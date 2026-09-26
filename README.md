@@ -1,2 +1,26 @@
-# projects-hub
-Voice-first iterative work with project ideas and documentation
+# Projects Hub
+
+Голосовой диалог по проектам, идеям и документации с итеративным уточнением и правками. Будущая замена `record-idea-hub`, а не переименование работающего диктофона.
+
+Основание: голосовое `idea-hub/inbox/voice/2026/09/voice-20260926-134715-8a684154.md` и прямое поручение владельца от 26 сентября 2026 создать этот репозиторий. [Продуктовое видение](docs/vision.md).
+
+## Что уже есть
+
+`src/projects_hub/live_resources.py` — исполняемая серверная граница подключения общего `ai-resource-control`: фиксированный consumer `projects-hub`, обязательная авторизованная область проекта, отдельная привязка ресурсов для пользователя/проекта, отсутствие обхода через одиночный API key. Unit tests проверяют изоляцию привязки, передачу управления именно общему SDK и корректный отказ при отсутствии пакета.
+
+Это **не готовое Android-приложение и не готовый production backend**. В этом checkpoint нет микрофонного UI, GitHub write tools, runtime deployment и реальной Live-приёмки. Работающий Record Idea Hub не менялся.
+
+## Общий ресурс
+
+Общий пакет: private `onedayonemasterpiece/ai-resource-control`. Транспорт: `onedayonemasterpiece/live-interaction`. Одна существующая Supabase authority; проект не создаёт собственный quota ledger. Подробности и текущий blocker: [resource-rollout.md](docs/resource-rollout.md).
+
+Runtime устанавливает private wheel авторизованным deployment-процессом и совместимый pinned transport. Сам package scaffold не подменяет частный dependency одноимённым публичным PyPI-пакетом. Без SDK возвращается `RESOURCE_PACKAGE_MISSING`; старый транспорт SDK отклоняет до вызова Google.
+
+## Проверка
+
+```sh
+python -m pip install -e '.[test]'
+PYTHONPATH=src python -m pytest -q
+```
+
+Тесты offline, без API key, Supabase и расходов провайдера.
