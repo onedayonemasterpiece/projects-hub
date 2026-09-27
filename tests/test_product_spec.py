@@ -14,7 +14,7 @@ def load_contract():
 
 def test_source_registry_is_unique_pinned_and_traceable():
     spec = load_contract()
-    assert spec["schema_version"] == 1
+    assert spec["schema_version"] == 2
     assert re.fullmatch(r"[0-9a-f]{40}", spec["source_snapshot"])
     sources = spec["sources"]
     assert len(sources) == len({s["id"] for s in sources})

@@ -1,14 +1,13 @@
 {
-  "schema_version": 1,
-  "spec_revision": 2,
+  "schema_version": 2,
+  "spec_revision": 3,
   "as_of": "2026-09-27",
   "status": "specified_not_implemented",
   "owner_input": {
-    "id": "U02",
-    "kind": "direct_user_clarification",
+    "id": "U03",
+    "kind": "direct_user_architecture_correction",
     "date": "2026-09-27",
-    "summary": "Equal PWA and Android experience; Android extra capabilities; Live dialogue without message composer or submit workflow; voice and contextual multi-project routing; reliable long offline speech, durable source Markdown and reusable evolving vocabulary.",
-    "voice_packet_id": null
+    "summary": "One central Live agent is the sole semantic orchestrator. Online and buffered offline raw audio go to that Live model; its input transcription and function calls drive memory, project routing, vocabulary and actions. Deterministic infrastructure may not hide a second ASR/LLM router/classifier/summarizer."
   },
   "applications": {
     "pwa": "full_application",
@@ -16,7 +15,15 @@
     "shared_core_ux": true,
     "android_capabilities_superset": true,
     "identical_os_guarantees_claimed": false,
-    "core_scenarios": ["live_dialogue", "projects", "tasks", "decisions", "history", "offline_capture", "resume_conversation"]
+    "core_scenarios": [
+      "live_dialogue",
+      "projects",
+      "tasks",
+      "decisions",
+      "history",
+      "offline_capture",
+      "resume_conversation"
+    ]
   },
   "interaction": {
     "mode": "continuous_live_dialogue",
@@ -46,53 +53,152 @@
     "long_capture_supported": true,
     "sealed_manifest_required": true,
     "resumable_upload": true,
-    "default_agent_delivery": "full_transcript_as_buffered_turn",
+    "agent_delivery": "raw_audio_to_central_live",
+    "separate_asr_before_live": false,
     "summary_only_delivery_allowed": false,
+    "manual_activity_boundaries_required": true,
+    "automatic_activity_detection_for_buffered_replay": false,
+    "activity_sequence": [
+      "activityStart",
+      "buffered_pcm",
+      "activityEnd"
+    ],
     "network_return_ends_utterance": false,
     "allow_response_to_incomplete_packet": false,
-    "allow_raw_backlog_new_live_interleave": false,
     "preserve_original_conversation_and_capture_time": true,
-    "new_conversation_policy": "archive_previous_and_await_resume",
+    "new_conversation_policy": "preserve_previous_source_and_separate_reply",
     "old_answer_plays_in_new_conversation": false,
     "stale_action_requires_revalidation": true
   },
   "archive": {
-    "always_for_explicit_save": true,
-    "always_for_meaningful_content": true,
-    "meaningful_minimum_duration_seconds": 0,
-    "always_for_sealed_offline_packet": true,
-    "conservative_archive_speech_seconds": 20,
-    "threshold_splits_markdown": false,
-    "uncertain_policy": "retain",
-    "short_processed_ephemeral_retention_days": 7,
-    "retention_parameter_status": "proposed_policy_to_disclose_and_validate",
-    "pending_auto_ttl_delete": false,
-    "source_format": "markdown_full_transcript",
+    "semantic_disposition_owner": "live_agent_function_call",
+    "fixed_duration_archive_rule_seconds": null,
+    "explicit_save_is_strong_agent_instruction": true,
+    "pending_agent_disposition_auto_delete": false,
+    "source_format": "markdown_provider_transcript_plus_provenance",
     "source_is_summary": false,
     "mixed_project_source_default_audience": "personal",
     "source_index_required": true,
     "per_source_vocabulary_snapshot": true,
-    "automatic_audio_cleanup_requires": ["manifest_complete", "source_transcript_verified", "archive_exact_commit_readback", "archive_current_main_readback", "conversation_links_durable", "backup_policy_satisfied"],
+    "automatic_audio_cleanup_requires": [
+      "manifest_complete",
+      "live_turn_complete",
+      "agent_disposition_durable",
+      "source_transcript_journal_durable",
+      "archive_readback_if_archived",
+      "conversation_links_durable",
+      "retention_policy_satisfied"
+    ],
     "physical_loss_of_only_offline_copy_recoverable_claim": false
   },
   "vocabulary": {
-    "scopes": ["product", "project", "personal"],
+    "scopes": [
+      "product",
+      "project",
+      "personal"
+    ],
     "agent_can_build_from_authorized_github_documents": true,
     "refresh_by_source_revision": true,
     "voice_corrections": true,
     "automatic_grounded_nonconflicting_updates": true,
     "unverified_conflicts": "candidate_or_clarify",
-    "own_asr_output_is_independent_evidence": false,
     "source_provenance_required": true,
     "old_transcripts_rewritten_on_refresh": false,
     "contextual_and_acoustic_compatibility_required": true,
     "provider_vocabulary_support_must_be_verified": true,
     "source_refs": [
-      {"repository":"onedayonemasterpiece/record-idea-hub","path":"docs/IDEA_HUB_CONTRACT.md","commit":"35fb24ee20ef2845824032793dedb60aee7ea6fa"},
-      {"repository":"onedayonemasterpiece/idea-hub","path":"config/voice-terminology.yaml","blob_sha":"52d4675affc03f351cfdc616a0ddf62eae7bfbac"},
-      {"repository":"onedayonemasterpiece/wonderful-lections","path":"docs/product/continuous-slide-review.md","blob_sha":"ac8786d3aeb2d3d8a392813176b526bcdf09605e"},
-      {"repository":"onedayonemasterpiece/wonderful-lections","path":"assets/review/terms.ru.json","blob_sha":"5bbfd45fdf0f1b4fd1b5f6d8f53b9e0b63259e71"}
+      {
+        "repository": "onedayonemasterpiece/record-idea-hub",
+        "path": "docs/IDEA_HUB_CONTRACT.md",
+        "commit": "35fb24ee20ef2845824032793dedb60aee7ea6fa"
+      },
+      {
+        "repository": "onedayonemasterpiece/idea-hub",
+        "path": "config/voice-terminology.yaml",
+        "blob_sha": "52d4675affc03f351cfdc616a0ddf62eae7bfbac"
+      },
+      {
+        "repository": "onedayonemasterpiece/wonderful-lections",
+        "path": "docs/product/continuous-slide-review.md",
+        "blob_sha": "ac8786d3aeb2d3d8a392813176b526bcdf09605e"
+      },
+      {
+        "repository": "onedayonemasterpiece/wonderful-lections",
+        "path": "assets/review/terms.ru.json",
+        "blob_sha": "5bbfd45fdf0f1b4fd1b5f6d8f53b9e0b63259e71"
+      }
+    ],
+    "semantic_owner": "live_agent",
+    "hidden_background_llm": false,
+    "provider_input_transcription_alone_is_grounding_evidence": false
+  },
+  "additional_acceptance_gates": [
+    "G21",
+    "G22",
+    "G23",
+    "G24",
+    "G25",
+    "G26",
+    "G27",
+    "G28",
+    "G29",
+    "G30",
+    "G31",
+    "G32",
+    "G33",
+    "G34",
+    "G35"
+  ],
+  "central_agent": {
+    "sole_semantic_orchestrator": true,
+    "online_input": "raw_audio_direct_to_live",
+    "offline_input": "raw_audio_deliberate_buffered_replay_to_live",
+    "input_transcription_owner": "live_provider_same_session",
+    "project_routing_owner": "live_agent",
+    "archive_disposition_owner": "live_agent_function_call",
+    "vocabulary_semantic_owner": "live_agent",
+    "clarification_owner": "live_agent",
+    "hidden_semantic_llm_inside_tools_allowed": false
+  },
+  "deterministic_layer": {
+    "allowed_roles": [
+      "audio_capture",
+      "vad",
+      "durable_source",
+      "transport",
+      "auth_acl",
+      "quota_leases",
+      "manifest_integrity",
+      "retries",
+      "idempotency",
+      "optimistic_concurrency",
+      "transactions_outbox",
+      "device_binding",
+      "readback_reconciliation",
+      "mechanical_retrieval",
+      "schema_validation"
+    ],
+    "forbidden_semantic_roles": [
+      "separate_asr_before_live",
+      "project_intent_router",
+      "pre_live_summarizer",
+      "value_classifier",
+      "response_rewriter_agent",
+      "hidden_dictionary_llm"
     ]
   },
-  "additional_acceptance_gates": ["G21", "G22", "G23", "G24", "G25", "G26", "G27", "G28", "G29", "G30"]
+  "framework_requirements": {
+    "direct_audio_to_live": true,
+    "live_input_transcription_enabled_in_current_framework": true,
+    "lossless_trusted_transcript_sink_required": true,
+    "ui_transcript_projection_must_not_be_archive": true,
+    "event_ring_must_not_be_archive": true,
+    "deliberate_buffered_turn_required": true,
+    "manual_activity_start_end_required": true,
+    "conversation_scope_not_single_project_scope_required": true,
+    "product_durable_capture_above_transport_required": true,
+    "current_provider_transcript_projection_limit_chars": 2000,
+    "current_session_event_ring_size": 320,
+    "current_browser_transcript_preview_is_bounded": true
+  }
 }

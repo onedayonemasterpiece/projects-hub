@@ -1,114 +1,125 @@
 """Specification regression checks only, not audio/device/provider acceptance."""
 import json
 from pathlib import Path
-import re
 
 DOCS = Path(__file__).resolve().parents[1] / "docs" / "product"
 
 
+def load(name):
+    return json.loads((DOCS / name).read_text(encoding="utf-8"))
+
+
 def contract():
-    return json.loads((DOCS / "live-contract.json").read_text(encoding="utf-8"))
+    return load("live-contract.json")
 
 
-def test_full_application_parity_without_identical_os_promises():
-    app = contract()["applications"]
+def test_full_application_parity_and_voice_first_ui():
+    c = contract()
+    app = c["applications"]
+    interaction = c["interaction"]
     assert app["pwa"] == app["android"] == "full_application"
     assert app["shared_core_ux"] and app["android_capabilities_superset"]
-    assert not app["identical_os_guarantees_claimed"]
-    assert {"live_dialogue", "history", "offline_capture", "resume_conversation"} <= set(app["core_scenarios"])
-
-
-def test_live_not_submission_form_and_no_fixed_question_limit():
-    interaction = contract()["interaction"]
-    assert interaction["mode"] == "continuous_live_dialogue"
     assert not interaction["free_text_composer"]
     assert not interaction["ordinary_utterance_submit_form"]
     assert interaction["contextual_buttons"]
     assert interaction["fixed_question_limit"] is None
-
-
-def test_project_focus_is_not_a_required_manual_step():
-    interaction = contract()["interaction"]
-    assert interaction["voice_project_switch"]
-    assert interaction["contextual_project_routing"]
-    assert interaction["multi_project_conversation"]
     assert not interaction["manual_project_selection_required"]
-    assert contract()["archive"]["mixed_project_source_default_audience"] == "personal"
 
 
-def test_capture_is_durable_independent_of_model_response():
-    capture = contract()["capture"]
-    assert capture["source_audio_pipeline_count"] == 1
-    assert capture["durable_before_provider_send"]
-    assert capture["vad"] and capture["pre_roll_and_hangover"]
-    assert not capture["silence_ends_logical_conversation"]
-    assert not capture["provider_response_is_archive_receipt"]
-    assert capture["checkpoint_target_status"] == "proposal_requires_device_measurement"
+def test_one_central_live_agent_owns_all_semantics():
+    c = contract()
+    agent = c["central_agent"]
+    assert c["spec_revision"] == 3
+    assert agent["sole_semantic_orchestrator"]
+    assert agent["online_input"] == "raw_audio_direct_to_live"
+    assert agent["offline_input"] == "raw_audio_deliberate_buffered_replay_to_live"
+    assert agent["input_transcription_owner"] == "live_provider_same_session"
+    assert agent["project_routing_owner"] == "live_agent"
+    assert agent["archive_disposition_owner"] == "live_agent_function_call"
+    assert agent["vocabulary_semantic_owner"] == "live_agent"
+    assert not agent["hidden_semantic_llm_inside_tools_allowed"]
 
 
-def test_buffered_turn_delivers_complete_source_not_summary():
+def test_deterministic_layer_cannot_become_second_brain():
+    layer = contract()["deterministic_layer"]
+    allowed = set(layer["allowed_roles"])
+    forbidden = set(layer["forbidden_semantic_roles"])
+    assert {"audio_capture", "vad", "auth_acl", "idempotency", "readback_reconciliation"} <= allowed
+    assert {"separate_asr_before_live", "project_intent_router", "pre_live_summarizer", "value_classifier"} <= forbidden
+
+
+def test_offline_is_raw_audio_buffered_live_turn():
     offline = contract()["offline"]
-    assert offline["long_capture_supported"] and offline["resumable_upload"]
-    assert offline["sealed_manifest_required"]
-    assert offline["default_agent_delivery"] == "full_transcript_as_buffered_turn"
-    for key in ("summary_only_delivery_allowed", "network_return_ends_utterance",
-                "allow_response_to_incomplete_packet", "allow_raw_backlog_new_live_interleave"):
-        assert not offline[key], key
-    assert offline["preserve_original_conversation_and_capture_time"]
+    assert offline["agent_delivery"] == "raw_audio_to_central_live"
+    assert not offline["separate_asr_before_live"]
+    assert not offline["summary_only_delivery_allowed"]
+    assert offline["manual_activity_boundaries_required"]
+    assert offline["activity_sequence"] == ["activityStart", "buffered_pcm", "activityEnd"]
+    assert not offline["allow_response_to_incomplete_packet"]
 
 
-def test_new_conversation_never_implies_deleting_pending_source():
-    spec = contract()
-    assert not spec["interaction"]["new_conversation_deletes_previous"]
-    assert spec["offline"]["new_conversation_policy"] == "archive_previous_and_await_resume"
-    assert not spec["offline"]["old_answer_plays_in_new_conversation"]
-    assert spec["offline"]["stale_action_requires_revalidation"]
-    assert not spec["archive"]["pending_auto_ttl_delete"]
-
-
-def test_short_meaningful_speech_is_not_filtered_by_duration():
+def test_archive_semantics_belong_to_agent_not_seconds():
     archive = contract()["archive"]
-    assert archive["always_for_explicit_save"] and archive["always_for_meaningful_content"]
-    assert archive["meaningful_minimum_duration_seconds"] == 0
-    assert archive["always_for_sealed_offline_packet"]
-    assert archive["conservative_archive_speech_seconds"] > 0
-    assert not archive["threshold_splits_markdown"]
-    assert archive["uncertain_policy"] == "retain"
-    assert archive["source_format"] == "markdown_full_transcript"
+    assert archive["semantic_disposition_owner"] == "live_agent_function_call"
+    assert archive["fixed_duration_archive_rule_seconds"] is None
+    assert not archive["pending_agent_disposition_auto_delete"]
     assert not archive["source_is_summary"]
-    assert archive["source_index_required"]
 
 
-def test_audio_cleanup_requires_archival_evidence():
-    archive = contract()["archive"]
-    assert {"manifest_complete", "source_transcript_verified", "archive_exact_commit_readback",
-            "archive_current_main_readback", "conversation_links_durable", "backup_policy_satisfied"} <= set(archive["automatic_audio_cleanup_requires"])
-    assert not archive["physical_loss_of_only_offline_copy_recoverable_claim"]
-
-
-def test_vocabulary_has_scoped_provenance_and_no_circular_evidence():
+def test_vocabulary_semantics_belong_to_same_agent():
     vocab = contract()["vocabulary"]
-    assert set(vocab["scopes"]) == {"product", "project", "personal"}
+    assert vocab["semantic_owner"] == "live_agent"
     assert vocab["agent_can_build_from_authorized_github_documents"]
-    assert vocab["automatic_grounded_nonconflicting_updates"] and vocab["voice_corrections"]
+    assert not vocab["hidden_background_llm"]
+    assert not vocab["provider_input_transcription_alone_is_grounding_evidence"]
     assert vocab["source_provenance_required"]
-    assert not vocab["own_asr_output_is_independent_evidence"]
-    assert not vocab["old_transcripts_rewritten_on_refresh"]
-    assert vocab["contextual_and_acoustic_compatibility_required"]
-    for ref in vocab["source_refs"]:
-        assert ref["repository"] and ref["path"]
-        assert re.fullmatch(r"[0-9a-f]{40}", ref.get("commit", ref.get("blob_sha", "")))
 
 
-def test_owner_revision_and_new_gates_are_connected():
-    spec = contract()
-    registry = json.loads((DOCS / "contract.json").read_text(encoding="utf-8"))
-    assert registry["experience_contract"] == "live-contract.json"
-    assert registry["owner_revision"]["spec_revision"] == spec["spec_revision"] == 2
-    assert spec["owner_input"]["id"] == registry["owner_revision"]["id"] == "U02"
-    assert spec["owner_input"]["voice_packet_id"] is None
-    assert "U02" in (DOCS / "01-evidence.md").read_text(encoding="utf-8")
-    gates = {g["id"] for g in registry["release_gates"]}
-    assert set(spec["additional_acceptance_gates"]) <= gates
-    assert len(spec["additional_acceptance_gates"]) == 10
-    assert registry["platform_decision"]["both_full_applications"]
+def test_framework_gaps_are_explicit_not_silently_assumed_solved():
+    req = contract()["framework_requirements"]
+    assert req["direct_audio_to_live"]
+    assert req["live_input_transcription_enabled_in_current_framework"]
+    assert req["lossless_trusted_transcript_sink_required"]
+    assert req["current_provider_transcript_projection_limit_chars"] == 2000
+    assert req["current_session_event_ring_size"] == 320
+    assert req["manual_activity_start_end_required"]
+    assert req["conversation_scope_not_single_project_scope_required"]
+    assert req["product_durable_capture_above_transport_required"]
+
+
+def test_product_registry_tracks_revision_three_and_35_gates():
+    registry = load("contract.json")
+    assert registry["spec_revision"] == 3
+    assert registry["owner_revision"]["id"] == "U03"
+    assert registry["central_agent_contract"] == "12-central-live-agent.md"
+    gates = registry["release_gates"]
+    assert len(gates) == 35
+    assert [g["id"] for g in gates] == [f"G{i:02d}" for i in range(1, 36)]
+    assert all(g["status"] == "not_run" for g in gates)
+    assert {"G31", "G32", "G33", "G34", "G35"} <= set(contract()["additional_acceptance_gates"])
+
+
+def test_docs_do_not_reintroduce_superseded_cognitive_pipeline():
+    text = "\n".join(p.read_text(encoding="utf-8") for p in DOCS.glob("*.md"))
+    forbidden = [
+        "целостное ASR сохранённого аудио",
+        "полный текст Live-агенту",
+        "full_transcript_as_buffered_turn",
+        "все завершённые офлайн-пакеты и эпизоды от 20 секунд речи архивируются",
+    ]
+    for phrase in forbidden:
+        assert phrase not in text
+    central = (DOCS / "12-central-live-agent.md").read_text(encoding="utf-8")
+    assert "единственное когнитивное звено" in central.lower()
+    assert "function calls" in central
+    assert "activityStart" in central and "activityEnd" in central
+
+
+def test_revision_three_docs_are_cross_linked():
+    index = (DOCS / "README.md").read_text(encoding="utf-8")
+    assert "12-central-live-agent.md" in index
+    assert "10-conversation-memory.md" in index
+    assert "11-routing-and-vocabulary.md" in index
+    reliability = (DOCS / "08-reliability.md").read_text(encoding="utf-8")
+    for n in range(1, 36):
+        assert f"G{n:02d}" in reliability

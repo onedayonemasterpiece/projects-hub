@@ -1,88 +1,227 @@
-# Архитектура единого продукта: PWA и Android
+# Платформы, архитектура и связность проектов
 
-[Индекс](README.md) · [UX](03-product-and-ux.md) · [Память](10-conversation-memory.md) · [Маршрутизация и словари](11-routing-and-vocabulary.md).
+[Индекс](README.md) · [Центральный Live-агент](12-central-live-agent.md) · [UX](03-product-and-ux.md) · [Память](10-conversation-memory.md) · [Маршрутизация и словари](11-routing-and-vocabulary.md).
 
-Ревизия 2 по прямому уточнению владельца 27 сентября 2026. Документ описывает будущую реализацию, не готовое приложение.
+**Ревизия 3, 27 сентября 2026.** Центральный интеллект продукта — Gemini Live в пользовательском разговоре. Backend не содержит параллельного смыслового конвейера.
 
-## ADR-01: два равноправных приложения
+## ADR-01: PWA и Android — два полноценных приложения
 
-PWA и Android имеют практически единые интерфейс, навигацию, состояния и основной функционал: Live-разговор, работу с несколькими проектами, историю исходных записей, задачи, решения и кнопочные варианты. Android не является тонким дополнением к PWA. Дополнительные возможности Android — длительный захват при блокировке, устойчивое нативное хранение и разрешённые локальные действия.
+Оба клиента реализуют практически единый основной продукт:
+- большая голосовая кнопка;
+- один живой диалог;
+- проекты и история;
+- задачи, решения, встречи;
+- contextual button choices;
+- возвращение к прошлым разговорам.
 
-Одинаковое поведение важнее буквального совпадения исходного кода. Общими являются API, модель разговора, компоненты/токены дизайна и каталог UX-приёмки. Основные функции нельзя исключать из одного приложения ради удобства разработки второго.
+Android имеет дополнительные platform capabilities: надёжная длительная запись при корректно работающем foreground service, более сильная локальная очередь, device-bound actions и системные интеграции. Это не «тонкий клиент».
 
-Оба приложения поддерживают длинный офлайн-захват в пределах возможностей платформы. PWA не обещает бесконечную запись после приостановки страницы ОС. Ограничения показываются в момент записи и проверяются на устройствах, не превращают PWA в отдельный урезанный продукт. WebView сам по себе не доказывает поддержку фоновой записи.
+PWA имеет тот же core UX и API. Ограничения браузера честно отображаются; нельзя обещать фоновые гарантии Android только потому, что экран похож.
 
-Свободного текстового composer в MVP нет. Вход — голос и контекстные кнопки; текст служит отображением ответа, документа, истории и статуса. При отсутствии Live работают сохранение речи, чтение и предусмотренные кнопочные действия.
+## ADR-02: одно когнитивное звено
 
-## ADR-02: небольшой общий backend
+```text
+PWA / Android microphone
+        │
+        ├─ durable local capture + VAD
+        │
+        ▼
+shared live-interaction
+        │ PCM / activity boundaries
+        ▼
+Gemini Live agent
+        │
+        ├─ input transcription events ──> source journal
+        ├─ audio response ──────────────> client
+        └─ function calls
+                │
+                ▼
+        authorized thin tools
+                │
+     docs / memory / tasks / calendar / notifications / vocabulary
+```
 
-Сохраняется Python-основа. Предлагаемый стек: ASGI/FastAPI, модульный монолит и worker той же кодовой базы, прикладная PostgreSQL с транзакционным outbox. PWA — TypeScript/React, Android — полноценный Kotlin-клиент с тем же UX-контрактом. Kafka, отдельный универсальный агентный оркестратор и обязательная векторная БД не нужны.
+Live-agent отвечает за semantic understanding:
+- что пользователь сказал;
+- к какому проекту это относится;
+- нужен ли дополнительный контекст;
+- какой вопрос задать;
+- что сохранить;
+- какое предметное действие предложить/выполнить.
 
-Backend размещается на DevCoveer согласно существующим требованиям проекта. Не добавляются Fly.io и GitHub self-hosted runner. Размещение БД, identity provider, допустимость данных и backup проверяются до пилота.
+Backend отвечает за механически проверяемое:
+- auth/ACL;
+- durable source;
+- schemas;
+- revision checks;
+- idempotency;
+- retries/reconciliation;
+- resource limits;
+- transaction/outbox;
+- device binding;
+- readback.
 
-Микрофон читается одной capture-системой. Она питает локальный долговечный источник и Live-поток. Из Record Idea Hub переиспользуются подходы VAD, pre-roll/hangover, chunks, очереди и подтверждений; из live-interaction — транспорт, Stop, playback и восстановление. Нужные адаптеры расширяют поддерживаемую общую границу, а не становятся расходящимися копиями.
+Нельзя добавлять скрытые LLM calls внутри tools для предварительной классификации, суммаризации, маршрутизации или переписывания ответа Live.
 
-Legacy-процедура завершения/отправки Recorder не переносится в Live-интерфейс. Трёхминутное закрытие M4A-сегмента тоже нельзя считать доказательством сохранности секундного хвоста: реализация отдельно проверяет checkpoint и восстановление контейнера. Недостающие hooks и их совместимость входят в backlog, а не объявляются уже существующими.
+## ADR-03: offline — сохранённый аудио-turn того же агента
 
-## ADR-03: владельцы данных
+Offline capture — не отдельный AI-режим.
+
+Android/PWA сохраняют речь локально. Когда central Live становится доступна, source подаётся **аудио** в Live-сессию. Для длинного buffered source нужен manual activity mode общего framework:
+- provider automatic activity detection disabled на этот deliberate replay;
+- activityStart;
+- последовательный PCM;
+- activityEnd.
+
+Так agent не начинает отвечать на естественной паузе внутри длинной записи.
+
+Текущий framework при reconnect намеренно не replay-ит старую речь — это сохраняется для обычного transport recovery. Projects Hub делает deliberate buffered replay из своей durable source queue только после создания готового Live-turn.
+
+Отдельный ASR перед Live не является базовой архитектурой.
+
+## ADR-04: разговор личный для actor, проекты — targets function calls
+
+Пользователь может за один разговор обсуждать несколько разрешённых проектов. Поэтому semantic project focus не должен быть hard-binding всей provider session.
+
+Целевая модель:
+- provider/Live session привязана к actor + tenant/workspace + conversation resource;
+- доступный project catalogue передаётся server-owned кратким контекстом и доступен через tools;
+- current focus хранится как conversation state;
+- каждый read/write tool повторно проверяет actor и target project;
+- полный личный source не публикуется автоматически ни в одну группу.
+
+Существующий `ProjectScope(tenant_id, subject_id, project_id)` — ранний resource bootstrap, не финальная multi-project модель. Его необходимо эволюционировать к conversation/workspace binding либо эквиваленту, не смешивая resource accounting и object authorization.
+
+Переключение фокуса «теперь про фестиваль» не должно перезапускать микрофон или модель. Если project недоступен — tool возвращает отказ, agent объясняет/уточняет.
+
+## ADR-05: инструменты агента
+
+Минимальный каталог, конкретные имена уточняются реализацией:
+
+### Контекст
+- `projects.list_accessible`
+- `projects.get`
+- `project_docs.search`
+- `project_docs.read`
+- `conversation.search_sources`
+- `conversation.get_source`
+- `conversation.set_focus`
+
+### Память
+- `memory.commit_voice_source`
+- `memory.finish_ephemeral`
+- `memory.link_source_to_project`
+
+### Коллаборация
+- task/proposal/decision/vote/meeting tools;
+- notification tools;
+- calendar tools.
+
+### Словарь
+- `vocabulary.read`
+- `vocabulary.upsert_grounded`
+- `vocabulary.list_candidates`
+
+### Предметные owning products
+- Wonderful Lections, KenigEvents, Street Story и другие через свои существующие service contracts/adapters.
+
+Tool schemas короткие и typed. Agent не получает shell/SQL/credential access. Tool может выполнять несколько детерминированных шагов одной бизнес-операции, но не решает semantic intent отдельной моделью.
+
+## ADR-06: источники и состояния
 
 | Данные | Канонический владелец |
 | --- | --- |
-| Значимые исходные записи речи, подробные идеи, документы | Отдельные Markdown в разрешённых GitHub repo; смешанный разговор по умолчанию личный |
-| Незавершённое аудио и текст до архивирования | Durable spool/журнал на устройстве и сервере; staging, а не второй редактируемый master |
-| Логические разговоры, ходы, маршруты и вопросы | Прикладная PostgreSQL со ссылками на источники и их ревизии |
-| Поручения, голосования, RSVP, предложения времени | Прикладная PostgreSQL |
-| Членство, права, device grants и подключения | Прикладная БД и защищённое серверное хранилище |
-| Словари | Версионируемые scoped документы и закреплённые snapshots с происхождением |
-| Команды, receipts, outbox и состояние внешних действий | Прикладная PostgreSQL |
-| Поиск по идеям и исходным разговорам | Восстанавливаемые проекции с правами и source revision |
-| Общие Live-квоты и аренды | Существующий ai-resource-control и его единственная authority |
+| Локально ещё не доставленное аудио | клиентская durable source queue |
+| Серверный source/transcript journal и disposition | прикладная PostgreSQL / durable source store |
+| Постоянный Markdown разговора/идеи/требования | разрешённый GitHub repo |
+| Оперативные задачи/голоса/meeting proposals | прикладная PostgreSQL |
+| Project docs | owning GitHub repositories |
+| Live quota/lease/grant | общий ai-resource-control |
+| Tool command/receipt/outbox | прикладная PostgreSQL |
+| Vocabulary snapshots/provenance | project-owned storage + versioned references |
 
-Сохранение речи — продуктовая память, а не технический лог. Общая база лимиттера не хранит пользовательские документы, аудио, профили и переписку. Оперативные голосования не становятся Git-коммитом на каждый клик. Индекс не редактируется как независимая версия документа.
+GitHub не используется как транспортный буфер для каждого PCM chunk. Прикладная БД не становится вторым владельцем документации.
 
-## ADR-04: разговор, соединение и проект — разные сущности
+## ADR-07: provider transcription — источник той же Live-сессии
 
-Conversation содержит Turns/Recordings, SourceArtifacts, SourceSpans/ProjectRoutes и Commands/Receipts. Она связана с участником, рабочими пространствами и предметными объектами. Conversation ID сохраняется при смене проекта, внутреннем reconnect и возвращении через неделю. Provider session ID — временная техническая связь.
+Текущий `live-interaction` уже настраивает `inputAudioTranscription`. Product adapter сохраняет provider transcript events для source provenance.
 
-Сервер определяет разрешённые источники. Агент меняет фокус по голосу/смыслу и задаёт адресат конкретного действия; каждое действие проверяется по актуальным правам. Один личный разговор может охватывать несколько проектов. Не требуется отдельное постоянное соединение для каждого проекта.
+Важные ограничения текущего framework:
+- provider projection режет текст события до 2000 символов;
+- UI host хранит ограниченный event ring;
+- browser transcript preview держит только хвост;
+- bootstrap history короткая.
 
-Смена действительной аудитории, отзыв прав и отдельные политики данных могут потребовать нового внутреннего контекста; простой переход между разрешёнными темами — нет. Полная личная запись не раскрывается всем затронутым группам. Подробности и словарная provenance находятся в документе 11.
+Ни одна из этих UI/transport проекций не должна быть archive source. Нужен lossless product observer/sink до truncation/ring eviction либо соответствующее изменение framework.
 
-Существующий ProjectScope рассчитан на один проект. Для портфельного разговора требуется явно спроектированный server-authorized binding, а не утверждение, что текущий адаптер уже всё поддерживает. Общие ресурсные правила и consumer projects-hub сохраняются.
+Если transcription incomplete, source audio остаётся и заново подаётся тому же central Live agent в recovery turn. Не запускается скрытая другая модель.
 
-## ADR-05: online и buffered — один разговор, разные способы доставки
+## ADR-08: словарь — контекст и tool memory агента
 
-Online: локальный durable checkpoint → серверная надёжная фиксация → Live. Расшифровка и Markdown-архивирование идут параллельно разговору; GitHub не блокирует каждую аудиопорцию.
+Agent сам читает разрешённые проектные документы и вызывает vocabulary tools. Backend хранит точные source refs/revisions и schema.
 
-Длинный buffered пакет: полный manifest → возобновляемая загрузка → целостное распознавание со словарём → надёжный полный текст и архивная job → один явно обозначенный исторический пользовательский ход для Live. Агент получает полную расшифровку, не только summary. Нельзя смешать старый буфер с новой живой речью и отвечать по недоставленному началу.
+В session bootstrap помещается небольшой актуальный terminology snapshot. Если agent обновил словарь в середине разговора:
+- tool result делает новые термины доступными самому agent;
+- для следующих turn может быть обновлён bounded conversation context;
+- old source сохраняет старый snapshot;
+- не заявляется, что произвольный custom vocabulary напрямую перенастроил provider speech recognizer, пока это не проверено API/моделью.
 
-Очередность дополнений, переход к новому разговору, обработка большого контекста и неизвестного исхода описаны в документе 10. Archive complete подтверждается readback. Server received, model responded и source archived — разные факты.
+## ADR-09: retrieval не является вторым интеллектом
 
-## ADR-06: конкуренция и последствия
+Полнотекстовый или vector search допустим как механический retrieval:
+- ACL применяется до выдачи;
+- результат — source refs/snippets/metadata;
+- agent сам решает, что они означают и что делать.
 
-Внутренняя mutation, command и outbox фиксируются транзакционно. Внешние операции используют устойчивые идентификаторы, ожидаемую ревизию и проверку результата. После неопределённого исхода сначала reconciliation, а не повторное создание.
+Нельзя строить отдельный LLM retrieval-router, который переписывает запрос, принимает project decision и передаёт Live только свой summary, если это не отдельное утверждённое продуктовое решение.
 
-Входная промежуточная ASR-гипотеза не считается окончательной командой. Поправка пользователя изменяет ожидаемое действие; уже применённое исправляется новой ревизией. Голосовой и кнопочный ответ на один выбор не создают два независимых эффекта. Stop и reconnect не отменяют историю и не повторяют совершённое.
+## ADR-10: долговечные function calls
 
-Операции над одним документом упорядочены, разные проекты и чтения работают параллельно. Версионный конфликт требует перечитать документ. Архивирование идемпотентно по recording_id. Полный CRDT-редактор для этого MVP не требуется.
+Provider call id помогает внутри Live-session, но продуктовые операции используют собственный durable command/source identity.
 
-## ADR-07: поиск и связность
+Для mutation:
+- agent выбирает tool и semantic args;
+- backend добавляет actor/scope;
+- command_id/idempotency;
+- expected revision;
+- execute;
+- readback/reconcile;
+- tool result возвращается агенту.
 
-Поиск включает исходные разговоры с автором и датой записи. В начале достаточно текстового индекса PostgreSQL и понятной структуры документов; необходимость embeddings оценивается на реальных вопросах. Кэши, summaries и словари наследуют доступы источников и обновляются по ревизиям.
+Reconnect не превращает function call в новый смысловой запрос. Если outcome unknown, agent получает честный status и может решить следующий шаг, но backend не повторяет mutation слепо.
 
-| Проект | Что переиспользуется |
-| --- | --- |
-| idea-hub | Исходные требования, разрешённые документы, .md intake/index и terminology policy |
-| record-idea-hub | Захват, VAD, durable queue и подтверждённое сохранение; работающий Recorder не отключается |
-| live-interaction | Общий голосовой транспорт и жизненный цикл; новые hooks добавляются версионируемо |
-| ai-resource-control | Единственный общий ресурсный договор |
-| wonderful-lections | Словари/recognition_context и предметные действия с лекциями; не второй генератор слайдов |
-| my-data-hub | Совместимый intake, поиск и маршрутизация с существующими правами |
-| events-bot-new / KenigEvents | Разрешённые события и карточки; исходный event owner сохраняется |
-| street-story | Последующая работа с выбранным брифом/результатом без дублирования публикационного продукта |
+## ADR-11: стек без космолёта
 
-Эта карта — план интеграций, не доказательство их подключения. Private SDK устанавливается доверенным процессом, не копируется в публичный продуктовый репозиторий. Для внешних каналов используются существующие разрешённые адаптеры.
+Целевой backend — Python ASGI/FastAPI, модульный монолит и ограниченный worker той же кодовой базы. Прикладная PostgreSQL + outbox достаточно для MVP.
 
-## Восстановление
+PWA — TypeScript/React. Android — Kotlin. Общие API schemas, state semantics и acceptance corpus важнее буквального общего UI-кода.
 
-Backup покрывает не только готовые документы, но и незавершённые источники, разговоры, receipts и словарные snapshots. Источники удаляются лишь после выполнения их retention/readback-договора. Одинаковый интерфейс не доказывает одинаковую crash-safety ОС: это отдельные обязательные проверки обеих платформ.
+Backend на DevCoveer. Не Fly.io. Не self-hosted GitHub runner.
+
+## ADR-12: связность экосистемы
+
+| Owning project | Projects Hub использует | Не забирает себе |
+| --- | --- | --- |
+| idea-hub | source/provenance и разрешённые документы | весь личный archive пользователя |
+| record-idea-hub | VAD/chunk/durable capture patterns | старое приложение до приёмки замены |
+| live-interaction | provider transport, input transcription, audio response, function calls | product semantics |
+| ai-resource-control | admission/leases/budgets/fallback | user content |
+| wonderful-lections | предметные lecture tools | собственный presentation engine |
+| events-bot-new | event/announcement tools | canonical event store |
+| street-story | story tools | предметный workflow истории |
+| my-data-hub | разрешённые knowledge/data tools | автоматическое раскрытие personal data |
+
+Projects Hub связывает продукты через function calls central agent, а не копирует их business logic.
+
+## Реальные framework изменения до product acceptance
+
+1. deliberate buffered audio turn;
+2. manual activityStart/activityEnd wire/setup;
+3. lossless input-transcript observer для product source journal;
+4. отсутствие 2000-char truncation на archive path;
+5. product source persistence до 320-event UI ring;
+6. multi-project conversation resource binding;
+7. tool contracts для conversation memory/project focus/vocabulary;
+8. клиентский durable capture online и offline без второго microphone/VAD stack.
+
+Все эти изменения должны внедряться в owning repositories, версионироваться и иметь real-provider acceptance. Документирование не означает, что они уже работают.

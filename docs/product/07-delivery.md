@@ -1,75 +1,192 @@
-# Насыщенный MVP: реализовать живой разговор и его надёжную память
+# Насыщенный MVP и порядок реализации
 
-[Индекс](README.md) · [UX](03-product-and-ux.md) · [Память](10-conversation-memory.md) · [Проекты/словарь](11-routing-and-vocabulary.md).
+[Индекс](README.md) · [Центральный Live-агент](12-central-live-agent.md) · [Архитектура](04-architecture.md) · [Память](10-conversation-memory.md).
 
-Ревизия 2 по уточнению владельца 27 сентября 2026. Архив разговора, длинный офлайн-ввод и проектные словари входят в MVP, не откладываются на необязательное расширение. Это план работ; runtime acceptance ещё не выполнен.
+**Ревизия 3, 27 сентября 2026.** MVP строится вокруг одной умной Live-модели и её function calls. Никакой промежуточный ASR/router/classifier не должен незаметно стать реальным мозгом продукта.
 
-## Что должен получить участник пилота
+## M0 — подтвердить внешние условия
 
-Два полноценных приложения — PWA и Android — с практически единым интерфейсом. Пользователь включает помощника, ведёт итеративный диалог, голосом переходит между проектами, наговаривает длинный материал без сети, получает ответ после доставки и позднее возвращается к исходной записи. Для простых выборов есть кнопки, для свободного содержания нет текстового composer и отдельной отправки каждой реплики.
+- provider/data/region/age policy для заявленной аудитории;
+- актуальные версии `live-interaction` и `ai-resource-control`;
+- прикладная PostgreSQL, backup/restore;
+- identity provider;
+- pilot group/use case.
 
-Коллаборация включает несколько проектов/групп, идеи и документы, поручения с принятием, простые решения/голосования, согласование времени и ненавязчивые уведомления. Android добавляет свои платформенные возможности, не является отдельным вспомогательным диктофоном.
+Разработку ядра можно вести синтетически параллельно; реальные закрытые данные не отправляются неподходящему provider path.
 
-## M0 — проверить существующие опоры
+## M1 — shared Live framework для Projects Hub
 
-PH-01: свежие main и versioned contracts live-interaction/ai-resource-control, действительные provider/data условия и доступность runtime. Проверять именно предназначенную authority через разрешённый DevCoveer контур, не другую подключённую учётную запись. Не менять общие квоты ради успешной демонстрации.
+До product adapter закрыть reusable gaps:
+- deliberate buffered audio feed;
+- manual activity detection mode + `activityStart/activityEnd`;
+- lossless trusted input-transcript sink;
+- отделение full transcript source от bounded UI projection;
+- product observer до 320-event ring eviction;
+- durable source feed без второго transport;
+- проверка resumption/recovery без replay mutations.
 
-PH-02: подходящие identity provider, прикладная PostgreSQL, защищённые хранилища и backup. Фиксировать реальные конфигурации без раскрытия secrets. Это инженерная работа по разрешённому окружению, не поручение владельцу вручную поддерживать очередь.
+Это изменения owning `live-interaction`, а не локальный форк Projects Hub.
 
-Параллельно можно разрабатывать независимое ядро на синтетических данных. Реальную речь/закрытые материалы провайдеру передают только по подходящим условиям.
+## M2 — capture substrate двух приложений
 
-## M1 — общее ядро и сохранность до AI
+PWA и Android реализуют единый UX и один source model:
+- одна большая кнопка;
+- один microphone pipeline;
+- VAD/pre-roll/hangover;
+- online PCM одновременно durable checkpoint + Live send;
+- offline durable chunks/manifest;
+- Stop/new conversation/delete имеют разные semantics.
 
-PH-03: workspace/membership/project, личный conversation, записи/ходы, маршруты, права объектов. Согласовать единый UI-контракт PWA/Android с большой кнопкой, читаемыми результатами и кнопочными выборами. Проверить отсутствие обязательного ручного выбора проекта.
+Android получает дополнительные foreground/device capabilities, но core workflow не урезан.
 
-PH-04: durable commands/outbox/receipts, GitHub source.md + registry/index, idempotent запись и readback. Сохранение не зависит от того, решила ли модель вызвать save. Runtime умеет отличить local_saved, server_received, transcript_complete, archive_pending и archive_verified.
+Выход M2: можно записать речь online/offline, пережить restart/network loss и доказать, что источник не потерян. Это ещё не означает, что agent правильно понял содержимое.
 
-PH-06: локальная очередь из общей capture-границы, VAD, реальный checkpoint и восстановление незавершённого контейнера. Сначала доказать сохранность закрытых и активных блоков, отсутствие обрезания первой/последней фразы и отсутствие удаления по timeout. Пределы памяти видны заранее.
+## M3 — центральный Live-agent и thin tools
 
-Выход M1: запись без сети сохраняется и восстанавливается, запись источника идемпотентна, права разделены. Это инженерный срез, а не объявление готового пользовательского продукта без Live.
+Product adapter:
+- actor/workspace/conversation scope;
+- server-owned system instruction;
+- project catalogue;
+- memory functions;
+- project docs read/search;
+- tasks/decisions/meetings;
+- vocabulary tools;
+- owning product adapters.
 
-## M2 — полноценный Live и единый UX
+Acceptance:
+- raw online audio → Live input transcription → function call → readback → voice response;
+- tool implementations не вызывают второй semantic LLM;
+- model сама задаёт столько вопросов, сколько нужно;
+- нет формы Send/Edit и обязательного text composer.
 
-PH-05: интеграция общего транспорта/контроллера, разговор без формы отправки, перебивание, несколько уточняющих вопросов по необходимости, голосовой выбор проекта и портфельные запросы. Обычная смена темы не создаёт нового обязательного пользовательского сеанса. Проверить совместимость server-authorized multi-project binding.
+## M4 — multi-project conversation
 
-PH-07: полноценный Android с теми же основными экранами и сценариями, плюс нативный захват/foreground service и локальные действия. PWA поддерживает тот же продуктовый цикл в разрешённом активном состоянии браузера. Из Record Idea Hub переиспользуется capture reliability, а не legacy-кнопка завершения/отправки.
+Эволюционировать одно-проектный `ProjectScope`.
 
-PH-16: scoped словари по реальным подходам Recorder/IdeaHub/Wonderful Lections. Первичная генерация по разрешённым GitHub-документам, автоматическое обновление по версиям, голосовые поправки, конфликты/неопределённости, snapshots и provenance. Проверить, как словарь фактически попадает в конкретные Live/ASR adapters.
+Нужно:
+- conversation/workspace resource binding;
+- per-tool target authorization;
+- voice/context project switching;
+- unresolved route → agent clarification;
+- один монолог может породить результаты в нескольких проектах;
+- полный source остаётся личным, пока agent явно не сохраняет разрешённую часть в группу.
 
-PH-17: длинный buffered-turn pipeline. Полный manifest, возобновляемый upload, полная расшифровка, исходный Markdown, передача Live не только summary, ограничения контекста без потери диапазонов. Не отвечать по началу незавершённого пакета. Исторический source учитывает дату записи и прежнюю conversation, не текущую вкладку.
+Acceptance: три проекта, похожие названия, поздняя поправка target, недоступный project, разговор «по всем проектам» без reconnect.
 
-Выход M2: пользователь говорит несколько минут без связи, связь восстанавливается, модель получает весь материал, сохраняет/обрабатывает его и отвечает. Новый разговор не стирает очередь; позднее продолжение находит исходную запись. Работающий Record Idea Hub не выключается.
+## M5 — offline buffered Live turn
 
-## M3 — совместная работа до результата
+Длинная запись без сети:
+- seal source;
+- resumable upload;
+- feed raw audio central Live-agent;
+- manual activityStart/end;
+- agent слышит весь пакет;
+- input transcript journal;
+- semantic function calls;
+- voice response о фактически выполненном.
 
-PH-08: поручения с предложением, принятием/отказом, сроком, блокировкой и завершением. Голосовой и кнопочный путь вызывают одинаковые предметные команды без двойного эффекта.
+Сеть может повторно пропасть. Source остаётся и recovery продолжает тот же logical turn/epoch без повторных business effects.
 
-PH-09: предложения с авторством, позиции участников, решение уполномоченного человека или простое голосование с известным правилом. Сохранять исходное высказывание и контекст краткого подтверждения, а не только итог модели.
+Никакой отдельный transcription model не вставляется перед Live.
 
-PH-10: встречи с несколькими вариантами и контрпредложениями, timezone, повторная проверка занятости и результата записи. Историческое «завтра» из офлайн-пакета не превращается в новое «завтра» после возвращения сети.
+## M6 — долговечная conversation memory
 
-PH-11: изменения с последнего визита, пакетные уведомления, тихие часы, карточки/RSVP и явное раскрытие разрешённого материала. Пуш открывает содержание, не микрофон. Старый отложенный ответ не озвучивается поверх нового разговора.
+Agent tools:
+- commit voice source;
+- finish ephemeral source;
+- search/get historical source;
+- resume conversation.
 
-Выход M3: несколько людей действительно договорились, исполнитель принял обязательство, результат доступен, а первоисточник разговора можно найти позднее.
+Permanent Markdown создаётся по semantic disposition Live-agent, а не по жёсткому секундному порогу.
 
-## M4 — доказать надёжность и понятность
+Если agent не успел disposition — source pending и не удаляется.
 
-PH-12: матрица отказов из [08](08-reliability.md), включая process kill, переключение сетей, потерянный ACK, частичный transcript, повтор completion, два устройства, отзыв доступа и ошибки маршрутизации/словаря.
+Acceptance: короткое важное, длинный вопрос без новой памяти, explicit «запомни», возврат через неделю, old relative date, source correction.
 
-PH-13: разрешённый настоящий provider/microphone canary, длительная сессия с reconnect, измерение добавленной задержки durable checkpoint, стоимости ASR/Live, восстановление backup и rollback. Offline unit-test не называется приёмкой телефона.
+## M7 — развивающийся словарь
 
-PH-14: один каталог задач для PWA и Android с нетехническими участниками. Без клавиатуры и ручного выбора проекта пройти длинный живой диалог, временный offline, сброс с сохранением и возврат к разговору. Участник понимает сохранность без чтения технического отчёта.
+Central agent:
+- читает разрешённые GitHub docs;
+- сравнивает vocabulary snapshot;
+- вызывает grounded upsert;
+- использует новый term в дальнейшем разговоре.
 
-PH-15: обновить owning документы и реестр реальными результатами. Миграция с Recorder только после совместимости и отдельной приёмки, без раскрытия личного IdeaHub новым участникам. У каждого release gate есть статус и свидетельство.
+Backend хранит schema/source refs/revisions и ACL. Никакого фонового dictionary LLM.
 
-## Не входит в первую версию
+Acceptance: имена, аббревиатуры, алиасы, конфликт, user correction, source revision, закрытый документ.
 
-Полный медиабанк и массовая индексация переписок, сложные весовые модели коллективных решений, универсальная CRM, платежи, marketplace агентов, произвольный desktop agent, нативный iOS и скрытое постоянное прослушивание. Это не отменяет исходное видение, но не является условием рабочего базового цикла.
+## M8 — коллаборация
 
-Отдельные платформенные функции Android развиваются поверх общего интерфейса. Нельзя выпустить обеднённый Android и назвать это достижением паритета. Нельзя заменить живой разговор сначала текстовым CRUD-интерфейсом и затем считать микрофон косметическим дополнением.
+Поверх работающего agent:
+- поручения proposed/accepted/blocked/done;
+- brainstorm с исходными source refs;
+- простое голосование или решение ответственного;
+- meeting proposals/calendar;
+- notifications;
+- event/project cards.
 
-## Ответственность реализации
+Все эти действия инициирует agent function calls или contextual buttons. Button event входит в тот же conversation/product state и не создаёт отдельный интеллект.
 
-Projects Hub владеет разговором, источниками, маршрутизацией, UI и предметными действиями. Общий Live framework владеет транспортом; общий контроллер — ресурсами. Capture reliability дорабатывается совместимо с Recorder, словари сохраняют проверяемое происхождение, документация лекций и событий остаётся у соответствующих продуктов.
+## M9 — связи owning products
 
-Содержательные решения и исходный код пишет подключённая сильная модель; прямые DevCoveer операции применяют, проверяют и раскатывают. Работа завершается сквозным результатом, не бесконечным аудитом. Ограничения среды фиксируются точно, без выдуманного PASS и без отказа от остальных доступных частей задачи.
+Сначала минимальные полезные адаптеры:
+- IdeaHub/document memory;
+- Wonderful Lections;
+- KenigEvents;
+- затем Street Story и остальные по нужде.
+
+Не переносить их business logic в Projects Hub. Agent использует service contracts.
+
+## M10 — выпускная проверка
+
+Обязательны:
+- multi-project isolation;
+- source durability;
+- real microphone;
+- long buffered audio;
+- transcript completeness;
+- tool idempotency;
+- two devices;
+- revocation;
+- quota/fallback;
+- calendar unknown outcome;
+- backup/restore;
+- vocabulary;
+- prompt injection;
+- нет скрытого semantic model внутри tool layer.
+
+Отдельно реальный pilot нетехнических взрослых пользователей должен пройти полный цикл:
+**сказали → agent понял → договорились → function calls → подтверждённый результат → позже нашли исходный разговор**.
+
+## Что не делать до доказанной необходимости
+
+- универсальный чат/текстовый редактор;
+- второй AI-router;
+- отдельный ASR-preprocessor;
+- hidden summarizer;
+- автоматический фоновый LLM dictionary worker;
+- Kafka/Kubernetes/CRDT;
+- универсальный local desktop agent;
+- сложные weighted voting schemes;
+- массовый импорт всех мессенджеров;
+- новый presentation/event/story engine.
+
+## Ownership
+
+Projects Hub: conversation semantics, product tools, memory/source, UI, collaboration.
+
+`live-interaction`: transport, provider protocol, buffered activity mode, transcript delivery.
+
+`ai-resource-control`: provider resource admission.
+
+Record Idea Hub: проверенные capture/VAD/durable queue patterns до извлечения reusable части.
+
+Owning products: свои документы и предметные mutations.
+
+## Договор реализации
+
+Перед каждым крупным решением задавать контрольный вопрос:
+
+> Это инфраструктура, которая помогает Live-agent надёжно работать, или новый слой, который сам начинает понимать пользователя вместо Live-agent?
+
+Если второе — остановиться и обосновать отдельное продуктовое решение. По умолчанию такое усложнение запрещено.

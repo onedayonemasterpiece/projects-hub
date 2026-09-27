@@ -40,16 +40,21 @@
 
 Для Содей/Sodey, Совершим, Ладено и псевдолатинских вариантов предварительного веб-поиска недостаточно: отдельно нужны реестры знаков, домены, магазины, фонетический/поисковый тест. Отсутствие очевидного результата поиска не доказывает свободное имя.
 
-## Ревизия 2: речь, порядок событий и словари
+## Ревизия 3: центральный Live-agent, buffered audio и activity boundaries
 
 Проверено 27 сентября 2026 по первичной документации; это не замена теста конкретного установленного SDK и устройства.
 
 | Источник | Ограниченный факт и проектное следствие |
 | --- | --- |
 | [Gemini Live API reference](https://ai.google.dev/api/live) | Input transcription приходит независимо от других сообщений; промежуточная версия меняется. Ответ/turnComplete не служит квитанцией полноты архивной расшифровки |
+| [Gemini Live API reference](https://ai.google.dev/api/live) | При отключённом automatic activity detection клиент обязан передавать activityStart/activityEnd. Это позволяет deliberate buffered offline source оформить как один user turn несмотря на паузы; audioStreamEnd относится к режиму automatic activity detection |
 | [Gemini Live API reference](https://ai.google.dev/api/live) | clientContent поддерживает накопление контекста с отдельным завершением хода; смешивание с realtimeInput не имеет гарантированного порядка. Длинный старый буфер нельзя произвольно чередовать с новой речью |
 | [Gemini Live API reference](https://ai.google.dev/api/live) | Setup не меняется произвольно на открытом соединении; предусмотрено изменение конфигурации через resumption. AudioTranscriptionConfig описывает customVocabulary, но совместимость конкретной разговорной модели/SDK ещё проверяется |
 | [MDN MediaRecorder dataavailable](https://developer.mozilla.org/en-US/docs/Web/API/MediaRecorder/dataavailable_event) | timeslice не точный таймер; поведение браузера/блокировка может задерживать данные. Интервал 1000 мс не является доказательством секундной crash-safety |
 | [Gemini Live capabilities](https://ai.google.dev/gemini-api/docs/live-api/capabilities) | Доступны VAD и взаимодействие с прерыванием ответа; требуется согласовать клиентские и серверные activity semantics, а не переносить batch-форму отправки |
 
 Отдельно прочитаны Record Idea Hub ARCHITECTURE/IDEA_HUB_CONTRACT, IdeaHub voice-terminology.yaml и Wonderful Lections continuous-slide-review/terms.ru.json. Точные commit/blob IDs закреплены в [документе 11](11-routing-and-vocabulary.md) и [Live-контракте](live-contract.json). Их существующие batch-ограничения не становятся UX-ограничениями нового Live-продукта.
+
+### Архитектурное следствие ревизии 3
+
+Gemini Live принимает raw PCM audio, возвращает input transcription и поддерживает function calling в той же live-session. Поэтому Projects Hub не должен вставлять обязательный отдельный ASR/semantic router между голосом пользователя и центральной моделью. Для offline используется сохранённый raw audio и deliberate buffered replay; deterministic слой обеспечивает transport/durability/ACL, а не semantic understanding.
