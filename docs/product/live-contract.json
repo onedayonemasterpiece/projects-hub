@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "spec_revision": 2,
+  "as_of": "2026-09-27",
+  "status": "specified_not_implemented",
+  "owner_input": {
+    "id": "U02",
+    "kind": "direct_user_clarification",
+    "date": "2026-09-27",
+    "summary": "Equal PWA and Android experience; Android extra capabilities; Live dialogue without message composer or submit workflow; voice and contextual multi-project routing; reliable long offline speech, durable source Markdown and reusable evolving vocabulary.",
+    "voice_packet_id": null
+  },
+  "applications": {
+    "pwa": "full_application",
+    "android": "full_application",
+    "shared_core_ux": true,
+    "android_capabilities_superset": true,
+    "identical_os_guarantees_claimed": false,
+    "core_scenarios": ["live_dialogue", "projects", "tasks", "decisions", "history", "offline_capture", "resume_conversation"]
+  },
+  "interaction": {
+    "mode": "continuous_live_dialogue",
+    "free_text_composer": false,
+    "ordinary_utterance_submit_form": false,
+    "contextual_buttons": true,
+    "fixed_question_limit": null,
+    "voice_project_switch": true,
+    "contextual_project_routing": true,
+    "multi_project_conversation": true,
+    "manual_project_selection_required": false,
+    "confirmation": "consequence_specific_voice_or_button",
+    "new_conversation_deletes_previous": false
+  },
+  "capture": {
+    "source_audio_pipeline_count": 1,
+    "durable_before_provider_send": true,
+    "checkpoint_target_ms": 1000,
+    "checkpoint_target_status": "proposal_requires_device_measurement",
+    "vad": true,
+    "vad_failure_behavior": "preserve_possible_speech",
+    "pre_roll_and_hangover": true,
+    "silence_ends_logical_conversation": false,
+    "provider_response_is_archive_receipt": false
+  },
+  "offline": {
+    "long_capture_supported": true,
+    "sealed_manifest_required": true,
+    "resumable_upload": true,
+    "default_agent_delivery": "full_transcript_as_buffered_turn",
+    "summary_only_delivery_allowed": false,
+    "network_return_ends_utterance": false,
+    "allow_response_to_incomplete_packet": false,
+    "allow_raw_backlog_new_live_interleave": false,
+    "preserve_original_conversation_and_capture_time": true,
+    "new_conversation_policy": "archive_previous_and_await_resume",
+    "old_answer_plays_in_new_conversation": false,
+    "stale_action_requires_revalidation": true
+  },
+  "archive": {
+    "always_for_explicit_save": true,
+    "always_for_meaningful_content": true,
+    "meaningful_minimum_duration_seconds": 0,
+    "always_for_sealed_offline_packet": true,
+    "conservative_archive_speech_seconds": 20,
+    "threshold_splits_markdown": false,
+    "uncertain_policy": "retain",
+    "short_processed_ephemeral_retention_days": 7,
+    "retention_parameter_status": "proposed_policy_to_disclose_and_validate",
+    "pending_auto_ttl_delete": false,
+    "source_format": "markdown_full_transcript",
+    "source_is_summary": false,
+    "mixed_project_source_default_audience": "personal",
+    "source_index_required": true,
+    "per_source_vocabulary_snapshot": true,
+    "automatic_audio_cleanup_requires": ["manifest_complete", "source_transcript_verified", "archive_exact_commit_readback", "archive_current_main_readback", "conversation_links_durable", "backup_policy_satisfied"],
+    "physical_loss_of_only_offline_copy_recoverable_claim": false
+  },
+  "vocabulary": {
+    "scopes": ["product", "project", "personal"],
+    "agent_can_build_from_authorized_github_documents": true,
+    "refresh_by_source_revision": true,
+    "voice_corrections": true,
+    "automatic_grounded_nonconflicting_updates": true,
+    "unverified_conflicts": "candidate_or_clarify",
+    "own_asr_output_is_independent_evidence": false,
+    "source_provenance_required": true,
+    "old_transcripts_rewritten_on_refresh": false,
+    "contextual_and_acoustic_compatibility_required": true,
+    "provider_vocabulary_support_must_be_verified": true,
+    "source_refs": [
+      {"repository":"onedayonemasterpiece/record-idea-hub","path":"docs/IDEA_HUB_CONTRACT.md","commit":"35fb24ee20ef2845824032793dedb60aee7ea6fa"},
+      {"repository":"onedayonemasterpiece/idea-hub","path":"config/voice-terminology.yaml","blob_sha":"52d4675affc03f351cfdc616a0ddf62eae7bfbac"},
+      {"repository":"onedayonemasterpiece/wonderful-lections","path":"docs/product/continuous-slide-review.md","blob_sha":"ac8786d3aeb2d3d8a392813176b526bcdf09605e"},
+      {"repository":"onedayonemasterpiece/wonderful-lections","path":"assets/review/terms.ru.json","blob_sha":"5bbfd45fdf0f1b4fd1b5f6d8f53b9e0b63259e71"}
+    ]
+  },
+  "additional_acceptance_gates": ["G21", "G22", "G23", "G24", "G25", "G26", "G27", "G28", "G29", "G30"]
+}

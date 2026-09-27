@@ -28,7 +28,9 @@
     {"id":"V17","voice_id":"voice-20260904-185839-2bc9b09e","group":"retrospective","theme":"Новые идеи с авторством и дайджест","url":"https://github.com/onedayonemasterpiece/idea-hub/blob/f9b7991c973282f111ef46742cd8cc1de4139469/inbox/voice/2026/09/voice-20260904-185839-2bc9b09e.md"},
     {"id":"V18","voice_id":"voice-20260907-114016-f6770f91","group":"retrospective","theme":"Надёжная очередь большого числа offline-записей","url":"https://github.com/onedayonemasterpiece/idea-hub/blob/f9b7991c973282f111ef46742cd8cc1de4139469/inbox/voice/2026/09/voice-20260907-114016-f6770f91.md"}
   ],
-  "platform_decision": {"status":"proposed_for_implementation","pwa":true,"android":true,"single_backend":true,"pwa_background_recording_promised":false,"native_ios_in_mvp":false},
+  "experience_contract": "live-contract.json",
+  "owner_revision": {"id":"U02","kind":"direct_user_clarification","date":"2026-09-27","spec_revision":2},
+  "platform_decision": {"status":"owner_clarified_for_implementation","pwa":true,"android":true,"both_full_applications":true,"shared_core_ux":true,"android_capabilities_superset":true,"single_backend":true,"pwa_background_recording_promised":false,"native_ios_in_mvp":false},
   "integrations": [
     {"id":"idea-hub","repository":"onedayonemasterpiece/idea-hub","owner_of":"source transcripts and authorized project documents","status":"source_reviewed_contract_planned"},
     {"id":"record-idea-hub","repository":"onedayonemasterpiece/record-idea-hub","owner_of":"existing recorder and reusable capture reliability","status":"reuse_planned_no_replacement_accepted"},
@@ -59,6 +61,16 @@
     {"id":"G17","name":"notifications_privacy_and_deep_links","status":"not_run","evidence":[]},
     {"id":"G18","name":"backup_restore_and_rollback","status":"not_run","evidence":[]},
     {"id":"G19","name":"nontechnical_group_outcome_cycle","status":"not_run","evidence":[]},
-    {"id":"G20","name":"cost_latency_privacy_telemetry","status":"not_run","evidence":[]}
+    {"id":"G20","name":"cost_latency_privacy_telemetry","status":"not_run","evidence":[]},
+    {"id":"G21","name":"cross_platform_live_voice_ux_parity","status":"not_run","evidence":[]},
+    {"id":"G22","name":"voice_multi_project_routing","status":"not_run","evidence":[]},
+    {"id":"G23","name":"long_offline_packet_complete_handoff","status":"not_run","evidence":[]},
+    {"id":"G24","name":"new_conversation_preserves_pending_source","status":"not_run","evidence":[]},
+    {"id":"G25","name":"transcription_coverage_and_archive","status":"not_run","evidence":[]},
+    {"id":"G26","name":"semantic_archive_and_short_important_speech","status":"not_run","evidence":[]},
+    {"id":"G27","name":"vad_speech_boundaries_and_failures","status":"not_run","evidence":[]},
+    {"id":"G28","name":"vocabulary_refresh_provenance_and_isolation","status":"not_run","evidence":[]},
+    {"id":"G29","name":"historical_conversation_resume","status":"not_run","evidence":[]},
+    {"id":"G30","name":"capture_pipeline_crash_recovery","status":"not_run","evidence":[]}
   ]
 }
