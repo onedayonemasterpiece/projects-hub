@@ -18,11 +18,29 @@ async def test_shared_controller_consumer_and_server_binding(monkeypatch):
     calls=[]
     async def run_guarded(**kwargs):calls.append(kwargs)
     monkeypatch.setitem(sys.modules,'ai_resource_control',types.SimpleNamespace(run_guarded=run_guarded))
-    scope=ProjectScope('tenant','user','project');reader=object();events=[];env={}
+    scope=ProjectScope('tenant','user','project');reader=object();events=[];env={'AI_RESOURCE_CONTROL_URL':'https://authority.example','AI_RESOURCE_CONTROL_SERVICE_KEY':'service','GOOGLE_API_KEY4':'fallback-four','GOOGLE_API_KEY':'wrong','UNRELATED_SECRET':'wrong'}
     await run_project_dialogue(scope=scope,environment=env,reader=reader,on_event=events.append)
     assert len(calls)==1 and calls[0]['consumer']=='projects-hub'
     assert calls[0]['binding']==scope.resource_binding() and calls[0]['reader'] is reader
-    assert calls[0]['environment'] is env and 'load_key' not in calls[0]
+    assert calls[0]['environment']=={'AI_RESOURCE_CONTROL_URL':'https://authority.example','AI_RESOURCE_CONTROL_SERVICE_KEY':'service','GOOGLE_API_KEY4':'fallback-four'} and 'load_key' not in calls[0]
+
+
+def test_resource_environment_never_borrows_other_consumer_fallbacks():
+    from projects_hub.live_resources import live_resource_environment
+    result=live_resource_environment({
+        'AI_RESOURCE_CONTROL_URL':'https://authority.example',
+        'AI_RESOURCE_CONTROL_SERVICE_KEY':'service',
+        'GOOGLE_API_KEY':'one',
+        'GOOGLE_API_KEY2':'two',
+        'GOOGLE_API_KEY3':'three',
+        'GOOGLE_API_KEY4':'four',
+        'GOOGLE_API_KEY5':'five',
+    })
+    assert result=={
+        'AI_RESOURCE_CONTROL_URL':'https://authority.example',
+        'AI_RESOURCE_CONTROL_SERVICE_KEY':'service',
+        'GOOGLE_API_KEY4':'four',
+    }
 
 @pytest.mark.asyncio
 async def test_missing_package_has_no_direct_key_fallback(monkeypatch):
