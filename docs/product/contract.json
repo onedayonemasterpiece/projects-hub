@@ -423,10 +423,10 @@
   "spec_revision": 3,
   "central_agent_contract": "12-central-live-agent.md",
   "implementation_status": {
-    "phase": "first_vertical_plus_pwa_offline_queue_deployed",
-    "release_sha": "f4d395ef86eaf4048308e9175775bc5e2bcb188f",
+    "phase": "first_vertical_plus_pwa_offline_and_multi_project_memory_deployed",
+    "release_sha": "c179ac0d00df3a3600df744c836a847bd3744bb0",
     "devcoveer_runtime": "pass",
-    "deterministic_contracts": "49_pass",
+    "deterministic_contracts": "52_pass",
     "pwa_production_build": "pass",
     "provider_function_canary": "pass",
     "real_audio_provider_transcript_memory_commit_readback_voice": "pass",
@@ -442,6 +442,11 @@
     "pwa_foreground_offline_queue": "implemented",
     "offline_partial_delivery_same_source_retry": "pass",
     "offline_retry_duplicate_memory_objects": 0,
-    "genuine_provider_resumption": "not_observed_in_15_minute_canary_resumable_handle_seen"
+    "genuine_provider_resumption": "not_observed_in_15_minute_canary_resumable_handle_seen",
+    "multi_project_single_voice_source_two_targets": "pass",
+    "multi_project_full_source_actor_private": "pass",
+    "project_memory_full_transcript_leak": "prevented",
+    "legacy_memory_schema_migration_live_readback": "pass",
+    "voice_multi_project_release_gate": "partial_two_project_canary_pass_full_G22_not_run"
   }
 }

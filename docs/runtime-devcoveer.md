@@ -125,6 +125,18 @@ per-chunk SHA-256. Interrupted local `capturing/replaying` state is recovered on
 startup, and local PCM is removed only after terminal server disposition. The product
 does not contain its own `getUserMedia`, AudioContext/VAD or WebSocket transport.
 
+On release `c179ac0d00df3a3600df744c836a847bd3744bb0`, a real-audio
+mixed-project canary passed in one central Live turn: one private voice source produced
+provider input transcription, two successful `memory_commit_voice_source` calls,
+two distinct memory objects targeted to Projects Hub and Wonderful Lections, voice
+output and `turn_complete`. No routing model or project classifier was added.
+
+The same deployment migrated existing legacy memory rows. A post-migration recall
+canary read the existing memory through `memory_read_project`, kept the memory set
+unchanged (1 → 1), and completed the voice turn. Project-memory Markdown is now
+semantic-only; full provider transcription lives once in the actor-private source
+archive and is referenced by digest.
+
 All synthetic-audio canaries explicitly keep
 `physical_microphone_acceptance=not_run`; deterministic PCM is not a substitute for a
 real browser/device microphone gate.

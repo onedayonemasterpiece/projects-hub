@@ -59,40 +59,58 @@ def request_json(
 
 
 def synthesize() -> tuple[bytes, str]:
+    parts = (
+        "Remember two separate project requirements from one recording. "
+        "The first is for Projects Hub. Save a requirement titled Offline status badge. "
+        "The memory is show offline recording state in the voice island.",
+        "The second is for Wonderful Lections. Save a requirement titled Speaker timer. "
+        "The memory is show a quiet speaker timer during presentation.",
+        "Save each only in its named project. Do not merge them. "
+        "After both confirmed function results briefly confirm both by voice.",
+    )
     for executable in FFMPEG_CANDIDATES:
         if not executable.is_file():
             continue
         with tempfile.TemporaryDirectory(prefix="projects-hub-multiproject-") as temp:
-            output = Path(temp) / "voice.pcm"
-            result = subprocess.run(
-                [
-                    str(executable),
-                    "-hide_banner",
-                    "-loglevel",
-                    "error",
-                    "-f",
-                    "lavfi",
-                    "-i",
-                    "flite=text=" + repr(PHRASE),
-                    "-ar",
-                    "16000",
-                    "-ac",
-                    "1",
-                    "-f",
-                    "s16le",
-                    "-y",
-                    str(output),
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=30,
-                check=False,
-            )
-            if result.returncode == 0 and output.is_file() and output.stat().st_size > 1000:
-                raw = output.read_bytes()
+            root = Path(temp)
+            rendered: list[bytes] = []
+            complete = True
+            for index, phrase in enumerate(parts):
+                output = root / f"voice-{index}.pcm"
+                filter_value = "flite=text='" + phrase + "'"
+                result = subprocess.run(
+                    [
+                        str(executable),
+                        "-hide_banner",
+                        "-loglevel",
+                        "error",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        filter_value,
+                        "-ar",
+                        "16000",
+                        "-ac",
+                        "1",
+                        "-f",
+                        "s16le",
+                        "-y",
+                        str(output),
+                    ],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=30,
+                    check=False,
+                )
+                if result.returncode != 0 or not output.is_file() or output.stat().st_size <= 1000:
+                    complete = False
+                    break
+                rendered.append(output.read_bytes())
+            if complete and len(rendered) == len(parts):
                 prefix = b"\x00\x00" * int(16000 * 0.35)
+                pause = b"\x00\x00" * int(16000 * 0.45)
                 suffix = b"\x00\x00" * int(16000 * 0.8)
-                return prefix + raw + suffix, "ffmpeg-flite"
+                return prefix + pause.join(rendered) + suffix, "ffmpeg-flite"
     raise RuntimeError("local ffmpeg-flite speech fixture unavailable")
 
 
