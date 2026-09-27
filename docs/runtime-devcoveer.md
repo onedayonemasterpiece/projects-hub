@@ -100,12 +100,20 @@ Deployed provider acceptance already proves a real central Gemini Live session c
 call `conversation_set_focus`, receive the deterministic function result, continue
 with voice output and complete the turn.
 
-The real-audio memory canary is `scripts/devcoveer_voice_memory_canary.py`. It uses
-a deterministic local speech fixture only as PCM input, then requires provider input
+The real-audio memory canary is `scripts/devcoveer_voice_memory_canary.py`. On
+release `69e3fe75799f425b3c930e10efd68eeba5cb87d2` it passed with provider input
 transcription, `memory_commit_voice_source`, durable source metadata, project-memory
-readback, voice/output response and `turn_complete`. It explicitly reports
-`physical_microphone_acceptance=not_run`; synthetic PCM is not a substitute for a
-real browser/device microphone gate.
+readback, voice/output response and `turn_complete`. The accepted source contained
+392508 bytes across 62 PCM chunks and produced transcript revision 1 / memory revision 1.
+
+A deliberate `projects-hub.service` restart then changed the process and
+`scripts/devcoveer_restart_recall_canary.py` passed in a fresh Live session:
+`memory_read_project` returned successfully, voice output completed, and the memory
+set remained unchanged (1 before, 1 after, same IDs/revisions). No source replay or
+duplicate memory write was needed.
+
+Both canaries explicitly keep `physical_microphone_acceptance=not_run`; deterministic
+PCM is not a substitute for a real browser/device microphone gate.
 
 Not yet claimed:
 

@@ -175,13 +175,13 @@
       "id": "live-interaction",
       "repository": "onedayonemasterpiece/live-interaction",
       "owner_of": "shared voice transport and lifecycle",
-      "status": "shared_contract_reviewed_product_canary_not_run"
+      "status": "v0.2.5_released_product_real_audio_and_function_canaries_pass_physical_mic_pending"
     },
     {
       "id": "ai-resource-control",
       "repository": "onedayonemasterpiece/ai-resource-control",
       "owner_of": "single shared quota authority and emergency policy",
-      "status": "resource_adapter_present_product_canary_not_run"
+      "status": "v0.1.7_product_canaries_pass_authoritative_admission_and_fallback_policy_active"
     },
     {
       "id": "my-data-hub",
@@ -421,5 +421,22 @@
     }
   ],
   "spec_revision": 3,
-  "central_agent_contract": "12-central-live-agent.md"
+  "central_agent_contract": "12-central-live-agent.md",
+  "implementation_status": {
+    "phase": "first_vertical_deployed",
+    "release_sha": "69e3fe75799f425b3c930e10efd68eeba5cb87d2",
+    "devcoveer_runtime": "pass",
+    "deterministic_contracts": "44_pass",
+    "pwa_production_build": "pass",
+    "provider_function_canary": "pass",
+    "real_audio_provider_transcript_memory_commit_readback_voice": "pass",
+    "service_restart_memory_recall_without_duplicate": "pass",
+    "typed_runtime_log_search": "pass",
+    "physical_browser_microphone_acceptance": "not_run_no_device_in_devcoveer_headless_browser",
+    "public_identity_provider": "not_implemented",
+    "android_application": "not_implemented",
+    "github_app_connection": "not_implemented",
+    "client_offline_restart_safe_queue": "not_implemented",
+    "production_product_accepted": false
+  }
 }

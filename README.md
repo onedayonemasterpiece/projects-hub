@@ -41,9 +41,13 @@ The shared framework release has real-provider evidence for deliberate buffered
 has a real central-Live/function canary proving Gemini Live →
 `conversation_set_focus` → deterministic backend readback → voice response.
 
-The product also carries a real-audio memory canary that exercises the buffered
-source path through provider transcription and `memory_commit_voice_source`. Its
-result is kept separate from physical browser/device microphone acceptance.
+On deployed release `69e3fe75799f425b3c930e10efd68eeba5cb87d2`, the real-audio
+memory canary passes end to end: buffered PCM produces provider input transcription,
+Gemini Live calls `memory_commit_voice_source`, durable source and project-memory
+readback succeed, and the same Live session returns voice output and `turn_complete`.
+A deliberate service restart then passes a second canary: a fresh Live session calls
+`memory_read_project`, answers by voice, and the memory set stays unchanged (1 → 1,
+same IDs/revisions). Physical browser/device microphone acceptance remains separate.
 
 ## DevCoveer runtime
 
