@@ -6,6 +6,22 @@ import json
 import re
 from typing import Any, Callable, Mapping
 
+RESOURCE_ENV_NAMES = (
+    'AI_RESOURCE_CONTROL_URL',
+    'AI_RESOURCE_CONTROL_SERVICE_KEY',
+    'GOOGLE_AI_LIMITER_SUPABASE_URL',
+    'GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY',
+    'AI_RESOURCE_LEDGER_ID',
+    'GOOGLE_API_KEY4',
+)
+
+def live_resource_environment(environment: Mapping[str,str]) -> dict[str,str]:
+    return {
+        name: environment[name]
+        for name in RESOURCE_ENV_NAMES
+        if isinstance(environment.get(name), str) and environment[name].strip()
+    }
+
 @dataclass(frozen=True)
 class ProjectScope:
     """Construct on the backend AFTER authenticating project access, not from a tool call."""
@@ -32,5 +48,5 @@ async def run_project_dialogue(*, scope: ProjectScope, environment: Mapping[str,
     except ImportError:
         on_event({'type':'error','code':'RESOURCE_PACKAGE_MISSING','message':'RESOURCE_PACKAGE_MISSING'})
         return
-    await run_guarded(consumer='projects-hub',environment=environment,reader=reader,
+    await run_guarded(consumer='projects-hub',environment=live_resource_environment(environment),reader=reader,
                       on_event=on_event,binding=scope.resource_binding())
