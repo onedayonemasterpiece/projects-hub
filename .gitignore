@@ -6,3 +6,7 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+.projects-hub/
+.projects-hub-dev/
+web/node_modules/
+web/dist/

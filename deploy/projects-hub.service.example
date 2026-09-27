@@ -1,0 +1,23 @@
+[Unit]
+Description=Projects Hub backend (exact DevCoveer release)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/dev/.local/share/projects-hub/current/source
+EnvironmentFile=/home/dev/.local/state/projects-hub/providers.env
+EnvironmentFile=/home/dev/.local/state/projects-hub/service.env
+ExecStart=/home/dev/.local/share/projects-hub/current/venv/bin/python /home/dev/.local/share/projects-hub/current/source/scripts/run_server.py
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/dev/.local/state/projects-hub
+UMask=0077
+
+[Install]
+WantedBy=default.target
