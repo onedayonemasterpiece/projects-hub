@@ -41,7 +41,7 @@ def _functions() -> list[dict[str, Any]]:
         },
         {
             "name": "memory_commit_voice_source",
-            "description": "Durably archive the current voice source after the user explicitly asks to remember/save it or the content is clearly durable project knowledge. The backend binds the current source; never invent success.",
+            "description": "Create or update one durable memory result grounded in the current private voice source. The full provider transcript stays actor-private; project memory contains only your semantic_notes plus a private source reference. For one mixed utterance, call this once for each distinct project/result that should persist. The backend binds the current source and authorizes each project; never invent success.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -53,10 +53,10 @@ def _functions() -> list[dict[str, Any]]:
                     },
                     "semantic_notes": {
                         "type": "string",
-                        "description": "Short grounded notes about why this source matters; do not replace the source transcript.",
+                        "description": "Required concise durable memory content grounded only in what the user said. For project memory, include only information appropriate for that target project; never copy unrelated parts of a mixed-project utterance.",
                     },
                 },
-                "required": ["title", "kind"],
+                "required": ["title", "kind", "semantic_notes"],
             },
         },
         {
@@ -80,9 +80,12 @@ SYSTEM_INSTRUCTION = """# ROLE
 - При смене проекта используй conversation_set_focus только после того, как поняла целевой проект.
 
 # MEMORY
-- Для явного «запомни/сохрани» и явно долговечной проектной информации используй memory_commit_voice_source.
+- Для явного «запомни/сохрани» и явно долговечной информации используй memory_commit_voice_source.
+- Один voice source может относиться к нескольким проектам: сделай отдельный memory_commit_voice_source для каждого действительно нужного project/result.
+- В semantic_notes передавай только память для конкретного target project. Полный provider transcript остаётся личным source и не копируется в project memory.
 - Для вопроса о ранее сохранённом используй memory_read_project.
 - Не архивируй каждую бытовую реплику автоматически.
+- После хотя бы одного успешного memory_commit_voice_source не вызывай memory_finish_ephemeral для того же source.
 - Никогда не говори, что что-то сохранено или изменено, пока function result не подтвердил это.
 - Source transcript создаёт provider этой же Live-сессии; function tools не являются вторым AI.
 
@@ -132,9 +135,10 @@ class ProjectsHubLiveAdapter:
             system_instruction += """
 # BUFFERED SOURCE DISPOSITION
 Этот Live-turn является одной законченной ранее записанной репликой.
-До завершения ответа обязательно дай source ровно одно содержательное disposition:
-- memory_commit_voice_source, если запись содержит долговечную проектную память;
-- memory_finish_ephemeral, если после выполнения просьбы хранить её как память не нужно.
+До завершения ответа обязательно дай source одно терминальное disposition:
+- один или несколько memory_commit_voice_source, если запись содержит долговечную память; для разных проектов/результатов делай отдельные вызовы;
+- либо memory_finish_ephemeral, если после выполнения просьбы хранить её как память не нужно.
+После успешного memory_commit_voice_source не вызывай memory_finish_ephemeral.
 Не проси пользователя повторять уже услышанную запись.
 """
         return {

@@ -202,7 +202,7 @@
     "current_browser_transcript_preview_is_bounded": true
   },
   "implementation_evidence": {
-    "release_sha": "f4d395ef86eaf4048308e9175775bc5e2bcb188f",
+    "release_sha": "c179ac0d00df3a3600df744c836a847bd3744bb0",
     "shared_live_interaction": "0.2.6-candidate@c9de297020087235d80ce4155e52f63f88c642bf",
     "shared_ai_resource_control": "0.1.7",
     "realtime_browser_transport_wired": true,
@@ -225,6 +225,11 @@
     "offline_retry_same_server_source": "pass",
     "offline_retry_duplicate_memory": false,
     "offline_real_provider_buffered_replay": "pass",
-    "genuine_provider_resumption": "not_observed_after_15_minutes_resumable_handle_available"
+    "genuine_provider_resumption": "not_observed_after_15_minutes_resumable_handle_available",
+    "multi_project_single_audio_source": "pass_two_project_canary",
+    "multi_project_memory_objects_for_source": 2,
+    "project_memory_semantic_only": true,
+    "full_provider_source_actor_private": true,
+    "legacy_memory_schema_migration": "pass_with_post_migration_live_readback"
   }
 }

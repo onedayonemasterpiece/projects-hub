@@ -58,6 +58,16 @@ provider transcript → one memory object → voice response and `turn_complete`
 
 Physical browser/device microphone acceptance remains separate.
 
+Deployed release `c179ac0d00df3a3600df744c836a847bd3744bb0` extends the same
+voice path to mixed-project utterances. A real buffered-audio canary produced one
+private source, provider input transcription, two confirmed
+`memory_commit_voice_source` calls, and exactly two project memories — one for
+Projects Hub and one for Wonderful Lections — followed by voice output and
+`turn_complete`. Project-memory Markdown no longer contains the full provider
+transcript; the transcript is archived once under actor-private `sources/` storage.
+Legacy one-source/one-memory data migrates in place and passed post-migration Live
+readback.
+
 ## DevCoveer runtime
 
 `deploy/devcoveer_install.py --sha <exact-commit>` is the owning deployment path.

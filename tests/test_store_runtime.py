@@ -64,8 +64,12 @@ def test_durable_source_memory_and_readback(tmp_path: Path):
         assert len(items) == 1
         memory_path = next((tmp_path / "memory" / workspace).glob("*.md"))
         text = memory_path.read_text(encoding="utf-8")
-        assert transcript in text
+        assert transcript not in text
         assert "Зафиксировано из Live source." in text
+        source_path = next((tmp_path / "sources" / workspace).glob("*.md"))
+        source_text = source_path.read_text(encoding="utf-8")
+        assert transcript in source_text
+        assert "private_source_ref" in text
     finally:
         store.close()
 
