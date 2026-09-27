@@ -37,9 +37,11 @@ class DurableStore:
         self.data_dir = Path(data_dir)
         self.audio_dir = self.data_dir / "audio"
         self.memory_dir = self.data_dir / "memory"
+        self.source_dir = self.data_dir / "sources"
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.audio_dir.mkdir(parents=True, exist_ok=True)
         self.memory_dir.mkdir(parents=True, exist_ok=True)
+        self.source_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = self.data_dir / "projects-hub.sqlite3"
         self._lock = threading.RLock()
         self.db = sqlite3.connect(self.db_path, check_same_thread=False, isolation_level=None)
@@ -125,7 +127,8 @@ class DurableStore:
         );
         CREATE TABLE IF NOT EXISTS memories(
             id TEXT PRIMARY KEY,
-            source_id TEXT NOT NULL UNIQUE REFERENCES sources(id),
+            memory_key TEXT NOT NULL UNIQUE,
+            source_id TEXT NOT NULL REFERENCES sources(id),
             workspace_id TEXT NOT NULL REFERENCES workspaces(id),
             project_id TEXT REFERENCES projects(id),
             title TEXT NOT NULL,
@@ -138,8 +141,6 @@ class DurableStore:
             created_at_ms INTEGER NOT NULL,
             updated_at_ms INTEGER NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS memories_project_idx
-            ON memories(workspace_id, project_id, updated_at_ms DESC);
         """
         with self._lock:
             self.db.executescript(schema)
@@ -154,6 +155,195 @@ class DurableStore:
                    ON sources(actor_id, client_source_id)
                    WHERE client_source_id IS NOT NULL"""
             )
+            self._migrate_memories_schema()
+            self.db.execute(
+                """CREATE INDEX IF NOT EXISTS memories_project_idx
+                   ON memories(workspace_id, project_id, updated_at_ms DESC)"""
+            )
+
+    @staticmethod
+    def _memory_key(
+        source_id: str,
+        project_id: str | None,
+        title: str,
+        kind: str,
+    ) -> str:
+        payload = json.dumps(
+            [source_id, project_id or "", title, kind],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
+    def _write_verified(self, relative: str, body: str) -> str:
+        path = self.data_dir / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        encoded = body.encode("utf-8")
+        digest = hashlib.sha256(encoded).hexdigest()
+        tmp = path.with_name(path.name + ".tmp-" + uuid.uuid4().hex)
+        with tmp.open("wb", buffering=0) as handle:
+            handle.write(encoded)
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+        with path.open("rb") as handle:
+            readback = handle.read()
+        if hashlib.sha256(readback).hexdigest() != digest:
+            raise StoreError("MEMORY_READBACK_FAILED", "Durable Markdown readback digest mismatch")
+        return digest
+
+    def _write_source_archive(self, source: dict[str, Any]) -> tuple[str, str]:
+        relative = f"sources/{source['workspace_id']}/{source['id']}.md"
+        body = (
+            "---\n"
+            f"source_id: {source['id']}\n"
+            f"conversation_id: {source['conversation_id']}\n"
+            f"workspace_id: {source['workspace_id']}\n"
+            f"transcript_revision: {source['transcript_revision']}\n"
+            f"captured_at_ms: {source['captured_at_ms']}\n"
+            "---\n\n"
+            "# Voice source\n\n"
+            "## Provider input transcription\n\n"
+            f"{source['transcript']}\n"
+        )
+        return relative, self._write_verified(relative, body)
+
+    def _memory_document(
+        self,
+        *,
+        memory_id: str,
+        source: dict[str, Any],
+        source_relative: str,
+        source_sha256: str,
+        project_id: str | None,
+        project_name: str,
+        title: str,
+        kind: str,
+        semantic_notes: str,
+        revision: int,
+    ) -> str:
+        return (
+            "---\n"
+            f"memory_id: {memory_id}\n"
+            f"source_id: {source['id']}\n"
+            f"conversation_id: {source['conversation_id']}\n"
+            f"project_id: {project_id or ''}\n"
+            f"project: {json.dumps(project_name, ensure_ascii=False)}\n"
+            f"kind: {kind}\n"
+            f"transcript_revision: {source['transcript_revision']}\n"
+            f"memory_revision: {revision}\n"
+            f"captured_at_ms: {source['captured_at_ms']}\n"
+            f"private_source_ref: {json.dumps(source_relative, ensure_ascii=False)}\n"
+            f"private_source_sha256: {source_sha256}\n"
+            "---\n\n"
+            f"# {title}\n\n"
+            "## Agent-confirmed memory\n\n"
+            f"{semantic_notes}\n\n"
+            "_The full provider transcript remains in the actor-private source archive._\n"
+        )
+
+    def _migrate_memories_schema(self) -> None:
+        columns = {
+            row["name"]
+            for row in self.db.execute("PRAGMA table_info(memories)").fetchall()
+        }
+        if "memory_key" in columns:
+            return
+        legacy = [dict(row) for row in self.db.execute("SELECT * FROM memories").fetchall()]
+        migrated: list[dict[str, Any]] = []
+        for row in legacy:
+            source_row = self.db.execute(
+                "SELECT * FROM sources WHERE id=?",
+                (row["source_id"],),
+            ).fetchone()
+            if not source_row:
+                raise StoreError("MEMORY_MIGRATION_FAILED", "Legacy memory source is missing")
+            source = dict(source_row)
+            project = self._project_row(source["workspace_id"], row["project_id"])
+            project_name = project["name"] if project else "Личное"
+            source_relative, source_sha = self._write_source_archive(source)
+            memory_key = self._memory_key(
+                source["id"],
+                row["project_id"],
+                row["title"],
+                row["kind"],
+            )
+            memory_relative = f"memory/{source['workspace_id']}/{row['id']}.md"
+            body = self._memory_document(
+                memory_id=row["id"],
+                source=source,
+                source_relative=source_relative,
+                source_sha256=source_sha,
+                project_id=row["project_id"],
+                project_name=project_name,
+                title=row["title"],
+                kind=row["kind"],
+                semantic_notes=row["semantic_notes"] or "—",
+                revision=row["revision"],
+            )
+            digest = self._write_verified(memory_relative, body)
+            old_path = self.data_dir / row["markdown_path"]
+            if row["markdown_path"] != memory_relative and old_path.is_file():
+                old_path.unlink()
+            migrated.append(
+                {
+                    **row,
+                    "memory_key": memory_key,
+                    "markdown_path": memory_relative,
+                    "content_sha256": digest,
+                }
+            )
+
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            self.db.execute("DROP INDEX IF EXISTS memories_project_idx")
+            self.db.execute("ALTER TABLE memories RENAME TO memories_legacy")
+            self.db.execute(
+                """CREATE TABLE memories(
+                    id TEXT PRIMARY KEY,
+                    memory_key TEXT NOT NULL UNIQUE,
+                    source_id TEXT NOT NULL REFERENCES sources(id),
+                    workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+                    project_id TEXT REFERENCES projects(id),
+                    title TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    semantic_notes TEXT NOT NULL,
+                    transcript_revision INTEGER NOT NULL,
+                    revision INTEGER NOT NULL,
+                    markdown_path TEXT NOT NULL,
+                    content_sha256 TEXT NOT NULL,
+                    created_at_ms INTEGER NOT NULL,
+                    updated_at_ms INTEGER NOT NULL
+                )"""
+            )
+            for row in migrated:
+                self.db.execute(
+                    """INSERT INTO memories
+                       (id,memory_key,source_id,workspace_id,project_id,title,kind,
+                        semantic_notes,transcript_revision,revision,markdown_path,
+                        content_sha256,created_at_ms,updated_at_ms)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        row["id"],
+                        row["memory_key"],
+                        row["source_id"],
+                        row["workspace_id"],
+                        row["project_id"],
+                        row["title"],
+                        row["kind"],
+                        row["semantic_notes"],
+                        row["transcript_revision"],
+                        row["revision"],
+                        row["markdown_path"],
+                        row["content_sha256"],
+                        row["created_at_ms"],
+                        row["updated_at_ms"],
+                    ),
+                )
+            self.db.execute("DROP TABLE memories_legacy")
+            self.db.execute("COMMIT")
+        except Exception:
+            self.db.execute("ROLLBACK")
+            raise
 
     def ping(self) -> bool:
         with self._lock:
@@ -498,6 +688,15 @@ class DurableStore:
         now = _now_ms()
         with self._lock:
             self.get_source(actor_id, source_id)
+            memory_count = self.db.execute(
+                "SELECT COUNT(*) FROM memories WHERE source_id=?",
+                (source_id,),
+            ).fetchone()[0]
+            if memory_count:
+                raise StoreError(
+                    "SOURCE_ALREADY_ARCHIVED",
+                    "Source already produced durable memory and cannot become ephemeral",
+                )
             self.db.execute(
                 "UPDATE sources SET status='ephemeral_processed',updated_at_ms=? WHERE id=?",
                 (now, source_id),
@@ -529,6 +728,8 @@ class DurableStore:
             if existing_result is not None:
                 return existing_result
             source = self.get_source(actor_id, source_id)
+            if source["status"] == "ephemeral_processed":
+                raise StoreError("SOURCE_ALREADY_DISPOSED", "Ephemeral source is already closed")
             if source["transcript_revision"] <= 0 or not source["transcript"]:
                 raise StoreError("SOURCE_TRANSCRIPT_PENDING", "Provider transcript is not durable yet")
             if project_id is not None:
@@ -538,48 +739,41 @@ class DurableStore:
                 project_name = project["name"]
             else:
                 project_name = "Личное"
+
             clean_title = (title or "Голосовая запись").strip()[:160]
             clean_kind = (kind or "note").strip()[:64]
             notes = (semantic_notes or "").strip()[:4000]
+            if not notes:
+                raise StoreError(
+                    "INVALID_ARGUMENT",
+                    "semantic_notes is required for durable memory",
+                )
+
+            memory_key = self._memory_key(source_id, project_id, clean_title, clean_kind)
             old = self.db.execute(
-                "SELECT id,revision,transcript_revision,created_at_ms FROM memories WHERE source_id=?",
-                (source_id,),
+                """SELECT id,revision,transcript_revision,created_at_ms
+                   FROM memories WHERE memory_key=?""",
+                (memory_key,),
             ).fetchone()
             revision = (old["revision"] + 1) if old else 1
             memory_id = old["id"] if old else _id("mem")
             created = old["created_at_ms"] if old else _now_ms()
-            markdown_rel = f"memory/{source['workspace_id']}/{source_id}.md"
-            markdown_path = self.data_dir / markdown_rel
-            markdown_path.parent.mkdir(parents=True, exist_ok=True)
-            body = (
-                "---\n"
-                f"source_id: {source_id}\n"
-                f"conversation_id: {source['conversation_id']}\n"
-                f"project_id: {project_id or ''}\n"
-                f"project: {project_name}\n"
-                f"kind: {clean_kind}\n"
-                f"transcript_revision: {source['transcript_revision']}\n"
-                f"memory_revision: {revision}\n"
-                f"captured_at_ms: {source['captured_at_ms']}\n"
-                "---\n\n"
-                f"# {clean_title}\n\n"
-                "## Provider input transcription\n\n"
-                f"{source['transcript']}\n\n"
-                "## Agent semantic notes\n\n"
-                f"{notes or '—'}\n"
+
+            source_relative, source_sha = self._write_source_archive(source)
+            markdown_rel = f"memory/{source['workspace_id']}/{memory_id}.md"
+            body = self._memory_document(
+                memory_id=memory_id,
+                source=source,
+                source_relative=source_relative,
+                source_sha256=source_sha,
+                project_id=project_id,
+                project_name=project_name,
+                title=clean_title,
+                kind=clean_kind,
+                semantic_notes=notes,
+                revision=revision,
             )
-            encoded = body.encode("utf-8")
-            digest = hashlib.sha256(encoded).hexdigest()
-            tmp = markdown_path.with_suffix(".tmp")
-            with tmp.open("wb", buffering=0) as handle:
-                handle.write(encoded)
-                os.fsync(handle.fileno())
-            os.replace(tmp, markdown_path)
-            with markdown_path.open("rb") as handle:
-                readback = handle.read()
-            readback_sha = hashlib.sha256(readback).hexdigest()
-            if readback_sha != digest:
-                raise StoreError("MEMORY_READBACK_FAILED", "Memory readback digest mismatch")
+            digest = self._write_verified(markdown_rel, body)
             now = _now_ms()
             result = {
                 "memory_id": memory_id,
@@ -591,6 +785,7 @@ class DurableStore:
                 "transcript_revision": source["transcript_revision"],
                 "revision": revision,
                 "sha256": digest,
+                "source_sha256": source_sha,
                 "status": "archived",
             }
             self.db.execute("BEGIN IMMEDIATE")
@@ -614,7 +809,7 @@ class DurableStore:
                     self.db.execute(
                         """UPDATE memories SET project_id=?,title=?,kind=?,semantic_notes=?,
                            transcript_revision=?,revision=?,markdown_path=?,content_sha256=?,updated_at_ms=?
-                           WHERE source_id=?""",
+                           WHERE memory_key=?""",
                         (
                             project_id,
                             clean_title,
@@ -625,17 +820,19 @@ class DurableStore:
                             markdown_rel,
                             digest,
                             now,
-                            source_id,
+                            memory_key,
                         ),
                     )
                 else:
                     self.db.execute(
                         """INSERT INTO memories
-                           (id,source_id,workspace_id,project_id,title,kind,semantic_notes,
-                            transcript_revision,revision,markdown_path,content_sha256,created_at_ms,updated_at_ms)
-                           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                           (id,memory_key,source_id,workspace_id,project_id,title,kind,
+                            semantic_notes,transcript_revision,revision,markdown_path,
+                            content_sha256,created_at_ms,updated_at_ms)
+                           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (
                             memory_id,
+                            memory_key,
                             source_id,
                             source["workspace_id"],
                             project_id,
