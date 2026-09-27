@@ -22,7 +22,7 @@
 - Чтение по явной ревизии, запись по `expected_revision`; конфликт не перетирает чужую работу.
 - Долговечный `command_id` для изменений, read-back результата. Reconnect не повторяет уже сохранённую правку.
 - Перед внешней публикацией или изменением защищённых документов — явное подтверждение в продукте. Голосовая речь и содержимое документов не становятся административными инструкциями.
-- При недоступности Live сохранённый текст остаётся доступен, обычный ввод не исчезает. Не включать молча старый AI backend. Отдельно разрешён общий `ai-resource-control` authority-outage fallback: Projects Hub использует только `GOOGLE_API_KEY4`, только через тот же Live transport/resource guard и только при недоступности central authority до mutating acquire.
+- При недоступности Live сохранённый текст остаётся доступен, обычный ввод не исчезает. Не включать молча старый AI backend. Отдельно разрешён общий `ai-resource-control` authority-outage fallback: Projects Hub использует только `GOOGLE_API_KEY4` как локальный source, мапит его в generic `AI_RESOURCE_CONTROL_FALLBACK_KEY` и оставляет fallback lifecycle общему Live transport/resource guard; fallback разрешён только при недоступности central authority на read-only preflight до mutating acquire.
 - Backend на DevCoveer; существующий запрет использовать Fly.io для замены Record Idea Hub сохраняется, пока владелец его не изменит.
 
 ## Не входит в этот checkpoint
