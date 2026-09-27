@@ -2,7 +2,7 @@
   "schema_version": 2,
   "spec_revision": 3,
   "as_of": "2026-09-27",
-  "status": "specified_not_implemented",
+  "status": "first_vertical_implemented_partial_product_acceptance",
   "owner_input": {
     "id": "U03",
     "kind": "direct_user_architecture_correction",
@@ -200,5 +200,23 @@
     "current_provider_transcript_projection_limit_chars": 2000,
     "current_session_event_ring_size": 320,
     "current_browser_transcript_preview_is_bounded": true
+  },
+  "implementation_evidence": {
+    "release_sha": "69e3fe75799f425b3c930e10efd68eeba5cb87d2",
+    "shared_live_interaction": "v0.2.5",
+    "shared_ai_resource_control": "0.1.7",
+    "realtime_browser_transport_wired": true,
+    "buffered_manual_activity_product_path": true,
+    "durable_pcm_before_provider_queue": true,
+    "trusted_input_transcript_sink": true,
+    "provider_function_canary": "pass",
+    "real_audio_memory_canary": "pass",
+    "service_restart_memory_recall_canary": "pass",
+    "duplicate_memory_after_restart": false,
+    "provider_voice_response_observed": true,
+    "physical_microphone_acceptance": "not_run",
+    "public_identity_provider": "not_implemented",
+    "android": "not_implemented",
+    "offline_client_queue": "not_implemented"
   }
 }

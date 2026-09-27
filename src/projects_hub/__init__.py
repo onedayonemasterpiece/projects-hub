@@ -1,3 +1,14 @@
-"""Projects Hub: domain binding for the shared, deployment-installed voice stack."""
-from .live_resources import ProjectScope, run_project_dialogue
-__all__ = ['ProjectScope','run_project_dialogue']
+"""Projects Hub: one central Live agent with deterministic product tools."""
+from .live_resources import (
+    ConversationScope,
+    ProjectScope,
+    run_conversation_dialogue,
+    run_project_dialogue,
+)
+
+__all__ = [
+    "ConversationScope",
+    "ProjectScope",
+    "run_conversation_dialogue",
+    "run_project_dialogue",
+]

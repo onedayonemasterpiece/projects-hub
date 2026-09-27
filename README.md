@@ -1,30 +1,92 @@
 # Projects Hub
 
-## Продуктовая проработка 27 сентября 2026 — ревизия 3
+Voice-first project workspace built around **one central Live agent**. The current
+implementation follows the product specification in [docs/product](docs/product/README.md)
+and is the first working vertical, not the complete product.
 
-[Актуальная спецификация](docs/product/README.md): 18 исходных голосовых и прямые уточнения владельца U02/U03. Центральное звено — одна Live-модель: она слышит online/offline audio, понимает намерение, маршрутизирует проекты и работает через typed function calls. PWA и Android — полноценные приложения с единым core UX. Отдельный ASR/router/summarizer перед Live запрещён по умолчанию. Предусмотрено 35 продуктовых проверок. Это документация для реализации, не готовое приложение; идентификатор `projects-hub` сохранён.
+## First vertical
 
-Голосовой диалог по проектам, идеям и документации с итеративным уточнением и правками. Будущая замена `record-idea-hub`, а не переименование работающего диктофона.
+The PWA is dark-first and uses the floating-islands UI: a compact context island,
+an on-demand work island and a stable voice island. There is no chat-style transcript
+feed and no free-text composer.
 
-Основание: голосовое `idea-hub/inbox/voice/2026/09/voice-20260926-134715-8a684154.md` и прямое поручение владельца от 26 сентября 2026 создать этот репозиторий. [Продуктовое видение](docs/vision.md).
+The backend is a small FastAPI modular monolith. A Live conversation is bound to
+actor + workspace + conversation, while each project tool checks its target again.
+Received PCM is fsynced to the durable source before it is queued to the shared
+provider transport. Full provider input transcription is persisted before the bounded
+UI event projection.
 
-## Что уже есть
+The central Gemini Live model owns semantic decisions and has typed deterministic tools
+for project catalogue/focus and durable memory. The backend does not contain another
+ASR, LLM router, classifier or summarizer.
 
-`src/projects_hub/live_resources.py` — исполняемая серверная граница подключения общего `ai-resource-control`: фиксированный consumer `projects-hub`, обязательная авторизованная область проекта и отдельная привязка ресурсов для пользователя/проекта. Normal Live использует central authority; при её транспортной недоступности trusted backend может взять только назначенный Projects Hub source alias `GOOGLE_API_KEY4` и передать его shared SDK как `AI_RESOURCE_CONTROL_FALLBACK_KEY` по общему bounded fallback-контракту. Unit tests проверяют изоляцию привязки, передачу управления именно общему SDK и корректный отказ при отсутствии пакета.
+Realtime microphone sessions keep provider automatic activity detection. Deliberate
+buffered/offline audio sessions use the shared `live-interaction` manual
+`activityStart → audio… → activityEnd` contract, so internal pauses do not terminate
+the buffered turn early.
 
-Это **не готовое Android-приложение и не готовый production backend**. В этом checkpoint нет микрофонного UI, GitHub write tools, runtime deployment и реальной Live-приёмки. Работающий Record Idea Hub не менялся.
+## Shared Live/runtime contracts
 
-## Общий ресурс
+- `live-interaction` **v0.2.5** is pinned as an immutable browser release archive
+  (`web/vendor/live-interaction-0.2.5.tgz`, SHA-256
+  `0f6b8d11b98af14004669812a4512a399aecff7907154c091e5a95e951c9a232`)
+  and as the same semantic version in the Python runtime.
+- DevCoveer deployment pins `ai-resource-control` **0.1.7** at
+  `51e9c043ce40dfefea8b2cb4f4956019819bd9d4`.
+- Projects Hub uses only its `GOOGLE_API_KEY4` authority-outage fallback source alias;
+  the shared SDK owns fallback policy. No provider credential reaches the browser.
 
-Общий пакет: private `onedayonemasterpiece/ai-resource-control`. Транспорт: `onedayonemasterpiece/live-interaction`. Одна существующая Supabase authority; проект не создаёт собственный quota ledger. Подробности и текущий blocker: [resource-rollout.md](docs/resource-rollout.md).
+The shared framework release has real-provider evidence for deliberate buffered
+`activityStart → PCM → activityEnd` delivery. The deployed Projects Hub runtime also
+has a real central-Live/function canary proving Gemini Live →
+`conversation_set_focus` → deterministic backend readback → voice response.
 
-Runtime устанавливает private wheel авторизованным deployment-процессом и совместимый pinned transport. Сам package scaffold не подменяет частный dependency одноимённым публичным PyPI-пакетом. Без SDK возвращается `RESOURCE_PACKAGE_MISSING`; старый транспорт SDK отклоняет до вызова Google.
+On deployed release `69e3fe75799f425b3c930e10efd68eeba5cb87d2`, the real-audio
+memory canary passes end to end: buffered PCM produces provider input transcription,
+Gemini Live calls `memory_commit_voice_source`, durable source and project-memory
+readback succeed, and the same Live session returns voice output and `turn_complete`.
+A deliberate service restart then passes a second canary: a fresh Live session calls
+`memory_read_project`, answers by voice, and the memory set stays unchanged (1 → 1,
+same IDs/revisions). Physical browser/device microphone acceptance remains separate.
 
-## Проверка
+## DevCoveer runtime
+
+`deploy/devcoveer_install.py --sha <exact-commit>` is the owning deployment path.
+It materializes the exact Git revision under `/home/dev/.local/share/projects-hub/releases`,
+builds its own venv and PWA, atomically moves `current`, writes private runtime
+configuration, installs/restarts `projects-hub.service`, and requires `/healthz` to
+read back the same deployment SHA. Durable state lives under
+`/home/dev/.local/state/projects-hub`.
+
+The first deployed pilot binds only to `127.0.0.1:8196`. Development login is accepted
+only on a direct loopback Host and is rejected for forwarded/public requests. It must
+not be exposed as the public authentication scheme; external access requires the
+supported IdP/OIDC boundary from the product specification.
+
+Operational logs are structured JSON in the user journal and in a bounded rotating
+`/home/dev/.local/state/projects-hub/logs/backend.jsonl`. They contain IDs, statuses,
+tool names and timings, not transcripts/audio/credentials. Runtime investigations use
+the registered DevCoveer `backend` log alias and typed `log_search`, for example a
+bounded search for `memory_commit_voice_source` or a conversation ID. No arbitrary
+host-file grep is needed.
+
+See [docs/runtime-devcoveer.md](docs/runtime-devcoveer.md) for the runtime contract.
+
+## Verification
 
 ```sh
-python -m pip install -e '.[test]'
-PYTHONPATH=src python -m pytest -q
+python -m pytest -q
+cd web && npm ci --ignore-scripts --no-audit --no-fund && npm run build
 ```
 
-Тесты offline, без API key, Supabase и расходов провайдера.
+Deterministic acceptance is kept separate from real-provider/device acceptance in
+`docs/product/08-reliability.md`.
+
+## Still outside this first vertical
+
+Physical microphone acceptance on a real user device, client-side offline/restart-safe
+capture before the server receives audio, Android, external IdP/OIDC, GitHub App
+installation/callback, long 3/10/30-minute buffered-source product acceptance,
+multi-user collaboration and the full release-gate corpus remain subsequent work.
+The existing Record Idea Hub is not disabled until its replacement path is actually
+accepted.
