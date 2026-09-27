@@ -175,7 +175,7 @@
       "id": "live-interaction",
       "repository": "onedayonemasterpiece/live-interaction",
       "owner_of": "shared voice transport and lifecycle",
-      "status": "v0.2.5_released_product_real_audio_and_function_canaries_pass_physical_mic_pending"
+      "status": "0.2.6_candidate_exact_commit_durability_first_capture_offline_retry_canary_pass_physical_mic_pending"
     },
     {
       "id": "ai-resource-control",
@@ -423,10 +423,10 @@
   "spec_revision": 3,
   "central_agent_contract": "12-central-live-agent.md",
   "implementation_status": {
-    "phase": "first_vertical_deployed",
-    "release_sha": "69e3fe75799f425b3c930e10efd68eeba5cb87d2",
+    "phase": "first_vertical_plus_pwa_offline_queue_deployed",
+    "release_sha": "f4d395ef86eaf4048308e9175775bc5e2bcb188f",
     "devcoveer_runtime": "pass",
-    "deterministic_contracts": "44_pass",
+    "deterministic_contracts": "49_pass",
     "pwa_production_build": "pass",
     "provider_function_canary": "pass",
     "real_audio_provider_transcript_memory_commit_readback_voice": "pass",
@@ -436,7 +436,12 @@
     "public_identity_provider": "not_implemented",
     "android_application": "not_implemented",
     "github_app_connection": "not_implemented",
-    "client_offline_restart_safe_queue": "not_implemented",
-    "production_product_accepted": false
+    "client_offline_restart_safe_queue": "pwa_foreground_implemented_android_not_implemented",
+    "production_product_accepted": false,
+    "shared_live_interaction": "0.2.6_candidate_c9de297020087235d80ce4155e52f63f88c642bf",
+    "pwa_foreground_offline_queue": "implemented",
+    "offline_partial_delivery_same_source_retry": "pass",
+    "offline_retry_duplicate_memory_objects": 0,
+    "genuine_provider_resumption": "not_observed_in_15_minute_canary_resumable_handle_seen"
   }
 }
