@@ -17,15 +17,22 @@ the target before a multi-instance rollout, not a prerequisite for proving the
 first vertical.
 
 The service is `projects-hub.service`. Normal output is structured JSON to the
-user journal. Logs contain IDs, status, tool name and timing; they do not contain
-audio, transcripts, provider credentials or session cookies.
+user journal and to the bounded rotating
+`/home/dev/.local/state/projects-hub/logs/backend.jsonl`. Logs contain IDs,
+status, tool name and timing; they do not contain audio, transcripts, provider
+credentials or session cookies.
+
+DevCoveer registers the runtime under the `backend` aliases for service, health
+and logs. Use typed `logs`/`log_search` for investigations. The latter is the
+bounded equivalent of grep over operational evidence and supports query, time
+window, result limit and small context without arbitrary host-file access.
 
 ## Shared Live dependencies
 
 The consumer is pinned to:
 
-- `live-interaction` merged 0.2.5 implementation:
-  `2758d52fa77e04b21978f5bef18ccb5d776049da`;
+- `live-interaction` release **v0.2.5**, browser release asset SHA-256
+  `0f6b8d11b98af14004669812a4512a399aecff7907154c091e5a95e951c9a232`;
 - deployment-installed `ai-resource-control` 0.1.7:
   `51e9c043ce40dfefea8b2cb4f4956019819bd9d4`.
 
@@ -37,17 +44,31 @@ installer and copied to a private `0600` provider environment using an explicit
 allowlist. Projects Hub may receive only its own `GOOGLE_API_KEY4` raw fallback
 alias; other consumer fallback keys are never copied into its runtime.
 
+## Realtime and buffered audio
+
+Normal PWA microphone sessions use `audio_mode=realtime` and provider automatic
+activity detection.
+
+Deliberate buffered/offline turns use `audio_mode=buffered`. The product adapter
+then sets `manual_activity_detection=true` in the shared framework and accepts only
+the explicit sequence:
+
+`activity_start → one or more PCM16/16k audio chunks → activity_end`.
+
+In that mode `audio_stream_end` is rejected by the shared host. Received PCM is
+still fsynced by the product adapter before the shared host queues it to Gemini Live.
+
+The trusted full provider input transcript is written to the source journal before
+any bounded 2000-character UI projection.
+
 ## Service state and health
 
 `GET /healthz` is content-free and reports storage readiness, installed shared
-Live/resource packages, exact deployment SHA and auth mode. The DevCoveer
-operator registry should expose the runtime through a `backend` alias for
-service, journal logs and health.
+Live/resource packages, exact deployment SHA and auth mode.
 
 The application source records are separate from the bounded Live event ring.
-Audio accepted by the backend is fsynced before being queued to the provider.
-The trusted full provider input transcript is written to the source journal
-before any 2000-character UI projection.
+A durable memory commit is not considered successful until the generated Markdown
+has been written and read back with the expected SHA-256.
 
 ## Authentication boundary of this first vertical
 
@@ -59,35 +80,42 @@ Do **not** expose this loopback dev-auth deployment as the public pilot. Public
 access requires the product identity-provider/OIDC boundary from the product
 specification. GitHub authentication is not the user identity system.
 
-## What this vertical proves
+## Acceptance evidence
 
-Implemented paths:
+Implemented and deterministically covered:
 
 - dark-first floating-islands PWA shell;
 - signed server session and workspace bootstrap;
 - actor/workspace/conversation-scoped central Live session;
-- shared microphone transport through `live-interaction`;
+- shared realtime microphone transport wiring;
+- shared manual-activity buffered turn wiring;
 - accessible-project catalogue and model-owned focus changes;
 - durable received PCM source;
 - lossless trusted provider transcript journal;
 - `memory_commit_voice_source`, project memory read and ephemeral disposition;
 - deterministic command identity and exact Markdown readback;
-- structured operational logging and health.
+- structured operational logging, health and typed log search.
 
-Not yet claimed by this vertical:
+Deployed provider acceptance already proves a real central Gemini Live session can
+call `conversation_set_focus`, receive the deterministic function result, continue
+with voice output and complete the turn.
 
-- client-side offline durable queue / restart recovery before the server receives
-  audio;
-- physical microphone acceptance on the user's own browser/device;
+The real-audio memory canary is `scripts/devcoveer_voice_memory_canary.py`. It uses
+a deterministic local speech fixture only as PCM input, then requires provider input
+transcription, `memory_commit_voice_source`, durable source metadata, project-memory
+readback, voice/output response and `turn_complete`. It explicitly reports
+`physical_microphone_acceptance=not_run`; synthetic PCM is not a substitute for a
+real browser/device microphone gate.
+
+Not yet claimed:
+
+- physical microphone acceptance on the user's actual browser/device;
+- client-side offline durable queue / restart recovery before the server receives audio;
 - Android application;
 - public IdP/OIDC;
 - GitHub App installation/callback;
-- long 3/10/30 minute buffered source product acceptance;
+- long 3/10/30-minute buffered-source acceptance;
 - multi-user/collaboration gates.
-
-The shared framework's 0.2.5 PR has separate real-provider evidence for deliberate
-buffered raw audio with manual activity boundaries. That evidence does not by
-itself make the Projects Hub physical-microphone gate pass.
 
 ## Deployment
 

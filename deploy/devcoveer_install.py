@@ -38,6 +38,8 @@ RELEASES_ROOT = Path("/home/dev/.local/share/projects-hub/releases")
 CURRENT_LINK = Path("/home/dev/.local/share/projects-hub/current")
 STATE_ROOT = Path("/home/dev/.local/state/projects-hub")
 DATA_ROOT = STATE_ROOT / "data"
+LOG_ROOT = STATE_ROOT / "logs"
+BACKEND_LOG = LOG_ROOT / "backend.jsonl"
 PROVIDER_ENV = STATE_ROOT / "providers.env"
 SERVICE_ENV = STATE_ROOT / "service.env"
 SESSION_SECRET_FILE = STATE_ROOT / "session-secret"
@@ -324,8 +326,10 @@ def _restore_current(previous: str | None) -> None:
 def write_runtime_environment(sha: str) -> bytes | None:
     STATE_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
     DATA_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
+    LOG_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(STATE_ROOT, 0o700)
     os.chmod(DATA_ROOT, 0o700)
+    os.chmod(LOG_ROOT, 0o700)
     provider = select_provider_environment(_parse_env(HOST_ENV))
     private_write(PROVIDER_ENV, render_env(provider))
     ensure_session_secret()
@@ -341,6 +345,7 @@ def write_runtime_environment(sha: str) -> bytes | None:
                 "PROJECTS_HUB_COOKIE_SECURE": "0",
                 "PROJECTS_HUB_LIVE_MODEL": "gemini-3.8-live",
                 "PROJECTS_HUB_DEPLOY_SHA": sha,
+                "PROJECTS_HUB_LOG_FILE": str(BACKEND_LOG),
                 "PROJECTS_HUB_PORT": str(PORT),
             }
         ),
@@ -487,6 +492,7 @@ def deploy(sha: str) -> dict[str, Any]:
         "current": str(CURRENT_LINK),
         "service": status,
         "health": live_health,
+        "log_file": str(BACKEND_LOG),
         "provider_environment_keys": sorted(select_provider_environment(_parse_env(HOST_ENV))),
         "provider_environment_values_exposed": False,
     }

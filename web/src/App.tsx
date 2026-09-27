@@ -45,6 +45,24 @@ function formatWait(wait: NonNullable<WaitState>) {
   return `${String(minutes).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
+function friendlyStartError(error: unknown) {
+  const name = error && typeof error === "object" && "name" in error
+    ? String((error as { name?: unknown }).name ?? "")
+    : "";
+  if (name === "NotFoundError") {
+    return "На этом устройстве не найден доступный микрофон.";
+  }
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    return "Браузер не дал доступ к микрофону.";
+  }
+  if (error instanceof Error) {
+    return /requested device not found/i.test(error.message)
+      ? "На этом устройстве не найден доступный микрофон."
+      : error.message;
+  }
+  return "Не удалось начать Live.";
+}
+
 export default function App() {
   const [boot, setBoot] = useState<Bootstrap | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -113,7 +131,7 @@ export default function App() {
         else if (kind === "transport_error") setNotice("Уже принятый сервером источник сохранён. Последние непереданные секунды не считаются сохранёнными — остановите и запустите Live снова.");
         else if (kind === "connection_error") setNotice("Связь с Live прервалась. Можно запустить разговор снова.");
         else if (kind === "event_gap") setNotice("Интерфейс пропустил часть служебных событий. Источник на сервере сохраняется отдельно.");
-        else if (error instanceof Error) setNotice(error.message);
+        else if (error) setNotice(friendlyStartError(error));
       },
       onWait: value => setWait(value),
       onEvent: (event: LiveEvent) => {
@@ -190,7 +208,7 @@ export default function App() {
         authorize: async () => {},
       });
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Не удалось начать Live.");
+      setNotice(friendlyStartError(error));
       setVoiceState("off");
     } finally {
       setBusy(false);

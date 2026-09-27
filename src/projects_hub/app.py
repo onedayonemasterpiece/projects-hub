@@ -5,7 +5,7 @@ import importlib.util
 import logging
 import time
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
@@ -29,6 +29,10 @@ class DevLogin(BaseModel):
 class ConversationCreate(BaseModel):
     workspace_id: str
     focus_project_id: str | None = None
+
+
+class LiveStart(BaseModel):
+    audio_mode: Literal["realtime", "buffered"] = "realtime"
 
 
 class LiveInput(BaseModel):
@@ -256,7 +260,7 @@ def create_app(
     async def live_start(
         conversation_id: str,
         request: Request,
-        payload: dict[str, Any] = Body(default_factory=dict),
+        payload: LiveStart = Body(default_factory=LiveStart),
     ) -> dict[str, Any]:
         actor_id = actor_id_from_request(request)
         conversation, resource_id, actor = live_context(actor_id, conversation_id)
@@ -266,7 +270,7 @@ def create_app(
                 actor=actor,
                 model=settings.model,
                 conversation_id=conversation_id,
-                history=payload.get("history") if isinstance(payload.get("history"), list) else None,
+                audio_mode=payload.audio_mode,
             )
         except Exception as exc:
             raise _error(exc) from exc

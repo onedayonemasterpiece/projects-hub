@@ -103,9 +103,12 @@ class ProjectsHubLiveAdapter:
         actor: dict[str, Any],
         model: str,
         conversation_id: str,
+        audio_mode: str = "realtime",
         **_args: Any,
     ) -> dict[str, Any]:
         actor_id = str(actor.get("subject") or "")
+        if audio_mode not in {"realtime", "buffered"}:
+            raise StoreError("INVALID_ARGUMENT", "Unknown Live audio mode")
         conversation = self.store.get_conversation(actor_id, conversation_id)
         expected = ConversationScope(
             workspace_id=conversation["workspace_id"],
@@ -122,6 +125,7 @@ class ProjectsHubLiveAdapter:
                 "workspace_id": conversation["workspace_id"],
                 "conversation_id": conversation_id,
                 "source_id": source["id"],
+                "audio_mode": audio_mode,
             },
             "context": {
                 "workspace_id": conversation["workspace_id"],
@@ -138,6 +142,7 @@ class ProjectsHubLiveAdapter:
                 "functions": _functions(),
                 "voice": "Aoede",
                 "search_enabled": False,
+                "manual_activity_detection": audio_mode == "buffered",
             },
             "response": {
                 "conversation_id": conversation_id,
@@ -145,6 +150,7 @@ class ProjectsHubLiveAdapter:
                 "workspace_id": conversation["workspace_id"],
                 "focus_project_id": conversation.get("focus_project_id"),
                 "focus_project_name": conversation.get("focus_project_name"),
+                "audio_mode": audio_mode,
             },
         }
 
