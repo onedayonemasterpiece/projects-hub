@@ -202,8 +202,8 @@
     "current_browser_transcript_preview_is_bounded": true
   },
   "implementation_evidence": {
-    "release_sha": "69e3fe75799f425b3c930e10efd68eeba5cb87d2",
-    "shared_live_interaction": "v0.2.5",
+    "release_sha": "f4d395ef86eaf4048308e9175775bc5e2bcb188f",
+    "shared_live_interaction": "0.2.6-candidate@c9de297020087235d80ce4155e52f63f88c642bf",
     "shared_ai_resource_control": "0.1.7",
     "realtime_browser_transport_wired": true,
     "buffered_manual_activity_product_path": true,
@@ -217,6 +217,14 @@
     "physical_microphone_acceptance": "not_run",
     "public_identity_provider": "not_implemented",
     "android": "not_implemented",
-    "offline_client_queue": "not_implemented"
+    "offline_client_queue": "pwa_foreground_implemented",
+    "pwa_durability_first_shared_capture": true,
+    "pwa_indexeddb_offline_source_queue": true,
+    "offline_interrupted_source_recovery": true,
+    "offline_stable_client_source_identity": true,
+    "offline_retry_same_server_source": "pass",
+    "offline_retry_duplicate_memory": false,
+    "offline_real_provider_buffered_replay": "pass",
+    "genuine_provider_resumption": "not_observed_after_15_minutes_resumable_handle_available"
   }
 }

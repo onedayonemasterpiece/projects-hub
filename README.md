@@ -27,10 +27,10 @@ the buffered turn early.
 
 ## Shared Live/runtime contracts
 
-- `live-interaction` **v0.2.5** is pinned as an immutable browser release archive
-  (`web/vendor/live-interaction-0.2.5.tgz`, SHA-256
-  `0f6b8d11b98af14004669812a4512a399aecff7907154c091e5a95e951c9a232`)
-  and as the same semantic version in the Python runtime.
+- `live-interaction` **0.2.6 candidate** is pinned for both browser and Python
+  to exact commit `c9de297020087235d80ce4155e52f63f88c642bf`. The commit contains the
+  shared durability-first browser capture primitive; it remains an exact commit pin
+  until the corresponding GitHub Release/tag is published.
 - DevCoveer deployment pins `ai-resource-control` **0.1.7** at
   `51e9c043ce40dfefea8b2cb4f4956019819bd9d4`.
 - Projects Hub uses only its `GOOGLE_API_KEY4` authority-outage fallback source alias;
@@ -47,7 +47,16 @@ Gemini Live calls `memory_commit_voice_source`, durable source and project-memor
 readback succeed, and the same Live session returns voice output and `turn_complete`.
 A deliberate service restart then passes a second canary: a fresh Live session calls
 `memory_read_project`, answers by voice, and the memory set stays unchanged (1 → 1,
-same IDs/revisions). Physical browser/device microphone acceptance remains separate.
+same IDs/revisions).
+
+Deployed release `f4d395ef86eaf4048308e9175775bc5e2bcb188f` adds the PWA offline
+source queue. Accepted offline PCM is written to IndexedDB through the shared
+`createDurableMicrophoneCapture` path, not a Projects Hub microphone/VAD fork. A real
+offline-retry canary proves partial first delivery → same `client_source_id` retry →
+same server source → reset of only the incomplete copy → full buffered replay →
+provider transcript → one memory object → voice response and `turn_complete`.
+
+Physical browser/device microphone acceptance remains separate.
 
 ## DevCoveer runtime
 
@@ -84,9 +93,11 @@ Deterministic acceptance is kept separate from real-provider/device acceptance i
 
 ## Still outside this first vertical
 
-Physical microphone acceptance on a real user device, client-side offline/restart-safe
-capture before the server receives audio, Android, external IdP/OIDC, GitHub App
-installation/callback, long 3/10/30-minute buffered-source product acceptance,
-multi-user collaboration and the full release-gate corpus remain subsequent work.
+Physical microphone acceptance on a real user device, Android offline/reboot capture,
+external IdP/OIDC, GitHub App installation/callback, long 3/10/30-minute buffered-source
+product acceptance, multi-user collaboration and the full release-gate corpus remain
+subsequent work. The PWA foreground offline queue is implemented; its mid-start online
+RAM handoff is not yet claimed crash-durable until the shared framework extends
+durability into that startup window.
 The existing Record Idea Hub is not disabled until its replacement path is actually
 accepted.

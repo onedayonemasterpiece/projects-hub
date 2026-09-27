@@ -23,6 +23,19 @@ export type MemoryItem = {
   updated_at_ms: number;
 };
 
+export type SourceReceipt = {
+  id: string;
+  conversation_id: string;
+  workspace_id: string;
+  client_source_id: string | null;
+  status: string;
+  audio_bytes: number;
+  audio_chunks: number;
+  transcript_revision: number;
+  captured_at_ms: number;
+  updated_at_ms: number;
+};
+
 export class ApiError extends Error {
   status: number;
   code?: string;
@@ -73,3 +86,8 @@ export const getMemories = (workspaceId: string, projectId?: string | null) => {
   if (projectId) params.set("project_id", projectId);
   return api<{ items: MemoryItem[] }>(`/api/memories?${params}`);
 };
+
+export const getSourceByClient = (conversationId: string, clientSourceId: string) =>
+  api<{ source: SourceReceipt }>(
+    `/api/conversations/${encodeURIComponent(conversationId)}/sources/by-client/${encodeURIComponent(clientSourceId)}`,
+  );

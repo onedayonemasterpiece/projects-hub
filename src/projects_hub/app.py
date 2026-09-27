@@ -33,6 +33,11 @@ class ConversationCreate(BaseModel):
 
 class LiveStart(BaseModel):
     audio_mode: Literal["realtime", "buffered"] = "realtime"
+    client_source_id: str | None = Field(
+        default=None,
+        pattern=r"^local_[0-9a-f]{32}$",
+        max_length=38,
+    )
 
 
 class LiveInput(BaseModel):
@@ -225,25 +230,41 @@ def create_app(
             "items": store.list_memories(actor_id, workspace_id, project_id, limit),
         }
 
+    def public_source(item: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: item.get(key)
+            for key in (
+                "id",
+                "conversation_id",
+                "workspace_id",
+                "client_source_id",
+                "status",
+                "audio_bytes",
+                "audio_chunks",
+                "transcript_revision",
+                "captured_at_ms",
+                "updated_at_ms",
+            )
+        }
+
     @app.get("/api/sources/{source_id}")
     async def source(source_id: str, request: Request) -> dict[str, Any]:
         actor_id = actor_id_from_request(request)
-        item = store.get_source(actor_id, source_id)
+        return {"source": public_source(store.get_source(actor_id, source_id))}
+
+    @app.get("/api/conversations/{conversation_id}/sources/by-client/{client_source_id}")
+    async def source_by_client(
+        conversation_id: str,
+        client_source_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        if not client_source_id.startswith("local_") or len(client_source_id) != 38:
+            raise HTTPException(status_code=400, detail={"code": "INVALID_ARGUMENT"})
+        actor_id = actor_id_from_request(request)
         return {
-            "source": {
-                key: item[key]
-                for key in (
-                    "id",
-                    "conversation_id",
-                    "workspace_id",
-                    "status",
-                    "audio_bytes",
-                    "audio_chunks",
-                    "transcript_revision",
-                    "captured_at_ms",
-                    "updated_at_ms",
-                )
-            }
+            "source": public_source(
+                store.get_source_by_client(actor_id, conversation_id, client_source_id)
+            )
         }
 
     def live_context(actor_id: str, conversation_id: str) -> tuple[dict[str, Any], str, dict[str, str]]:
@@ -271,6 +292,7 @@ def create_app(
                 model=settings.model,
                 conversation_id=conversation_id,
                 audio_mode=payload.audio_mode,
+                client_source_id=payload.client_source_id,
             )
         except Exception as exc:
             raise _error(exc) from exc

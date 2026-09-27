@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  createDurableMicrophoneCapture,
   createLiveClient,
+  type DurableMicrophoneCapture,
   type LiveClient,
   type LiveEvent,
 } from "@onedayonemasterpiece/live-interaction/browser";
@@ -15,6 +17,16 @@ import {
   type Conversation,
   type MemoryItem,
 } from "./api";
+import { replayLocalVoiceSource } from "./bufferedReplay";
+import {
+  acknowledgeDeliveredSource,
+  createLocalPersistSink,
+  createLocalVoiceSource,
+  listPendingVoiceSources,
+  recoverInterruptedVoiceSources,
+  sealLocalVoiceSource,
+  type LocalVoiceSource,
+} from "./offlineSources";
 
 type WaitState = null | { elapsed_ms: number; stage: string; can_restart: boolean };
 
@@ -28,6 +40,8 @@ const stateLabel: Record<string, string> = {
   microphone_unavailable: "Нет доступа к микрофону",
   connection_error: "Проблема соединения",
   start_error: "Не удалось начать",
+  offline_recording: "Записываю без сети",
+  replaying: "Передаю сохранённую запись",
 };
 
 function MicIcon() {
@@ -75,7 +89,15 @@ export default function App() {
   const [contextOpen, setContextOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [networkOnline, setNetworkOnline] = useState(() => navigator.onLine);
+  const [pendingSources, setPendingSources] = useState<LocalVoiceSource[]>([]);
   const clientRef = useRef<LiveClient | null>(null);
+  const offlineCaptureRef = useRef<DurableMicrophoneCapture | null>(null);
+  const offlineSourceRef = useRef<{
+    source: LocalVoiceSource;
+    sink: ReturnType<typeof createLocalPersistSink>;
+  } | null>(null);
+  const replayingRef = useRef(false);
   const turnHasInput = useRef(false);
   const conversationRef = useRef<Conversation | null>(null);
 
@@ -97,6 +119,33 @@ export default function App() {
     );
     setMemories(result.items);
   }, [boot]);
+
+  const refreshPendingSources = useCallback(async () => {
+    if (!boot) return;
+    setPendingSources(await listPendingVoiceSources(boot.workspace.id));
+  }, [boot]);
+
+  const applyLiveEvent = useCallback((event: LiveEvent) => {
+    if (event.type === "input_transcript") {
+      if (!turnHasInput.current) {
+        turnHasInput.current = true;
+        setAnswer("");
+      }
+    } else if (event.type === "output_transcript" && typeof event.text === "string") {
+      setAnswer(previous => (previous + event.text).slice(-5000));
+    } else if (event.type === "turn_complete") {
+      turnHasInput.current = false;
+    } else if (event.type === "tool_result" && event.status === "ok") {
+      if (event.name === "memory_commit_voice_source") {
+        void loadMemories().then(() => setMemoryOpen(true));
+      }
+      if (event.name === "conversation_set_focus" && conversationRef.current) {
+        void getConversation(conversationRef.current.id).then(setConversation);
+      }
+    } else if (event.type === "capability_unavailable" && event.code !== "NOT_CONFIGURED") {
+      setNotice("Одна из дополнительных возможностей сейчас недоступна.");
+    }
+  }, [loadMemories]);
 
   useEffect(() => {
     bootstrap()
@@ -120,6 +169,29 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const online = () => {
+      setNetworkOnline(true);
+      void refreshPendingSources();
+    };
+    const offline = () => setNetworkOnline(false);
+    window.addEventListener("online", online);
+    window.addEventListener("offline", offline);
+    return () => {
+      window.removeEventListener("online", online);
+      window.removeEventListener("offline", offline);
+    };
+  }, [refreshPendingSources]);
+
+  useEffect(() => {
+    if (!boot) return;
+    void recoverInterruptedVoiceSources(boot.workspace.id)
+      .then(refreshPendingSources)
+      .catch(error => {
+        setNotice(error instanceof Error ? error.message : "Не удалось восстановить локальные записи.");
+      });
+  }, [boot, refreshPendingSources]);
+
+  useEffect(() => {
     if (!boot) return;
     const client = createLiveClient({
       onState: state => {
@@ -134,34 +206,14 @@ export default function App() {
         else if (error) setNotice(friendlyStartError(error));
       },
       onWait: value => setWait(value),
-      onEvent: (event: LiveEvent) => {
-        if (event.type === "input_transcript") {
-          if (!turnHasInput.current) {
-            turnHasInput.current = true;
-            setAnswer("");
-          }
-        } else if (event.type === "output_transcript" && typeof event.text === "string") {
-          setAnswer(previous => (previous + event.text).slice(-5000));
-        } else if (event.type === "turn_complete") {
-          turnHasInput.current = false;
-        } else if (event.type === "tool_result" && event.status === "ok") {
-          if (event.name === "memory_commit_voice_source") {
-            void loadMemories().then(() => setMemoryOpen(true));
-          }
-          if (event.name === "conversation_set_focus" && conversationRef.current) {
-            void getConversation(conversationRef.current.id).then(setConversation);
-          }
-        } else if (event.type === "capability_unavailable" && event.code !== "NOT_CONFIGURED") {
-          setNotice("Одна из дополнительных возможностей сейчас недоступна.");
-        }
-      },
+      onEvent: applyLiveEvent,
     });
     clientRef.current = client;
     return () => {
       client.stop({ reason: "ui_unmount" });
       clientRef.current = null;
     };
-  }, [boot, loadMemories]);
+  }, [applyLiveEvent, boot]);
 
   async function signIn() {
     setBusy(true);
@@ -186,9 +238,100 @@ export default function App() {
     return created;
   }
 
+  async function startOfflineCapture() {
+    if (!boot) return;
+    const current = conversationRef.current;
+    if (!current) {
+      throw new Error("Для работы без сети сначала откройте Projects Hub один раз при подключении.");
+    }
+    const source = await createLocalVoiceSource(boot.workspace.id, current.id);
+    const sink = createLocalPersistSink(source.id);
+    const capture = createDurableMicrophoneCapture({
+      persist: sink.persist,
+      onError: error => {
+        setNotice(error instanceof Error ? error.message : "Локальная запись остановлена.");
+        setVoiceState("off");
+      },
+    });
+    offlineSourceRef.current = { source, sink };
+    offlineCaptureRef.current = capture;
+    try {
+      await capture.start();
+      setVoiceState("offline_recording");
+      setNotice("Связи нет. Речь сохраняется на этом устройстве и никуда не отправляется.");
+    } catch (error) {
+      offlineCaptureRef.current = null;
+      offlineSourceRef.current = null;
+      await acknowledgeDeliveredSource(source.id);
+      throw error;
+    }
+  }
+
+  async function stopOfflineCapture() {
+    const capture = offlineCaptureRef.current;
+    const local = offlineSourceRef.current;
+    if (!capture || !local) return;
+    setBusy(true);
+    try {
+      await capture.stop();
+      await local.sink.drain();
+      const sealed = await sealLocalVoiceSource(local.source.id);
+      setNotice(
+        sealed.chunk_count > 0
+          ? "Запись сохранена на устройстве. Когда связь появится, её можно передать Live."
+          : "Речь не обнаружена; пустая запись не будет отправлена.",
+      );
+    } finally {
+      offlineCaptureRef.current = null;
+      offlineSourceRef.current = null;
+      setVoiceState("off");
+      setBusy(false);
+      await refreshPendingSources();
+    }
+  }
+
+  async function deliverSavedSource() {
+    if (!networkOnline || !pendingSources.length || replayingRef.current) return;
+    const source = pendingSources[0];
+    replayingRef.current = true;
+    setBusy(true);
+    setVoiceState("replaying");
+    setNotice("Передаю сохранённую запись центральному Live‑агенту…");
+    try {
+      const result = await replayLocalVoiceSource(source, {
+        onState: state => {
+          if (state !== "off") setVoiceState(state);
+        },
+        onEvent: applyLiveEvent,
+        onNotice: message => setNotice(message),
+      });
+      if (result.status === "delivered") {
+        setNotice(
+          result.skipped_provider
+            ? "Запись уже была подтверждена сервером. Локальная копия очищена."
+            : "Сохранённая запись обработана и подтверждена.",
+        );
+      }
+      await loadMemories();
+    } catch (error) {
+      setNotice(
+        "Передача не завершена. Запись остаётся на устройстве и её можно повторно отправить без нового наговаривания.",
+      );
+    } finally {
+      replayingRef.current = false;
+      setBusy(false);
+      setVoiceState("off");
+      await refreshPendingSources();
+    }
+  }
+
   async function toggleVoice() {
     const client = clientRef.current;
-    if (!client || !boot) return;
+    if (!client || !boot || replayingRef.current) return;
+    if (offlineCaptureRef.current) {
+      await stopOfflineCapture();
+      return;
+    }
     const active = voiceState !== "off" && voiceState !== "start_error" && voiceState !== "connection_error";
     if (active || client.sessionId || client.starting) {
       client.stop({ reason: "user_stop" });
@@ -199,6 +342,10 @@ export default function App() {
     setNotice(null);
     setAnswer("");
     try {
+      if (!networkOnline) {
+        await startOfflineCapture();
+        return;
+      }
       const current = await ensureConversation();
       await client.start({
         url: `/api/live/${current.id}/sessions`,
@@ -207,11 +354,15 @@ export default function App() {
         captureDuringStart: true,
         authorize: async () => {},
       });
+      if (!client.sessionId && !navigator.onLine) {
+        await startOfflineCapture();
+      }
     } catch (error) {
       setNotice(friendlyStartError(error));
       setVoiceState("off");
     } finally {
-      setBusy(false);
+      if (!offlineCaptureRef.current) setBusy(false);
+      else setBusy(false);
     }
   }
 
@@ -251,6 +402,21 @@ export default function App() {
   const voiceActive = !["off", "start_error", "connection_error", "microphone_unavailable"].includes(voiceState);
   const showWork = Boolean(answer || notice || wait || memoryOpen);
   const projectCount = Math.max(0, boot.projects.length - 1);
+  const pendingCount = pendingSources.length;
+  const voiceHeadline =
+    voiceState === "off" && !networkOnline
+      ? "Можно говорить без сети"
+      : stateLabel[voiceState] ?? "Live";
+  const voiceHint =
+    voiceState === "offline_recording"
+      ? "Нажмите, чтобы надёжно закрыть запись"
+      : voiceState === "replaying"
+        ? "Сохранённая речь уже передаётся"
+        : !networkOnline
+          ? "Запись останется на этом устройстве"
+          : voiceActive
+            ? "Нажмите, чтобы остановить"
+            : "Нажмите и говорите";
 
   return (
     <main className="shell">
@@ -344,8 +510,13 @@ export default function App() {
         )}
       </section>
 
-      {(answer || memories.length > 0) && !voiceActive && (
+      {(answer || memories.length > 0 || (pendingCount > 0 && networkOnline)) && !voiceActive && (
         <nav className="action-islands" aria-label="Контекстные действия">
+          {pendingCount > 0 && networkOnline && (
+            <button className="island action-pill" onClick={deliverSavedSource} disabled={busy}>
+              {pendingCount === 1 ? "Передать запись" : `Передать записи · ${pendingCount}`}
+            </button>
+          )}
           {memories.length > 0 && <button className="island action-pill" onClick={openMemory}>Память</button>}
           {answer && <button className="island action-pill" onClick={() => setAnswer("")}>Убрать результат</button>}
         </nav>
@@ -364,8 +535,8 @@ export default function App() {
             <span className="orb-core"><MicIcon /></span>
           </button>
           <div className="voice-copy">
-            <strong>{stateLabel[voiceState] ?? "Live"}</strong>
-            <span>{voiceActive ? "Нажмите, чтобы остановить" : "Нажмите и говорите"}</span>
+            <strong>{voiceHeadline}</strong>
+            <span>{voiceHint}</span>
           </div>
           <span className={"state-dot " + (voiceActive ? "live" : "")} />
         </div>

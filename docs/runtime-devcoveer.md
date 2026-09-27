@@ -31,8 +31,9 @@ window, result limit and small context without arbitrary host-file access.
 
 The consumer is pinned to:
 
-- `live-interaction` release **v0.2.5**, browser release asset SHA-256
-  `0f6b8d11b98af14004669812a4512a399aecff7907154c091e5a95e951c9a232`;
+- `live-interaction` **0.2.6 candidate** exact commit
+  `c9de297020087235d80ce4155e52f63f88c642bf` for both browser and Python;
+  this exact pin is used until a matching versioned GitHub Release/tag exists;
 - deployment-installed `ai-resource-control` 0.1.7:
   `51e9c043ce40dfefea8b2cb4f4956019819bd9d4`.
 
@@ -112,14 +113,27 @@ A deliberate `projects-hub.service` restart then changed the process and
 set remained unchanged (1 before, 1 after, same IDs/revisions). No source replay or
 duplicate memory write was needed.
 
-Both canaries explicitly keep `physical_microphone_acceptance=not_run`; deterministic
-PCM is not a substitute for a real browser/device microphone gate.
+On deployed release `f4d395ef86eaf4048308e9175775bc5e2bcb188f`, the offline retry
+canary passes as well. The first buffered attempt persists only part of the source and
+stops. A second attempt with the same stable `client_source_id` reuses the same server
+source, clears only its incomplete server copy, replays the full durable PCM, receives
+provider input transcription, performs `memory_commit_voice_source`, produces exactly
+one memory object, speaks the answer and reaches `turn_complete`.
+
+The PWA foreground offline queue stores accepted shared-capture PCM in IndexedDB with
+per-chunk SHA-256. Interrupted local `capturing/replaying` state is recovered on app
+startup, and local PCM is removed only after terminal server disposition. The product
+does not contain its own `getUserMedia`, AudioContext/VAD or WebSocket transport.
+
+All synthetic-audio canaries explicitly keep
+`physical_microphone_acceptance=not_run`; deterministic PCM is not a substitute for a
+real browser/device microphone gate.
 
 Not yet claimed:
 
 - physical microphone acceptance on the user's actual browser/device;
-- client-side offline durable queue / restart recovery before the server receives audio;
-- Android application;
+- crash-durable online startup capture while the Live session POST itself is pending;
+- Android application and Android offline/reboot queue;
 - public IdP/OIDC;
 - GitHub App installation/callback;
 - long 3/10/30-minute buffered-source acceptance;
