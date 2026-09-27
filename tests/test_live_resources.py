@@ -22,7 +22,7 @@ async def test_shared_controller_consumer_and_server_binding(monkeypatch):
     await run_project_dialogue(scope=scope,environment=env,reader=reader,on_event=events.append)
     assert len(calls)==1 and calls[0]['consumer']=='projects-hub'
     assert calls[0]['binding']==scope.resource_binding() and calls[0]['reader'] is reader
-    assert calls[0]['environment']=={'AI_RESOURCE_CONTROL_URL':'https://authority.example','AI_RESOURCE_CONTROL_SERVICE_KEY':'service','GOOGLE_API_KEY4':'fallback-four'} and 'load_key' not in calls[0]
+    assert calls[0]['environment']=={'AI_RESOURCE_CONTROL_URL':'https://authority.example','AI_RESOURCE_CONTROL_SERVICE_KEY':'service','AI_RESOURCE_CONTROL_FALLBACK_KEY':'fallback-four'} and 'load_key' not in calls[0]
 
 
 def test_resource_environment_never_borrows_other_consumer_fallbacks():
@@ -39,7 +39,7 @@ def test_resource_environment_never_borrows_other_consumer_fallbacks():
     assert result=={
         'AI_RESOURCE_CONTROL_URL':'https://authority.example',
         'AI_RESOURCE_CONTROL_SERVICE_KEY':'service',
-        'GOOGLE_API_KEY4':'four',
+        'AI_RESOURCE_CONTROL_FALLBACK_KEY':'four',
     }
 
 @pytest.mark.asyncio
