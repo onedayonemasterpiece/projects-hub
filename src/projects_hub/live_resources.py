@@ -12,15 +12,18 @@ RESOURCE_ENV_NAMES = (
     'GOOGLE_AI_LIMITER_SUPABASE_URL',
     'GOOGLE_AI_LIMITER_SUPABASE_SERVICE_KEY',
     'AI_RESOURCE_LEDGER_ID',
-    'GOOGLE_API_KEY4',
 )
 
 def live_resource_environment(environment: Mapping[str,str]) -> dict[str,str]:
-    return {
+    result = {
         name: environment[name]
         for name in RESOURCE_ENV_NAMES
         if isinstance(environment.get(name), str) and environment[name].strip()
     }
+    fallback = str(environment.get('GOOGLE_API_KEY4') or '').strip()
+    if fallback:
+        result['AI_RESOURCE_CONTROL_FALLBACK_KEY'] = fallback
+    return result
 
 @dataclass(frozen=True)
 class ProjectScope:

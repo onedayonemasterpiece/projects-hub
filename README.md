@@ -6,7 +6,7 @@
 
 ## Что уже есть
 
-`src/projects_hub/live_resources.py` — исполняемая серверная граница подключения общего `ai-resource-control`: фиксированный consumer `projects-hub`, обязательная авторизованная область проекта и отдельная привязка ресурсов для пользователя/проекта. Normal Live использует central authority; при её транспортной недоступности общий SDK может использовать только назначенный Projects Hub alias `GOOGLE_API_KEY4` по общему bounded fallback-контракту. Unit tests проверяют изоляцию привязки, передачу управления именно общему SDK и корректный отказ при отсутствии пакета.
+`src/projects_hub/live_resources.py` — исполняемая серверная граница подключения общего `ai-resource-control`: фиксированный consumer `projects-hub`, обязательная авторизованная область проекта и отдельная привязка ресурсов для пользователя/проекта. Normal Live использует central authority; при её транспортной недоступности trusted backend может взять только назначенный Projects Hub source alias `GOOGLE_API_KEY4` и передать его shared SDK как `AI_RESOURCE_CONTROL_FALLBACK_KEY` по общему bounded fallback-контракту. Unit tests проверяют изоляцию привязки, передачу управления именно общему SDK и корректный отказ при отсутствии пакета.
 
 Это **не готовое Android-приложение и не готовый production backend**. В этом checkpoint нет микрофонного UI, GitHub write tools, runtime deployment и реальной Live-приёмки. Работающий Record Idea Hub не менялся.
 
