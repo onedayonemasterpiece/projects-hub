@@ -102,6 +102,8 @@ Stop, «Новый разговор» и delete — разные действи�
 | [Позиционирование](02-positioning.md) | Имя, pitch, пилот |
 | [Внешние источники](09-research.md) | Проверенные API/platform constraints |
 | [Общий реестр](contract.json) | Sources/integrations/gates |
+| [UI: тёмные плавающие острова](13-ui-floating-islands.md) | Визуальная система PWA/Android и основной экран |
+| [GitHub connections](14-github-connections.md) | GitHub App installation, repository roles и отсутствие PAT у обычных участников |
 | [Live contract](live-contract.json) | Машиночитаемые архитектурные правила |
 
 ## Фактический baseline и статус
