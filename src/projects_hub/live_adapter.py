@@ -104,6 +104,7 @@ class ProjectsHubLiveAdapter:
         model: str,
         conversation_id: str,
         audio_mode: str = "realtime",
+        client_source_id: str | None = None,
         **_args: Any,
     ) -> dict[str, Any]:
         actor_id = str(actor.get("subject") or "")
@@ -117,8 +118,25 @@ class ProjectsHubLiveAdapter:
         ).resource_binding()
         if resource_id != expected:
             raise StoreError("FORBIDDEN", "Conversation resource binding mismatch")
-        source = self.store.create_source(actor_id, conversation_id)
+        source = self.store.create_source(
+            actor_id,
+            conversation_id,
+            client_source_id=client_source_id,
+        )
+        source_reused = bool(source.pop("_reused", False))
+        if source_reused and source["status"] not in {"archived", "ephemeral_processed"}:
+            source = self.store.reset_source_for_replay(actor_id, source["id"])
         projects = self.store.list_projects(actor_id, conversation["workspace_id"])
+        system_instruction = SYSTEM_INSTRUCTION
+        if audio_mode == "buffered":
+            system_instruction += """
+# BUFFERED SOURCE DISPOSITION
+Этот Live-turn является одной законченной ранее записанной репликой.
+До завершения ответа обязательно дай source ровно одно содержательное disposition:
+- memory_commit_voice_source, если запись содержит долговечную проектную память;
+- memory_finish_ephemeral, если после выполнения просьбы хранить её как память не нужно.
+Не проси пользователя повторять уже услышанную запись.
+"""
         return {
             "state": {
                 "actor_id": actor_id,
@@ -126,6 +144,7 @@ class ProjectsHubLiveAdapter:
                 "conversation_id": conversation_id,
                 "source_id": source["id"],
                 "audio_mode": audio_mode,
+                "client_source_id": client_source_id,
             },
             "context": {
                 "workspace_id": conversation["workspace_id"],
@@ -138,7 +157,7 @@ class ProjectsHubLiveAdapter:
                 "current_source_id": source["id"],
             },
             "configuration": {
-                "system_instruction": SYSTEM_INSTRUCTION,
+                "system_instruction": system_instruction,
                 "functions": _functions(),
                 "voice": "Aoede",
                 "search_enabled": False,
@@ -151,6 +170,10 @@ class ProjectsHubLiveAdapter:
                 "focus_project_id": conversation.get("focus_project_id"),
                 "focus_project_name": conversation.get("focus_project_name"),
                 "audio_mode": audio_mode,
+                "client_source_id": client_source_id,
+                "source_status": source["status"],
+                "source_reused": source_reused,
+                "source_terminal": source["status"] in {"archived", "ephemeral_processed"},
             },
         }
 

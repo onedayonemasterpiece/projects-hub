@@ -10,7 +10,7 @@ requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.116,<1",
   "uvicorn[standard]>=0.35,<1",
-  "live-interaction @ git+https://github.com/onedayonemasterpiece/live-interaction.git@v0.2.5",
+  "live-interaction @ git+https://github.com/onedayonemasterpiece/live-interaction.git@c9de297020087235d80ce4155e52f63f88c642bf",
 ]
 
 [project.optional-dependencies]

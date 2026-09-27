@@ -92,6 +92,7 @@ class DurableStore:
             conversation_id TEXT NOT NULL REFERENCES conversations(id),
             workspace_id TEXT NOT NULL REFERENCES workspaces(id),
             actor_id TEXT NOT NULL REFERENCES actors(id),
+            client_source_id TEXT,
             status TEXT NOT NULL,
             audio_path TEXT NOT NULL,
             audio_bytes INTEGER NOT NULL DEFAULT 0,
@@ -142,6 +143,17 @@ class DurableStore:
         """
         with self._lock:
             self.db.executescript(schema)
+            columns = {
+                row["name"]
+                for row in self.db.execute("PRAGMA table_info(sources)").fetchall()
+            }
+            if "client_source_id" not in columns:
+                self.db.execute("ALTER TABLE sources ADD COLUMN client_source_id TEXT")
+            self.db.execute(
+                """CREATE UNIQUE INDEX IF NOT EXISTS sources_actor_client_source_idx
+                   ON sources(actor_id, client_source_id)
+                   WHERE client_source_id IS NOT NULL"""
+            )
 
     def ping(self) -> bool:
         with self._lock:
@@ -295,28 +307,52 @@ class DurableStore:
             )
             return {"project_id": project_id, "project_name": project["name"], "revision": now}
 
-    def create_source(self, actor_id: str, conversation_id: str) -> dict[str, Any]:
+    def create_source(
+        self,
+        actor_id: str,
+        conversation_id: str,
+        client_source_id: str | None = None,
+    ) -> dict[str, Any]:
         now = _now_ms()
         with self._lock:
             conversation = self.get_conversation(actor_id, conversation_id)
+            if client_source_id:
+                existing = self.db.execute(
+                    """SELECT id,conversation_id FROM sources
+                       WHERE actor_id=? AND client_source_id=?""",
+                    (actor_id, client_source_id),
+                ).fetchone()
+                if existing:
+                    if existing["conversation_id"] != conversation_id:
+                        raise StoreError(
+                            "CLIENT_SOURCE_CONFLICT",
+                            "Local source is already bound to another conversation",
+                        )
+                    result = self.get_source(actor_id, existing["id"])
+                    result["_reused"] = True
+                    return result
             source_id = _id("src")
             relative = f"audio/{source_id}.pcm"
             self.db.execute(
                 """INSERT INTO sources
-                   (id,conversation_id,workspace_id,actor_id,status,audio_path,captured_at_ms,updated_at_ms)
-                   VALUES(?,?,?,?,?,?,?,?)""",
+                   (id,conversation_id,workspace_id,actor_id,client_source_id,status,
+                    audio_path,captured_at_ms,updated_at_ms)
+                   VALUES(?,?,?,?,?,?,?,?,?)""",
                 (
                     source_id,
                     conversation_id,
                     conversation["workspace_id"],
                     actor_id,
+                    client_source_id,
                     "capturing",
                     relative,
                     now,
                     now,
                 ),
             )
-            return self.get_source(actor_id, source_id)
+            result = self.get_source(actor_id, source_id)
+            result["_reused"] = False
+            return result
 
     def get_source(self, actor_id: str, source_id: str) -> dict[str, Any]:
         with self._lock:
@@ -325,6 +361,58 @@ class DurableStore:
                 raise StoreError("SOURCE_NOT_FOUND", "Source is not available")
             self._membership(actor_id, row["workspace_id"])
             return dict(row)
+
+    def get_source_by_client(
+        self,
+        actor_id: str,
+        conversation_id: str,
+        client_source_id: str,
+    ) -> dict[str, Any]:
+        with self._lock:
+            conversation = self.get_conversation(actor_id, conversation_id)
+            row = self.db.execute(
+                """SELECT * FROM sources
+                   WHERE actor_id=? AND conversation_id=? AND client_source_id=?""",
+                (actor_id, conversation_id, client_source_id),
+            ).fetchone()
+            if not row:
+                raise StoreError("SOURCE_NOT_FOUND", "Local source is not available")
+            if row["workspace_id"] != conversation["workspace_id"]:
+                raise StoreError("FORBIDDEN", "Source workspace mismatch")
+            return dict(row)
+
+    def reset_source_for_replay(self, actor_id: str, source_id: str) -> dict[str, Any]:
+        terminal = {"archived", "ephemeral_processed"}
+        with self._lock:
+            source = self.get_source(actor_id, source_id)
+            if not source.get("client_source_id"):
+                raise StoreError(
+                    "INVALID_ARGUMENT",
+                    "Only client-owned buffered sources may be reset for replay",
+                )
+            if source["status"] in terminal:
+                return source
+            path = self.data_dir / source["audio_path"]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("wb", buffering=0) as handle:
+                handle.flush()
+                os.fsync(handle.fileno())
+            now = _now_ms()
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                self.db.execute("DELETE FROM source_events WHERE source_id=?", (source_id,))
+                self.db.execute(
+                    """UPDATE sources
+                       SET status='capturing',audio_bytes=0,audio_chunks=0,
+                           transcript='',transcript_revision=0,updated_at_ms=?
+                       WHERE id=?""",
+                    (now, source_id),
+                )
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
+            return self.get_source(actor_id, source_id)
 
     def append_audio(self, actor_id: str, source_id: str, pcm: bytes) -> dict[str, int]:
         if not pcm:

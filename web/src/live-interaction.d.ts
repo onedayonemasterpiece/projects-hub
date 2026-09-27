@@ -10,18 +10,33 @@ declare module "@onedayonemasterpiece/live-interaction/browser" {
     [key: string]: unknown;
   };
 
+  export type DurableAudioMessage =
+    | { pcm: Int16Array; sample_rate: 16000; captured_at_ms: number }
+    | { audio_stream_end: true; captured_at_ms: number };
+
   export type LiveClient = {
     readonly sessionId: string | null;
     readonly starting: boolean;
+    readonly microphoneEnabled: boolean;
+    readonly playingCount: number;
     start(args: {
       url: string;
       body?: Record<string, unknown>;
       authorize?: () => Promise<void>;
       microphone?: boolean;
       captureDuringStart?: boolean;
-    }): Promise<void>;
+    }): Promise<Record<string, unknown> | undefined>;
     stop(args?: { reason?: string; keepalive?: boolean; preservePlayback?: boolean }): void;
     input(message: Record<string, unknown>): Promise<unknown>;
+    enableMicrophone(args?: Record<string, unknown>): Promise<boolean>;
+    disableMicrophone(): void;
+  };
+
+  export type DurableMicrophoneCapture = {
+    start(options?: Record<string, unknown>): Promise<boolean>;
+    stop(): Promise<void>;
+    stats(): Record<string, number | boolean>;
+    readonly running: boolean;
   };
 
   export function createLiveClient(options: {
@@ -30,5 +45,15 @@ declare module "@onedayonemasterpiece/live-interaction/browser" {
     onNotice?: (notice: string, error?: unknown) => void;
     onTiming?: (event: string, metrics?: Record<string, unknown>) => void;
     onWait?: (wait: null | { elapsed_ms: number; stage: string; can_restart: boolean }) => void;
+    persistAudio?: ((message: DurableAudioMessage) => Promise<void> | void) | null;
   }): LiveClient;
+
+  export function createDurableMicrophoneCapture(options: {
+    persist: (message: DurableAudioMessage) => Promise<void> | void;
+    onTiming?: (event: string, metrics?: Record<string, unknown>) => void;
+    onError?: (error: unknown) => void;
+    batchMs?: number;
+    maxQueueMs?: number;
+    maxAgeMs?: number;
+  }): DurableMicrophoneCapture;
 }
