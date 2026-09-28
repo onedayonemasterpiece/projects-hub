@@ -255,7 +255,7 @@ public final class MainActivity extends Activity {
         io.execute(() -> {
             try {
                 String workspaceId = api.bootstrapWorkspace(cookie);
-                String token = <redacted>
+                String token = api.registerAndroidDevice(
                         cookie,
                         workspaceId,
                         Build.MANUFACTURER + " " + Build.MODEL
