@@ -8,12 +8,14 @@ import uuid
 from typing import Any, Literal
 
 from fastapi import Body, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .auth import COOKIE_NAME, SESSION_TTL_SECONDS, issue_session, parse_session
 from .identity import IdentityError, SupabaseIdentityVerifier
+from .github_app import GitHubAppError
+from .github_connections import GitHubConnections
 from .live_resources import ConversationScope
 from .live_runtime import build_live_host
 from .logging_config import configure_logging
@@ -53,22 +55,51 @@ class LiveInput(BaseModel):
     text: str | None = Field(default=None, max_length=4_000)
 
 
+class GitHubInstallStart(BaseModel):
+    workspace_id: str
+    conversation_id: str | None = None
+
+
+class GitHubRepositoryBind(BaseModel):
+    workspace_id: str
+    project_id: str | None = None
+    role: str = Field(max_length=64)
+    access_mode: str = Field(max_length=64)
+    allowed_paths: list[str] = Field(default_factory=list, max_length=32)
+
+
 def _http_for_code(code: str) -> int:
     if code in {"UNAUTHENTICATED"}:
         return 401
-    if code in {"FORBIDDEN"}:
+    if code in {
+        "FORBIDDEN",
+        "GITHUB_FORBIDDEN",
+        "GITHUB_WRITE_POLICY_DENIED",
+        "GITHUB_WRITE_PERMISSION_MISSING",
+        "GITHUB_WEBHOOK_INVALID",
+    }:
         return 403
     if code in {"IDENTITY_PROVIDER_INVALID"}:
         return 502
     if code in {"IDENTITY_PROVIDER_UNAVAILABLE"}:
         return 503
-    if code.endswith("_NOT_FOUND") or code == "LIVE_SESSION_NOT_FOUND":
+    if code.endswith("_NOT_FOUND") or code in {
+        "LIVE_SESSION_NOT_FOUND",
+        "GITHUB_NOT_FOUND",
+        "GITHUB_REPOSITORY_NOT_FOUND",
+        "GITHUB_INSTALLATION_NOT_FOUND",
+    }:
         return 404
     if code in {"LIVE_BUSY"}:
         return 429
     if code.startswith("INVALID") or code in {"SOURCE_TRANSCRIPT_PENDING"}:
         return 409 if code == "SOURCE_TRANSCRIPT_PENDING" else 400
-    return 503 if code.startswith(("LIVE_", "RESOURCE_")) else 400
+    return 503 if code.startswith(("LIVE_", "RESOURCE_")) or code in {
+        "GITHUB_APP_NOT_CONFIGURED",
+        "GITHUB_UNAVAILABLE",
+        "GITHUB_ERROR",
+        "GITHUB_INVALID_RESPONSE",
+    } else 400
 
 
 def _error(exc: Exception) -> HTTPException:
@@ -117,6 +148,7 @@ def create_app(
     store: DurableStore | None = None,
     live_host: Any | None = None,
     identity_verifier: Any | None = None,
+    github_connections: Any | None = None,
 ) -> FastAPI:
     configure_logging()
     settings = settings or Settings.from_env()
@@ -139,6 +171,7 @@ def create_app(
     app.state.store = store
     app.state.live_host = live_host
     app.state.identity_verifier = identity_verifier
+    app.state.github_connections = github_connections or GitHubConnections(store, settings)
     if app.state.identity_verifier is None and settings.public_auth_enabled:
         app.state.identity_verifier = SupabaseIdentityVerifier(
             base_url=settings.auth_supabase_url,
@@ -161,12 +194,13 @@ def create_app(
                         status_code=403,
                         content={"error": {"code": "PUBLIC_ORIGIN_REQUIRED"}},
                     )
-                origin = (request.headers.get("origin") or "").strip().rstrip("/")
-                if origin != settings.public_origin:
-                    return JSONResponse(
-                        status_code=403,
-                        content={"error": {"code": "ORIGIN_MISMATCH"}},
-                    )
+                if request.url.path != "/api/github/webhook":
+                    origin = (request.headers.get("origin") or "").strip().rstrip("/")
+                    if origin != settings.public_origin:
+                        return JSONResponse(
+                            status_code=403,
+                            content={"error": {"code": "ORIGIN_MISMATCH"}},
+                        )
         request_id = request.headers.get("x-request-id") or "req_" + uuid.uuid4().hex[:16]
         started = time.monotonic()
         try:
@@ -220,6 +254,13 @@ def create_app(
             content={"error": {"code": exc.code, "message": str(exc)[:300]}},
         )
 
+    @app.exception_handler(GitHubAppError)
+    async def github_error(_request: Request, exc: GitHubAppError):
+        return JSONResponse(
+            status_code=_http_for_code(exc.code),
+            content={"error": {"code": exc.code, "message": str(exc)[:300]}},
+        )
+
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
         return {
@@ -238,6 +279,7 @@ def create_app(
             "static_ready": settings.static_dir.is_dir(),
             "live_interaction_available": importlib.util.find_spec("live_interaction") is not None,
             "resource_control_available": importlib.util.find_spec("ai_resource_control") is not None,
+            "github_app_configured": settings.github_app_enabled,
         }
 
     @app.get("/api/auth/config")
@@ -309,6 +351,87 @@ def create_app(
     async def logout(response: Response) -> dict[str, bool]:
         response.delete_cookie(COOKIE_NAME, path="/")
         return {"ok": True}
+
+    @app.get("/api/github/status")
+    async def github_status(request: Request, workspace_id: str) -> dict[str, Any]:
+        actor_id = actor_id_from_request(request)
+        return app.state.github_connections.status(actor_id, workspace_id)
+
+    @app.post("/api/github/install/start")
+    async def github_install_start(
+        payload: GitHubInstallStart,
+        request: Request,
+    ) -> dict[str, Any]:
+        actor_id = actor_id_from_request(request)
+        return app.state.github_connections.start_install(
+            actor_id=actor_id,
+            workspace_id=payload.workspace_id,
+            conversation_id=payload.conversation_id,
+        )
+
+    @app.get("/api/github/install/callback")
+    async def github_install_callback(
+        request: Request,
+        installation_id: int,
+        state: str,
+        setup_action: str | None = None,
+    ):
+        actor_id = actor_id_from_request(request)
+        result = await app.state.github_connections.complete_install(
+            actor_id=actor_id,
+            state=state,
+            installation_id=installation_id,
+        )
+        log.info(
+            "github installation connected",
+            extra={
+                "event": "github_installation",
+                "workspace_id": result["workspace_id"],
+                "installation_id": installation_id,
+                "result": "connected",
+            },
+        )
+        return RedirectResponse(url="/?github=connected", status_code=303)
+
+    @app.post("/api/github/repositories/{repository_id}/bind")
+    async def github_repository_bind(
+        repository_id: int,
+        payload: GitHubRepositoryBind,
+        request: Request,
+    ) -> dict[str, Any]:
+        actor_id = actor_id_from_request(request)
+        return app.state.github_connections.bind_repository(
+            actor_id=actor_id,
+            workspace_id=payload.workspace_id,
+            repository_id=repository_id,
+            project_id=payload.project_id,
+            role=payload.role,
+            access_mode=payload.access_mode,
+            allowed_paths=payload.allowed_paths,
+        )
+
+    @app.post("/api/github/webhook")
+    async def github_webhook(request: Request) -> dict[str, Any]:
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                if int(content_length) > 1_000_000:
+                    raise HTTPException(
+                        status_code=413,
+                        detail={"code": "PAYLOAD_TOO_LARGE"},
+                    )
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "INVALID_ARGUMENT"},
+                )
+        body = await request.body()
+        return await app.state.github_connections.webhook(
+            body=body,
+            signature=request.headers.get("x-hub-signature-256"),
+            delivery_id=request.headers.get("x-github-delivery"),
+            event_name=request.headers.get("x-github-event"),
+        )
 
     @app.get("/api/bootstrap")
     async def bootstrap(request: Request) -> dict[str, Any]:

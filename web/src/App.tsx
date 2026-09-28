@@ -9,14 +9,18 @@ import {
 import {
   ApiError,
   bootstrap,
+  bindGitHubRepository,
   createConversation,
   getConversation,
+  getGitHubStatus,
   getMemories,
   getAuthConfig,
   login,
+  startGitHubInstall,
   type AuthConfig,
   type Bootstrap,
   type Conversation,
+  type GitHubStatus,
   type MemoryItem,
 } from "./api";
 import { finishPublicAuth, startPublicAuth } from "./auth";
@@ -95,6 +99,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [networkOnline, setNetworkOnline] = useState(() => navigator.onLine);
   const [pendingSources, setPendingSources] = useState<LocalVoiceSource[]>([]);
+  const [githubStatus, setGitHubStatus] = useState<GitHubStatus | null>(null);
+  const [githubBusy, setGitHubBusy] = useState(false);
   const clientRef = useRef<LiveClient | null>(null);
   const offlineCaptureRef = useRef<DurableMicrophoneCapture | null>(null);
   const offlineSourceRef = useRef<{
@@ -127,6 +133,14 @@ export default function App() {
   const refreshPendingSources = useCallback(async () => {
     if (!boot) return;
     setPendingSources(await listPendingVoiceSources(boot.workspace.id));
+  }, [boot]);
+
+  const refreshGitHub = useCallback(async () => {
+    if (!boot || boot.role !== "owner") {
+      setGitHubStatus(null);
+      return;
+    }
+    setGitHubStatus(await getGitHubStatus(boot.workspace.id));
   }, [boot]);
 
   const applyLiveEvent = useCallback((event: LiveEvent) => {
@@ -225,6 +239,23 @@ export default function App() {
         setNotice(error instanceof Error ? error.message : "Не удалось восстановить локальные записи.");
       });
   }, [boot, refreshPendingSources]);
+
+  useEffect(() => {
+    if (!boot || boot.role !== "owner") return;
+    void refreshGitHub()
+      .then(() => {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get("github") === "connected") {
+          params.delete("github");
+          const query = params.toString();
+          window.history.replaceState({}, "", window.location.pathname + (query ? "?" + query : "") + window.location.hash);
+          setNotice("GitHub подключён. Доступны только repositories, разрешённые установкой.");
+        }
+      })
+      .catch(error => {
+        setNotice(error instanceof Error ? error.message : "Не удалось прочитать GitHub connections.");
+      });
+  }, [boot, refreshGitHub]);
 
   useEffect(() => {
     if (!boot) return;
@@ -418,6 +449,52 @@ export default function App() {
     }
   }
 
+  async function connectGitHub() {
+    if (!boot || boot.role !== "owner" || githubBusy) return;
+    setGitHubBusy(true);
+    setNotice(null);
+    try {
+      const result = await startGitHubInstall(
+        boot.workspace.id,
+        conversationRef.current?.id ?? null,
+      );
+      window.location.assign(result.install_url);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Не удалось начать подключение GitHub.");
+      setGitHubBusy(false);
+    }
+  }
+
+  async function bindRepository(
+    repositoryId: number,
+    role: "project_docs" | "memory_store" | "external_owning_repo",
+    accessMode: "read_only" | "app_managed_write",
+  ) {
+    if (!boot || githubBusy) return;
+    setGitHubBusy(true);
+    setNotice(null);
+    try {
+      await bindGitHubRepository(repositoryId, {
+        workspace_id: boot.workspace.id,
+        project_id: focusProject?.id ?? null,
+        role,
+        access_mode: accessMode,
+        allowed_paths: [],
+      });
+      await refreshGitHub();
+      setNotice("GitHub repository привязан к workspace policy.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Не удалось привязать repository.");
+    } finally {
+      setGitHubBusy(false);
+    }
+  }
+
+  function manageGitHubAccess() {
+    const url = githubStatus?.installations.find(item => item.state === "active")?.html_url;
+    if (url) window.location.assign(url);
+  }
+
   if (!authReady) {
     return <main className="shell loading-shell"><div className="boot-dot" aria-label="Загрузка" /></main>;
   }
@@ -470,7 +547,11 @@ export default function App() {
         <button
           className={"island context-island" + (contextOpen ? " is-open" : "")}
           onClick={() => {
-            setContextOpen(value => !value);
+            setContextOpen(value => {
+              const next = !value;
+              if (next && boot.role === "owner") void refreshGitHub();
+              return next;
+            });
             setMemoryOpen(false);
           }}
           aria-expanded={contextOpen}
@@ -505,6 +586,86 @@ export default function App() {
               ))}
             </div>
             <p className="sheet-footnote">Сменить проект можно голосом. Live‑агент сам уточнит контекст, если он неоднозначен.</p>
+
+            {boot.role === "owner" && (
+              <div className="integration-card" aria-label="GitHub integration">
+                <div className="integration-heading">
+                  <div>
+                    <p className="eyebrow">Интеграция</p>
+                    <strong>GitHub</strong>
+                  </div>
+                  {githubStatus?.configured && githubStatus.installations.length > 0 ? (
+                    <button className="quiet-button" onClick={manageGitHubAccess} disabled={githubBusy}>
+                      Изменить доступ
+                    </button>
+                  ) : githubStatus?.configured ? (
+                    <button className="quiet-button" onClick={connectGitHub} disabled={githubBusy}>
+                      Подключить
+                    </button>
+                  ) : null}
+                </div>
+
+                {!githubStatus ? (
+                  <p className="integration-copy">Проверяю подключение…</p>
+                ) : !githubStatus.configured ? (
+                  <p className="integration-copy">
+                    GitHub App ещё не зарегистрирован на сервере. PAT в приложение не нужен.
+                  </p>
+                ) : githubStatus.installations.length === 0 ? (
+                  <p className="integration-copy">
+                    Владелец workspace устанавливает GitHub App и выбирает только нужные repositories.
+                  </p>
+                ) : (
+                  <>
+                    <p className="integration-copy">
+                      {githubStatus.repositories.filter(item => item.state === "available").length} repositories доступны установке.
+                    </p>
+                    <div className="repository-list">
+                      {githubStatus.repositories
+                        .filter(item => item.state === "available")
+                        .slice(0, 8)
+                        .map(repository => (
+                          <div className="repository-row" key={repository.repository_id}>
+                            <div className="repository-copy">
+                              <strong>{repository.full_name}</strong>
+                              <span>
+                                {repository.role === "unassigned"
+                                  ? "ещё не привязан к продуктовой роли"
+                                  : repository.role + " · " + repository.access_mode}
+                              </span>
+                            </div>
+                            {repository.role === "unassigned" && (
+                              <div className="repository-actions">
+                                <button
+                                  className="mini-action"
+                                  onClick={() => bindRepository(repository.repository_id, "project_docs", "read_only")}
+                                  disabled={githubBusy}
+                                >
+                                  Документы
+                                </button>
+                                <button
+                                  className="mini-action"
+                                  onClick={() => bindRepository(repository.repository_id, "memory_store", "app_managed_write")}
+                                  disabled={githubBusy}
+                                >
+                                  Память
+                                </button>
+                                <button
+                                  className="mini-action"
+                                  onClick={() => bindRepository(repository.repository_id, "external_owning_repo", "read_only")}
+                                  disabled={githubBusy}
+                                >
+                                  Внешний read-only
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </section>
         )}
       </header>

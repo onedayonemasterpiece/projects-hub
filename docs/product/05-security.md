@@ -22,7 +22,7 @@ Private GitHub repo на группу и отдельный личный repo д
 
 Для людей — стандартный поддерживаемый identity provider/OIDC, короткоживущая серверная сессия и приглашения с одноразовым использованием/сроком. Для PWA предпочтительна HttpOnly Secure cookie с CSRF/origin защитой; для Android — системный браузер и Authorization Code + PKCE. Конкретный identity provider утверждается по доступности и требованиям данных до пилота; собственную криптографию/парольную систему не проектируем.
 
-Для GitHub — scoped GitHub App installation, ограниченная выбранными репозиториями. Обычные участники Projects Hub не вводят PAT и могут вообще не иметь GitHub-аккаунта; repository подключает владелец/координатор workspace. Product-managed repositories доступны через права Projects Hub, external/owning repositories по умолчанию read-only. Подробный договор — [GitHub connections](14-github-connections.md). Календарь подключается отдельным согласием владельца с минимальными scopes. Идентификаторы подключения могут быть видны UI, credential — нет.
+Для GitHub — scoped GitHub App installation, ограниченная выбранными репозиториями. Обычные участники Projects Hub не вводят PAT и могут вообще не иметь GitHub-аккаунта; repository подключает владелец/координатор workspace. Product-managed repositories доступны через права Projects Hub, external/owning repositories по умолчанию read-only. Подробный договор — [GitHub connections](14-github-connections.md). Календарь подключается отдельным согласием владельца с минимальными scopes. Идентификаторы подключения могут быть видны UI, credential — нет. **App JWT, installation access token и GitHub API calls существуют только на Projects Hub backend; Android/PWA не являются GitHub clients продукта.**
 
 Backend хранит secrets шифрованно с контролируемым доступом и ротацией, вне Git, логов и prompt. TLS защищает передачу. Шифрование на диске не равнозначно сквозному шифрованию: сервер и разрешённый AI-провайдер могут видеть данные, которые им переданы. Нельзя продавать этот вариант как zero-knowledge/E2EE.
 
@@ -38,7 +38,7 @@ Backend хранит secrets шифрованно с контролируемы�
 
 ## Телефон — исполнитель узких разрешённых команд
 
-Телефон не открывает публичный MCP endpoint и не получает команды по одному общему каналу «на все устройства». Он устанавливает исходящее авторизованное соединение. Device grant привязан к user, device, session и конкретным capabilities.
+Телефон не открывает публичный MCP endpoint и не получает команды по одному общему каналу «на все устройства». Он устанавливает исходящее авторизованное соединение. Device grant привязан к user, device, session и конкретным capabilities. **Live function call возникает в backend-owned provider session; backend выдаёт адресованную device-команду, а Android возвращает receipt/result. Телефон не держит отдельную Gemini Live session для такого действия и не становится вторым backend.**
 
 Минимальный конверт команды: command_id, actor_id, workspace_id, project_id, device_id, session_id, capability, payload_hash, expires_at и защита от повторного воспроизведения. Неправильное устройство/сессия, просроченный grant или повторная команда не исполняются. Сервер и клиент проверяют один и тот же binding, а результат возвращается в исходный command.
 

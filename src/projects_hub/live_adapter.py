@@ -20,6 +20,11 @@ def _functions() -> list[dict[str, Any]]:
             "parameters": {"type": "object", "properties": {}},
         },
         {
+            "name": "github_repositories_list",
+            "description": "List repositories already connected and explicitly bound inside this workspace. This is read-only catalogue access and cannot grant or increase GitHub permissions.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        {
             "name": "conversation_set_focus",
             "description": "Set the current conversation project after you have understood which allowed project the user means.",
             "parameters": {
@@ -91,6 +96,7 @@ SYSTEM_INSTRUCTION = """# ROLE
 
 # SECURITY
 - Доступ определяет backend. Аргументы function call не могут расширять права или подключать новый repository.
+- github_repositories_list показывает только уже подключённые и привязанные repositories. Если нужного repo нет, скажи, что его должен разрешить workspace owner через GitHub integration UI; не пытайся заменить это другим repo.
 - Если tool отказал, объясни результат и продолжи разговор, не выдумывая успешное действие.
 """
 
@@ -249,6 +255,27 @@ class ProjectsHubLiveAdapter:
             return {
                 "projects": self.store.list_projects(actor_id, workspace_id),
                 "conversation": self.store.get_conversation(actor_id, conversation_id),
+            }
+
+        if name == "github_repositories_list":
+            rows = self.store.list_repository_connections(actor_id, workspace_id)
+            repositories = [
+                {
+                    "repository_id": int(item["repository_id"]),
+                    "full_name": item["full_name"],
+                    "project_id": item["project_id"],
+                    "role": item["role"],
+                    "access_mode": item["access_mode"],
+                    "allowed_paths": item["allowed_paths"],
+                }
+                for item in rows
+                if item["state"] == "available"
+                and item["installation_state"] == "active"
+                and item["role"] != "unassigned"
+            ]
+            return {
+                "repositories": repositories,
+                "requires_connection": not repositories,
             }
 
         if name == "conversation_set_focus":

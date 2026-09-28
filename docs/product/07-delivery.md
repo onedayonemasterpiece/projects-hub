@@ -2,7 +2,7 @@
 
 [Индекс](README.md) · [Центральный Live-агент](12-central-live-agent.md) · [Архитектура](04-architecture.md) · [Память](10-conversation-memory.md).
 
-**Ревизия 3, 27 сентября 2026.** MVP строится вокруг одной умной Live-модели и её function calls. Никакой промежуточный ASR/router/classifier не должен незаметно стать реальным мозгом продукта.
+**Ревизия 4, 28 сентября 2026.** MVP строится вокруг одной умной Live-модели и её function calls. **Live provider connection и server integrations находятся на одном Projects Hub backend на DevCoveer.** Никакой промежуточный ASR/router/classifier не должен незаметно стать реальным мозгом продукта.
 
 ## M0 — подтвердить внешние условия
 
@@ -33,11 +33,11 @@ PWA и Android реализуют единый UX и один source model:
 - одна большая кнопка;
 - один microphone pipeline;
 - VAD/pre-roll/hangover;
-- online PCM одновременно durable checkpoint + Live send;
+- online PCM одновременно durable checkpoint + send **в Projects Hub backend**, который уже отправляет PCM в свою Gemini Live session;
 - offline durable chunks/manifest;
 - Stop/new conversation/delete имеют разные semantics.
 
-Android получает дополнительные foreground/device capabilities, но core workflow не урезан.
+Android получает дополнительные foreground/device capabilities, но core workflow не урезан. Эти capabilities не переносят backend на телефон: server-issued typed command приходит конкретному device, Android выполняет platform API и возвращает receipt.
 
 Выход M2: можно записать речь online/offline, пережить restart/network loss и доказать, что источник не потерян. Это ещё не означает, что agent правильно понял содержимое.
 
@@ -52,6 +52,8 @@ Product adapter:
 - tasks/decisions/meetings;
 - vocabulary tools;
 - owning product adapters.
+- server-side GitHub App catalogue/operations; GitHub credentials никогда не покидают backend;
+- durable device-command outbox для Android-local capabilities.
 
 Acceptance:
 - raw online audio → Live input transcription → function call → readback → voice response;
@@ -121,8 +123,9 @@ Acceptance: имена, аббревиатуры, алиасы, конфликт
 - поручения proposed/accepted/blocked/done;
 - brainstorm с исходными source refs;
 - простое голосование или решение ответственного;
-- meeting proposals/calendar;
-- notifications;
+- meeting proposals;
+- calendar: server function call → bound Android device command → Android Calendar/provider API → receipt → backend → same Live agent;
+- notifications/device actions через тот же bound-device command channel;
 - event/project cards.
 
 Все эти действия инициирует agent function calls или contextual buttons. Button event входит в тот же conversation/product state и не создаёт отдельный интеллект.
@@ -173,9 +176,11 @@ Acceptance: имена, аббревиатуры, алиасы, конфликт
 
 ## Ownership
 
-Projects Hub: conversation semantics, product tools, memory/source, UI, collaboration.
+Projects Hub backend on DevCoveer: единственная Live provider session, conversation semantics, product tools, memory/source, GitHub App, server integrations, device-command outbox и reconciliation.
 
-`live-interaction`: transport, provider protocol, buffered activity mode, transcript delivery.
+PWA/Android: capture/UI/local durable queue. Android дополнительно исполняет allowlisted device-local commands; он не является backend и не получает GitHub/provider credentials.
+
+`live-interaction`: shared transport/provider protocol, buffered activity mode, transcript delivery; provider host используется backend-side, capture primitive переиспользуется клиентами.
 
 `ai-resource-control`: provider resource admission.
 

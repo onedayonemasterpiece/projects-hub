@@ -153,6 +153,60 @@ class DurableStore:
             created_at_ms INTEGER NOT NULL,
             updated_at_ms INTEGER NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS github_install_states(
+            state_hash TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+            actor_id TEXT NOT NULL REFERENCES actors(id),
+            conversation_id TEXT REFERENCES conversations(id),
+            expires_at_ms INTEGER NOT NULL,
+            consumed_at_ms INTEGER,
+            created_at_ms INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS github_install_states_actor_idx
+            ON github_install_states(actor_id, expires_at_ms);
+        CREATE TABLE IF NOT EXISTS github_installations(
+            installation_id INTEGER PRIMARY KEY,
+            workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+            account_id INTEGER NOT NULL,
+            account_login TEXT NOT NULL,
+            account_type TEXT NOT NULL,
+            html_url TEXT NOT NULL,
+            repository_selection TEXT NOT NULL,
+            permissions_json TEXT NOT NULL,
+            state TEXT NOT NULL,
+            suspended_at_ms INTEGER,
+            last_verified_at_ms INTEGER NOT NULL,
+            created_at_ms INTEGER NOT NULL,
+            updated_at_ms INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS github_installations_workspace_idx
+            ON github_installations(workspace_id, state, updated_at_ms DESC);
+        CREATE TABLE IF NOT EXISTS repository_connections(
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+            installation_id INTEGER NOT NULL REFERENCES github_installations(installation_id),
+            repository_id INTEGER NOT NULL,
+            full_name TEXT NOT NULL,
+            default_branch TEXT NOT NULL,
+            private INTEGER NOT NULL,
+            project_id TEXT REFERENCES projects(id),
+            role TEXT NOT NULL,
+            access_mode TEXT NOT NULL,
+            allowed_paths_json TEXT NOT NULL,
+            state TEXT NOT NULL,
+            last_verified_at_ms INTEGER NOT NULL,
+            created_at_ms INTEGER NOT NULL,
+            updated_at_ms INTEGER NOT NULL,
+            UNIQUE(workspace_id, repository_id)
+        );
+        CREATE INDEX IF NOT EXISTS repository_connections_workspace_idx
+            ON repository_connections(workspace_id, state, full_name);
+        CREATE TABLE IF NOT EXISTS github_webhook_deliveries(
+            delivery_id TEXT PRIMARY KEY,
+            event_name TEXT NOT NULL,
+            action TEXT NOT NULL,
+            received_at_ms INTEGER NOT NULL
+        );
         """
         with self._lock:
             self.db.executescript(schema)
@@ -475,6 +529,736 @@ class DurableStore:
                 self.db.execute("ROLLBACK")
                 raise
         return self.bootstrap(actor_id, workspace_id)
+
+    def workspace_role(self, actor_id: str, workspace_id: str) -> str:
+        with self._lock:
+            return str(self._membership(actor_id, workspace_id)["role"])
+
+    def require_workspace_owner(self, actor_id: str, workspace_id: str) -> None:
+        role = self.workspace_role(actor_id, workspace_id)
+        if role != "owner":
+            raise StoreError("FORBIDDEN", "Workspace owner permission is required")
+
+    def create_github_install_state(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        state_hash: str,
+        expires_at_ms: int,
+        conversation_id: str | None = None,
+    ) -> dict[str, Any]:
+        if len(state_hash) != 64:
+            raise StoreError("INVALID_ARGUMENT", "GitHub installation state is invalid")
+        now = _now_ms()
+        if expires_at_ms <= now or expires_at_ms > now + 20 * 60 * 1000:
+            raise StoreError("INVALID_ARGUMENT", "GitHub installation state expiry is invalid")
+        with self._lock:
+            self.require_workspace_owner(actor_id, workspace_id)
+            if conversation_id is not None:
+                conversation = self.get_conversation(actor_id, conversation_id)
+                if conversation["workspace_id"] != workspace_id:
+                    raise StoreError("FORBIDDEN", "Conversation workspace mismatch")
+            self.db.execute(
+                """INSERT INTO github_install_states
+                   (state_hash,workspace_id,actor_id,conversation_id,expires_at_ms,
+                    consumed_at_ms,created_at_ms)
+                   VALUES(?,?,?,?,?,NULL,?)""",
+                (
+                    state_hash,
+                    workspace_id,
+                    actor_id,
+                    conversation_id,
+                    int(expires_at_ms),
+                    now,
+                ),
+            )
+        return {
+            "workspace_id": workspace_id,
+            "conversation_id": conversation_id,
+            "expires_at_ms": int(expires_at_ms),
+        }
+
+    def consume_github_install_state(
+        self,
+        *,
+        actor_id: str,
+        state_hash: str,
+    ) -> dict[str, Any]:
+        now = _now_ms()
+        with self._lock:
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self.db.execute(
+                    "SELECT * FROM github_install_states WHERE state_hash=?",
+                    (state_hash,),
+                ).fetchone()
+                if (
+                    not row
+                    or row["actor_id"] != actor_id
+                    or row["consumed_at_ms"] is not None
+                    or int(row["expires_at_ms"]) < now
+                ):
+                    raise StoreError(
+                        "GITHUB_INSTALL_STATE_INVALID",
+                        "GitHub installation state is invalid or expired",
+                    )
+                self.require_workspace_owner(actor_id, row["workspace_id"])
+                self.db.execute(
+                    "UPDATE github_install_states SET consumed_at_ms=? WHERE state_hash=?",
+                    (now, state_hash),
+                )
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
+            return dict(row)
+
+    def complete_github_installation(
+        self,
+        *,
+        actor_id: str,
+        state_hash: str,
+        installation: dict[str, Any],
+        repositories: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        installation_id = int(installation.get("id") or 0)
+        account = installation.get("account") or {}
+        account_id = int(account.get("id") or 0)
+        account_login = str(account.get("login") or "").strip()[:200]
+        account_type = str(account.get("type") or "").strip()[:40]
+        html_url = str(installation.get("html_url") or "").strip()[:1000]
+        selection = str(installation.get("repository_selection") or "selected").strip()[:40]
+        permissions = installation.get("permissions") or {}
+        if (
+            len(state_hash) != 64
+            or installation_id <= 0
+            or account_id <= 0
+            or not account_login
+            or account_type not in {"User", "Organization", "Enterprise"}
+            or not isinstance(permissions, dict)
+        ):
+            raise StoreError(
+                "GITHUB_INVALID_INSTALLATION",
+                "GitHub installation metadata is invalid",
+            )
+        now = _now_ms()
+        if installation.get("suspended_at"):
+            raise StoreError(
+                "GITHUB_INSTALLATION_UNAVAILABLE",
+                "GitHub installation is suspended",
+            )
+
+        with self._lock:
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                pending = self.db.execute(
+                    "SELECT * FROM github_install_states WHERE state_hash=?",
+                    (state_hash,),
+                ).fetchone()
+                if (
+                    not pending
+                    or pending["actor_id"] != actor_id
+                    or pending["consumed_at_ms"] is not None
+                    or int(pending["expires_at_ms"]) < now
+                ):
+                    raise StoreError(
+                        "GITHUB_INSTALL_STATE_INVALID",
+                        "GitHub installation state is invalid or expired",
+                    )
+                workspace_id = str(pending["workspace_id"])
+                self.require_workspace_owner(actor_id, workspace_id)
+
+                existing = self.db.execute(
+                    """SELECT workspace_id,created_at_ms
+                       FROM github_installations WHERE installation_id=?""",
+                    (installation_id,),
+                ).fetchone()
+                if existing and existing["workspace_id"] != workspace_id:
+                    raise StoreError(
+                        "GITHUB_INSTALLATION_CONFLICT",
+                        "GitHub installation is already bound to another workspace",
+                    )
+                created = existing["created_at_ms"] if existing else now
+                self.db.execute(
+                    """INSERT INTO github_installations
+                       (installation_id,workspace_id,account_id,account_login,account_type,
+                        html_url,repository_selection,permissions_json,state,suspended_at_ms,
+                        last_verified_at_ms,created_at_ms,updated_at_ms)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT(installation_id) DO UPDATE SET
+                         account_id=excluded.account_id,
+                         account_login=excluded.account_login,
+                         account_type=excluded.account_type,
+                         html_url=excluded.html_url,
+                         repository_selection=excluded.repository_selection,
+                         permissions_json=excluded.permissions_json,
+                         state='active',
+                         suspended_at_ms=NULL,
+                         last_verified_at_ms=excluded.last_verified_at_ms,
+                         updated_at_ms=excluded.updated_at_ms""",
+                    (
+                        installation_id,
+                        workspace_id,
+                        account_id,
+                        account_login,
+                        account_type,
+                        html_url,
+                        selection,
+                        json.dumps(permissions, sort_keys=True, separators=(",", ":")),
+                        "active",
+                        None,
+                        now,
+                        created,
+                        now,
+                    ),
+                )
+
+                ids: list[int] = []
+                for repository in repositories:
+                    repository_id, full_name, default_branch, private = self._repository_fields(repository)
+                    ids.append(repository_id)
+                    old = self.db.execute(
+                        """SELECT id,project_id,role,access_mode,allowed_paths_json,created_at_ms
+                           FROM repository_connections
+                           WHERE workspace_id=? AND repository_id=?""",
+                        (workspace_id, repository_id),
+                    ).fetchone()
+                    self.db.execute(
+                        """INSERT INTO repository_connections
+                           (id,workspace_id,installation_id,repository_id,full_name,
+                            default_branch,private,project_id,role,access_mode,
+                            allowed_paths_json,state,last_verified_at_ms,created_at_ms,updated_at_ms)
+                           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                           ON CONFLICT(workspace_id,repository_id) DO UPDATE SET
+                             installation_id=excluded.installation_id,
+                             full_name=excluded.full_name,
+                             default_branch=excluded.default_branch,
+                             private=excluded.private,
+                             state='available',
+                             last_verified_at_ms=excluded.last_verified_at_ms,
+                             updated_at_ms=excluded.updated_at_ms""",
+                        (
+                            old["id"] if old else _id("repo"),
+                            workspace_id,
+                            installation_id,
+                            repository_id,
+                            full_name,
+                            default_branch,
+                            private,
+                            old["project_id"] if old else None,
+                            old["role"] if old else "unassigned",
+                            old["access_mode"] if old else "read_only",
+                            old["allowed_paths_json"] if old else "[]",
+                            "available",
+                            now,
+                            old["created_at_ms"] if old else now,
+                            now,
+                        ),
+                    )
+                if ids:
+                    placeholders = ",".join("?" for _ in ids)
+                    self.db.execute(
+                        f"""UPDATE repository_connections
+                            SET state='unavailable',updated_at_ms=?
+                            WHERE workspace_id=? AND installation_id=?
+                              AND repository_id NOT IN ({placeholders})""",
+                        (now, workspace_id, installation_id, *ids),
+                    )
+                else:
+                    self.db.execute(
+                        """UPDATE repository_connections
+                           SET state='unavailable',updated_at_ms=?
+                           WHERE workspace_id=? AND installation_id=?""",
+                        (now, workspace_id, installation_id),
+                    )
+
+                self.db.execute(
+                    "UPDATE github_install_states SET consumed_at_ms=? WHERE state_hash=?",
+                    (now, state_hash),
+                )
+                stored = dict(
+                    self.db.execute(
+                        "SELECT * FROM github_installations WHERE installation_id=?",
+                        (installation_id,),
+                    ).fetchone()
+                )
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
+
+            connections = self.list_repository_connections_internal(workspace_id)
+            return {
+                "pending": dict(pending),
+                "installation": stored,
+                "connections": connections,
+            }
+
+    def upsert_github_installation(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        installation: dict[str, Any],
+    ) -> dict[str, Any]:
+        installation_id = int(installation.get("id") or 0)
+        account = installation.get("account") or {}
+        account_id = int(account.get("id") or 0)
+        account_login = str(account.get("login") or "").strip()[:200]
+        account_type = str(account.get("type") or "").strip()[:40]
+        html_url = str(installation.get("html_url") or "").strip()[:1000]
+        selection = str(installation.get("repository_selection") or "selected").strip()[:40]
+        permissions = installation.get("permissions") or {}
+        if (
+            installation_id <= 0
+            or account_id <= 0
+            or not account_login
+            or account_type not in {"User", "Organization", "Enterprise"}
+            or not isinstance(permissions, dict)
+        ):
+            raise StoreError("GITHUB_INVALID_INSTALLATION", "GitHub installation metadata is invalid")
+        now = _now_ms()
+        suspended = installation.get("suspended_at")
+        state = "suspended" if suspended else "active"
+        with self._lock:
+            self.require_workspace_owner(actor_id, workspace_id)
+            existing = self.db.execute(
+                "SELECT workspace_id,created_at_ms FROM github_installations WHERE installation_id=?",
+                (installation_id,),
+            ).fetchone()
+            if existing and existing["workspace_id"] != workspace_id:
+                raise StoreError(
+                    "GITHUB_INSTALLATION_CONFLICT",
+                    "GitHub installation is already bound to another workspace",
+                )
+            created = existing["created_at_ms"] if existing else now
+            self.db.execute(
+                """INSERT INTO github_installations
+                   (installation_id,workspace_id,account_id,account_login,account_type,
+                    html_url,repository_selection,permissions_json,state,suspended_at_ms,
+                    last_verified_at_ms,created_at_ms,updated_at_ms)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(installation_id) DO UPDATE SET
+                     account_id=excluded.account_id,
+                     account_login=excluded.account_login,
+                     account_type=excluded.account_type,
+                     html_url=excluded.html_url,
+                     repository_selection=excluded.repository_selection,
+                     permissions_json=excluded.permissions_json,
+                     state=excluded.state,
+                     suspended_at_ms=excluded.suspended_at_ms,
+                     last_verified_at_ms=excluded.last_verified_at_ms,
+                     updated_at_ms=excluded.updated_at_ms""",
+                (
+                    installation_id,
+                    workspace_id,
+                    account_id,
+                    account_login,
+                    account_type,
+                    html_url,
+                    selection,
+                    json.dumps(permissions, sort_keys=True, separators=(",", ":")),
+                    state,
+                    now if suspended else None,
+                    now,
+                    created,
+                    now,
+                ),
+            )
+            return dict(
+                self.db.execute(
+                    "SELECT * FROM github_installations WHERE installation_id=?",
+                    (installation_id,),
+                ).fetchone()
+            )
+
+    @staticmethod
+    def _repository_fields(repository: dict[str, Any]) -> tuple[int, str, str, int]:
+        repository_id = int(repository.get("id") or 0)
+        full_name = str(repository.get("full_name") or "").strip()[:300]
+        default_branch = str(repository.get("default_branch") or "main").strip()[:200]
+        private = 1 if bool(repository.get("private")) else 0
+        if repository_id <= 0 or not full_name or "/" not in full_name or not default_branch:
+            raise StoreError("GITHUB_INVALID_REPOSITORY", "GitHub repository metadata is invalid")
+        return repository_id, full_name, default_branch, private
+
+    def sync_github_repositories(
+        self,
+        *,
+        workspace_id: str,
+        installation_id: int,
+        repositories: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        now = _now_ms()
+        with self._lock:
+            installation = self.db.execute(
+                "SELECT workspace_id,state FROM github_installations WHERE installation_id=?",
+                (int(installation_id),),
+            ).fetchone()
+            if not installation or installation["workspace_id"] != workspace_id:
+                raise StoreError("GITHUB_INSTALLATION_NOT_FOUND", "GitHub installation is unavailable")
+            if installation["state"] != "active":
+                raise StoreError("GITHUB_INSTALLATION_UNAVAILABLE", "GitHub installation is not active")
+            ids: list[int] = []
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                for repository in repositories:
+                    repository_id, full_name, default_branch, private = self._repository_fields(repository)
+                    ids.append(repository_id)
+                    old = self.db.execute(
+                        """SELECT id,project_id,role,access_mode,allowed_paths_json,created_at_ms
+                           FROM repository_connections
+                           WHERE workspace_id=? AND repository_id=?""",
+                        (workspace_id, repository_id),
+                    ).fetchone()
+                    connection_id = old["id"] if old else _id("repo")
+                    self.db.execute(
+                        """INSERT INTO repository_connections
+                           (id,workspace_id,installation_id,repository_id,full_name,
+                            default_branch,private,project_id,role,access_mode,
+                            allowed_paths_json,state,last_verified_at_ms,created_at_ms,updated_at_ms)
+                           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                           ON CONFLICT(workspace_id,repository_id) DO UPDATE SET
+                             installation_id=excluded.installation_id,
+                             full_name=excluded.full_name,
+                             default_branch=excluded.default_branch,
+                             private=excluded.private,
+                             state='available',
+                             last_verified_at_ms=excluded.last_verified_at_ms,
+                             updated_at_ms=excluded.updated_at_ms""",
+                        (
+                            connection_id,
+                            workspace_id,
+                            int(installation_id),
+                            repository_id,
+                            full_name,
+                            default_branch,
+                            private,
+                            old["project_id"] if old else None,
+                            old["role"] if old else "unassigned",
+                            old["access_mode"] if old else "read_only",
+                            old["allowed_paths_json"] if old else "[]",
+                            "available",
+                            now,
+                            old["created_at_ms"] if old else now,
+                            now,
+                        ),
+                    )
+                if ids:
+                    placeholders = ",".join("?" for _ in ids)
+                    self.db.execute(
+                        f"""UPDATE repository_connections
+                            SET state='unavailable',updated_at_ms=?
+                            WHERE workspace_id=? AND installation_id=?
+                              AND repository_id NOT IN ({placeholders})""",
+                        (now, workspace_id, int(installation_id), *ids),
+                    )
+                else:
+                    self.db.execute(
+                        """UPDATE repository_connections
+                           SET state='unavailable',updated_at_ms=?
+                           WHERE workspace_id=? AND installation_id=?""",
+                        (now, workspace_id, int(installation_id)),
+                    )
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
+            return self.list_repository_connections_internal(workspace_id)
+
+    def list_repository_connections_internal(self, workspace_id: str) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            """SELECT c.*,i.account_id,i.account_login,i.account_type,i.html_url AS installation_url,
+                      i.permissions_json,i.state AS installation_state
+               FROM repository_connections c
+               JOIN github_installations i ON i.installation_id=c.installation_id
+               WHERE c.workspace_id=?
+               ORDER BY c.full_name,c.repository_id""",
+            (workspace_id,),
+        ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["private"] = bool(item["private"])
+            item["allowed_paths"] = json.loads(item.pop("allowed_paths_json") or "[]")
+            item["permissions"] = json.loads(item.pop("permissions_json") or "{}")
+            result.append(item)
+        return result
+
+    def list_repository_connections(
+        self,
+        actor_id: str,
+        workspace_id: str,
+    ) -> list[dict[str, Any]]:
+        with self._lock:
+            self._membership(actor_id, workspace_id)
+            return self.list_repository_connections_internal(workspace_id)
+
+    @staticmethod
+    def _normalize_allowed_paths(paths: list[str] | None) -> list[str]:
+        if not paths:
+            return []
+        if len(paths) > 32:
+            raise StoreError("INVALID_ARGUMENT", "Too many allowed repository paths")
+        clean: list[str] = []
+        for raw in paths:
+            value = str(raw).strip().strip("/")
+            parts = value.split("/")
+            if (
+                not value
+                or len(value) > 300
+                or "\\" in value
+                or any(part in {"", ".", ".."} for part in parts)
+            ):
+                raise StoreError("INVALID_ARGUMENT", "Repository path restriction is invalid")
+            if value not in clean:
+                clean.append(value)
+        return clean
+
+    def bind_repository_connection(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        repository_id: int,
+        project_id: str | None,
+        role: str,
+        access_mode: str,
+        allowed_paths: list[str] | None,
+    ) -> dict[str, Any]:
+        roles = {
+            "memory_store",
+            "project_docs",
+            "source_dataset",
+            "external_owning_repo",
+            "generated_artifacts",
+        }
+        if role not in roles:
+            raise StoreError("INVALID_ARGUMENT", "Repository role is invalid")
+        if access_mode not in {"read_only", "app_managed_write"}:
+            raise StoreError("INVALID_ARGUMENT", "Repository access mode is invalid")
+        if role == "external_owning_repo" and access_mode != "read_only":
+            raise StoreError(
+                "GITHUB_WRITE_POLICY_DENIED",
+                "External owning repositories are read-only in this release",
+            )
+        paths = self._normalize_allowed_paths(allowed_paths)
+        now = _now_ms()
+        with self._lock:
+            self.require_workspace_owner(actor_id, workspace_id)
+            row = self.db.execute(
+                """SELECT c.*,i.permissions_json,i.state AS installation_state
+                   FROM repository_connections c
+                   JOIN github_installations i ON i.installation_id=c.installation_id
+                   WHERE c.workspace_id=? AND c.repository_id=?""",
+                (workspace_id, int(repository_id)),
+            ).fetchone()
+            if not row or row["state"] != "available" or row["installation_state"] != "active":
+                raise StoreError("GITHUB_REPOSITORY_UNAVAILABLE", "GitHub repository is unavailable")
+            if project_id is not None:
+                project = self._project_row(workspace_id, project_id)
+                if not project or project["status"] != "active":
+                    raise StoreError("PROJECT_NOT_FOUND", "Project is not available")
+            permissions = json.loads(row["permissions_json"] or "{}")
+            if access_mode == "app_managed_write" and permissions.get("contents") != "write":
+                raise StoreError(
+                    "GITHUB_WRITE_PERMISSION_MISSING",
+                    "GitHub App installation does not grant Contents write",
+                )
+            self.db.execute(
+                """UPDATE repository_connections
+                   SET project_id=?,role=?,access_mode=?,allowed_paths_json=?,
+                       updated_at_ms=?
+                   WHERE workspace_id=? AND repository_id=?""",
+                (
+                    project_id,
+                    role,
+                    access_mode,
+                    json.dumps(paths, ensure_ascii=False, separators=(",", ":")),
+                    now,
+                    workspace_id,
+                    int(repository_id),
+                ),
+            )
+            return next(
+                item
+                for item in self.list_repository_connections_internal(workspace_id)
+                if int(item["repository_id"]) == int(repository_id)
+            )
+
+    def get_repository_connection(
+        self,
+        actor_id: str,
+        workspace_id: str,
+        repository_id: int,
+    ) -> dict[str, Any]:
+        with self._lock:
+            self._membership(actor_id, workspace_id)
+            for item in self.list_repository_connections_internal(workspace_id):
+                if int(item["repository_id"]) == int(repository_id):
+                    return item
+        raise StoreError("GITHUB_REPOSITORY_NOT_FOUND", "GitHub repository is not connected")
+
+    def list_github_installations(
+        self,
+        actor_id: str,
+        workspace_id: str,
+    ) -> list[dict[str, Any]]:
+        with self._lock:
+            self._membership(actor_id, workspace_id)
+            rows = self.db.execute(
+                """SELECT installation_id,account_id,account_login,account_type,html_url,
+                          repository_selection,state,suspended_at_ms,last_verified_at_ms
+                   FROM github_installations
+                   WHERE workspace_id=?
+                   ORDER BY account_login,installation_id""",
+                (workspace_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def github_installation(self, installation_id: int) -> dict[str, Any] | None:
+        with self._lock:
+            row = self.db.execute(
+                "SELECT * FROM github_installations WHERE installation_id=?",
+                (int(installation_id),),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def record_github_webhook_delivery(
+        self,
+        *,
+        delivery_id: str,
+        event_name: str,
+        action: str,
+    ) -> bool:
+        if not delivery_id or len(delivery_id) > 200:
+            raise StoreError("INVALID_ARGUMENT", "GitHub webhook delivery id is invalid")
+        with self._lock:
+            try:
+                self.db.execute(
+                    """INSERT INTO github_webhook_deliveries
+                       (delivery_id,event_name,action,received_at_ms)
+                       VALUES(?,?,?,?)""",
+                    (
+                        delivery_id,
+                        event_name[:100],
+                        action[:100],
+                        _now_ms(),
+                    ),
+                )
+                return True
+            except sqlite3.IntegrityError:
+                return False
+
+    def set_github_installation_state(
+        self,
+        *,
+        installation_id: int,
+        state: str,
+    ) -> None:
+        if state not in {"active", "suspended", "revoked"}:
+            raise StoreError("INVALID_ARGUMENT", "GitHub installation state is invalid")
+        now = _now_ms()
+        with self._lock:
+            row = self.db.execute(
+                "SELECT workspace_id FROM github_installations WHERE installation_id=?",
+                (int(installation_id),),
+            ).fetchone()
+            if not row:
+                return
+            self.db.execute(
+                """UPDATE github_installations
+                   SET state=?,suspended_at_ms=?,updated_at_ms=?
+                   WHERE installation_id=?""",
+                (
+                    state,
+                    now if state == "suspended" else None,
+                    now,
+                    int(installation_id),
+                ),
+            )
+            if state != "active":
+                self.db.execute(
+                    """UPDATE repository_connections
+                       SET state='unavailable',updated_at_ms=?
+                       WHERE installation_id=?""",
+                    (now, int(installation_id)),
+                )
+
+    def apply_github_repository_webhook(
+        self,
+        *,
+        installation_id: int,
+        added: list[dict[str, Any]],
+        removed: list[dict[str, Any]],
+    ) -> None:
+        now = _now_ms()
+        with self._lock:
+            installation = self.db.execute(
+                "SELECT workspace_id,state FROM github_installations WHERE installation_id=?",
+                (int(installation_id),),
+            ).fetchone()
+            if not installation:
+                return
+            workspace_id = str(installation["workspace_id"])
+            if installation["state"] != "active":
+                return
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                for repository in added:
+                    repository_id, full_name, default_branch, private = self._repository_fields(repository)
+                    old = self.db.execute(
+                        """SELECT id,project_id,role,access_mode,allowed_paths_json,created_at_ms
+                           FROM repository_connections
+                           WHERE workspace_id=? AND repository_id=?""",
+                        (workspace_id, repository_id),
+                    ).fetchone()
+                    self.db.execute(
+                        """INSERT INTO repository_connections
+                           (id,workspace_id,installation_id,repository_id,full_name,
+                            default_branch,private,project_id,role,access_mode,
+                            allowed_paths_json,state,last_verified_at_ms,created_at_ms,updated_at_ms)
+                           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                           ON CONFLICT(workspace_id,repository_id) DO UPDATE SET
+                             installation_id=excluded.installation_id,
+                             full_name=excluded.full_name,
+                             default_branch=excluded.default_branch,
+                             private=excluded.private,
+                             state='available',
+                             last_verified_at_ms=excluded.last_verified_at_ms,
+                             updated_at_ms=excluded.updated_at_ms""",
+                        (
+                            old["id"] if old else _id("repo"),
+                            workspace_id,
+                            int(installation_id),
+                            repository_id,
+                            full_name,
+                            default_branch,
+                            private,
+                            old["project_id"] if old else None,
+                            old["role"] if old else "unassigned",
+                            old["access_mode"] if old else "read_only",
+                            old["allowed_paths_json"] if old else "[]",
+                            "available",
+                            now,
+                            old["created_at_ms"] if old else now,
+                            now,
+                        ),
+                    )
+                for repository in removed:
+                    repository_id = int(repository.get("id") or 0)
+                    if repository_id > 0:
+                        self.db.execute(
+                            """UPDATE repository_connections
+                               SET state='unavailable',updated_at_ms=?
+                               WHERE installation_id=? AND repository_id=?""",
+                            (now, int(installation_id), repository_id),
+                        )
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
 
     def _membership(self, actor_id: str, workspace_id: str) -> sqlite3.Row:
         row = self.db.execute(

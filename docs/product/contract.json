@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "as_of": "2026-09-27",
+  "as_of": "2026-09-28",
   "product_id": "projects-hub",
   "brand": {
     "recommended": "Содей",
@@ -156,7 +156,13 @@
     "android_capabilities_superset": true,
     "single_backend": true,
     "pwa_background_recording_promised": false,
-    "native_ios_in_mvp": false
+    "native_ios_in_mvp": false,
+    "live_provider_session_owner": "projects_hub_backend_devcoveer",
+    "github_app_execution_owner": "projects_hub_backend_devcoveer",
+    "clients_connect_to_live_provider_directly": false,
+    "clients_receive_github_credentials": false,
+    "android_device_capabilities": "backend_issued_typed_command_to_bound_device_then_receipt_to_same_live_session",
+    "android_is_backend": false
   },
   "integrations": [
     {
@@ -433,9 +439,9 @@
     "service_restart_memory_recall_without_duplicate": "pass",
     "typed_runtime_log_search": "pass",
     "physical_browser_microphone_acceptance": "not_run_no_device_in_devcoveer_headless_browser",
-    "public_identity_provider": "not_implemented",
+    "public_identity_provider": "backend_deployed_yandex_pkce_public_edge_dns_blocked_inc_4e353e4e5c18ef24c5998658",
     "android_application": "not_implemented",
-    "github_app_connection": "not_implemented",
+    "github_app_connection": "server_side_candidate_implemented_credentials_not_configured",
     "client_offline_restart_safe_queue": "pwa_foreground_implemented_android_not_implemented",
     "production_product_accepted": false,
     "shared_live_interaction": "0.2.6_candidate_c9de297020087235d80ce4155e52f63f88c642bf",
@@ -447,6 +453,11 @@
     "multi_project_full_source_actor_private": "pass",
     "project_memory_full_transcript_leak": "prevented",
     "legacy_memory_schema_migration_live_readback": "pass",
-    "voice_multi_project_release_gate": "partial_two_project_canary_pass_full_G22_not_run"
+    "voice_multi_project_release_gate": "partial_two_project_canary_pass_full_G22_not_run",
+    "github_app_candidate_contracts": "72_pytest_pass_and_pwa_build_pass",
+    "github_app_browser_token_surface": "none",
+    "github_app_live_surface": "read_only_bound_repository_catalogue_only",
+    "android_device_command_architecture": "documented_backend_outbox_device_executor_not_yet_implemented",
+    "backend_topology": "single_devcoveer_backend_owns_live_and_server_integrations"
   }
 }
