@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.Intent;
 import android.net.Uri;
 import android.provider.Settings;
+import android.util.Log;
 
 import androidx.core.content.FileProvider;
 
@@ -21,8 +22,11 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 final class Updater {
+    private static final String TAG = "ProjectsHubUpdate";
+
     interface Listener {
         void onAvailable(AvailableUpdate update);
         void onMessage(String message);
@@ -46,6 +50,7 @@ final class Updater {
     private final Activity activity;
     private final ExecutorService executor;
     private final Listener listener;
+    private final AtomicBoolean checking = new AtomicBoolean(false);
     private volatile AvailableUpdate pendingInstall;
 
     Updater(Activity activity, ExecutorService executor, Listener listener) {
@@ -55,17 +60,42 @@ final class Updater {
     }
 
     void checkForUpdate() {
+        if (!checking.compareAndSet(false, true)) return;
         executor.execute(() -> {
             try {
-                AvailableUpdate update = fetchLatestUpdate();
-                if (update != null && UpdatePolicy.shouldOffer(
-                        BuildConfig.VERSION_CODE,
-                        update.versionCode
-                )) {
-                    activity.runOnUiThread(() -> listener.onAvailable(update));
+                for (int attempt = 1; attempt <= 3; attempt++) {
+                    try {
+                        AvailableUpdate update = fetchLatestUpdate();
+                        if (update != null && UpdatePolicy.shouldOffer(
+                                BuildConfig.VERSION_CODE,
+                                update.versionCode
+                        )) {
+                            Log.i(TAG, "update_available versionCode=" + update.versionCode);
+                            activity.runOnUiThread(() -> listener.onAvailable(update));
+                        } else {
+                            Log.i(TAG, "update_current versionCode=" + BuildConfig.VERSION_CODE);
+                        }
+                        return;
+                    } catch (Exception failure) {
+                        Log.w(
+                                TAG,
+                                "update_check_retry attempt=" + attempt
+                                        + " error=" + failure.getClass().getSimpleName()
+                        );
+                        if (attempt >= 3) {
+                            Log.w(TAG, "update_check_unavailable");
+                            return;
+                        }
+                        try {
+                            Thread.sleep(attempt == 1 ? 1500L : 4000L);
+                        } catch (InterruptedException interrupted) {
+                            Thread.currentThread().interrupt();
+                            return;
+                        }
+                    }
                 }
-            } catch (Exception ignored) {
-                // Update checks are opportunistic and must never block the Live client.
+            } finally {
+                checking.set(false);
             }
         });
     }
@@ -73,6 +103,7 @@ final class Updater {
     void downloadAndInstall(AvailableUpdate update) {
         if (!activity.getPackageManager().canRequestPackageInstalls()) {
             pendingInstall = update;
+            Log.i(TAG, "install_permission_required versionCode=" + update.versionCode);
             Intent settings = new Intent(
                     Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                     Uri.parse("package:" + activity.getPackageName())
@@ -83,15 +114,19 @@ final class Updater {
         }
 
         pendingInstall = null;
+        Log.i(TAG, "update_download_start versionCode=" + update.versionCode);
         listener.onMessage("Скачиваю обновление…");
         executor.execute(() -> {
             try {
                 File apk = download(update);
+                Log.i(TAG, "update_verified versionCode=" + update.versionCode);
                 activity.runOnUiThread(() -> {
                     listener.onMessage("Обновление готово. Подтвердите установку Android.");
+                    Log.i(TAG, "installer_launch versionCode=" + update.versionCode);
                     launchInstaller(apk);
                 });
             } catch (Exception failure) {
+                Log.w(TAG, "update_download_failed error=" + failure.getClass().getSimpleName());
                 activity.runOnUiThread(() ->
                         listener.onFailure("Не удалось скачать или проверить обновление.")
                 );
