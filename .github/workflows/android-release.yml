@@ -24,7 +24,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.10.2"
-      - run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Install Android SDK 35
+        run: |
+          export ANDROID_HOME=/usr/local/lib/android/sdk
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort | tail -1)"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Require stable signing material
         env:
@@ -47,6 +54,8 @@ jobs:
 
       - name: Test and build signed APK
         env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
           ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/projects-hub.jks
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -60,7 +69,7 @@ jobs:
             --stacktrace
           mkdir -p dist
           cp android/app/build/outputs/apk/release/app-release.apk dist/projects-hub.apk
-          apksigner verify --verbose dist/projects-hub.apk
+          /usr/local/lib/android/sdk/build-tools/35.0.0/apksigner verify --verbose dist/projects-hub.apk
 
       - name: Build update manifest
         run: |
