@@ -1,6 +1,6 @@
 # Projects Hub — спецификация живой совместной работы
 
-**Ревизия 4 от 28 сентября 2026. Статус: первая Live/PWA вертикаль частично реализована и проверена canary-сценариями; полный продукт и Android E2E ещё не приняты.** Имя «Содей / Sodey» остаётся предложением; технический идентификатор `projects-hub` не меняется.
+**Ревизия 6 от 28 сентября 2026. Статус: central Live/PWA, Android-клиент, device-command calendar backend, signed GitHub Releases и event-readiness слой реализованы; полный production acceptance ещё не объявлен из-за незакрытых physical-device/public-edge/GitHub-App gates.** Имя «Содей / Sodey» остаётся предложением; технический идентификатор `projects-hub` не меняется.
 
 ## Центральная идея
 
@@ -110,8 +110,10 @@ Stop, «Новый разговор» и delete — разные действи�
 
 ## Фактический baseline и статус
 
-Интеграционная линия PR #3 уже содержит рабочий FastAPI/PWA вертикальный срез: центральную Live-сессию на backend, typed function calls, durable voice source/memory, PWA offline retry и mixed-project memory. Для этих путей есть реальные provider canary/readback проверки. Публичная Yandex-auth граница и server-side GitHub App connection код также интегрированы в эту линию, но их отдельные production acceptance gates не следует путать с самим фактом наличия кода.
+Текущий `main` — `b26c76ba9e27c62af2cf2401a07939cefff76d8a`. На этом SHA DevCoveer backend развёрнут и healthy: central Gemini Live, resource-control, durable SQLite/WAL, device-command API и readiness/task слой доступны. После деплоя реальный provider canary снова прошёл: `conversation_set_focus` → backend readback → голосовой ответ → `turn_complete`.
 
-Следующий активный срез — backend-issued command на конкретное Android-устройство и возврат typed receipt в тот же Live function call, начиная с `calendar.create_event`. Android-приложение, physical-device calendar E2E, Android offline/reboot capture и updater ещё не являются принятым продуктом.
+Android теперь существует как отдельное устанавливаемое приложение: WebView/PWA сохраняет общий floating-islands Live UX, native-слой хранит device credential в Android Keystore, исполняет allowlisted `calendar.create_event` через Calendar Provider, требует подтверждение на телефоне и возвращает `applied` только после readback. GitHub Actions build/unit и Android emulator install+launch прошли на `main`. Signed releases `android-v1`, `android-v2` и `android-v3` опубликованы; latest — `0.1.3`. Self-update feed и SHA-256 verification реализованы; интерактивный in-app update acceptance на emulator ведётся отдельным workflow и не считается PASS до его зелёного результата.
 
-Работающий Record Idea Hub не выключается до отдельной реальной приёмки нового Android/capture/recovery пути. Документация, unit tests и mock flow не заменяют physical microphone/device/provider acceptance; не выполненные gates остаются `not_run`/непринятыми.
+После подтверждённого calendar result backend автоматически создаёт event card. Реализованы bounded templates `generic` и `podcast`, checklist готовности и follow-up tasks со статусами proposed/accepted/done/snoozed/rejected; UI показывает это в существующих floating islands. Backend suite после этого слоя: 80 pytest PASS; PWA production build PASS.
+
+Не закрыты и поэтому не подменяются mock/unit evidence: physical Android microphone/calendar E2E, Android offline/reboot capture, публичный DNS/TLS edge `projects-hub.kenigevents.ru` (bounded publisher блокируется отсутствием рабочего non-interactive Yandex Cloud auth) и production GitHub App registration/credentials (`github_app_configured=false`). Работающий Record Idea Hub не выключается до отдельной физической приёмки нового Android capture/recovery пути.
