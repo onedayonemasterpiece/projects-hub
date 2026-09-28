@@ -177,8 +177,8 @@ def find_node(predicate, timeout_seconds: int = 60) -> ET.Element:
         # continue the same product flow instead of treating that overlay as an
         # application failure.
         system_anr = any(
-            "System UI" in node.attrib.get("text", "")
-            and "responding" in node.attrib.get("text", "")
+            "isn't responding" in node.attrib.get("text", "")
+            and "Projects Hub" not in node.attrib.get("text", "")
             for node in nodes
         )
         if system_anr:
@@ -191,8 +191,21 @@ def find_node(predicate, timeout_seconds: int = 60) -> ET.Element:
                 None,
             )
             if close_node is not None:
+                print("emulator system ANR: dismissing system process")
                 tap_node(close_node)
-                time.sleep(4)
+                time.sleep(6)
+                run(
+                    "adb",
+                    "shell",
+                    "am",
+                    "start",
+                    "-W",
+                    "-n",
+                    ACTIVITY,
+                    check=False,
+                    timeout=30,
+                    retries=6,
+                )
                 continue
 
         wait_node = next(
