@@ -14,14 +14,17 @@ import {
   getConversation,
   getGitHubStatus,
   getMemories,
+  getEventCards,
   getAuthConfig,
   login,
+  setTaskState,
   startGitHubInstall,
   type AuthConfig,
   type Bootstrap,
   type Conversation,
   type GitHubStatus,
   type MemoryItem,
+  type EventCard,
 } from "./api";
 import { finishPublicAuth, startPublicAuth } from "./auth";
 import { replayLocalVoiceSource } from "./bufferedReplay";
@@ -94,8 +97,10 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [wait, setWait] = useState<WaitState>(null);
   const [memories, setMemories] = useState<MemoryItem[]>([]);
+  const [eventCards, setEventCards] = useState<EventCard[]>([]);
   const [contextOpen, setContextOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
+  const [eventOpen, setEventOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [networkOnline, setNetworkOnline] = useState(() => navigator.onLine);
   const [pendingSources, setPendingSources] = useState<LocalVoiceSource[]>([]);
@@ -130,6 +135,15 @@ export default function App() {
     setMemories(result.items);
   }, [boot]);
 
+  const loadEventCards = useCallback(async () => {
+    if (!boot) return;
+    const result = await getEventCards(
+      boot.workspace.id,
+      conversationRef.current?.focus_project_id ?? null,
+    );
+    setEventCards(result.items);
+  }, [boot]);
+
   const refreshPendingSources = useCallback(async () => {
     if (!boot) return;
     setPendingSources(await listPendingVoiceSources(boot.workspace.id));
@@ -157,13 +171,25 @@ export default function App() {
       if (event.name === "memory_commit_voice_source") {
         void loadMemories().then(() => setMemoryOpen(true));
       }
+      if ([
+        "calendar_create_event_on_device",
+        "event_readiness_set",
+        "task_create_follow_up",
+        "task_set_state",
+      ].includes(event.name ?? "")) {
+        void loadEventCards().then(() => {
+          setEventOpen(true);
+          setMemoryOpen(false);
+        });
+      }
       if (event.name === "conversation_set_focus" && conversationRef.current) {
         void getConversation(conversationRef.current.id).then(setConversation);
+        void loadEventCards();
       }
     } else if (event.type === "capability_unavailable" && event.code !== "NOT_CONFIGURED") {
       setNotice("Одна из дополнительных возможностей сейчас недоступна.");
     }
-  }, [loadMemories]);
+  }, [loadEventCards, loadMemories]);
 
   useEffect(() => {
     let cancelled = false;
@@ -230,6 +256,11 @@ export default function App() {
       window.removeEventListener("offline", offline);
     };
   }, [refreshPendingSources]);
+
+  useEffect(() => {
+    if (!boot) return;
+    void loadEventCards().catch(() => {});
+  }, [boot, loadEventCards]);
 
   useEffect(() => {
     if (!boot) return;
@@ -443,9 +474,34 @@ export default function App() {
     try {
       await loadMemories();
       setMemoryOpen(true);
+      setEventOpen(false);
       setContextOpen(false);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Не удалось прочитать память.");
+    }
+  }
+
+  async function openEvents() {
+    try {
+      await loadEventCards();
+      setEventOpen(true);
+      setMemoryOpen(false);
+      setContextOpen(false);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Не удалось прочитать готовность.");
+    }
+  }
+
+  async function changeTaskState(
+    taskId: string,
+    state: "accepted" | "done" | "snoozed" | "rejected",
+  ) {
+    if (!boot) return;
+    try {
+      await setTaskState(taskId, boot.workspace.id, state);
+      await loadEventCards();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Не удалось изменить задачу.");
     }
   }
 
@@ -523,7 +579,7 @@ export default function App() {
   }
 
   const voiceActive = !["off", "start_error", "connection_error", "microphone_unavailable"].includes(voiceState);
-  const showWork = Boolean(answer || notice || wait || memoryOpen);
+  const showWork = Boolean(answer || notice || wait || memoryOpen || eventOpen);
   const projectCount = Math.max(0, boot.projects.length - 1);
   const pendingCount = pendingSources.length;
   const voiceHeadline =
@@ -553,6 +609,7 @@ export default function App() {
               return next;
             });
             setMemoryOpen(false);
+            setEventOpen(false);
           }}
           aria-expanded={contextOpen}
         >
@@ -572,7 +629,10 @@ export default function App() {
                 <p className="eyebrow">Контекст</p>
                 <h2>{boot.workspace.name}</h2>
               </div>
-              <button className="quiet-button" onClick={openMemory}>Память</button>
+              <div className="sheet-actions">
+                <button className="quiet-button" onClick={openEvents}>Готовность</button>
+                <button className="quiet-button" onClick={openMemory}>Память</button>
+              </div>
             </div>
             <div className="project-list">
               {boot.projects.map(project => (
@@ -679,6 +739,65 @@ export default function App() {
                 <strong>{formatWait(wait)}</strong>
                 <p>{wait.can_restart ? "Можно остановить и начать снова — источник останется сохранён." : "Можно остановить в любой момент."}</p>
               </div>
+            ) : eventOpen ? (
+              <div className="event-board">
+                <div className="sheet-heading">
+                  <div>
+                    <p className="eyebrow">Готовность к событиям</p>
+                    <h2>{focusProject?.name ?? "Проекты"}</h2>
+                  </div>
+                  <button className="quiet-button" onClick={() => setEventOpen(false)}>Закрыть</button>
+                </div>
+                {eventCards.length ? (
+                  <div className="event-list">
+                    {eventCards.map(card => (
+                      <section className={"event-card" + (card.ready ? " is-ready" : "")} key={card.id}>
+                        <div className="event-heading">
+                          <div>
+                            <span className="event-time">{card.starts_at}</span>
+                            <strong>{card.title}</strong>
+                          </div>
+                          <span className="readiness-badge">
+                            {card.ready ? "Готово" : `Осталось · ${card.incomplete_count}`}
+                          </span>
+                        </div>
+                        <div className="checklist">
+                          {card.checklist.map(item => (
+                            <div className={"check-row" + (item.done ? " done" : "")} key={item.key}>
+                              <span>{item.done ? "✓" : "○"}</span>
+                              <p>{item.label}</p>
+                            </div>
+                          ))}
+                        </div>
+                        {card.tasks.length > 0 && (
+                          <div className="task-list">
+                            {card.tasks.map(task => (
+                              <div className="task-row" key={task.id}>
+                                <div>
+                                  <strong>{task.title}</strong>
+                                  <span>{task.state}{task.deadline ? " · " + task.deadline : ""}</span>
+                                </div>
+                                {task.state !== "done" && task.state !== "rejected" && (
+                                  <div className="task-actions">
+                                    {task.state === "proposed" && (
+                                      <button className="mini-action" onClick={() => changeTaskState(task.id, "accepted")}>Принять</button>
+                                    )}
+                                    <button className="mini-action" onClick={() => changeTaskState(task.id, "done")}>Готово</button>
+                                    <button className="mini-action" onClick={() => changeTaskState(task.id, "snoozed")}>Отложить</button>
+                                    <button className="mini-action" onClick={() => changeTaskState(task.id, "rejected")}>Отказаться</button>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </section>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="empty-copy">Событий с checklist пока нет. Создайте событие голосом.</p>
+                )}
+              </div>
             ) : memoryOpen ? (
               <div className="memory-card">
                 <div className="sheet-heading">
@@ -717,13 +836,14 @@ export default function App() {
         )}
       </section>
 
-      {(answer || memories.length > 0 || (pendingCount > 0 && networkOnline)) && !voiceActive && (
+      {(answer || memories.length > 0 || eventCards.length > 0 || (pendingCount > 0 && networkOnline)) && !voiceActive && (
         <nav className="action-islands" aria-label="Контекстные действия">
           {pendingCount > 0 && networkOnline && (
             <button className="island action-pill" onClick={deliverSavedSource} disabled={busy}>
               {pendingCount === 1 ? "Передать запись" : `Передать записи · ${pendingCount}`}
             </button>
           )}
+          {eventCards.length > 0 && <button className="island action-pill" onClick={openEvents}>Готовность</button>}
           {memories.length > 0 && <button className="island action-pill" onClick={openMemory}>Память</button>}
           {answer && <button className="island action-pill" onClick={() => setAnswer("")}>Убрать результат</button>}
         </nav>

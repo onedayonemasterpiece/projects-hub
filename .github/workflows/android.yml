@@ -58,4 +58,4 @@ jobs:
         with:
           api-level: 35
           arch: x86_64
-          script: gradle -p android connectedDebugAndroidTest --stacktrace
+          script: bash scripts/android_emulator_smoke.sh

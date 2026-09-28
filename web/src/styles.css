@@ -308,7 +308,9 @@ button:focus-visible {
   font-size: 11px;
 }
 
-.repository-actions {
+.repository-actions,
+.sheet-actions,
+.task-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -435,6 +437,104 @@ button:focus-visible {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.45;
+}
+
+.event-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.event-card {
+  padding: 18px;
+  border: 1px solid var(--stroke);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.032);
+}
+
+.event-card.is-ready {
+  border-color: rgba(110, 231, 168, 0.24);
+}
+
+.event-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-start;
+}
+
+.event-heading > div {
+  display: grid;
+  gap: 5px;
+}
+
+.event-heading strong {
+  font-size: 17px;
+}
+
+.event-time,
+.task-row span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.readiness-badge {
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: rgba(255, 211, 123, 0.08);
+  color: var(--warn);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.event-card.is-ready .readiness-badge {
+  color: var(--positive);
+  background: rgba(110, 231, 168, 0.08);
+}
+
+.checklist,
+.task-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 14px;
+}
+
+.check-row {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  gap: 8px;
+  align-items: center;
+  color: #d9d9dc;
+}
+
+.check-row span {
+  color: var(--warn);
+}
+
+.check-row.done span {
+  color: var(--positive);
+}
+
+.check-row p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.task-row {
+  padding-top: 12px;
+  border-top: 1px solid var(--stroke);
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.task-row > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.task-row strong {
+  font-size: 13px;
 }
 
 .empty-copy {

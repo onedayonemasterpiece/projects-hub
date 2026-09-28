@@ -6,6 +6,7 @@ from typing import Any
 from .device_commands import DeviceCommandService
 from .live_adapter import ProjectsHubLiveAdapter
 from .live_resources import live_resource_environment
+from .readiness import ReadinessService
 from .store import DurableStore
 
 
@@ -14,6 +15,7 @@ def build_live_host(
     *,
     environment: dict[str, str] | None = None,
     device_commands: DeviceCommandService | None = None,
+    readiness: ReadinessService | None = None,
 ) -> Any:
     """Build the canonical shared host lazily so offline store/API tests need no provider SDK."""
 
@@ -25,6 +27,7 @@ def build_live_host(
 
     env = dict(os.environ if environment is None else environment)
     device_commands = device_commands or DeviceCommandService(store)
+    readiness = readiness or ReadinessService(store)
 
     async def managed_runner(*, session: Any, reader: Any, on_event: Any) -> None:
         try:
@@ -44,6 +47,7 @@ def build_live_host(
         adapter_factory=lambda **shared: ProjectsHubLiveAdapter(
             store,
             device_commands=device_commands,
+            readiness=readiness,
             **shared,
         ),
         managed_runner=managed_runner,

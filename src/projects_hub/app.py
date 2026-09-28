@@ -20,6 +20,7 @@ from .device_commands import DeviceCommandService
 from .live_resources import ConversationScope
 from .live_runtime import build_live_host
 from .logging_config import configure_logging
+from .readiness import ReadinessService
 from .settings import Settings
 from .store import DurableStore, StoreError
 
@@ -74,6 +75,11 @@ class DeviceRegister(BaseModel):
     display_name: str = Field(min_length=1, max_length=120)
     platform: Literal["android"] = "android"
     capabilities: list[str] = Field(min_length=1, max_length=16)
+
+
+class TaskStateChange(BaseModel):
+    workspace_id: str
+    state: Literal["accepted", "done", "snoozed", "rejected"]
 
 
 class DeviceReceipt(BaseModel):
@@ -176,6 +182,7 @@ def create_app(
     identity_verifier: Any | None = None,
     github_connections: Any | None = None,
     device_commands: DeviceCommandService | None = None,
+    readiness: ReadinessService | None = None,
 ) -> FastAPI:
     configure_logging()
     settings = settings or Settings.from_env()
@@ -200,6 +207,7 @@ def create_app(
     app.state.identity_verifier = identity_verifier
     app.state.github_connections = github_connections or GitHubConnections(store, settings)
     app.state.device_commands = device_commands or DeviceCommandService(store)
+    app.state.readiness = readiness or ReadinessService(store)
     if app.state.identity_verifier is None and settings.public_auth_enabled:
         app.state.identity_verifier = SupabaseIdentityVerifier(
             base_url=settings.auth_supabase_url,
@@ -212,6 +220,7 @@ def create_app(
             app.state.live_host = build_live_host(
                 store,
                 device_commands=app.state.device_commands,
+                readiness=app.state.readiness,
             )
         return app.state.live_host
 
@@ -568,6 +577,45 @@ def create_app(
     @app.get("/api/conversations/{conversation_id}")
     async def get_conversation(conversation_id: str, request: Request) -> dict[str, Any]:
         return store.get_conversation(actor_id_from_request(request), conversation_id)
+
+    @app.get("/api/event-cards")
+    async def event_cards(
+        request: Request,
+        workspace_id: str,
+        project_id: str | None = None,
+        limit: int = 8,
+    ) -> dict[str, Any]:
+        actor_id = actor_id_from_request(request)
+        return {"items": app.state.readiness.list_event_cards(
+            actor_id=actor_id,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            limit=limit,
+        )}
+
+    @app.get("/api/tasks")
+    async def tasks(
+        request: Request,
+        workspace_id: str,
+        project_id: str | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        actor_id = actor_id_from_request(request)
+        return {"items": app.state.readiness.list_tasks(
+            actor_id=actor_id,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            limit=limit,
+        )}
+
+    @app.post("/api/tasks/{task_id}/state")
+    async def task_state(task_id: str, payload: TaskStateChange, request: Request) -> dict[str, Any]:
+        return app.state.readiness.set_task_state(
+            actor_id=actor_id_from_request(request),
+            workspace_id=payload.workspace_id,
+            task_id=task_id,
+            state=payload.state,
+        )
 
     @app.get("/api/memories")
     async def memories(
