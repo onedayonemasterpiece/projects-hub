@@ -73,15 +73,33 @@ has been written and read back with the expected SHA-256.
 
 ## Authentication boundary of this first vertical
 
-The first DevCoveer deployment is **loopback only** and uses
-`PROJECTS_HUB_DEV_AUTH=1` for product/browser acceptance. The session secret is
-a separate private file; it is not committed or printed.
+The current DevCoveer runtime keeps loopback dev-auth for bounded local canaries
+and also has the public Yandex/Supabase identity boundary configured. Health reports
+`auth_mode=public_yandex+loopback_dev` and the fixed public origin is
+`https://projects-hub.kenigevents.ru`.
 
-Do **not** expose this loopback dev-auth deployment as the public pilot. Public
-access requires the product identity-provider/OIDC boundary from the product
-specification. GitHub authentication is not the user identity system.
+This does **not** mean the public pilot is reachable yet. The bounded edge publisher
+currently fails before DNS mutation because the installed Yandex Cloud CLI lacks a
+working non-interactive credential. Until that owner-controlled credential is restored
+and the publisher passes DNS/TLS/HTTPS readback, the public edge remains blocked.
+GitHub authentication is still not the user identity system.
 
 ## Acceptance evidence
+
+Current Android/MVP evidence on 28 September 2026:
+
+- `main` / deployed release: `b26c76ba9e27c62af2cf2401a07939cefff76d8a`;
+- backend deployment health PASS, service active/running with zero restarts;
+- post-deploy real Gemini Live function canary PASS with backend readback, voice output and `turn_complete`;
+- Android build + unit PASS and Android emulator install + `MainActivity` launch PASS;
+- signed GitHub Releases `android-v1`, `android-v2`, `android-v3`; v3 is 0.1.3 and its release workflow passed `apksigner verify`;
+- Android updater fetches the latest release manifest, requires increasing versionCode, verifies APK SHA-256 and delegates installation to the Android package installer; interactive emulator update acceptance remains a separate gate until its workflow is green;
+- device-command backend and typed receipts are implemented with claim/digest/session binding and Calendar Provider readback semantics;
+- event-readiness cards, `generic`/`podcast` checklists and follow-up task lifecycle are implemented;
+- backend suite after readiness: 80 pytest PASS; PWA production build PASS;
+- physical Android microphone/calendar acceptance remains `not_run` because no physical ADB device is connected to DevCoveer;
+- production GitHub App code exists, but runtime health reports `github_app_configured=false`;
+- public edge remains BLOCKED by Yandex Cloud DNS authentication before any DNS/TLS mutation.
 
 Implemented and deterministically covered:
 
@@ -145,9 +163,9 @@ Not yet claimed:
 
 - physical microphone acceptance on the user's actual browser/device;
 - crash-durable online startup capture while the Live session POST itself is pending;
-- Android application and Android offline/reboot queue;
-- public IdP/OIDC;
-- GitHub App installation/callback;
+- physical Android calendar/microphone acceptance and Android offline/reboot queue;
+- public DNS/TLS edge acceptance for the configured Yandex IdP boundary;
+- production GitHub App registration/credentials plus installation/callback acceptance;
 - long 3/10/30-minute buffered-source acceptance;
 - multi-user/collaboration gates.
 
