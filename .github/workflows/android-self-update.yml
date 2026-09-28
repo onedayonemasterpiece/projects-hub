@@ -1,0 +1,25 @@
+name: Android self-update E2E
+
+on:
+  pull_request:
+    paths:
+      - "android/**"
+      - "scripts/android_self_update_e2e.py"
+      - ".github/workflows/android-self-update.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  self-update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          script: python3 scripts/android_self_update_e2e.py
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
