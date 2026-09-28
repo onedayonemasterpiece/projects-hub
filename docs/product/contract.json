@@ -10,7 +10,7 @@
   "specification_status": "design_for_implementation",
   "production_product_accepted": false,
   "source_repository": "onedayonemasterpiece/idea-hub",
-  "source_snapshot": "f9b7991c973282f111ef46742cd8cc1de4139469",
+  "source_snapshot": "958264b169ab60c3e7d2bde3510d156ed0eb0337",
   "runtime_baseline": "d4f740df85f7c79e687a88b95e5f86bcee11e8bf",
   "sources": [
     {
@@ -18,126 +18,140 @@
       "voice_id": "voice-20260926-134715-8a684154",
       "group": "core",
       "theme": "Итеративный диалог и правка документации",
-      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/f9b7991c973282f111ef46742cd8cc1de4139469/inbox/voice/2026/09/voice-20260926-134715-8a684154.md"
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/958264b169ab60c3e7d2bde3510d156ed0eb0337/inbox/voice/2026/09/voice-20260926-134715-8a684154.md"
     },
     {
       "id": "V02",
       "voice_id": "voice-20260926-174413-5c6516de",
       "group": "core",
       "theme": "Групповой проектный помощник и роли",
-      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/f9b7991c973282f111ef46742cd8cc1de4139469/inbox/voice/2026/09/voice-20260926-174413-5c6516de.md"
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/958264b169ab60c3e7d2bde3510d156ed0eb0337/inbox/voice/2026/09/voice-20260926-174413-5c6516de.md"
     },
     {
       "id": "V03",
       "voice_id": "voice-20260926-224900-4ccf0f7b",
       "group": "core",
       "theme": "Личное, общее и конкретное устройство",
-      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/f9b7991c973282f111ef46742cd8cc1de4139469/inbox/voice/2026/09/voice-20260926-224900-4ccf0f7b.md"
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/958264b169ab60c3e7d2bde3510d156ed0eb0337/inbox/voice/2026/09/voice-20260926-224900-4ccf0f7b.md"
     },
     {
       "id": "V04",
       "voice_id": "voice-20260927-095306-4ceafe77",
       "group": "core",
       "theme": "Задачи, статусы участия, уведомления",
-      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/f9b7991c973282f111ef46742cd8cc1de4139469/inbox/voice/2026/09/voice-20260927-095306-4ceafe77.md"
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/958264b169ab60c3e7d2bde3510d156ed0eb0337/inbox/voice/2026/09/voice-20260927-095306-4ceafe77.md"
     },
     {
       "id": "V05",
       "voice_id": "voice-20260927-100527-1bedc808",
       "group": "core",
       "theme": "Согласование, приоритет результата, мнения",
-      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/f9b7991c973282f111ef46742cd8cc1de4139469/inbox/voice/2026/09/voice-20260927-100527-1bedc808.md"
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/958264b169ab60c3e7d2bde3510d156ed0eb0337/inbox/voice/2026/09/voice-20260927-100527-1bedc808.md"
     },
     {
       "id": "V06",
       "voice_id": "voice-20260927-101856-e1b21585",
       "group": "core",
       "theme": "Библиотека ресурсов после первой итерации",
-      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/f9b7991c973282f111ef46742cd8cc1de4139469/inbox/voice/2026/09/voice-20260927-101856-e1b21585.md"
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/958264b169ab60c3e7d2bde3510d156ed0eb0337/inbox/voice/2026/09/voice-20260927-101856-e1b21585.md"
     },
     {
       "id": "V07",
       "voice_id": "voice-20260927-102201-f6b70293",
       "group": "core",
       "theme": "Внешние группы, витрина, БД и конкуренция",
-      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/f9b7991c973282f111ef46742cd8cc1de4139469/inbox/voice/2026/09/voice-20260927-102201-f6b70293.md"
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/958264b169ab60c3e7d2bde3510d156ed0eb0337/inbox/voice/2026/09/voice-20260927-102201-f6b70293.md"
     },
     {
       "id": "V08",
       "voice_id": "voice-20260904-175251-3f8f12af",
       "group": "retrospective",
       "theme": "Личные и коллективные хабы",
-      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/f9b7991c973282f111ef46742cd8cc1de4139469/inbox/voice/2026/09/voice-20260904-175251-3f8f12af.md"
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/958264b169ab60c3e7d2bde3510d156ed0eb0337/inbox/voice/2026/09/voice-20260904-175251-3f8f12af.md"
     },
     {
       "id": "V09",
       "voice_id": "voice-20260907-100045-0cde49c3",
       "group": "retrospective",
       "theme": "Приватность в группах лекторов",
-      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/f9b7991c973282f111ef46742cd8cc1de4139469/inbox/voice/2026/09/voice-20260907-100045-0cde49c3.md"
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/958264b169ab60c3e7d2bde3510d156ed0eb0337/inbox/voice/2026/09/voice-20260907-100045-0cde49c3.md"
     },
     {
       "id": "V10",
       "voice_id": "voice-20260920-151123-79725306",
       "group": "retrospective",
       "theme": "Простой веб-интерфейс для партнёров",
-      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/f9b7991c973282f111ef46742cd8cc1de4139469/inbox/voice/2026/09/voice-20260920-151123-79725306.md"
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/958264b169ab60c3e7d2bde3510d156ed0eb0337/inbox/voice/2026/09/voice-20260920-151123-79725306.md"
     },
     {
       "id": "V11",
       "voice_id": "voice-20260829-083338-286e5240",
       "group": "retrospective",
       "theme": "Голосовые изменения материалов лекторов",
-      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/f9b7991c973282f111ef46742cd8cc1de4139469/inbox/voice/2026/08/voice-20260829-083338-286e5240.md"
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/958264b169ab60c3e7d2bde3510d156ed0eb0337/inbox/voice/2026/08/voice-20260829-083338-286e5240.md"
     },
     {
       "id": "V12",
       "voice_id": "voice-20260830-190622-3f5f7e84",
       "group": "retrospective",
       "theme": "Музыкальный клуб и коллективные мероприятия",
-      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/f9b7991c973282f111ef46742cd8cc1de4139469/inbox/voice/2026/08/voice-20260830-190622-3f5f7e84.md"
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/958264b169ab60c3e7d2bde3510d156ed0eb0337/inbox/voice/2026/08/voice-20260830-190622-3f5f7e84.md"
     },
     {
       "id": "V13",
       "voice_id": "voice-20260902-112011-6bcd1aaf",
       "group": "retrospective",
       "theme": "Личный AI-помощник и бизнес-питч",
-      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/f9b7991c973282f111ef46742cd8cc1de4139469/inbox/voice/2026/09/voice-20260902-112011-6bcd1aaf.md"
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/958264b169ab60c3e7d2bde3510d156ed0eb0337/inbox/voice/2026/09/voice-20260902-112011-6bcd1aaf.md"
     },
     {
       "id": "V14",
       "voice_id": "voice-20260902-172715-4bef907e",
       "group": "retrospective",
       "theme": "Узкие capabilities телефона",
-      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/f9b7991c973282f111ef46742cd8cc1de4139469/inbox/voice/2026/09/voice-20260902-172715-4bef907e.md"
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/958264b169ab60c3e7d2bde3510d156ed0eb0337/inbox/voice/2026/09/voice-20260902-172715-4bef907e.md"
     },
     {
       "id": "V15",
       "voice_id": "voice-20260904-000929-7272ae22",
       "group": "retrospective",
       "theme": "Явный обмен карточкой и ссылкой",
-      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/f9b7991c973282f111ef46742cd8cc1de4139469/inbox/voice/2026/09/voice-20260904-000929-7272ae22.md"
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/958264b169ab60c3e7d2bde3510d156ed0eb0337/inbox/voice/2026/09/voice-20260904-000929-7272ae22.md"
     },
     {
       "id": "V16",
       "voice_id": "voice-20260904-171603-ff37739b",
       "group": "retrospective",
       "theme": "Сервисная подписка и бюджет AI",
-      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/f9b7991c973282f111ef46742cd8cc1de4139469/inbox/voice/2026/09/voice-20260904-171603-ff37739b.md"
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/958264b169ab60c3e7d2bde3510d156ed0eb0337/inbox/voice/2026/09/voice-20260904-171603-ff37739b.md"
     },
     {
       "id": "V17",
       "voice_id": "voice-20260904-185839-2bc9b09e",
       "group": "retrospective",
       "theme": "Новые идеи с авторством и дайджест",
-      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/f9b7991c973282f111ef46742cd8cc1de4139469/inbox/voice/2026/09/voice-20260904-185839-2bc9b09e.md"
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/958264b169ab60c3e7d2bde3510d156ed0eb0337/inbox/voice/2026/09/voice-20260904-185839-2bc9b09e.md"
     },
     {
       "id": "V18",
       "voice_id": "voice-20260907-114016-f6770f91",
       "group": "retrospective",
       "theme": "Надёжная очередь большого числа offline-записей",
-      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/f9b7991c973282f111ef46742cd8cc1de4139469/inbox/voice/2026/09/voice-20260907-114016-f6770f91.md"
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/958264b169ab60c3e7d2bde3510d156ed0eb0337/inbox/voice/2026/09/voice-20260907-114016-f6770f91.md"
+    },
+    {
+      "id": "V19",
+      "voice_id": "voice-20260928-095420-b7d29370",
+      "group": "core",
+      "theme": "Android self-update after first installation",
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/958264b169ab60c3e7d2bde3510d156ed0eb0337/inbox/voice/2026/09/voice-20260928-095420-b7d29370.md"
+    },
+    {
+      "id": "V20",
+      "voice_id": "voice-20260928-152848-96c08200",
+      "group": "core",
+      "theme": "Event readiness checklist and secretary follow-up",
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/958264b169ab60c3e7d2bde3510d156ed0eb0337/inbox/voice/2026/09/voice-20260928-152848-96c08200.md"
     }
   ],
   "experience_contract": "live-contract.json",
@@ -459,5 +473,18 @@
     "github_app_live_surface": "read_only_bound_repository_catalogue_only",
     "android_device_command_architecture": "documented_backend_outbox_device_executor_not_yet_implemented",
     "backend_topology": "single_devcoveer_backend_owns_live_and_server_integrations"
+  },
+  "current_execution_focus": {
+    "as_of": "2026-09-28",
+    "slice": "central Live -> backend device command -> paired Android -> calendar -> typed receipt -> same Live call",
+    "android_update": "after physical device-command E2E; signed APK/version manifest/system installer confirmation",
+    "event_readiness": "after basic event/task primitives; class-specific checklist plus concrete follow-up task",
+    "explicitly_deferred": [
+      "vector-search stack until ordinary indexed search proves insufficient",
+      "generic BPM/workflow engine",
+      "privileged silent Android updater",
+      "full shared resource library",
+      "mass external-channel synchronization"
+    ]
   }
 }

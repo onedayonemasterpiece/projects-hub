@@ -4,6 +4,12 @@
 
 **Ревизия 4, 28 сентября 2026.** MVP строится вокруг одной умной Live-модели и её function calls. **Live provider connection и server integrations находятся на одном Projects Hub backend на DevCoveer.** Никакой промежуточный ASR/router/classifier не должен незаметно стать реальным мозгом продукта.
 
+## Кратчайший текущий путь к продуктовому результату
+
+Не реализовывать все идеи из голосовых одновременно. Текущий вертикальный срез: **central Live → `calendar.create_event` function call → durable backend device command → конкретное paired Android-устройство → системный календарь → typed receipt/readback → тот же Live-разговор**. Сначала довести этот путь на реальном телефоне и не потерять уже начатую реализацию device-command outbox.
+
+После этого: минимальный Android updater с обычным системным подтверждением, затем простые collaboration primitives — event/task card, checklist готовности и уведомление. Внешние каналы, библиотека ресурсов, сложные голосования и vector search не блокируют этот E2E.
+
 ## M0 — подтвердить внешние условия
 
 - provider/data/region/age policy для заявленной аудитории;
@@ -38,6 +44,8 @@ PWA и Android реализуют единый UX и один source model:
 - Stop/new conversation/delete имеют разные semantics.
 
 Android получает дополнительные foreground/device capabilities, но core workflow не урезан. Эти capabilities не переносят backend на телефон: server-issued typed command приходит конкретному device, Android выполняет platform API и возвращает receipt.
+
+Для доставки новых Android-сборок достаточно минимального updater path: version manifest с доверенного Projects Hub endpoint/артефакта, подписанный APK, проверка version/signature/hash и системный package installer. Не строить собственный store, MDM или privileged silent installer.
 
 Выход M2: можно записать речь online/offline, пережить restart/network loss и доказать, что источник не потерян. Это ещё не означает, что agent правильно понял содержимое.
 
@@ -126,7 +134,9 @@ Acceptance: имена, аббревиатуры, алиасы, конфликт
 - meeting proposals;
 - calendar: server function call → bound Android device command → Android Calendar/provider API → receipt → backend → same Live agent;
 - notifications/device actions через тот же bound-device command channel;
-- event/project cards.
+- event/project cards;
+- class-specific readiness checklist / Definition of Done с lead time;
+- follow-up task по реально отсутствующему материалу.
 
 Все эти действия инициирует agent function calls или contextual buttons. Button event входит в тот же conversation/product state и не создаёт отдельный интеллект.
 
@@ -172,6 +182,10 @@ Acceptance: имена, аббревиатуры, алиасы, конфликт
 - универсальный local desktop agent;
 - сложные weighted voting schemes;
 - массовый импорт всех мессенджеров;
+- vector DB / embedding pipeline до доказанной нехватки обычного индексированного поиска;
+- универсальный workflow/BPM-конструктор для чек-листов;
+- privileged silent Android updater/MDM;
+- полную библиотеку файлов/медиа до отдельной итерации V06;
 - новый presentation/event/story engine.
 
 ## Ownership
