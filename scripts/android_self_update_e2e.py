@@ -112,7 +112,22 @@ def asset(release: dict, name: str) -> dict:
 def package_state() -> tuple[int, str]:
     output = run("adb", "shell", "dumpsys", "package", PACKAGE, timeout=30, retries=12)
     version = re.search(r"versionCode=(\d+)", output)
-    uid = re.search(r"userId=(\d+)", output)
+    uid = re.search(r"(?:userId|appId)=(\d+)", output)
+    if uid is None:
+        listed = run(
+            "adb",
+            "shell",
+            "cmd",
+            "package",
+            "list",
+            "packages",
+            "-U",
+            PACKAGE,
+            check=False,
+            timeout=20,
+            retries=12,
+        )
+        uid = re.search(r"uid:(\d+)", listed)
     package_path = run(
         "adb", "shell", "pm", "path", PACKAGE, timeout=20, retries=12
     ).strip()
