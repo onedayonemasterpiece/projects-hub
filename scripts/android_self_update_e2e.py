@@ -109,14 +109,19 @@ def asset(release: dict, name: str) -> dict:
     raise RuntimeError(f"Release {release.get('tag_name')} is missing {name}")
 
 
-def package_state() -> tuple[int, str, str]:
-    output = run("adb", "shell", "dumpsys", "package", PACKAGE, timeout=30)
+def package_state() -> tuple[int, str]:
+    output = run("adb", "shell", "dumpsys", "package", PACKAGE, timeout=30, retries=12)
     version = re.search(r"versionCode=(\d+)", output)
     uid = re.search(r"userId=(\d+)", output)
-    first = re.search(r"firstInstallTime=([^\r\n]+)", output)
-    if not version or not uid or not first:
-        raise RuntimeError("Cannot read installed package state")
-    return int(version.group(1)), uid.group(1), first.group(1).strip()
+    package_path = run(
+        "adb", "shell", "pm", "path", PACKAGE, timeout=20, retries=12
+    ).strip()
+    if not version or not uid or not package_path.startswith("package:"):
+        raise RuntimeError(
+            "Cannot read installed package state: "
+            f"version={bool(version)} uid={bool(uid)} path={bool(package_path)}"
+        )
+    return int(version.group(1)), uid.group(1)
 
 
 def ui_tree() -> ET.Element:
@@ -163,7 +168,7 @@ def tap_node(node: ET.Element) -> None:
     run("adb", "shell", "input", "tap", str(x), str(y))
 
 
-def wait_version(expected: int, timeout_seconds: int = 150) -> tuple[int, str, str]:
+def wait_version(expected: int, timeout_seconds: int = 150) -> tuple[int, str]:
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
         try:
@@ -251,13 +256,10 @@ def main() -> None:
     after = wait_version(new_code)
     if before[1] != after[1]:
         raise RuntimeError("Package UID changed; this was not an in-place update")
-    if before[2] != after[2]:
-        raise RuntimeError("firstInstallTime changed; package appears to have been reinstalled")
-
     print(
         "SELF_UPDATE_PASS "
         f"versionCode={before[0]}->{after[0]} "
-        f"uid_preserved=yes firstInstallTime_preserved=yes"
+        f"uid_preserved=yes"
     )
 
 

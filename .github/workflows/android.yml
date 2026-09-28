@@ -58,23 +58,4 @@ jobs:
         with:
           api-level: 35
           arch: x86_64
-          script: |
-            set -eu
-            gradle -p android assembleDebug --stacktrace
-            adb_retry() {
-              i=0
-              while [ "$i" -lt 20 ]; do
-                if adb "$@"; then return 0; fi
-                adb start-server >/dev/null 2>&1 || true
-                i=$((i + 1))
-                sleep 2
-              done
-              return 1
-            }
-            adb_retry wait-for-device
-            adb_retry install -r android/app/build/outputs/apk/debug/app-debug.apk
-            adb_retry shell am start -W -n com.kenigevents.projectshub.debug/com.kenigevents.projectshub.MainActivity
-            sleep 3
-            PID="$(adb_retry shell pidof com.kenigevents.projectshub.debug | tr -d '\r')"
-            test -n "$PID"
-            echo "ANDROID_LAUNCH_PASS pid=$PID"
+          script: bash scripts/android_emulator_smoke.sh
