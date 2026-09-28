@@ -79,6 +79,14 @@ public final class MainActivity extends Activity {
                         + UpdatePolicy.displayVersion(update.versionName, update.versionCode));
                 updateButton.setVisibility(View.VISIBLE);
                 updateButton.setEnabled(true);
+                updateButton.post(() -> Log.i(
+                        "ProjectsHubUpdate",
+                        "update_button_ready versionCode=" + update.versionCode
+                                + " bounds=" + updateButton.getLeft()
+                                + "," + updateButton.getTop()
+                                + "," + updateButton.getRight()
+                                + "," + updateButton.getBottom()
+                ));
                 notifier.updateAvailable(
                         UpdatePolicy.displayVersion(update.versionName, update.versionCode)
                 );
