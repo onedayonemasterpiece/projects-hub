@@ -10,6 +10,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.webkit.CookieManager;
@@ -78,6 +79,14 @@ public final class MainActivity extends Activity {
                         + UpdatePolicy.displayVersion(update.versionName, update.versionCode));
                 updateButton.setVisibility(View.VISIBLE);
                 updateButton.setEnabled(true);
+                updateButton.post(() -> Log.i(
+                        "ProjectsHubUpdate",
+                        "update_button_ready versionCode=" + update.versionCode
+                                + " bounds=" + updateButton.getLeft()
+                                + "," + updateButton.getTop()
+                                + "," + updateButton.getRight()
+                                + "," + updateButton.getBottom()
+                ));
                 notifier.updateAvailable(
                         UpdatePolicy.displayVersion(update.versionName, update.versionCode)
                 );
@@ -127,7 +136,10 @@ public final class MainActivity extends Activity {
         super.onResume();
         main.removeCallbacks(pairingProbe);
         main.post(pairingProbe);
-        if (updater != null) updater.resumePendingInstall();
+        if (updater != null) {
+            updater.resumePendingInstall();
+            updater.checkForUpdate();
+        }
     }
 
     @Override
@@ -233,7 +245,10 @@ public final class MainActivity extends Activity {
 
         button.setOnClickListener(ignored -> {
             Updater.AvailableUpdate update = availableUpdate;
-            if (update != null) updater.downloadAndInstall(update);
+            if (update != null) {
+                Log.i("ProjectsHubUpdate", "update_button_clicked versionCode=" + update.versionCode);
+                updater.downloadAndInstall(update);
+            }
         });
         return button;
     }
