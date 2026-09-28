@@ -12,7 +12,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .auth import COOKIE_NAME, issue_session, parse_session
+from .auth import COOKIE_NAME, SESSION_TTL_SECONDS, issue_session, parse_session
+from .identity import IdentityError, SupabaseIdentityVerifier
 from .live_resources import ConversationScope
 from .live_runtime import build_live_host
 from .logging_config import configure_logging
@@ -24,6 +25,10 @@ log = logging.getLogger("projects_hub.api")
 
 class DevLogin(BaseModel):
     display_name: str = Field(default="Pilot user", max_length=80)
+
+
+class AuthExchange(BaseModel):
+    access_token: str = Field(min_length=20, max_length=8192)
 
 
 class ConversationCreate(BaseModel):
@@ -53,6 +58,10 @@ def _http_for_code(code: str) -> int:
         return 401
     if code in {"FORBIDDEN"}:
         return 403
+    if code in {"IDENTITY_PROVIDER_INVALID"}:
+        return 502
+    if code in {"IDENTITY_PROVIDER_UNAVAILABLE"}:
+        return 503
     if code.endswith("_NOT_FOUND") or code == "LIVE_SESSION_NOT_FOUND":
         return 404
     if code in {"LIVE_BUSY"}:
@@ -88,11 +97,26 @@ def _loopback_dev_request(request: Request) -> bool:
     return host in {"127.0.0.1", "::1", "localhost"}
 
 
+def _public_edge_request(request: Request, settings: Settings) -> bool:
+    if not settings.public_auth_enabled:
+        return False
+    expected_host = settings.public_origin.removeprefix("https://")
+    return (
+        (request.headers.get("host") or "").strip().lower() == expected_host.lower()
+        and (request.headers.get("x-forwarded-host") or "").strip().lower() == expected_host.lower()
+        and (request.headers.get("x-forwarded-proto") or "").strip().lower() == "https"
+        and (request.headers.get("x-forwarded-port") or "").strip() == "443"
+        and not request.headers.get("forwarded")
+        and not request.headers.get("x-forwarded-for")
+    )
+
+
 def create_app(
     settings: Settings | None = None,
     *,
     store: DurableStore | None = None,
     live_host: Any | None = None,
+    identity_verifier: Any | None = None,
 ) -> FastAPI:
     configure_logging()
     settings = settings or Settings.from_env()
@@ -114,6 +138,13 @@ def create_app(
     app.state.settings = settings
     app.state.store = store
     app.state.live_host = live_host
+    app.state.identity_verifier = identity_verifier
+    if app.state.identity_verifier is None and settings.public_auth_enabled:
+        app.state.identity_verifier = SupabaseIdentityVerifier(
+            base_url=settings.auth_supabase_url,
+            publishable_key=settings.auth_supabase_publishable_key,
+            provider=settings.auth_provider,
+        )
 
     def host() -> Any:
         if app.state.live_host is None:
@@ -122,6 +153,20 @@ def create_app(
 
     @app.middleware("http")
     async def request_log(request: Request, call_next):
+        if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
+            direct_loopback = _loopback_dev_request(request)
+            if settings.public_auth_enabled and not direct_loopback:
+                if not _public_edge_request(request, settings):
+                    return JSONResponse(
+                        status_code=403,
+                        content={"error": {"code": "PUBLIC_ORIGIN_REQUIRED"}},
+                    )
+                origin = (request.headers.get("origin") or "").strip().rstrip("/")
+                if origin != settings.public_origin:
+                    return JSONResponse(
+                        status_code=403,
+                        content={"error": {"code": "ORIGIN_MISMATCH"}},
+                    )
         request_id = request.headers.get("x-request-id") or "req_" + uuid.uuid4().hex[:16]
         started = time.monotonic()
         try:
@@ -168,17 +213,80 @@ def create_app(
         http = _error(exc)
         return JSONResponse(status_code=http.status_code, content={"error": http.detail})
 
+    @app.exception_handler(IdentityError)
+    async def identity_error(_request: Request, exc: IdentityError):
+        return JSONResponse(
+            status_code=_http_for_code(exc.code),
+            content={"error": {"code": exc.code, "message": str(exc)[:300]}},
+        )
+
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
         return {
             "ok": store.ping(),
             "storage": "sqlite-wal",
-            "auth_mode": "loopback_dev" if settings.dev_auth else "session",
+            "auth_mode": (
+                "public_yandex+loopback_dev"
+                if settings.public_auth_enabled and settings.dev_auth
+                else "public_yandex"
+                if settings.public_auth_enabled
+                else "loopback_dev"
+                if settings.dev_auth
+                else "session"
+            ),
             "release_sha": settings.release_sha,
             "static_ready": settings.static_dir.is_dir(),
             "live_interaction_available": importlib.util.find_spec("live_interaction") is not None,
             "resource_control_available": importlib.util.find_spec("ai_resource_control") is not None,
         }
+
+    @app.get("/api/auth/config")
+    async def auth_config() -> dict[str, Any]:
+        if settings.public_auth_enabled:
+            return {
+                "mode": "yandex_pkce",
+                "supabase_url": settings.auth_supabase_url,
+                "publishable_key": settings.auth_supabase_publishable_key,
+                "provider": settings.auth_provider,
+                "redirect_url": settings.public_origin + "/",
+            }
+        return {
+            "mode": "loopback_dev" if settings.dev_auth else "disabled",
+        }
+
+    @app.post("/api/auth/exchange")
+    async def auth_exchange(
+        payload: AuthExchange,
+        response: Response,
+        request: Request,
+    ) -> dict[str, Any]:
+        if not settings.public_auth_enabled or not _public_edge_request(request, settings):
+            raise HTTPException(status_code=404, detail={"code": "PUBLIC_AUTH_DISABLED"})
+        verifier = app.state.identity_verifier
+        if verifier is None:
+            raise HTTPException(status_code=503, detail={"code": "IDENTITY_PROVIDER_UNAVAILABLE"})
+        identity = await verifier.verify(payload.access_token)
+        bootstrap = store.ensure_external_workspace(
+            provider=str(identity["provider"]),
+            subject=str(identity["subject"]),
+            display_name=str(identity.get("display_name") or "Пользователь"),
+            email=identity.get("email"),
+        )
+        token = issue_session(bootstrap["actor"]["id"], settings.session_secret)
+        response.set_cookie(
+            COOKIE_NAME,
+            token,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            max_age=SESSION_TTL_SECONDS,
+            path="/",
+        )
+        log.info(
+            "public identity exchanged",
+            extra={"event": "auth_exchange", "result": "ok"},
+        )
+        return bootstrap
 
     @app.post("/api/dev/login")
     async def dev_login(payload: DevLogin, response: Response, request: Request) -> dict[str, Any]:
@@ -190,9 +298,9 @@ def create_app(
             COOKIE_NAME,
             token,
             httponly=True,
-            secure=settings.cookie_secure,
+            secure=False,
             samesite="lax",
-            max_age=7 * 24 * 60 * 60,
+            max_age=SESSION_TTL_SECONDS,
             path="/",
         )
         return bootstrap
