@@ -176,6 +176,25 @@ def find_node(predicate, timeout_seconds: int = 60) -> ET.Element:
         # unrelated to the app under test. Keep the system process alive and
         # continue the same product flow instead of treating that overlay as an
         # application failure.
+        system_anr = any(
+            "System UI" in node.attrib.get("text", "")
+            and "responding" in node.attrib.get("text", "")
+            for node in nodes
+        )
+        if system_anr:
+            close_node = next(
+                (
+                    node
+                    for node in nodes
+                    if node.attrib.get("text") == "Close app"
+                ),
+                None,
+            )
+            if close_node is not None:
+                tap_node(close_node)
+                time.sleep(4)
+                continue
+
         wait_node = next(
             (
                 node
