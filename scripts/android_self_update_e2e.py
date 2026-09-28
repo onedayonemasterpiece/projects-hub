@@ -8,6 +8,7 @@ import re
 import subprocess
 import time
 import urllib.request
+import xml.etree.ElementTree as ET
 
 
 REPO = "onedayonemasterpiece/projects-hub"
@@ -162,20 +163,96 @@ def current_focus() -> str:
     return " | ".join(lines[-4:])
 
 
+def _bounds_center(value: str) -> tuple[int, int] | None:
+    match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", value)
+    if not match:
+        return None
+    left, top, right, bottom = map(int, match.groups())
+    return (left + right) // 2, (top + bottom) // 2
+
+
+def _ui_nodes() -> list[dict[str, str]]:
+    dumped = run(
+        "adb",
+        "shell",
+        "uiautomator",
+        "dump",
+        "/sdcard/projects-hub-window.xml",
+        check=False,
+        timeout=20,
+        retries=1,
+    )
+    if "ERROR" in dumped.upper():
+        return []
+    raw = run(
+        "adb",
+        "exec-out",
+        "cat",
+        "/sdcard/projects-hub-window.xml",
+        check=False,
+        timeout=20,
+        retries=1,
+    )
+    if not raw.lstrip().startswith("<?xml"):
+        return []
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError:
+        return []
+    return [dict(node.attrib) for node in root.iter("node")]
+
+
 def tap_update_until_system_ui(width: int, height: int, density: float) -> str:
-    # The update button is a native overlay anchored bottom/end in MainActivity.
-    x = max(1, width - round(90 * density))
-    y = max(1, height - round(48 * density))
-    deadline = time.time() + 90
+    # Prefer the actual native Button bounds. Coordinate fallback remains only
+    # for a transient UIAutomator failure after the button has already appeared.
+    fallback_x = max(1, width - round(110 * density))
+    fallback_y = max(1, height - round(46 * density))
+    deadline = time.time() + 120
+    button_seen = False
+    last_texts: list[str] = []
     while time.time() < deadline:
-        run("adb", "shell", "input", "tap", str(x), str(y), check=False, timeout=15)
-        time.sleep(2)
         focus = current_focus().lower()
         if "settings" in focus:
             return "settings"
         if "packageinstaller" in focus or "permissioncontroller" in focus:
             return "installer"
-    raise RuntimeError("Update button did not hand off to Android system UI")
+
+        nodes = _ui_nodes()
+        if nodes:
+            last_texts = [node.get("text", "") for node in nodes if node.get("text")][-30:]
+            update = next(
+                (
+                    node for node in nodes
+                    if node.get("text", "").startswith("Доступно обновление")
+                ),
+                None,
+            )
+            if update is not None:
+                center = _bounds_center(update.get("bounds", ""))
+                if center is None:
+                    raise RuntimeError("Update button has invalid bounds")
+                button_seen = True
+                print("app update button: visible")
+                run(
+                    "adb", "shell", "input", "tap",
+                    str(center[0]), str(center[1]),
+                    check=False, timeout=15, retries=1,
+                )
+                time.sleep(2)
+                continue
+
+        if button_seen:
+            run(
+                "adb", "shell", "input", "tap",
+                str(fallback_x), str(fallback_y),
+                check=False, timeout=15, retries=1,
+            )
+        time.sleep(2)
+
+    raise RuntimeError(
+        "Update button handoff failed: "
+        f"button_seen={button_seen} focus={current_focus()!r} visible={last_texts!r}"
+    )
 
 
 def wait_installer(timeout_seconds: int = 150) -> None:
