@@ -181,7 +181,6 @@ def find_node(predicate, timeout_seconds: int = 60) -> ET.Element:
                 node
                 for node in nodes
                 if node.attrib.get("text") == "Wait"
-                and node.attrib.get("clickable") == "true"
             ),
             None,
         )
