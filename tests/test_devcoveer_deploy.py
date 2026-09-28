@@ -1,6 +1,11 @@
 import pytest
 
-from deploy.devcoveer_install import DeployError, render_env, select_provider_environment
+from deploy.devcoveer_install import (
+    DeployError,
+    render_env,
+    select_provider_environment,
+    select_public_auth_publishable_key,
+)
 
 
 def test_provider_environment_is_minimal_and_uses_only_projects_hub_fallback():
@@ -32,3 +37,25 @@ def test_provider_environment_requires_shared_authority_pair():
 def test_render_env_rejects_multiline_values():
     with pytest.raises(DeployError):
         render_env({"AI_RESOURCE_CONTROL_URL": "one\ntwo"})
+
+
+def test_public_auth_publishable_key_accepts_matching_aliases_only():
+    value = "sb_publishable_" + ("p" * 40)
+    assert select_public_auth_publishable_key(
+        {
+            "PERSONALIZATION_SUPABASE_PUBLISHABLE_KEY": value,
+            "PUBLIC_PERSONALIZATION_SUPABASE_PUBLISHABLE_KEY": value,
+        }
+    ) == value
+
+    with pytest.raises(DeployError, match="unavailable"):
+        select_public_auth_publishable_key({})
+
+    with pytest.raises(DeployError, match="disagree"):
+        select_public_auth_publishable_key(
+            {
+                "PERSONALIZATION_SUPABASE_PUBLISHABLE_KEY": value,
+                "PUBLIC_PERSONALIZATION_SUPABASE_PUBLISHABLE_KEY":
+                    "sb_publishable_" + ("q" * 40),
+            }
+        )

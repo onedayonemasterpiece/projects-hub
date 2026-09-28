@@ -12,7 +12,13 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .auth import COOKIE_NAME, issue_session, parse_session
+from .auth import (
+    COOKIE_NAME,
+    PUBLIC_SESSION_TTL_SECONDS,
+    issue_session,
+    parse_session,
+)
+from .identity import IdentityError, SupabaseIdentityVerifier
 from .live_resources import ConversationScope
 from .live_runtime import build_live_host
 from .logging_config import configure_logging
@@ -24,6 +30,10 @@ log = logging.getLogger("projects_hub.api")
 
 class DevLogin(BaseModel):
     display_name: str = Field(default="Pilot user", max_length=80)
+
+
+class PublicAuthExchange(BaseModel):
+    access_token: str = Field(min_length=20, max_length=8192)
 
 
 class ConversationCreate(BaseModel):
@@ -51,6 +61,8 @@ class LiveInput(BaseModel):
 def _http_for_code(code: str) -> int:
     if code in {"UNAUTHENTICATED"}:
         return 401
+    if code in {"IDENTITY_PROVIDER_UNAVAILABLE", "IDENTITY_PROVIDER_INVALID"}:
+        return 503
     if code in {"FORBIDDEN"}:
         return 403
     if code.endswith("_NOT_FOUND") or code == "LIVE_SESSION_NOT_FOUND":
@@ -70,6 +82,15 @@ def _error(exc: Exception) -> HTTPException:
     )
 
 
+def _host_only(value: str) -> str:
+    raw = (value or "").strip().lower()
+    if raw.startswith("[") and "]" in raw:
+        return raw[1 : raw.index("]")]
+    if raw.count(":") == 1:
+        return raw.rsplit(":", 1)[0]
+    return raw
+
+
 def _loopback_dev_request(request: Request) -> bool:
     # Development login is deliberately not a reverse-proxy authentication mode.
     # A future public deployment must use a real supported IdP/OIDC flow.
@@ -78,14 +99,48 @@ def _loopback_dev_request(request: Request) -> bool:
         for name in ("forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto")
     ):
         return False
-    raw = (request.headers.get("host") or "").strip().lower()
-    if raw.startswith("[") and "]" in raw:
-        host = raw[1 : raw.index("]")]
-    elif raw.count(":") == 1:
-        host = raw.rsplit(":", 1)[0]
-    else:
-        host = raw
+    host = _host_only(request.headers.get("host") or "")
     return host in {"127.0.0.1", "::1", "localhost"}
+
+
+def _public_edge_candidate(request: Request, settings: Settings) -> bool:
+    if not settings.public_auth_enabled:
+        return False
+    host = _host_only(request.headers.get("host") or "")
+    return bool(
+        host == "projects-hub.kenigevents.ru"
+        or request.headers.get("x-forwarded-host")
+        or request.headers.get("x-forwarded-proto")
+        or request.headers.get("x-forwarded-port")
+    )
+
+
+def _public_edge_request(request: Request, settings: Settings) -> bool:
+    if not settings.public_auth_enabled:
+        return False
+    host = _host_only(request.headers.get("host") or "")
+    forwarded_host = (
+        request.headers.get("x-forwarded-host") or ""
+    ).strip().lower()
+    forwarded_proto = (
+        request.headers.get("x-forwarded-proto") or ""
+    ).strip().lower()
+    forwarded_port = (
+        request.headers.get("x-forwarded-port") or ""
+    ).strip()
+    if (
+        host != "projects-hub.kenigevents.ru"
+        or forwarded_host != "projects-hub.kenigevents.ru"
+        or forwarded_proto != "https"
+        or forwarded_port != "443"
+    ):
+        return False
+    if any(
+        (request.headers.get(name) or "").strip()
+        for name in ("forwarded", "x-forwarded-for", "x-real-ip")
+    ):
+        return False
+    return True
 
 
 def create_app(
@@ -93,11 +148,18 @@ def create_app(
     *,
     store: DurableStore | None = None,
     live_host: Any | None = None,
+    identity_verifier: SupabaseIdentityVerifier | None = None,
 ) -> FastAPI:
     configure_logging()
     settings = settings or Settings.from_env()
     owned_store = store is None
     store = store or DurableStore(settings.data_dir)
+    if settings.public_auth_enabled and identity_verifier is None:
+        identity_verifier = SupabaseIdentityVerifier(
+            base_url=settings.auth_supabase_url,
+            publishable_key=settings.auth_supabase_publishable_key,
+            provider=settings.auth_provider,
+        )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -114,6 +176,7 @@ def create_app(
     app.state.settings = settings
     app.state.store = store
     app.state.live_host = live_host
+    app.state.identity_verifier = identity_verifier
 
     def host() -> Any:
         if app.state.live_host is None:
@@ -122,24 +185,56 @@ def create_app(
 
     @app.middleware("http")
     async def request_log(request: Request, call_next):
-        request_id = request.headers.get("x-request-id") or "req_" + uuid.uuid4().hex[:16]
+        request_id = (
+            request.headers.get("x-request-id")
+            or "req_" + uuid.uuid4().hex[:16]
+        )
         started = time.monotonic()
-        try:
-            response = await call_next(request)
-        except Exception:
-            log.exception(
-                "request failed",
-                extra={
-                    "event": "http_request",
-                    "request_id": request_id,
-                    "method": request.method,
-                    "path": request.url.path,
-                    "status": 500,
-                    "duration_ms": round((time.monotonic() - started) * 1000),
-                },
+        public_edge = _public_edge_request(request, settings)
+        if _public_edge_candidate(request, settings) and not public_edge:
+            response = JSONResponse(
+                status_code=403,
+                content={"error": {"code": "PUBLIC_EDGE_REQUIRED"}},
             )
-            raise
+        elif (
+            public_edge
+            and request.method not in {"GET", "HEAD", "OPTIONS"}
+            and (request.headers.get("origin") or "").rstrip("/")
+            != settings.public_origin
+        ):
+            response = JSONResponse(
+                status_code=403,
+                content={"error": {"code": "ORIGIN_REQUIRED"}},
+            )
+        else:
+            try:
+                response = await call_next(request)
+            except Exception:
+                log.exception(
+                    "request failed",
+                    extra={
+                        "event": "http_request",
+                        "request_id": request_id,
+                        "method": request.method,
+                        "path": request.url.path,
+                        "status": 500,
+                        "duration_ms": round(
+                            (time.monotonic() - started) * 1000
+                        ),
+                    },
+                )
+                raise
+
         response.headers["x-request-id"] = request_id
+        response.headers["x-content-type-options"] = "nosniff"
+        response.headers["referrer-policy"] = "no-referrer"
+        response.headers["x-frame-options"] = "DENY"
+        if request.url.path.startswith("/api/"):
+            response.headers["cache-control"] = "no-store"
+        if public_edge:
+            response.headers[
+                "strict-transport-security"
+            ] = "max-age=31536000; includeSubDomains"
         log.info(
             "request",
             extra={
@@ -148,7 +243,9 @@ def create_app(
                 "method": request.method,
                 "path": request.url.path,
                 "status": response.status_code,
-                "duration_ms": round((time.monotonic() - started) * 1000),
+                "duration_ms": round(
+                    (time.monotonic() - started) * 1000
+                ),
             },
         )
         return response
@@ -166,19 +263,91 @@ def create_app(
     @app.exception_handler(StoreError)
     async def store_error(_request: Request, exc: StoreError):
         http = _error(exc)
-        return JSONResponse(status_code=http.status_code, content={"error": http.detail})
+        return JSONResponse(
+            status_code=http.status_code,
+            content={"error": http.detail},
+        )
+
+    @app.exception_handler(IdentityError)
+    async def identity_error(_request: Request, exc: IdentityError):
+        http = _error(exc)
+        return JSONResponse(
+            status_code=http.status_code,
+            content={"error": http.detail},
+        )
 
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
         return {
             "ok": store.ping(),
             "storage": "sqlite-wal",
-            "auth_mode": "loopback_dev" if settings.dev_auth else "session",
+            "auth_mode": settings.auth_mode,
             "release_sha": settings.release_sha,
             "static_ready": settings.static_dir.is_dir(),
             "live_interaction_available": importlib.util.find_spec("live_interaction") is not None,
             "resource_control_available": importlib.util.find_spec("ai_resource_control") is not None,
         }
+
+    @app.get("/api/auth/config")
+    async def auth_config() -> dict[str, Any]:
+        if settings.public_auth_enabled:
+            return {
+                "mode": "yandex_pkce",
+                "supabase_url": settings.auth_supabase_url,
+                "publishable_key": settings.auth_supabase_publishable_key,
+                "provider": settings.auth_provider,
+                "redirect_url": settings.public_origin + "/",
+            }
+        return {
+            "mode": "loopback_dev"
+            if settings.dev_auth
+            else "disabled"
+        }
+
+    @app.post("/api/auth/exchange")
+    async def public_auth_exchange(
+        payload: PublicAuthExchange,
+        response: Response,
+        request: Request,
+    ) -> dict[str, Any]:
+        verifier = app.state.identity_verifier
+        if (
+            not settings.public_auth_enabled
+            or verifier is None
+            or not _public_edge_request(request, settings)
+        ):
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "PUBLIC_AUTH_DISABLED"},
+            )
+        identity = await verifier.verify(payload.access_token)
+        bootstrap = store.ensure_external_workspace(
+            provider=str(identity["provider"] or ""),
+            subject=str(identity["subject"] or ""),
+            display_name=str(
+                identity["display_name"] or "Пользователь"
+            ),
+            email=(
+                str(identity["email"])
+                if identity.get("email")
+                else None
+            ),
+        )
+        token = issue_session(
+            bootstrap["actor"]["id"],
+            settings.session_secret,
+            ttl_seconds=PUBLIC_SESSION_TTL_SECONDS,
+        )
+        response.set_cookie(
+            COOKIE_NAME,
+            token,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            max_age=PUBLIC_SESSION_TTL_SECONDS,
+            path="/",
+        )
+        return bootstrap
 
     @app.post("/api/dev/login")
     async def dev_login(payload: DevLogin, response: Response, request: Request) -> dict[str, Any]:
@@ -190,7 +359,7 @@ def create_app(
             COOKIE_NAME,
             token,
             httponly=True,
-            secure=settings.cookie_secure,
+            secure=False,
             samesite="lax",
             max_age=7 * 24 * 60 * 60,
             path="/",
@@ -199,7 +368,12 @@ def create_app(
 
     @app.post("/api/logout")
     async def logout(response: Response) -> dict[str, bool]:
-        response.delete_cookie(COOKIE_NAME, path="/")
+        response.delete_cookie(
+            COOKIE_NAME,
+            path="/",
+            secure=settings.public_auth_enabled,
+            samesite="lax",
+        )
         return {"ok": True}
 
     @app.get("/api/bootstrap")
