@@ -17,16 +17,44 @@ ACTIVITY = PACKAGE + "/.MainActivity"
 WORK = Path(os.environ.get("RUNNER_TEMP", "/tmp")) / "projects-hub-update-e2e"
 
 
-def run(*args: str, check: bool = True, timeout: int = 60) -> str:
-    completed = subprocess.run(
-        list(args),
-        check=check,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        timeout=timeout,
-    )
-    return completed.stdout
+def run(
+    *args: str,
+    check: bool = True,
+    timeout: int = 60,
+    retries: int | None = None,
+) -> str:
+    attempts = retries if retries is not None else (12 if args and args[0] == "adb" else 1)
+    last = None
+    for attempt in range(max(1, attempts)):
+        completed = subprocess.run(
+            list(args),
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=timeout,
+        )
+        if completed.returncode == 0:
+            return completed.stdout
+        last = completed
+        if args and args[0] == "adb" and attempt + 1 < attempts:
+            subprocess.run(
+                ["adb", "start-server"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=20,
+            )
+            time.sleep(min(5, attempt + 1))
+            continue
+        break
+    if check and last is not None:
+        raise subprocess.CalledProcessError(
+            last.returncode,
+            list(args),
+            output=last.stdout,
+        )
+    return "" if last is None else last.stdout
 
 
 def request_json(url: str):
@@ -169,7 +197,16 @@ def main() -> None:
         raise RuntimeError("Latest release manifest APK URL is invalid")
 
     print(f"self-update pair: {old_release['tag_name']} -> {new_release['tag_name']}")
-    run("adb", "install", "-r", str(old_apk), timeout=90)
+    run("adb", "start-server", timeout=20, retries=3)
+    run("adb", "wait-for-device", timeout=90, retries=6)
+    boot_deadline = time.time() + 90
+    while time.time() < boot_deadline:
+        if run("adb", "shell", "getprop", "sys.boot_completed", check=False, timeout=15).strip() == "1":
+            break
+        time.sleep(2)
+    else:
+        raise RuntimeError("Emulator did not become adb-stable after boot")
+    run("adb", "install", "-r", str(old_apk), timeout=90, retries=15)
     before = package_state()
     if before[0] != old_code:
         raise RuntimeError(f"Expected installed versionCode={old_code}, got {before[0]}")
