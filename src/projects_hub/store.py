@@ -207,6 +207,44 @@ class DurableStore:
             action TEXT NOT NULL,
             received_at_ms INTEGER NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS devices(
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL REFERENCES actors(id),
+            workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+            session_id TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            platform TEXT NOT NULL,
+            capabilities_json TEXT NOT NULL,
+            credential_hash TEXT NOT NULL,
+            state TEXT NOT NULL,
+            last_seen_at_ms INTEGER NOT NULL,
+            created_at_ms INTEGER NOT NULL,
+            updated_at_ms INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS devices_actor_workspace_idx
+            ON devices(actor_id, workspace_id, state, updated_at_ms DESC);
+        CREATE TABLE IF NOT EXISTS device_commands(
+            id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL REFERENCES actors(id),
+            workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+            project_id TEXT REFERENCES projects(id),
+            device_id TEXT NOT NULL REFERENCES devices(id),
+            device_session_id TEXT NOT NULL,
+            capability TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            payload_sha256 TEXT NOT NULL,
+            status TEXT NOT NULL,
+            claim_hash TEXT,
+            claimed_at_ms INTEGER,
+            result_json TEXT,
+            result_sha256 TEXT,
+            expires_at_ms INTEGER NOT NULL,
+            finished_at_ms INTEGER,
+            created_at_ms INTEGER NOT NULL,
+            updated_at_ms INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS device_commands_pending_idx
+            ON device_commands(device_id, device_session_id, status, created_at_ms);
         """
         with self._lock:
             self.db.executescript(schema)
@@ -1259,6 +1297,439 @@ class DurableStore:
             except Exception:
                 self.db.execute("ROLLBACK")
                 raise
+
+    @staticmethod
+    def _decode_json_object(value: str | None) -> dict[str, Any]:
+        if not value:
+            return {}
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    @staticmethod
+    def _device_public(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+        item = dict(row)
+        capabilities_raw = item.pop("capabilities_json", "[]")
+        item.pop("credential_hash", None)
+        try:
+            capabilities = json.loads(capabilities_raw)
+        except json.JSONDecodeError:
+            capabilities = []
+        item["capabilities"] = [
+            str(value)
+            for value in capabilities
+            if isinstance(value, str)
+        ] if isinstance(capabilities, list) else []
+        return item
+
+    @staticmethod
+    def _device_command_public(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+        item = dict(row)
+        payload_raw = item.pop("payload_json", "{}")
+        result_raw = item.pop("result_json", None)
+        item.pop("claim_hash", None)
+        item["payload"] = DurableStore._decode_json_object(payload_raw)
+        item["result"] = (
+            DurableStore._decode_json_object(result_raw)
+            if result_raw
+            else None
+        )
+        return item
+
+    def register_device(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        display_name: str,
+        platform: str,
+        capabilities: list[str],
+        credential_hash: str,
+        session_id: str,
+    ) -> dict[str, Any]:
+        name = display_name.strip()[:120]
+        if not name:
+            raise StoreError("INVALID_ARGUMENT", "Device display name is required")
+        if platform not in {"android"}:
+            raise StoreError("INVALID_ARGUMENT", "Unsupported device platform")
+        if (
+            len(credential_hash) != 64
+            or len(session_id) < 20
+            or len(session_id) > 160
+        ):
+            raise StoreError("INVALID_ARGUMENT", "Device credential binding is invalid")
+        clean_capabilities = sorted(set(str(value) for value in capabilities))
+        if not clean_capabilities or len(clean_capabilities) > 32:
+            raise StoreError("INVALID_ARGUMENT", "Device capabilities are invalid")
+        now = _now_ms()
+        device_id = _id("dev")
+        with self._lock:
+            self._membership(actor_id, workspace_id)
+            self.db.execute(
+                """INSERT INTO devices(
+                       id,actor_id,workspace_id,session_id,display_name,platform,
+                       capabilities_json,credential_hash,state,last_seen_at_ms,
+                       created_at_ms,updated_at_ms
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    device_id,
+                    actor_id,
+                    workspace_id,
+                    session_id,
+                    name,
+                    platform,
+                    json.dumps(
+                        clean_capabilities,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                    credential_hash,
+                    "active",
+                    now,
+                    now,
+                    now,
+                ),
+            )
+            row = self.db.execute(
+                "SELECT * FROM devices WHERE id=?",
+                (device_id,),
+            ).fetchone()
+            return self._device_public(row)
+
+    def list_devices(
+        self,
+        actor_id: str,
+        workspace_id: str,
+        *,
+        capability: str | None = None,
+    ) -> list[dict[str, Any]]:
+        with self._lock:
+            self._membership(actor_id, workspace_id)
+            rows = self.db.execute(
+                """SELECT * FROM devices
+                   WHERE actor_id=? AND workspace_id=? AND state='active'
+                   ORDER BY updated_at_ms DESC,id""",
+                (actor_id, workspace_id),
+            ).fetchall()
+            result = [self._device_public(row) for row in rows]
+            if capability:
+                result = [
+                    item
+                    for item in result
+                    if capability in item["capabilities"]
+                ]
+            return result
+
+    def device_auth_record(self, device_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self.db.execute(
+                "SELECT * FROM devices WHERE id=?",
+                (device_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def touch_device(
+        self,
+        *,
+        device_id: str,
+        session_id: str,
+    ) -> None:
+        now = _now_ms()
+        with self._lock:
+            self.db.execute(
+                """UPDATE devices SET last_seen_at_ms=?,updated_at_ms=?
+                   WHERE id=? AND session_id=? AND state='active'""",
+                (now, now, device_id, session_id),
+            )
+
+    def disable_device(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        device_id: str,
+    ) -> None:
+        now = _now_ms()
+        with self._lock:
+            self._membership(actor_id, workspace_id)
+            row = self.db.execute(
+                """SELECT id FROM devices
+                   WHERE id=? AND actor_id=? AND workspace_id=?""",
+                (device_id, actor_id, workspace_id),
+            ).fetchone()
+            if not row:
+                raise StoreError("DEVICE_NOT_FOUND", "Device is not available")
+            self.db.execute(
+                "UPDATE devices SET state='revoked',updated_at_ms=? WHERE id=?",
+                (now, device_id),
+            )
+            self.db.execute(
+                """UPDATE device_commands
+                   SET status='cancelled',finished_at_ms=?,updated_at_ms=?
+                   WHERE device_id=? AND status='pending'""",
+                (now, now, device_id),
+            )
+
+    def _refresh_device_command_timeouts(self, now: int | None = None) -> None:
+        current = now if now is not None else _now_ms()
+        self.db.execute(
+            """UPDATE device_commands
+               SET status='expired',finished_at_ms=?,updated_at_ms=?
+               WHERE status='pending' AND expires_at_ms<=?""",
+            (current, current, current),
+        )
+        self.db.execute(
+            """UPDATE device_commands
+               SET status='outcome_unknown',finished_at_ms=?,updated_at_ms=?
+               WHERE status='claimed' AND claimed_at_ms IS NOT NULL
+                 AND claimed_at_ms<=?""",
+            (current, current, current - 120_000),
+        )
+
+    def create_device_command(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        project_id: str | None,
+        device_id: str,
+        capability: str,
+        payload: dict[str, Any],
+        payload_sha256: str,
+        command_id: str,
+        expires_at_ms: int,
+    ) -> dict[str, Any]:
+        now = _now_ms()
+        if (
+            not command_id.startswith("cmd_")
+            or len(command_id) > 160
+            or len(payload_sha256) != 64
+            or not capability
+            or len(capability) > 100
+            or expires_at_ms <= now
+            or expires_at_ms > now + 60 * 60 * 1000
+        ):
+            raise StoreError("INVALID_ARGUMENT", "Device command is invalid")
+        encoded_payload = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        with self._lock:
+            self._membership(actor_id, workspace_id)
+            if project_id is not None:
+                project = self._project_row(workspace_id, project_id)
+                if not project or project["status"] != "active":
+                    raise StoreError("PROJECT_NOT_FOUND", "Project is not available")
+            device = self.db.execute(
+                """SELECT * FROM devices
+                   WHERE id=? AND actor_id=? AND workspace_id=? AND state='active'""",
+                (device_id, actor_id, workspace_id),
+            ).fetchone()
+            if not device:
+                raise StoreError("DEVICE_NOT_FOUND", "Device is not available")
+            capabilities = json.loads(device["capabilities_json"] or "[]")
+            if capability not in capabilities:
+                raise StoreError(
+                    "DEVICE_CAPABILITY_NOT_AVAILABLE",
+                    "Device does not grant this capability",
+                )
+            existing = self.db.execute(
+                "SELECT * FROM device_commands WHERE id=?",
+                (command_id,),
+            ).fetchone()
+            if existing:
+                if (
+                    existing["actor_id"] != actor_id
+                    or existing["workspace_id"] != workspace_id
+                    or existing["device_id"] != device_id
+                    or existing["device_session_id"] != device["session_id"]
+                    or existing["capability"] != capability
+                    or existing["payload_sha256"] != payload_sha256
+                ):
+                    raise StoreError(
+                        "DEVICE_COMMAND_CONFLICT",
+                        "Command id is already bound to another device action",
+                    )
+                self._refresh_device_command_timeouts(now)
+                return self._device_command_public(
+                    self.db.execute(
+                        "SELECT * FROM device_commands WHERE id=?",
+                        (command_id,),
+                    ).fetchone()
+                )
+            self.db.execute(
+                """INSERT INTO device_commands(
+                       id,actor_id,workspace_id,project_id,device_id,device_session_id,
+                       capability,payload_json,payload_sha256,status,claim_hash,
+                       claimed_at_ms,result_json,result_sha256,expires_at_ms,
+                       finished_at_ms,created_at_ms,updated_at_ms
+                   ) VALUES(?,?,?,?,?,?,?,?,?,'pending',NULL,NULL,NULL,NULL,?,NULL,?,?)""",
+                (
+                    command_id,
+                    actor_id,
+                    workspace_id,
+                    project_id,
+                    device_id,
+                    device["session_id"],
+                    capability,
+                    encoded_payload,
+                    payload_sha256,
+                    int(expires_at_ms),
+                    now,
+                    now,
+                ),
+            )
+            return self._device_command_public(
+                self.db.execute(
+                    "SELECT * FROM device_commands WHERE id=?",
+                    (command_id,),
+                ).fetchone()
+            )
+
+    def claim_next_device_command(
+        self,
+        *,
+        device_id: str,
+        session_id: str,
+        claim_hash: str,
+    ) -> dict[str, Any] | None:
+        if len(claim_hash) != 64:
+            raise StoreError("INVALID_ARGUMENT", "Device command claim is invalid")
+        now = _now_ms()
+        with self._lock:
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                self._refresh_device_command_timeouts(now)
+                device = self.db.execute(
+                    """SELECT id FROM devices
+                       WHERE id=? AND session_id=? AND state='active'""",
+                    (device_id, session_id),
+                ).fetchone()
+                if not device:
+                    raise StoreError("DEVICE_UNAUTHENTICATED", "Device session is unavailable")
+                row = self.db.execute(
+                    """SELECT * FROM device_commands
+                       WHERE device_id=? AND device_session_id=?
+                         AND status='pending' AND expires_at_ms>?
+                       ORDER BY created_at_ms,id
+                       LIMIT 1""",
+                    (device_id, session_id, now),
+                ).fetchone()
+                if not row:
+                    self.db.execute("COMMIT")
+                    return None
+                self.db.execute(
+                    """UPDATE device_commands
+                       SET status='claimed',claim_hash=?,claimed_at_ms=?,updated_at_ms=?
+                       WHERE id=? AND status='pending'""",
+                    (claim_hash, now, now, row["id"]),
+                )
+                claimed = self.db.execute(
+                    "SELECT * FROM device_commands WHERE id=?",
+                    (row["id"],),
+                ).fetchone()
+                self.db.execute("COMMIT")
+                return self._device_command_public(claimed)
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
+
+    def get_device_command(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        command_id: str,
+    ) -> dict[str, Any]:
+        with self._lock:
+            self._membership(actor_id, workspace_id)
+            self._refresh_device_command_timeouts()
+            row = self.db.execute(
+                """SELECT * FROM device_commands
+                   WHERE id=? AND actor_id=? AND workspace_id=?""",
+                (command_id, actor_id, workspace_id),
+            ).fetchone()
+            if not row:
+                raise StoreError("DEVICE_COMMAND_NOT_FOUND", "Device command is unavailable")
+            return self._device_command_public(row)
+
+    def complete_device_command(
+        self,
+        *,
+        device_id: str,
+        session_id: str,
+        command_id: str,
+        claim_hash: str,
+        payload_sha256: str,
+        status: str,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        if status not in {"applied", "rejected", "failed"}:
+            raise StoreError("INVALID_ARGUMENT", "Device command result status is invalid")
+        if len(claim_hash) != 64 or len(payload_sha256) != 64:
+            raise StoreError("INVALID_ARGUMENT", "Device command receipt is invalid")
+        encoded_result = json.dumps(
+            result,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        result_sha = hashlib.sha256(encoded_result.encode("utf-8")).hexdigest()
+        now = _now_ms()
+        with self._lock:
+            self._refresh_device_command_timeouts(now)
+            row = self.db.execute(
+                """SELECT * FROM device_commands
+                   WHERE id=? AND device_id=? AND device_session_id=?""",
+                (command_id, device_id, session_id),
+            ).fetchone()
+            if not row:
+                raise StoreError("DEVICE_COMMAND_NOT_FOUND", "Device command is unavailable")
+            if row["payload_sha256"] != payload_sha256:
+                raise StoreError(
+                    "DEVICE_COMMAND_CONFLICT",
+                    "Device command payload digest mismatch",
+                )
+            if row["status"] in {"applied", "rejected", "failed"}:
+                if row["status"] == status and row["result_sha256"] == result_sha:
+                    return self._device_command_public(row)
+                raise StoreError(
+                    "DEVICE_COMMAND_CONFLICT",
+                    "Device command already has another terminal result",
+                )
+            if row["status"] == "outcome_unknown":
+                raise StoreError(
+                    "DEVICE_COMMAND_OUTCOME_UNKNOWN",
+                    "Device command outcome must be reconciled explicitly",
+                )
+            if row["status"] != "claimed" or row["claim_hash"] != claim_hash:
+                raise StoreError(
+                    "DEVICE_COMMAND_CLAIM_INVALID",
+                    "Device command claim is invalid",
+                )
+            self.db.execute(
+                """UPDATE device_commands
+                   SET status=?,result_json=?,result_sha256=?,finished_at_ms=?,updated_at_ms=?
+                   WHERE id=?""",
+                (
+                    status,
+                    encoded_result,
+                    result_sha,
+                    now,
+                    now,
+                    command_id,
+                ),
+            )
+            return self._device_command_public(
+                self.db.execute(
+                    "SELECT * FROM device_commands WHERE id=?",
+                    (command_id,),
+                ).fetchone()
+            )
 
     def _membership(self, actor_id: str, workspace_id: str) -> sqlite3.Row:
         row = self.db.execute(

@@ -16,6 +16,7 @@ from .auth import COOKIE_NAME, SESSION_TTL_SECONDS, issue_session, parse_session
 from .identity import IdentityError, SupabaseIdentityVerifier
 from .github_app import GitHubAppError
 from .github_connections import GitHubConnections
+from .device_commands import DeviceCommandService
 from .live_resources import ConversationScope
 from .live_runtime import build_live_host
 from .logging_config import configure_logging
@@ -68,8 +69,22 @@ class GitHubRepositoryBind(BaseModel):
     allowed_paths: list[str] = Field(default_factory=list, max_length=32)
 
 
+class DeviceRegister(BaseModel):
+    workspace_id: str
+    display_name: str = Field(min_length=1, max_length=120)
+    platform: Literal["android"] = "android"
+    capabilities: list[str] = Field(min_length=1, max_length=16)
+
+
+class DeviceReceipt(BaseModel):
+    claim_token: str = Field(min_length=20, max_length=200)
+    payload_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    status: Literal["applied", "rejected", "failed"]
+    result: dict[str, Any] = Field(default_factory=dict)
+
+
 def _http_for_code(code: str) -> int:
-    if code in {"UNAUTHENTICATED"}:
+    if code in {"UNAUTHENTICATED", "DEVICE_UNAUTHENTICATED"}:
         return 401
     if code in {
         "FORBIDDEN",
@@ -77,6 +92,7 @@ def _http_for_code(code: str) -> int:
         "GITHUB_WRITE_POLICY_DENIED",
         "GITHUB_WRITE_PERMISSION_MISSING",
         "GITHUB_WEBHOOK_INVALID",
+        "DEVICE_COMMAND_CLAIM_INVALID",
     }:
         return 403
     if code in {"IDENTITY_PROVIDER_INVALID"}:
@@ -88,10 +104,20 @@ def _http_for_code(code: str) -> int:
         "GITHUB_NOT_FOUND",
         "GITHUB_REPOSITORY_NOT_FOUND",
         "GITHUB_INSTALLATION_NOT_FOUND",
+        "DEVICE_NOT_FOUND",
+        "DEVICE_COMMAND_NOT_FOUND",
     }:
         return 404
     if code in {"LIVE_BUSY"}:
         return 429
+    if code in {
+        "DEVICE_SELECTION_REQUIRED",
+        "DEVICE_CAPABILITY_NOT_AVAILABLE",
+        "DEVICE_COMMAND_CONFLICT",
+        "DEVICE_COMMAND_OUTCOME_UNKNOWN",
+        "DEVICE_READBACK_REQUIRED",
+    }:
+        return 409
     if code.startswith("INVALID") or code in {"SOURCE_TRANSCRIPT_PENDING"}:
         return 409 if code == "SOURCE_TRANSCRIPT_PENDING" else 400
     return 503 if code.startswith(("LIVE_", "RESOURCE_")) or code in {
@@ -149,6 +175,7 @@ def create_app(
     live_host: Any | None = None,
     identity_verifier: Any | None = None,
     github_connections: Any | None = None,
+    device_commands: DeviceCommandService | None = None,
 ) -> FastAPI:
     configure_logging()
     settings = settings or Settings.from_env()
@@ -172,6 +199,7 @@ def create_app(
     app.state.live_host = live_host
     app.state.identity_verifier = identity_verifier
     app.state.github_connections = github_connections or GitHubConnections(store, settings)
+    app.state.device_commands = device_commands or DeviceCommandService(store)
     if app.state.identity_verifier is None and settings.public_auth_enabled:
         app.state.identity_verifier = SupabaseIdentityVerifier(
             base_url=settings.auth_supabase_url,
@@ -181,7 +209,10 @@ def create_app(
 
     def host() -> Any:
         if app.state.live_host is None:
-            app.state.live_host = build_live_host(store)
+            app.state.live_host = build_live_host(
+                store,
+                device_commands=app.state.device_commands,
+            )
         return app.state.live_host
 
     @app.middleware("http")
@@ -194,7 +225,8 @@ def create_app(
                         status_code=403,
                         content={"error": {"code": "PUBLIC_ORIGIN_REQUIRED"}},
                     )
-                if request.url.path != "/api/github/webhook":
+                device_call = request.url.path.startswith("/api/device/")
+                if request.url.path != "/api/github/webhook" and not device_call:
                     origin = (request.headers.get("origin") or "").strip().rstrip("/")
                     if origin != settings.public_origin:
                         return JSONResponse(
@@ -432,6 +464,94 @@ def create_app(
             delivery_id=request.headers.get("x-github-delivery"),
             event_name=request.headers.get("x-github-event"),
         )
+
+    @app.post("/api/devices/register")
+    async def register_device(
+        payload: DeviceRegister,
+        request: Request,
+    ) -> dict[str, Any]:
+        actor_id = actor_id_from_request(request)
+        result = app.state.device_commands.register_device(
+            actor_id=actor_id,
+            workspace_id=payload.workspace_id,
+            display_name=payload.display_name,
+            platform=payload.platform,
+            capabilities=payload.capabilities,
+        )
+        log.info(
+            "device registered",
+            extra={
+                "event": "device_registered",
+                "actor_id": actor_id,
+                "workspace_id": payload.workspace_id,
+                "device_id": result["device"]["id"],
+                "platform": payload.platform,
+            },
+        )
+        return result
+
+    @app.get("/api/devices")
+    async def list_devices(
+        request: Request,
+        workspace_id: str,
+    ) -> dict[str, Any]:
+        actor_id = actor_id_from_request(request)
+        return {
+            "devices": app.state.device_commands.list_devices(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+            )
+        }
+
+    @app.post("/api/devices/{device_id}/disable")
+    async def disable_device(
+        device_id: str,
+        request: Request,
+        workspace_id: str = Body(embed=True),
+    ) -> dict[str, Any]:
+        actor_id = actor_id_from_request(request)
+        app.state.device_commands.disable_device(
+            actor_id=actor_id,
+            workspace_id=workspace_id,
+            device_id=device_id,
+        )
+        return {"ok": True, "device_id": device_id}
+
+    @app.get("/api/device/commands/next")
+    async def next_device_command(
+        request: Request,
+        wait_ms: int = 25_000,
+    ) -> dict[str, Any]:
+        return await app.state.device_commands.next_command(
+            authorization=request.headers.get("authorization"),
+            wait_ms=max(0, min(wait_ms, 25_000)),
+        )
+
+    @app.post("/api/device/commands/{command_id}/receipt")
+    async def device_command_receipt(
+        command_id: str,
+        payload: DeviceReceipt,
+        request: Request,
+    ) -> dict[str, Any]:
+        result = app.state.device_commands.receipt(
+            authorization=request.headers.get("authorization"),
+            command_id=command_id,
+            claim_token=payload.claim_token,
+            payload_sha256=payload.payload_sha256,
+            status=payload.status,
+            result=payload.result,
+        )
+        log.info(
+            "device command receipt",
+            extra={
+                "event": "device_command_receipt",
+                "command_id": command_id,
+                "device_id": result.get("device_id"),
+                "capability": result.get("capability"),
+                "result": result.get("status"),
+            },
+        )
+        return result
 
     @app.get("/api/bootstrap")
     async def bootstrap(request: Request) -> dict[str, Any]:

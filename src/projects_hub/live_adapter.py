@@ -6,6 +6,7 @@ import json
 import logging
 from typing import Any
 
+from .device_commands import DeviceCommandService
 from .live_resources import ConversationScope
 from .store import DurableStore, StoreError
 
@@ -23,6 +24,38 @@ def _functions() -> list[dict[str, Any]]:
             "name": "github_repositories_list",
             "description": "List repositories already connected and explicitly bound inside this workspace. This is read-only catalogue access and cannot grant or increase GitHub permissions.",
             "parameters": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "devices_list_capabilities",
+            "description": "List this actor's currently bound Android devices and their allowlisted local capabilities. Read-only; use before a device-local action when the target device is unclear.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "calendar_create_event_on_device",
+            "description": "Ask a bound Android device to create one event in the user's personal calendar. The backend creates a durable device command and waits briefly for a device receipt. Never claim the event exists unless the returned status is applied with verified readback.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "device_id": {"type": "string"},
+                    "project_id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "starts_at": {
+                        "type": "string",
+                        "description": "RFC3339 timestamp with explicit UTC offset."
+                    },
+                    "ends_at": {
+                        "type": "string",
+                        "description": "RFC3339 timestamp with explicit UTC offset."
+                    },
+                    "timezone": {
+                        "type": "string",
+                        "description": "IANA timezone, for example Europe/Kaliningrad."
+                    },
+                    "description": {"type": "string"},
+                    "location": {"type": "string"}
+                },
+                "required": ["title", "starts_at", "ends_at", "timezone"]
+            },
         },
         {
             "name": "conversation_set_focus",
@@ -97,13 +130,23 @@ SYSTEM_INSTRUCTION = """# ROLE
 # SECURITY
 - Доступ определяет backend. Аргументы function call не могут расширять права или подключать новый repository.
 - github_repositories_list показывает только уже подключённые и привязанные repositories. Если нужного repo нет, скажи, что его должен разрешить workspace owner через GitHub integration UI; не пытайся заменить это другим repo.
+- Device-local действие всё равно вызывается здесь, в backend-owned Live session. Android — только исполнитель typed command.
+- Для календаря сначала используй devices_list_capabilities, если подходящий телефон неоднозначен. calendar_create_event_on_device может потребовать подтверждение на телефоне.
+- Говори «событие создано» только если calendar_create_event_on_device вернул status=applied и device readback. pending/claimed означает, что подтверждение на телефоне ещё ожидается; outcome_unknown означает, что итог надо сверить.
 - Если tool отказал, объясни результат и продолжи разговор, не выдумывая успешное действие.
 """
 
 
 class ProjectsHubLiveAdapter:
-    def __init__(self, store: DurableStore, **_shared: Any):
+    def __init__(
+        self,
+        store: DurableStore,
+        *,
+        device_commands: DeviceCommandService | None = None,
+        **_shared: Any,
+    ):
         self.store = store
+        self.device_commands = device_commands or DeviceCommandService(store)
 
     def initialize(
         self,
@@ -277,6 +320,57 @@ class ProjectsHubLiveAdapter:
                 "repositories": repositories,
                 "requires_connection": not repositories,
             }
+
+        if name == "devices_list_capabilities":
+            return {
+                "devices": [
+                    {
+                        "device_id": item["id"],
+                        "display_name": item["display_name"],
+                        "platform": item["platform"],
+                        "capabilities": item["capabilities"],
+                        "last_seen_at_ms": item["last_seen_at_ms"],
+                    }
+                    for item in self.device_commands.list_devices(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                    )
+                ]
+            }
+
+        if name == "calendar_create_event_on_device":
+            project_id = str(args.get("project_id") or "") or None
+            if project_id is None:
+                project_id = self.store.get_conversation(
+                    actor_id,
+                    conversation_id,
+                ).get("focus_project_id")
+            command_id, _args_sha = self._command_id(session, name, args)
+            command = self.device_commands.create_calendar_command(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                command_id=command_id,
+                args=args,
+            )
+            result = await self.device_commands.wait_for_terminal(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                command_id=command["id"],
+                timeout_seconds=40.0,
+            )
+            log.info(
+                "device command result",
+                extra={
+                    "event": "tool_result",
+                    "tool": name,
+                    "conversation_id": conversation_id,
+                    "command_id": command["id"],
+                    "device_id": result.get("device_id"),
+                    "result": result.get("status"),
+                },
+            )
+            return result
 
         if name == "conversation_set_focus":
             project_id = str(args.get("project_id") or "")
