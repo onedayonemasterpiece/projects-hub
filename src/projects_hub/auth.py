@@ -7,26 +7,46 @@ import time
 
 COOKIE_NAME = "projects_hub_session"
 SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
+PUBLIC_SESSION_TTL_SECONDS = 24 * 60 * 60
 
 
 def _sign(payload: bytes, secret: str) -> str:
-    return hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+    return hmac.new(
+        secret.encode("utf-8"),
+        payload,
+        hashlib.sha256,
+    ).hexdigest()
 
 
-def issue_session(actor_id: str, secret: str, now: int | None = None) -> str:
-    now = int(time.time() if now is None else now)
-    expires = now + SESSION_TTL_SECONDS
+def issue_session(
+    actor_id: str,
+    secret: str,
+    now: int | None = None,
+    *,
+    ttl_seconds: int = SESSION_TTL_SECONDS,
+) -> str:
+    ttl = int(ttl_seconds)
+    if not 300 <= ttl <= 7 * 24 * 60 * 60:
+        raise ValueError("session ttl is outside the supported bound")
+    now_value = int(time.time() if now is None else now)
+    expires = now_value + ttl
     payload = f"{actor_id}|{expires}".encode("utf-8")
     body = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
     return f"{body}.{_sign(payload, secret)}"
 
 
-def parse_session(token: str | None, secret: str, now: int | None = None) -> str | None:
+def parse_session(
+    token: str | None,
+    secret: str,
+    now: int | None = None,
+) -> str | None:
     if not token or "." not in token:
         return None
     body, signature = token.rsplit(".", 1)
     try:
-        raw = base64.urlsafe_b64decode(body + "=" * (-len(body) % 4))
+        raw = base64.urlsafe_b64decode(
+            body + "=" * (-len(body) % 4)
+        )
         actor_id, expires_text = raw.decode("utf-8").split("|", 1)
         expires = int(expires_text)
     except (ValueError, UnicodeDecodeError):

@@ -23,6 +23,16 @@ export type MemoryItem = {
   updated_at_ms: number;
 };
 
+export type AuthConfig =
+  | { mode: "loopback_dev" | "disabled" }
+  | {
+      mode: "yandex_pkce";
+      supabase_url: string;
+      publishable_key: string;
+      provider: "custom:yandex";
+      redirect_url: string;
+    };
+
 export type SourceReceipt = {
   id: string;
   conversation_id: string;
@@ -91,3 +101,18 @@ export const getSourceByClient = (conversationId: string, clientSourceId: string
   api<{ source: SourceReceipt }>(
     `/api/conversations/${encodeURIComponent(conversationId)}/sources/by-client/${encodeURIComponent(clientSourceId)}`,
   );
+
+export const getAuthConfig = () =>
+  api<AuthConfig>("/api/auth/config");
+
+export const exchangePublicAuth = (accessToken: string) =>
+  api<Bootstrap>("/api/auth/exchange", {
+    method: "POST",
+    body: JSON.stringify({ access_token: accessToken }),
+  });
+
+export const logout = () =>
+  api<{ ok: boolean }>("/api/logout", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });

@@ -203,6 +203,12 @@ button:focus-visible {
   letter-spacing: -0.03em;
 }
 
+.sheet-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .quiet-button {
   padding: 9px 12px;
   border: 1px solid var(--stroke);

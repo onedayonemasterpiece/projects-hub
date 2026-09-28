@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@onedayonemasterpiece/live-interaction": "git+https://github.com/onedayonemasterpiece/live-interaction.git#c9de297020087235d80ce4155e52f63f88c642bf",
+    "@supabase/supabase-js": "^2.57.4",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },

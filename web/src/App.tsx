@@ -11,12 +11,20 @@ import {
   bootstrap,
   createConversation,
   getConversation,
+  getAuthConfig,
   getMemories,
   login,
+  logout,
+  type AuthConfig,
   type Bootstrap,
   type Conversation,
   type MemoryItem,
 } from "./api";
+import {
+  finishPublicAuth,
+  recoverPublicAuth,
+  startPublicAuth,
+} from "./auth";
 import { replayLocalVoiceSource } from "./bufferedReplay";
 import {
   acknowledgeDeliveredSource,
@@ -80,6 +88,7 @@ function friendlyStartError(error: unknown) {
 export default function App() {
   const [boot, setBoot] = useState<Bootstrap | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [voiceState, setVoiceState] = useState("off");
   const [answer, setAnswer] = useState("");
@@ -147,26 +156,92 @@ export default function App() {
     }
   }, [loadMemories]);
 
+  const acceptBootstrap = useCallback(async (value: Bootstrap) => {
+    setBoot(value);
+    const saved = localStorage.getItem("projects-hub-conversation");
+    if (!saved) return;
+    try {
+      const current = await getConversation(saved);
+      if (current.workspace_id === value.workspace.id) {
+        setConversation(current);
+        conversationRef.current = current;
+      } else {
+        localStorage.removeItem("projects-hub-conversation");
+      }
+    } catch {
+      localStorage.removeItem("projects-hub-conversation");
+    }
+  }, []);
+
   useEffect(() => {
-    bootstrap()
-      .then(async value => {
-        setBoot(value);
-        const saved = localStorage.getItem("projects-hub-conversation");
-        if (saved) {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const config = await getAuthConfig();
+        if (cancelled) return;
+        setAuthConfig(config);
+
+        if (config.mode === "yandex_pkce") {
           try {
-            const current = await getConversation(saved);
-            if (current.workspace_id === value.workspace.id) setConversation(current);
-            else localStorage.removeItem("projects-hub-conversation");
-          } catch {
-            localStorage.removeItem("projects-hub-conversation");
+            const callback = await finishPublicAuth(config);
+            if (callback) {
+              if (!cancelled) await acceptBootstrap(callback);
+              return;
+            }
+          } catch (error) {
+            if (!cancelled) {
+              setNotice(
+                error instanceof Error
+                  ? error.message
+                  : "Не удалось завершить вход через Яндекс.",
+              );
+            }
           }
         }
-      })
-      .catch(error => {
-        if (!(error instanceof ApiError) || error.status !== 401) setNotice(error.message);
-      })
-      .finally(() => setAuthReady(true));
-  }, []);
+
+        try {
+          const value = await bootstrap();
+          if (!cancelled) await acceptBootstrap(value);
+          return;
+        } catch (error) {
+          if (
+            error instanceof ApiError &&
+            error.status === 401 &&
+            config.mode === "yandex_pkce"
+          ) {
+            const recovered = await recoverPublicAuth(config);
+            if (recovered && !cancelled) {
+              await acceptBootstrap(recovered);
+            }
+            return;
+          }
+          if (
+            !cancelled &&
+            (!(error instanceof ApiError) || error.status !== 401)
+          ) {
+            setNotice(
+              error instanceof Error
+                ? error.message
+                : "Не удалось проверить вход.",
+            );
+          }
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setNotice(
+            error instanceof Error
+              ? error.message
+              : "Не удалось подготовить вход.",
+          );
+        }
+      } finally {
+        if (!cancelled) setAuthReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [acceptBootstrap]);
 
   useEffect(() => {
     const online = () => {
@@ -219,11 +294,43 @@ export default function App() {
     setBusy(true);
     setNotice(null);
     try {
+      if (authConfig?.mode === "yandex_pkce") {
+        await startPublicAuth(authConfig);
+        return;
+      }
       const value = await login();
-      setBoot(value);
+      await acceptBootstrap(value);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Не удалось войти.");
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "Не удалось войти.",
+      );
     } finally {
+      setBusy(false);
+    }
+  }
+
+  async function signOut() {
+    setBusy(true);
+    try {
+      clientRef.current?.stop({ reason: "logout" });
+      if (offlineCaptureRef.current) {
+        await stopOfflineCapture();
+      }
+      await logout();
+    } catch {
+      // Local logout below is still required even if cleanup request fails.
+    } finally {
+      localStorage.removeItem("projects-hub-conversation");
+      conversationRef.current = null;
+      setConversation(null);
+      setMemories([]);
+      setPendingSources([]);
+      setAnswer("");
+      setBoot(null);
+      setContextOpen(false);
+      setMemoryOpen(false);
       setBusy(false);
     }
   }
@@ -391,7 +498,11 @@ export default function App() {
             Один Live‑собеседник слышит вас, понимает контекст проекта и вызывает только разрешённые действия.
           </p>
           <button className="primary-action" onClick={signIn} disabled={busy}>
-            {busy ? "Вхожу…" : "Войти в пилот"}
+            {busy
+              ? "Вхожу…"
+              : authConfig?.mode === "yandex_pkce"
+                ? "Войти через Яндекс"
+                : "Войти в пилот"}
           </button>
           {notice && <p className="notice" role="alert">{notice}</p>}
         </section>
@@ -445,7 +556,10 @@ export default function App() {
                 <p className="eyebrow">Контекст</p>
                 <h2>{boot.workspace.name}</h2>
               </div>
-              <button className="quiet-button" onClick={openMemory}>Память</button>
+              <div className="sheet-actions">
+                <button className="quiet-button" onClick={openMemory}>Память</button>
+                <button className="quiet-button" onClick={signOut} disabled={busy}>Выйти</button>
+              </div>
             </div>
             <div className="project-list">
               {boot.projects.map(project => (
