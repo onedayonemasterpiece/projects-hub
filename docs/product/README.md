@@ -1,6 +1,6 @@
 # Projects Hub — спецификация живой совместной работы
 
-**Ревизия 3 от 27 сентября 2026. Статус: спроектировано для реализации, не принято как работающее приложение.** Имя «Содей / Sodey» остаётся предложением; технический идентификатор `projects-hub` не меняется.
+**Ревизия 4 от 28 сентября 2026. Статус: первая Live/PWA вертикаль частично реализована и проверена canary-сценариями; полный продукт и Android E2E ещё не приняты.** Имя «Содей / Sodey» остаётся предложением; технический идентификатор `projects-hub` не меняется.
 
 ## Центральная идея
 
@@ -106,12 +106,12 @@ Stop, «Новый разговор» и delete — разные действи�
 | [GitHub connections](14-github-connections.md) | GitHub App installation, repository roles и отсутствие PAT у обычных участников |
 | [Live contract](live-contract.json) | Машиночитаемые архитектурные правила |
 
+Свежие требования 28 сентября не меняют central-Live архитектуру: V19 добавляет безопасный in-app путь обновления Android после первой установки; V20 добавляет class-specific checklist готовности к приближающимся событиям и создание конкретных follow-up задач по недостающим материалам. Оба пункта включаются последовательно после работающего device-command/calendar E2E, а не расширяют MVP до универсального workflow engine.
+
 ## Фактический baseline и статус
 
-Исходный Projects Hub runtime scaffold содержит только resource adapter к общему `ai-resource-control`; полноценного backend/client/agent adapter ещё нет.
+Интеграционная линия PR #3 уже содержит рабочий FastAPI/PWA вертикальный срез: центральную Live-сессию на backend, typed function calls, durable voice source/memory, PWA offline retry и mixed-project memory. Для этих путей есть реальные provider canary/readback проверки. Публичная Yandex-auth граница и server-side GitHub App connection код также интегрированы в эту линию, но их отдельные production acceptance gates не следует путать с самим фактом наличия кода.
 
-Текущий shared Live framework уже поддерживает прямой audio, input transcription, function calls и tool responses. Однако buffered offline source и lossless transcript archive требуют расширения framework.
+Следующий активный срез — backend-issued command на конкретное Android-устройство и возврат typed receipt в тот же Live function call, начиная с `calendar.create_event`. Android-приложение, physical-device calendar E2E, Android offline/reboot capture и updater ещё не являются принятым продуктом.
 
-Работающий Record Idea Hub не выключается до отдельной реальной приёмки нового capture/recovery пути.
-
-Документация и contract tests не доказывают microphone/provider acceptance. Не выполненные gates остаются `not_run`.
+Работающий Record Idea Hub не выключается до отдельной реальной приёмки нового Android/capture/recovery пути. Документация, unit tests и mock flow не заменяют physical microphone/device/provider acceptance; не выполненные gates остаются `not_run`/непринятыми.
