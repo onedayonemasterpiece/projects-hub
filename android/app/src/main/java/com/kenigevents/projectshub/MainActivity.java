@@ -255,7 +255,7 @@ public final class MainActivity extends Activity {
         io.execute(() -> {
             try {
                 String workspaceId = api.bootstrapWorkspace(cookie);
-                String token = api.registerAndroidDevice(
+                String token = <redacted>
                         cookie,
                         workspaceId,
                         Build.MANUFACTURER + " " + Build.MODEL
@@ -304,9 +304,7 @@ public final class MainActivity extends Activity {
         if (!"calendar.create_event".equals(command.capability)) {
             completion.complete(
                     "failed",
-                    new JSONObject()
-                            .put("readback_verified", false)
-                            .put("error", "UNSUPPORTED_CAPABILITY")
+                    errorResult("UNSUPPORTED_CAPABILITY")
             );
             return;
         }
@@ -337,9 +335,7 @@ public final class MainActivity extends Activity {
         } catch (Exception failure) {
             completion.complete(
                     "failed",
-                    new JSONObject()
-                            .put("readback_verified", false)
-                            .put("error", failure.getClass().getSimpleName())
+                    errorResult(failure.getClass().getSimpleName())
             );
             toast("Не удалось создать событие в календаре.");
         }
@@ -366,9 +362,7 @@ public final class MainActivity extends Activity {
                     if (done.compareAndSet(false, true)) {
                         completion.complete(
                                 "rejected",
-                                new JSONObject()
-                                        .put("readback_verified", false)
-                                        .put("error", "USER_REJECTED")
+                                errorResult("USER_REJECTED")
                         );
                     }
                 })
@@ -376,9 +370,7 @@ public final class MainActivity extends Activity {
                     if (done.compareAndSet(false, true)) {
                         completion.complete(
                                 "rejected",
-                                new JSONObject()
-                                        .put("readback_verified", false)
-                                        .put("error", "USER_REJECTED")
+                                errorResult("USER_REJECTED")
                         );
                     }
                 })
@@ -440,11 +432,20 @@ public final class MainActivity extends Activity {
             } else {
                 completion.complete(
                         "rejected",
-                        new JSONObject()
-                                .put("readback_verified", false)
-                                .put("error", "CALENDAR_PERMISSION_DENIED")
+                        errorResult("CALENDAR_PERMISSION_DENIED")
                 );
             }
+        }
+    }
+
+    private static JSONObject errorResult(String error) {
+        JSONObject result = new JSONObject();
+        try {
+            result.put("readback_verified", false);
+            result.put("error", error);
+            return result;
+        } catch (org.json.JSONException impossible) {
+            throw new IllegalStateException(impossible);
         }
     }
 
