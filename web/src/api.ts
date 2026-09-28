@@ -40,6 +40,32 @@ export type SourceReceipt = {
   updated_at_ms: number;
 };
 
+export type TaskItem = {
+  id: string;
+  project_id: string | null;
+  event_card_id: string | null;
+  title: string;
+  description: string;
+  assignee_role: string;
+  deadline: string | null;
+  state: "proposed" | "accepted" | "done" | "snoozed" | "rejected";
+  updated_at_ms: number;
+};
+
+export type EventCard = {
+  id: string;
+  project_id: string | null;
+  device_event_id: string | null;
+  title: string;
+  starts_at: string;
+  event_type: "generic" | "podcast";
+  status: string;
+  ready: boolean;
+  incomplete_count: number;
+  checklist: Array<{ key: string; label: string; done: boolean }>;
+  tasks: TaskItem[];
+};
+
 export type GitHubInstallation = {
   installation_id: number;
   account_id: number;
@@ -131,6 +157,22 @@ export const getMemories = (workspaceId: string, projectId?: string | null) => {
   if (projectId) params.set("project_id", projectId);
   return api<{ items: MemoryItem[] }>(`/api/memories?${params}`);
 };
+
+export const getEventCards = (workspaceId: string, projectId?: string | null) => {
+  const params = new URLSearchParams({ workspace_id: workspaceId, limit: "8" });
+  if (projectId) params.set("project_id", projectId);
+  return api<{ items: EventCard[] }>(`/api/event-cards?${params}`);
+};
+
+export const setTaskState = (
+  taskId: string,
+  workspaceId: string,
+  state: "accepted" | "done" | "snoozed" | "rejected",
+) =>
+  api<TaskItem>(`/api/tasks/${encodeURIComponent(taskId)}/state`, {
+    method: "POST",
+    body: JSON.stringify({ workspace_id: workspaceId, state }),
+  });
 
 export const getSourceByClient = (conversationId: string, clientSourceId: string) =>
   api<{ source: SourceReceipt }>(

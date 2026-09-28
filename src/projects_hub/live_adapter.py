@@ -8,6 +8,7 @@ from typing import Any
 
 from .device_commands import DeviceCommandService
 from .live_resources import ConversationScope
+from .readiness import ReadinessService
 from .store import DurableStore, StoreError
 
 log = logging.getLogger("projects_hub.live")
@@ -52,9 +53,69 @@ def _functions() -> list[dict[str, Any]]:
                         "description": "IANA timezone, for example Europe/Kaliningrad."
                     },
                     "description": {"type": "string"},
-                    "location": {"type": "string"}
+                    "location": {"type": "string"},
+                    "event_type": {
+                        "type": "string",
+                        "enum": ["generic", "podcast"],
+                        "description": "Use podcast only for podcast/interview recording; otherwise generic."
+                    }
                 },
                 "required": ["title", "starts_at", "ends_at", "timezone"]
+            },
+        },
+        {
+            "name": "event_cards_list",
+            "description": "List upcoming event-readiness cards and their checklist/task state. Use before discussing whether the user is ready for an event.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 20}
+                }
+            },
+        },
+        {
+            "name": "event_readiness_set",
+            "description": "Mark one checklist item for an event card as ready/not ready after the user confirms its real state.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "event_id": {"type": "string"},
+                    "checklist_key": {"type": "string"},
+                    "done": {"type": "boolean"}
+                },
+                "required": ["event_id", "checklist_key", "done"]
+            },
+        },
+        {
+            "name": "task_create_follow_up",
+            "description": "Create one concrete follow-up task for an event or project when readiness work is missing.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "event_id": {"type": "string"},
+                    "project_id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "description": {"type": "string"},
+                    "assignee_role": {"type": "string"},
+                    "deadline": {"type": "string"}
+                },
+                "required": ["title"]
+            },
+        },
+        {
+            "name": "task_set_state",
+            "description": "Update one task after the user accepts, completes, postpones or rejects it.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string"},
+                    "state": {
+                        "type": "string",
+                        "enum": ["accepted", "done", "snoozed", "rejected"]
+                    }
+                },
+                "required": ["task_id", "state"]
             },
         },
         {
@@ -134,6 +195,13 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Для календаря сначала используй devices_list_capabilities, если подходящий телефон неоднозначен. calendar_create_event_on_device может потребовать подтверждение на телефоне.
 - Говори «событие создано» только если calendar_create_event_on_device вернул status=applied и device readback. pending/claimed означает, что подтверждение на телефоне ещё ожидается; outcome_unknown означает, что итог надо сверить.
 - Если tool отказал, объясни результат и продолжи разговор, не выдумывая успешное действие.
+
+# EVENT READINESS
+- После подтверждённого calendar event backend автоматически создаёт event card. Для записи подкаста передавай event_type=podcast, иначе generic.
+- Перед событием используй event_cards_list и называй только фактические незакрытые пункты checklist.
+- Меняй checklist через event_readiness_set только после подтверждения пользователя, не угадывай готовность.
+- Если реально не хватает подготовки, предложи один конкретный follow-up и создавай его через task_create_follow_up после согласия.
+- task_set_state отражает принятие/выполнение/откладывание/отказ; не объявляй task выполненной без tool result.
 """
 
 
@@ -143,10 +211,12 @@ class ProjectsHubLiveAdapter:
         store: DurableStore,
         *,
         device_commands: DeviceCommandService | None = None,
+        readiness: ReadinessService | None = None,
         **_shared: Any,
     ):
         self.store = store
         self.device_commands = device_commands or DeviceCommandService(store)
+        self.readiness = readiness or ReadinessService(store)
 
     def initialize(
         self,
@@ -359,6 +429,22 @@ class ProjectsHubLiveAdapter:
                 command_id=command["id"],
                 timeout_seconds=40.0,
             )
+            if (
+                result.get("status") == "applied"
+                and isinstance(result.get("result"), dict)
+                and result["result"].get("readback_verified") is True
+            ):
+                event_card = self.readiness.record_calendar_event(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    project_id=project_id,
+                    command_id=command["id"],
+                    title=str(args.get("title") or ""),
+                    starts_at=str(args.get("starts_at") or ""),
+                    event_type=str(args.get("event_type") or "generic"),
+                    device_event_id=str(result["result"].get("event_id") or "") or None,
+                )
+                result = {**result, "event_card": event_card}
             log.info(
                 "device command result",
                 extra={
@@ -371,6 +457,52 @@ class ProjectsHubLiveAdapter:
                 },
             )
             return result
+
+        if name == "event_cards_list":
+            project_id = str(args.get("project_id") or "") or None
+            if project_id is None:
+                project_id = self.store.get_conversation(actor_id, conversation_id).get("focus_project_id")
+            try:
+                limit = int(args.get("limit", 8))
+            except (TypeError, ValueError):
+                limit = 8
+            return {"events": self.readiness.list_event_cards(
+                actor_id=actor_id, workspace_id=workspace_id, project_id=project_id, limit=limit
+            )}
+
+        if name == "event_readiness_set":
+            return self.readiness.set_readiness(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                event_id=str(args.get("event_id") or ""),
+                checklist_key=str(args.get("checklist_key") or ""),
+                done=bool(args.get("done")),
+            )
+
+        if name == "task_create_follow_up":
+            project_id = str(args.get("project_id") or "") or None
+            if project_id is None:
+                project_id = self.store.get_conversation(actor_id, conversation_id).get("focus_project_id")
+            command_id, _args_sha = self._command_id(session, name, args)
+            return self.readiness.create_follow_up_task(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                event_id=str(args.get("event_id") or "") or None,
+                command_id=command_id,
+                title=str(args.get("title") or ""),
+                description=str(args.get("description") or ""),
+                assignee_role=str(args.get("assignee_role") or "owner"),
+                deadline=str(args.get("deadline") or "") or None,
+            )
+
+        if name == "task_set_state":
+            return self.readiness.set_task_state(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                task_id=str(args.get("task_id") or ""),
+                state=str(args.get("state") or ""),
+            )
 
         if name == "conversation_set_focus":
             project_id = str(args.get("project_id") or "")
