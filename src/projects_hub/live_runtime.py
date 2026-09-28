@@ -3,12 +3,18 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from .device_commands import DeviceCommandService
 from .live_adapter import ProjectsHubLiveAdapter
 from .live_resources import live_resource_environment
 from .store import DurableStore
 
 
-def build_live_host(store: DurableStore, *, environment: dict[str, str] | None = None) -> Any:
+def build_live_host(
+    store: DurableStore,
+    *,
+    environment: dict[str, str] | None = None,
+    device_commands: DeviceCommandService | None = None,
+) -> Any:
     """Build the canonical shared host lazily so offline store/API tests need no provider SDK."""
 
     try:
@@ -18,6 +24,7 @@ def build_live_host(store: DurableStore, *, environment: dict[str, str] | None =
         raise RuntimeError("LIVE_INTERACTION_PACKAGE_MISSING") from exc
 
     env = dict(os.environ if environment is None else environment)
+    device_commands = device_commands or DeviceCommandService(store)
 
     async def managed_runner(*, session: Any, reader: Any, on_event: Any) -> None:
         try:
@@ -34,7 +41,11 @@ def build_live_host(store: DurableStore, *, environment: dict[str, str] | None =
         )
 
     return LiveSessionHost(
-        adapter_factory=lambda **shared: ProjectsHubLiveAdapter(store, **shared),
+        adapter_factory=lambda **shared: ProjectsHubLiveAdapter(
+            store,
+            device_commands=device_commands,
+            **shared,
+        ),
         managed_runner=managed_runner,
         max_sessions=4,
         client_liveness_timeout_ms=75_000,
