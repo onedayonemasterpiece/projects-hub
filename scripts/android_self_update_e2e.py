@@ -171,6 +171,25 @@ def find_node(predicate, timeout_seconds: int = 60) -> ET.Element:
             for node in nodes
             if node.attrib.get("text")
         ][-20:]
+
+        # GitHub's Android emulator images occasionally surface a System UI ANR
+        # unrelated to the app under test. Keep the system process alive and
+        # continue the same product flow instead of treating that overlay as an
+        # application failure.
+        wait_node = next(
+            (
+                node
+                for node in nodes
+                if node.attrib.get("text") == "Wait"
+                and node.attrib.get("clickable") == "true"
+            ),
+            None,
+        )
+        if wait_node is not None:
+            tap_node(wait_node)
+            time.sleep(2)
+            continue
+
         for node in nodes:
             if predicate(node.attrib):
                 return node
