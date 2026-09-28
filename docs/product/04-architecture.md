@@ -2,7 +2,7 @@
 
 [Индекс](README.md) · [Центральный Live-агент](12-central-live-agent.md) · [UX](03-product-and-ux.md) · [Память](10-conversation-memory.md) · [Маршрутизация и словари](11-routing-and-vocabulary.md).
 
-**Ревизия 3, 27 сентября 2026.** Центральный интеллект продукта — Gemini Live в пользовательском разговоре. Backend не содержит параллельного смыслового конвейера.
+**Ревизия 4, 28 сентября 2026.** Центральный интеллект продукта — Gemini Live в пользовательском разговоре. Backend не содержит параллельного смыслового конвейера. **Backend Projects Hub один: provider connection к Gemini Live, GitHub App и все server-owned integrations живут на DevCoveer; PWA/Android не подключаются к Gemini/GitHub в обход backend.**
 
 ## ADR-01: PWA и Android — два полноценных приложения
 
@@ -23,22 +23,25 @@ PWA имеет тот же core UX и API. Ограничения браузер
 ```text
 PWA / Android microphone
         │
-        ├─ durable local capture + VAD
+        ├─ durable local capture + shared capture/VAD
         │
         ▼
-shared live-interaction
-        │ PCM / activity boundaries
-        ▼
-Gemini Live agent
+Projects Hub backend on DevCoveer
         │
-        ├─ input transcription events ──> source journal
-        ├─ audio response ──────────────> client
-        └─ function calls
-                │
-                ▼
-        authorized thin tools
-                │
-     docs / memory / tasks / calendar / notifications / vocabulary
+        ├─ shared live-interaction session host
+        │       │ raw PCM / activity boundaries
+        │       ▼
+        │   Gemini Live agent
+        │       ├─ input transcription ──> backend source journal
+        │       ├─ audio response ───────> backend ──> client
+        │       └─ typed function calls ─> backend tools
+        │
+        ├─ GitHub App / project stores / owning service APIs
+        │       └─ server-side only; credentials never go to PWA/Android/Live
+        │
+        └─ device command outbox
+                └─ addressed command ──> Android capability
+                                      └─ receipt/result ──> backend ──> same Live session
 ```
 
 Live-agent отвечает за semantic understanding:
@@ -60,6 +63,19 @@ Backend отвечает за механически проверяемое:
 - transaction/outbox;
 - device binding;
 - readback.
+
+**Сетевая граница фиксирована:** клиентское приложение не держит provider credential и не создаёт самостоятельную Gemini Live session. Клиент передаёт audio/input в один Projects Hub backend; именно backend поднимает/возобновляет Live provider session и возвращает provider events/audio клиенту.
+
+GitHub работает по той же границе: install/callback metadata приходит в backend, App JWT и installation token создаются только на backend и только на конкретную server operation. Android/PWA видят лишь connection metadata и contextual UI.
+
+Для device-local возможностей направление обратное. Например календарь телефона:
+1. Gemini Live вызывает typed `calendar.*` function в своей backend session;
+2. backend авторизует actor/workspace/device и создаёт durable device command;
+3. конкретное Android-устройство получает только адресованную команду;
+4. Android выполняет действие через platform API и возвращает typed receipt/result;
+5. backend reconciles outcome и возвращает function result **той же** Live-модели.
+
+Телефон не становится вторым agent/backend и не получает GitHub/provider credentials. Backend не «симулирует» локальный Android Calendar API.
 
 Нельзя добавлять скрытые LLM calls внутри tools для предварительной классификации, суммаризации, маршрутизации или переписывания ответа Live.
 
@@ -116,6 +132,8 @@ Android/PWA сохраняют речь локально. Когда central Liv
 - task/proposal/decision/vote/meeting tools;
 - notification tools;
 - calendar tools.
+
+Server-owned и device-owned tools различаются исполнителем, но **не когнитивным звеном**. GitHub/project/docs выполняются backend-side. Личный Android calendar, notification permission и другие OS-local actions выполняются device capability после server-issued command; результат возвращается через backend.
 
 ### Словарь
 - `vocabulary.read`

@@ -2,11 +2,13 @@
 
 [Индекс](README.md) · [Архитектура](04-architecture.md) · [Безопасность](05-security.md).
 
-**Ревизия 4, 27 сентября 2026.** Обычный пользователь Projects Hub не обязан иметь GitHub-аккаунт и не должен вставлять personal access token в приложение.
+**Ревизия 5, 28 сентября 2026.** Обычный пользователь Projects Hub не обязан иметь GitHub-аккаунт и не должен вставлять personal access token в приложение. **Вся GitHub App интеграция server-side на единственном Projects Hub backend; Android/PWA не получают App private key, App JWT или installation token.**
 
 ## Базовое решение
 
 Projects Hub регистрируется как **GitHub App**.
+
+GitHub App client живёт в backend на DevCoveer. Browser/Android только инициируют install UI и показывают connection metadata; все GitHub API calls (`/app/installations/*`, installation access token, repo read/write, webhook reconciliation) выполняет backend.
 
 Владелец или координатор workspace:
 1. нажимает «Подключить GitHub»;
@@ -59,6 +61,8 @@ Projects Hub хранит durable metadata connection: installation id, numeric 
 
 Короткоживущая GitHub credential выдаётся сервером только на конкретную операцию. Она не передаётся в browser, Live model, transcript или logs.
 
+Для одной операции backend по возможности сужает installation token до **numeric repository ID** и минимального permission set. Token живёт только в памяти server-side operation и не сохраняется как connection credential.
+
 Repo авторизуется по installation + numeric repository id. Имя или URL из function arguments не является доказательством доступа.
 
 ## Optional user-delegated mode
@@ -96,6 +100,8 @@ Workspace settings → Integrations → GitHub → «Подключить GitHub
 Дальше открывается GitHub installation page: personal/org, Only select repositories, выбор repos, возможный org approval.
 
 После callback Projects Hub показывает только repositories, доступные installation.
+
+Callback принимает `installation_id` только как указатель: backend повторно проверяет installation через App authentication, сверяет принадлежность configured App и только затем сохраняет metadata. Callback URL не является доказательством доступа сам по себе.
 
 Для добавления ещё repo — «Изменить доступ в GitHub».
 
@@ -150,6 +156,7 @@ Live-agent решает **что** делать; adapter гарантирует 
 - voice prompt не повышает write capability;
 - external read-only не принимает write;
 - GitHub credential отсутствует в browser/model/logs;
+- Android/PWA не содержат GitHub SDK/token exchange для Projects Hub; GitHub API вызывается только backend;
 - uninstall/suspend прекращает доступ;
 - direct external changes дают conflict, не force overwrite.
 

@@ -17,16 +17,24 @@ def _flag(value: str | None, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _read_private_secret(path: Path) -> str:
+def _read_private_text(path: Path, label: str, *, min_length: int = 32) -> str:
     info = path.lstat()
     if path.is_symlink() or stat.S_IMODE(info.st_mode) & 0o077:
-        raise RuntimeError("PROJECTS_HUB_SESSION_SECRET_FILE must be a private regular file")
+        raise RuntimeError(f"{label} must be a private regular file")
     if not path.is_file():
-        raise RuntimeError("PROJECTS_HUB_SESSION_SECRET_FILE must be a regular file")
+        raise RuntimeError(f"{label} must be a regular file")
     value = path.read_text(encoding="utf-8").strip()
-    if len(value) < 32:
-        raise RuntimeError("PROJECTS_HUB_SESSION_SECRET_FILE is too short")
+    if len(value) < min_length:
+        raise RuntimeError(f"{label} is too short")
     return value
+
+
+def _read_private_secret(path: Path) -> str:
+    return _read_private_text(
+        path,
+        "PROJECTS_HUB_SESSION_SECRET_FILE",
+        min_length=32,
+    )
 
 
 def _dev_session_secret(root: Path) -> str:
@@ -57,6 +65,10 @@ class Settings:
     auth_supabase_url: str = ""
     auth_supabase_publishable_key: str = ""
     auth_provider: str = EXPECTED_AUTH_PROVIDER
+    github_app_id: int | None = None
+    github_app_slug: str = ""
+    github_app_private_key: str = ""
+    github_app_webhook_secret: str = ""
 
     @property
     def public_auth_enabled(self) -> bool:
@@ -64,6 +76,15 @@ class Settings:
             self.public_origin
             and self.auth_supabase_url
             and self.auth_supabase_publishable_key
+        )
+
+    @property
+    def github_app_enabled(self) -> bool:
+        return bool(
+            self.github_app_id
+            and self.github_app_slug
+            and self.github_app_private_key
+            and self.github_app_webhook_secret
         )
 
     @classmethod
@@ -115,16 +136,67 @@ class Settings:
             if len(auth_key) < 20 or len(auth_key) > 4096:
                 raise RuntimeError("Projects Hub public auth publishable key is invalid")
 
+        github_app_id_raw = str(env.get("PROJECTS_HUB_GITHUB_APP_ID") or "").strip()
+        github_slug = str(env.get("PROJECTS_HUB_GITHUB_APP_SLUG") or "").strip()
+        github_key_file = str(env.get("PROJECTS_HUB_GITHUB_APP_PRIVATE_KEY_FILE") or "").strip()
+        github_webhook_file = str(env.get("PROJECTS_HUB_GITHUB_APP_WEBHOOK_SECRET_FILE") or "").strip()
+        github_parts = (
+            bool(github_app_id_raw),
+            bool(github_slug),
+            bool(github_key_file),
+            bool(github_webhook_file),
+        )
+        if any(github_parts) and not all(github_parts):
+            raise RuntimeError("Projects Hub GitHub App configuration is incomplete")
+
+        github_app_id: int | None = None
+        github_private_key = ""
+        github_webhook_secret = ""
+        if all(github_parts):
+            try:
+                github_app_id = int(github_app_id_raw)
+            except ValueError as exc:
+                raise RuntimeError("PROJECTS_HUB_GITHUB_APP_ID must be numeric") from exc
+            if github_app_id <= 0:
+                raise RuntimeError("PROJECTS_HUB_GITHUB_APP_ID must be positive")
+            if (
+                len(github_slug) > 100
+                or github_slug.lower() != github_slug
+                or not all(ch.isalnum() or ch == "-" for ch in github_slug)
+                or github_slug.startswith("-")
+                or github_slug.endswith("-")
+            ):
+                raise RuntimeError("PROJECTS_HUB_GITHUB_APP_SLUG is invalid")
+            github_private_key = _read_private_text(
+                Path(github_key_file).expanduser(),
+                "PROJECTS_HUB_GITHUB_APP_PRIVATE_KEY_FILE",
+                min_length=100,
+            )
+            if "BEGIN" not in github_private_key or "PRIVATE KEY" not in github_private_key:
+                raise RuntimeError("Projects Hub GitHub App private key format is invalid")
+            github_webhook_secret = _read_private_text(
+                Path(github_webhook_file).expanduser(),
+                "PROJECTS_HUB_GITHUB_APP_WEBHOOK_SECRET_FILE",
+                min_length=20,
+            )
+
         return cls(
             data_dir=root,
             static_dir=static,
             session_secret=secret,
             dev_auth=dev_auth,
-            cookie_secure=_flag(env.get("PROJECTS_HUB_COOKIE_SECURE"), default=bool(public_origin) or not dev_auth),
+            cookie_secure=_flag(
+                env.get("PROJECTS_HUB_COOKIE_SECURE"),
+                default=bool(public_origin) or not dev_auth,
+            ),
             model=str(env.get("PROJECTS_HUB_LIVE_MODEL") or "gemini-3.8-live"),
             release_sha=str(env.get("PROJECTS_HUB_DEPLOY_SHA") or "development"),
             public_origin=public_origin,
             auth_supabase_url=auth_url,
             auth_supabase_publishable_key=auth_key,
             auth_provider=auth_provider,
+            github_app_id=github_app_id,
+            github_app_slug=github_slug,
+            github_app_private_key=github_private_key,
+            github_app_webhook_secret=github_webhook_secret,
         )

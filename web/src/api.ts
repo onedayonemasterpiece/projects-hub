@@ -40,6 +40,39 @@ export type SourceReceipt = {
   updated_at_ms: number;
 };
 
+export type GitHubInstallation = {
+  installation_id: number;
+  account_id: number;
+  account_login: string;
+  account_type: string;
+  html_url: string;
+  repository_selection: string;
+  state: string;
+  suspended_at_ms: number | null;
+  last_verified_at_ms: number;
+};
+
+export type RepositoryConnection = {
+  id: string;
+  installation_id: number;
+  repository_id: number;
+  full_name: string;
+  default_branch: string;
+  private: boolean;
+  project_id: string | null;
+  role: string;
+  access_mode: string;
+  allowed_paths: string[];
+  state: string;
+  installation_state: string;
+};
+
+export type GitHubStatus = {
+  configured: boolean;
+  installations: GitHubInstallation[];
+  repositories: RepositoryConnection[];
+};
+
 export class ApiError extends Error {
   status: number;
   code?: string;
@@ -103,3 +136,38 @@ export const getSourceByClient = (conversationId: string, clientSourceId: string
   api<{ source: SourceReceipt }>(
     `/api/conversations/${encodeURIComponent(conversationId)}/sources/by-client/${encodeURIComponent(clientSourceId)}`,
   );
+
+export const getGitHubStatus = (workspaceId: string) => {
+  const params = new URLSearchParams({ workspace_id: workspaceId });
+  return api<GitHubStatus>(`/api/github/status?${params}`);
+};
+
+export const startGitHubInstall = (
+  workspaceId: string,
+  conversationId?: string | null,
+) =>
+  api<{ install_url: string; expires_at_ms: number }>("/api/github/install/start", {
+    method: "POST",
+    body: JSON.stringify({
+      workspace_id: workspaceId,
+      conversation_id: conversationId ?? null,
+    }),
+  });
+
+export const bindGitHubRepository = (
+  repositoryId: number,
+  payload: {
+    workspace_id: string;
+    project_id?: string | null;
+    role: "memory_store" | "project_docs" | "source_dataset" | "external_owning_repo" | "generated_artifacts";
+    access_mode: "read_only" | "app_managed_write";
+    allowed_paths?: string[];
+  },
+) =>
+  api<RepositoryConnection>(`/api/github/repositories/${repositoryId}/bind`, {
+    method: "POST",
+    body: JSON.stringify({
+      ...payload,
+      allowed_paths: payload.allowed_paths ?? [],
+    }),
+  });

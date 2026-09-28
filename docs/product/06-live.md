@@ -2,7 +2,7 @@
 
 [Индекс](README.md) · [Центральный Live-агент](12-central-live-agent.md) · [Архитектура](04-architecture.md) · [Память](10-conversation-memory.md).
 
-**Ревизия 3, 27 сентября 2026.** Live — не один из сервисов обработки Projects Hub, а центральная интерактивная модель продукта. Общий resource controller ограничивает её ресурс; tools дают ей руки; durable capture не даёт потерять речь.
+**Ревизия 4, 28 сентября 2026.** Live — не один из сервисов обработки Projects Hub, а центральная интерактивная модель продукта. **Gemini Live provider session существует на единственном Projects Hub backend на DevCoveer; PWA и Android не подключаются к Gemini напрямую.** Общий resource controller ограничивает её ресурс; tools дают ей руки; durable capture не даёт потерять речь.
 
 ## 1. Текущий фактический baseline
 
@@ -13,7 +13,7 @@
 - session host выполняет product adapter tools и возвращает function responses той же Live-сессии;
 - resource guard защищает provider connect/send/receive.
 
-Это подтверждает правильную архитектурную ось: **audio → Live model → function calls → product state → Live model**.
+Это подтверждает правильную архитектурную ось: **client audio → Projects Hub backend → Live model → function calls → backend/device executor → readback → та же Live model → backend → client**.
 
 Projects Hub уже имеет ранний resource adapter к `ai-resource-control`, но не готовый product adapter.
 
@@ -37,16 +37,18 @@ Projects Hub уже имеет ранний resource adapter к `ai-resource-con
 ## 3. Normal Live session
 
 Порядок:
-1. authenticate actor;
-2. создать conversation/workspace scope;
-3. собрать server-owned system instruction и небольшой разрешённый bootstrap context;
-4. получить resource lease;
-5. подключить Gemini Live;
-6. отправлять raw PCM из capture pipeline;
-7. сохранять provider input-transcript/source events;
-8. исполнять Live function calls через product adapter;
-9. возвращать tool responses модели;
-10. model продолжает голосовой ответ.
+1. клиент authenticate actor в Projects Hub backend;
+2. backend создаёт conversation/workspace scope;
+3. backend собирает server-owned system instruction и небольшой разрешённый bootstrap context;
+4. backend получает resource lease;
+5. **backend** подключает Gemini Live и владеет provider session;
+6. PWA/Android передают raw PCM в backend; shared `live-interaction` на backend отправляет его provider;
+7. backend сохраняет provider input-transcript/source events;
+8. backend исполняет Live function calls через product adapter или durable device-command channel;
+9. backend возвращает tool/device receipts модели;
+10. model продолжает голосовой ответ, backend доставляет audio/events клиенту.
+
+Provider key/resumption handle и GitHub credentials не выдаются клиенту. Android не создаёт отдельную Live session для локальных platform actions.
 
 Project access проверяется **на каждом tool**, а не один раз через project_id provider session.
 
@@ -134,6 +136,20 @@ Shared wire нужно расширить typed events `activity_start/activity_
 Нужен adapter-level механизм читать сохранённый source и bounded/paced отправлять PCM через shared provider без создания второго transport implementation.
 
 Все эти gaps исправляются в `live-interaction` как reusable capability, а Projects Hub только использует versioned release.
+
+## 8.1. Device-local function execution
+
+Часть function calls имеет server-owned executor (memory, GitHub, project docs, owning service API), а часть — device-owned executor (личный календарь Android, notification permission, другие явно разрешённые platform capabilities).
+
+Для device-owned call central Live-model всё равно вызывает function **в backend session**. Backend:
+- авторизует actor + workspace + concrete device;
+- записывает durable command/idempotency state;
+- доставляет command только связанному Android device;
+- получает typed result/receipt;
+- reconciles unknown outcome/retry;
+- возвращает подтверждённый result той же Live-модели.
+
+Android исполняет только allowlisted platform command и не получает provider/GitHub credentials. Device channel — исполнитель, не второй semantic agent.
 
 ## 9. Function calls: одна модель, много инструментов
 
