@@ -1,0 +1,77 @@
+import base64
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from projects_hub.live_adapter import ProjectsHubLiveAdapter
+from projects_hub.live_resources import ConversationScope
+from projects_hub.store import DurableStore
+
+
+@pytest.mark.asyncio
+async def test_live_adapter_persists_audio_transcript_and_verified_memory(tmp_path: Path):
+    store = DurableStore(tmp_path)
+    try:
+        boot = store.ensure_dev_workspace("Live")
+        actor_id = boot["actor"]["id"]
+        workspace_id = boot["workspace"]["id"]
+        project_id = boot["projects"][0]["id"]
+        conversation = store.create_conversation(actor_id, workspace_id, project_id)
+        binding = ConversationScope(workspace_id, actor_id, conversation["id"]).resource_binding()
+        adapter = ProjectsHubLiveAdapter(store)
+        initialized = adapter.initialize(
+            resource_id=binding,
+            actor={"subject": actor_id, "tenant_id": workspace_id},
+            model="gemini-3.8-live",
+            conversation_id=conversation["id"],
+        )
+        assert initialized["configuration"]["functions"]
+        assert initialized["response"]["focus_project_id"] == project_id
+
+        session = SimpleNamespace(state=initialized["state"])
+        pcm = b"\x01\x00" * 320
+        adapter.input(session, {"audio_base64": base64.b64encode(pcm).decode("ascii")})
+        source = store.get_source(actor_id, initialized["response"]["source_id"])
+        assert source["audio_bytes"] == len(pcm)
+
+        full = "важный источник " + ("д" * 5000)
+        adapter.on_event(
+            session,
+            {"type": "input_transcript", "text": full, "provider_at": 123},
+        )
+        assert store.get_source(actor_id, source["id"])["transcript"] == full
+
+        result = await adapter.execute_tool(
+            session,
+            {
+                "name": "memory_commit_voice_source",
+                "id": "provider-call-1",
+                "args": {
+                    "project_id": project_id,
+                    "title": "Важное решение",
+                    "kind": "decision",
+                    "semantic_notes": "Нужно сохранить.",
+                },
+            },
+        )
+        assert result["status"] == "archived"
+        assert result["transcript_revision"] == 1
+
+        repeated = await adapter.execute_tool(
+            session,
+            {
+                "name": "memory_commit_voice_source",
+                "id": "provider-call-after-reconnect",
+                "args": {
+                    "project_id": project_id,
+                    "title": "Важное решение",
+                    "kind": "decision",
+                    "semantic_notes": "Нужно сохранить.",
+                },
+            },
+        )
+        assert repeated == result
+        assert len(store.list_memories(actor_id, workspace_id, project_id)) == 1
+    finally:
+        store.close()

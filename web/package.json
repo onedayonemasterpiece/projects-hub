@@ -1,0 +1,28 @@
+{
+  "name": "projects-hub-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build"
+  },
+  "dependencies": {
+    "@onedayonemasterpiece/live-interaction": "git+https://github.com/onedayonemasterpiece/live-interaction.git#c9de297020087235d80ce4155e52f63f88c642bf",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "@supabase/supabase-js": "2.108.2"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.16",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.4",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.7"
+  },
+  "liveFramework": {
+    "repository": "https://github.com/onedayonemasterpiece/live-interaction",
+    "version": "0.2.6-candidate",
+    "commit": "c9de297020087235d80ce4155e52f63f88c642bf"
+  }
+}

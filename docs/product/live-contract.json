@@ -1,0 +1,235 @@
+{
+  "schema_version": 2,
+  "spec_revision": 3,
+  "as_of": "2026-09-27",
+  "status": "first_vertical_implemented_partial_product_acceptance",
+  "owner_input": {
+    "id": "U03",
+    "kind": "direct_user_architecture_correction",
+    "date": "2026-09-27",
+    "summary": "One central Live agent is the sole semantic orchestrator. Online and buffered offline raw audio go to that Live model; its input transcription and function calls drive memory, project routing, vocabulary and actions. Deterministic infrastructure may not hide a second ASR/LLM router/classifier/summarizer."
+  },
+  "applications": {
+    "pwa": "full_application",
+    "android": "full_application",
+    "shared_core_ux": true,
+    "android_capabilities_superset": true,
+    "identical_os_guarantees_claimed": false,
+    "core_scenarios": [
+      "live_dialogue",
+      "projects",
+      "tasks",
+      "decisions",
+      "history",
+      "offline_capture",
+      "resume_conversation"
+    ]
+  },
+  "interaction": {
+    "mode": "continuous_live_dialogue",
+    "free_text_composer": false,
+    "ordinary_utterance_submit_form": false,
+    "contextual_buttons": true,
+    "fixed_question_limit": null,
+    "voice_project_switch": true,
+    "contextual_project_routing": true,
+    "multi_project_conversation": true,
+    "manual_project_selection_required": false,
+    "confirmation": "consequence_specific_voice_or_button",
+    "new_conversation_deletes_previous": false
+  },
+  "capture": {
+    "source_audio_pipeline_count": 1,
+    "durable_before_provider_send": true,
+    "checkpoint_target_ms": 1000,
+    "checkpoint_target_status": "proposal_requires_device_measurement",
+    "vad": true,
+    "vad_failure_behavior": "preserve_possible_speech",
+    "pre_roll_and_hangover": true,
+    "silence_ends_logical_conversation": false,
+    "provider_response_is_archive_receipt": false
+  },
+  "offline": {
+    "long_capture_supported": true,
+    "sealed_manifest_required": true,
+    "resumable_upload": true,
+    "agent_delivery": "raw_audio_to_central_live",
+    "separate_asr_before_live": false,
+    "summary_only_delivery_allowed": false,
+    "manual_activity_boundaries_required": true,
+    "automatic_activity_detection_for_buffered_replay": false,
+    "activity_sequence": [
+      "activityStart",
+      "buffered_pcm",
+      "activityEnd"
+    ],
+    "network_return_ends_utterance": false,
+    "allow_response_to_incomplete_packet": false,
+    "preserve_original_conversation_and_capture_time": true,
+    "new_conversation_policy": "preserve_previous_source_and_separate_reply",
+    "old_answer_plays_in_new_conversation": false,
+    "stale_action_requires_revalidation": true
+  },
+  "archive": {
+    "semantic_disposition_owner": "live_agent_function_call",
+    "fixed_duration_archive_rule_seconds": null,
+    "explicit_save_is_strong_agent_instruction": true,
+    "pending_agent_disposition_auto_delete": false,
+    "source_format": "markdown_provider_transcript_plus_provenance",
+    "source_is_summary": false,
+    "mixed_project_source_default_audience": "personal",
+    "source_index_required": true,
+    "per_source_vocabulary_snapshot": true,
+    "automatic_audio_cleanup_requires": [
+      "manifest_complete",
+      "live_turn_complete",
+      "agent_disposition_durable",
+      "source_transcript_journal_durable",
+      "archive_readback_if_archived",
+      "conversation_links_durable",
+      "retention_policy_satisfied"
+    ],
+    "physical_loss_of_only_offline_copy_recoverable_claim": false
+  },
+  "vocabulary": {
+    "scopes": [
+      "product",
+      "project",
+      "personal"
+    ],
+    "agent_can_build_from_authorized_github_documents": true,
+    "refresh_by_source_revision": true,
+    "voice_corrections": true,
+    "automatic_grounded_nonconflicting_updates": true,
+    "unverified_conflicts": "candidate_or_clarify",
+    "source_provenance_required": true,
+    "old_transcripts_rewritten_on_refresh": false,
+    "contextual_and_acoustic_compatibility_required": true,
+    "provider_vocabulary_support_must_be_verified": true,
+    "source_refs": [
+      {
+        "repository": "onedayonemasterpiece/record-idea-hub",
+        "path": "docs/IDEA_HUB_CONTRACT.md",
+        "commit": "35fb24ee20ef2845824032793dedb60aee7ea6fa"
+      },
+      {
+        "repository": "onedayonemasterpiece/idea-hub",
+        "path": "config/voice-terminology.yaml",
+        "blob_sha": "52d4675affc03f351cfdc616a0ddf62eae7bfbac"
+      },
+      {
+        "repository": "onedayonemasterpiece/wonderful-lections",
+        "path": "docs/product/continuous-slide-review.md",
+        "blob_sha": "ac8786d3aeb2d3d8a392813176b526bcdf09605e"
+      },
+      {
+        "repository": "onedayonemasterpiece/wonderful-lections",
+        "path": "assets/review/terms.ru.json",
+        "blob_sha": "5bbfd45fdf0f1b4fd1b5f6d8f53b9e0b63259e71"
+      }
+    ],
+    "semantic_owner": "live_agent",
+    "hidden_background_llm": false,
+    "provider_input_transcription_alone_is_grounding_evidence": false
+  },
+  "additional_acceptance_gates": [
+    "G21",
+    "G22",
+    "G23",
+    "G24",
+    "G25",
+    "G26",
+    "G27",
+    "G28",
+    "G29",
+    "G30",
+    "G31",
+    "G32",
+    "G33",
+    "G34",
+    "G35"
+  ],
+  "central_agent": {
+    "sole_semantic_orchestrator": true,
+    "online_input": "raw_audio_direct_to_live",
+    "offline_input": "raw_audio_deliberate_buffered_replay_to_live",
+    "input_transcription_owner": "live_provider_same_session",
+    "project_routing_owner": "live_agent",
+    "archive_disposition_owner": "live_agent_function_call",
+    "vocabulary_semantic_owner": "live_agent",
+    "clarification_owner": "live_agent",
+    "hidden_semantic_llm_inside_tools_allowed": false
+  },
+  "deterministic_layer": {
+    "allowed_roles": [
+      "audio_capture",
+      "vad",
+      "durable_source",
+      "transport",
+      "auth_acl",
+      "quota_leases",
+      "manifest_integrity",
+      "retries",
+      "idempotency",
+      "optimistic_concurrency",
+      "transactions_outbox",
+      "device_binding",
+      "readback_reconciliation",
+      "mechanical_retrieval",
+      "schema_validation"
+    ],
+    "forbidden_semantic_roles": [
+      "separate_asr_before_live",
+      "project_intent_router",
+      "pre_live_summarizer",
+      "value_classifier",
+      "response_rewriter_agent",
+      "hidden_dictionary_llm"
+    ]
+  },
+  "framework_requirements": {
+    "direct_audio_to_live": true,
+    "live_input_transcription_enabled_in_current_framework": true,
+    "lossless_trusted_transcript_sink_required": true,
+    "ui_transcript_projection_must_not_be_archive": true,
+    "event_ring_must_not_be_archive": true,
+    "deliberate_buffered_turn_required": true,
+    "manual_activity_start_end_required": true,
+    "conversation_scope_not_single_project_scope_required": true,
+    "product_durable_capture_above_transport_required": true,
+    "current_provider_transcript_projection_limit_chars": 2000,
+    "current_session_event_ring_size": 320,
+    "current_browser_transcript_preview_is_bounded": true
+  },
+  "implementation_evidence": {
+    "release_sha": "c179ac0d00df3a3600df744c836a847bd3744bb0",
+    "shared_live_interaction": "0.2.6-candidate@c9de297020087235d80ce4155e52f63f88c642bf",
+    "shared_ai_resource_control": "0.1.7",
+    "realtime_browser_transport_wired": true,
+    "buffered_manual_activity_product_path": true,
+    "durable_pcm_before_provider_queue": true,
+    "trusted_input_transcript_sink": true,
+    "provider_function_canary": "pass",
+    "real_audio_memory_canary": "pass",
+    "service_restart_memory_recall_canary": "pass",
+    "duplicate_memory_after_restart": false,
+    "provider_voice_response_observed": true,
+    "physical_microphone_acceptance": "not_run",
+    "public_identity_provider": "not_implemented",
+    "android": "not_implemented",
+    "offline_client_queue": "pwa_foreground_implemented",
+    "pwa_durability_first_shared_capture": true,
+    "pwa_indexeddb_offline_source_queue": true,
+    "offline_interrupted_source_recovery": true,
+    "offline_stable_client_source_identity": true,
+    "offline_retry_same_server_source": "pass",
+    "offline_retry_duplicate_memory": false,
+    "offline_real_provider_buffered_replay": "pass",
+    "genuine_provider_resumption": "not_observed_after_15_minutes_resumable_handle_available",
+    "multi_project_single_audio_source": "pass_two_project_canary",
+    "multi_project_memory_objects_for_source": 2,
+    "project_memory_semantic_only": true,
+    "full_provider_source_actor_private": true,
+    "legacy_memory_schema_migration": "pass_with_post_migration_live_readback"
+  }
+}

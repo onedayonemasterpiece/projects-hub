@@ -1,0 +1,75 @@
+plugins {
+    id "com.android.application"
+}
+
+def versionCodeOverride = providers.gradleProperty("versionCodeOverride").orNull
+def versionNameOverride = providers.gradleProperty("versionNameOverride").orNull
+def hasReleaseSigning = System.getenv("ANDROID_KEYSTORE_PATH") &&
+        System.getenv("ANDROID_KEYSTORE_PASSWORD") &&
+        System.getenv("ANDROID_KEY_ALIAS") &&
+        System.getenv("ANDROID_KEY_PASSWORD")
+
+android {
+    namespace "com.kenigevents.projectshub"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.kenigevents.projectshub"
+        minSdk 26
+        targetSdk 35
+        versionCode versionCodeOverride ? Integer.parseInt(versionCodeOverride) : 1
+        versionName versionNameOverride ?: "0.1.1"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField "String", "HUB_URL", "\"https://projects-hub.kenigevents.ru/\""
+        buildConfigField "String", "UPDATE_REPOSITORY", "\"onedayonemasterpiece/projects-hub\""
+    }
+
+    signingConfigs {
+        release {
+            if (hasReleaseSigning) {
+                storeFile file(System.getenv("ANDROID_KEYSTORE_PATH"))
+                storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-debug"
+        }
+        release {
+            minifyEnabled false
+            shrinkResources false
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    testOptions {
+        animationsDisabled true
+    }
+}
+
+dependencies {
+    implementation "androidx.core:core:1.15.0"
+
+    testImplementation "junit:junit:4.13.2"
+
+    androidTestImplementation "androidx.test:core:1.6.1"
+    androidTestImplementation "androidx.test.ext:junit:1.2.1"
+}

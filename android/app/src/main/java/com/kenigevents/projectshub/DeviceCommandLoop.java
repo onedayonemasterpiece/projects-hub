@@ -1,0 +1,117 @@
+package com.kenigevents.projectshub;
+
+import org.json.JSONObject;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+
+final class DeviceCommandLoop {
+    interface Completion {
+        void complete(String status, JSONObject result);
+    }
+
+    interface CommandHandler {
+        void handle(ApiClient.ClaimedCommand command, Completion completion);
+    }
+
+    interface Listener {
+        void onAuthenticationRejected();
+    }
+
+    private static final class Outcome {
+        final String status;
+        final JSONObject result;
+
+        Outcome(String status, JSONObject result) {
+            this.status = status;
+            this.result = result;
+        }
+    }
+
+    private final ApiClient api;
+    private final String deviceToken;
+    private final ExecutorService executor;
+    private final CommandHandler handler;
+    private final Listener listener;
+    private final AtomicBoolean running = new AtomicBoolean(false);
+
+    DeviceCommandLoop(
+            ApiClient api,
+            String deviceToken,
+            ExecutorService executor,
+            CommandHandler handler,
+            Listener listener
+    ) {
+        this.api = api;
+        this.deviceToken = deviceToken;
+        this.executor = executor;
+        this.handler = handler;
+        this.listener = listener;
+    }
+
+    void start() {
+        if (!running.compareAndSet(false, true)) return;
+        executor.execute(this::runLoop);
+    }
+
+    void stop() {
+        running.set(false);
+    }
+
+    private void runLoop() {
+        while (running.get() && !Thread.currentThread().isInterrupted()) {
+            try {
+                ApiClient.ClaimedCommand command = api.nextCommand(deviceToken, 25000);
+                if (command == null) continue;
+
+                CountDownLatch completed = new CountDownLatch(1);
+                AtomicReference<Outcome> outcome = new AtomicReference<>();
+                AtomicBoolean accepted = new AtomicBoolean(false);
+
+                handler.handle(command, (status, result) -> {
+                    if (!accepted.compareAndSet(false, true)) return;
+                    outcome.set(new Outcome(
+                            status == null ? "failed" : status,
+                            result == null ? new JSONObject() : result
+                    ));
+                    completed.countDown();
+                });
+
+                if (!completed.await(180, TimeUnit.SECONDS)) {
+                    // Do not guess after a local capability timeout. The backend moves
+                    // a claimed command to outcome_unknown rather than replaying it.
+                    continue;
+                }
+
+                Outcome value = outcome.get();
+                if (value != null) {
+                    api.submitReceipt(deviceToken, command, value.status, value.result);
+                }
+            } catch (ApiClient.ApiException apiFailure) {
+                if (apiFailure.statusCode == 401) {
+                    running.set(false);
+                    listener.onAuthenticationRejected();
+                    return;
+                }
+                sleepQuietly();
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return;
+            } catch (Exception ignored) {
+                sleepQuietly();
+            }
+        }
+    }
+
+    private void sleepQuietly() {
+        if (!running.get()) return;
+        try {
+            Thread.sleep(1500);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+}
