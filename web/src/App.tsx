@@ -10,11 +10,14 @@ import {
   createConversation,
   getConversation,
   getMemories,
+  getAuthConfig,
   login,
+  type AuthConfig,
   type Bootstrap,
   type Conversation,
   type MemoryItem,
 } from "./api";
+import { finishPublicAuth, startPublicAuth } from "./auth";
 
 type WaitState = null | { elapsed_ms: number; stage: string; can_restart: boolean };
 
@@ -65,6 +68,7 @@ function friendlyStartError(error: unknown) {
 
 export default function App() {
   const [boot, setBoot] = useState<Bootstrap | null>(null);
+  const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [voiceState, setVoiceState] = useState("off");
@@ -99,24 +103,55 @@ export default function App() {
   }, [boot]);
 
   useEffect(() => {
-    bootstrap()
-      .then(async value => {
-        setBoot(value);
-        const saved = localStorage.getItem("projects-hub-conversation");
-        if (saved) {
-          try {
-            const current = await getConversation(saved);
-            if (current.workspace_id === value.workspace.id) setConversation(current);
-            else localStorage.removeItem("projects-hub-conversation");
-          } catch {
-            localStorage.removeItem("projects-hub-conversation");
+    let cancelled = false;
+
+    async function applyBootstrap(value: Bootstrap) {
+      if (cancelled) return;
+      setBoot(value);
+      const saved = localStorage.getItem("projects-hub-conversation");
+      if (!saved) return;
+      try {
+        const current = await getConversation(saved);
+        if (cancelled) return;
+        if (current.workspace_id === value.workspace.id) setConversation(current);
+        else localStorage.removeItem("projects-hub-conversation");
+      } catch {
+        localStorage.removeItem("projects-hub-conversation");
+      }
+    }
+
+    async function initialize() {
+      try {
+        const config = await getAuthConfig();
+        if (cancelled) return;
+        setAuthConfig(config);
+
+        if (config.mode === "yandex_pkce") {
+          const callbackBootstrap = await finishPublicAuth(config);
+          if (callbackBootstrap) {
+            await applyBootstrap(callbackBootstrap);
+            return;
           }
         }
-      })
-      .catch(error => {
-        if (!(error instanceof ApiError) || error.status !== 401) setNotice(error.message);
-      })
-      .finally(() => setAuthReady(true));
+
+        try {
+          await applyBootstrap(await bootstrap());
+        } catch (error) {
+          if (!(error instanceof ApiError) || error.status !== 401) throw error;
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setNotice(error instanceof Error ? error.message : "Не удалось проверить вход.");
+        }
+      } finally {
+        if (!cancelled) setAuthReady(true);
+      }
+    }
+
+    void initialize();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -167,6 +202,13 @@ export default function App() {
     setBusy(true);
     setNotice(null);
     try {
+      if (authConfig?.mode === "yandex_pkce") {
+        await startPublicAuth(authConfig);
+        return;
+      }
+      if (authConfig?.mode === "disabled") {
+        throw new Error("Вход сейчас недоступен.");
+      }
       const value = await login();
       setBoot(value);
     } catch (error) {
@@ -240,7 +282,11 @@ export default function App() {
             Один Live‑собеседник слышит вас, понимает контекст проекта и вызывает только разрешённые действия.
           </p>
           <button className="primary-action" onClick={signIn} disabled={busy}>
-            {busy ? "Вхожу…" : "Войти в пилот"}
+            {busy
+              ? "Вхожу…"
+              : authConfig?.mode === "yandex_pkce"
+                ? "Войти через Яндекс"
+                : "Войти в пилот"}
           </button>
           {notice && <p className="notice" role="alert">{notice}</p>}
         </section>

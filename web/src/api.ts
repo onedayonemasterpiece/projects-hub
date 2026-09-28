@@ -12,6 +12,10 @@ export type Conversation = {
   focus_project_id: string | null;
   focus_project_name: string | null;
 };
+export type AuthConfig =
+  | { mode: "yandex_pkce"; supabase_url: string; publishable_key: string; provider: string; redirect_url: string }
+  | { mode: "loopback_dev" | "disabled" };
+
 export type MemoryItem = {
   id: string;
   source_id: string;
@@ -54,6 +58,14 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   }
   return payload as T;
 }
+
+export const getAuthConfig = () => api<AuthConfig>("/api/auth/config");
+
+export const exchangePublicAuth = (accessToken: string) =>
+  api<Bootstrap>("/api/auth/exchange", {
+    method: "POST",
+    body: JSON.stringify({ access_token: accessToken }),
+  });
 
 export const login = () =>
   api<Bootstrap>("/api/dev/login", { method: "POST", body: JSON.stringify({}) });

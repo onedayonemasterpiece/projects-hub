@@ -60,6 +60,18 @@ class DurableStore:
             display_name TEXT NOT NULL,
             created_at_ms INTEGER NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS external_identities(
+            provider TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            actor_id TEXT NOT NULL REFERENCES actors(id),
+            email TEXT,
+            display_name TEXT NOT NULL,
+            created_at_ms INTEGER NOT NULL,
+            updated_at_ms INTEGER NOT NULL,
+            PRIMARY KEY(provider, subject)
+        );
+        CREATE INDEX IF NOT EXISTS external_identities_actor_idx
+            ON external_identities(actor_id);
         CREATE TABLE IF NOT EXISTS workspaces(
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -169,6 +181,79 @@ class DurableStore:
                 self.db.execute(
                     "INSERT INTO actors(id,display_name,created_at_ms) VALUES(?,?,?)",
                     (actor_id, name, now),
+                )
+                self.db.execute(
+                    "INSERT INTO workspaces(id,name,created_at_ms) VALUES(?,?,?)",
+                    (workspace_id, "Личное пространство", now),
+                )
+                self.db.execute(
+                    "INSERT INTO memberships(actor_id,workspace_id,role) VALUES(?,?,?)",
+                    (actor_id, workspace_id, "owner"),
+                )
+                for project_name in ("Projects Hub", "Wonderful Lections", "KenigEvents"):
+                    self.db.execute(
+                        "INSERT INTO projects(id,workspace_id,name,status,created_at_ms) VALUES(?,?,?,?,?)",
+                        (_id("prj"), workspace_id, project_name, "active", now),
+                    )
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
+        return self.bootstrap(actor_id, workspace_id)
+
+    def ensure_external_workspace(
+        self,
+        *,
+        provider: str,
+        subject: str,
+        display_name: str,
+        email: str | None = None,
+    ) -> dict[str, Any]:
+        provider = str(provider or "").strip()
+        subject = str(subject or "").strip()
+        name = (display_name or "Пользователь").strip()[:80] or "Пользователь"
+        normalized_email = (email or "").strip()[:320] or None
+        if not provider or len(provider) > 100 or not subject or len(subject) > 200:
+            raise StoreError("INVALID_IDENTITY", "External identity is invalid")
+        now = _now_ms()
+        with self._lock:
+            row = self.db.execute(
+                "SELECT actor_id FROM external_identities WHERE provider=? AND subject=?",
+                (provider, subject),
+            ).fetchone()
+            if row:
+                actor_id = row["actor_id"]
+                self.db.execute("BEGIN IMMEDIATE")
+                try:
+                    self.db.execute(
+                        "UPDATE actors SET display_name=? WHERE id=?",
+                        (name, actor_id),
+                    )
+                    self.db.execute(
+                        """UPDATE external_identities
+                           SET email=?,display_name=?,updated_at_ms=?
+                           WHERE provider=? AND subject=?""",
+                        (normalized_email, name, now, provider, subject),
+                    )
+                    self.db.execute("COMMIT")
+                except Exception:
+                    self.db.execute("ROLLBACK")
+                    raise
+                return self.bootstrap(actor_id)
+
+            actor_id = _id("usr")
+            workspace_id = _id("ws")
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                self.db.execute(
+                    "INSERT INTO actors(id,display_name,created_at_ms) VALUES(?,?,?)",
+                    (actor_id, name, now),
+                )
+                self.db.execute(
+                    """INSERT INTO external_identities
+                       (provider,subject,actor_id,email,display_name,created_at_ms,updated_at_ms)
+                       VALUES(?,?,?,?,?,?,?)""",
+                    (provider, subject, actor_id, normalized_email, name, now, now),
                 )
                 self.db.execute(
                     "INSERT INTO workspaces(id,name,created_at_ms) VALUES(?,?,?)",

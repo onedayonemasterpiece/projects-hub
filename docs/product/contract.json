@@ -426,7 +426,7 @@
     "phase": "first_vertical_deployed",
     "release_sha": "69e3fe75799f425b3c930e10efd68eeba5cb87d2",
     "devcoveer_runtime": "pass",
-    "deterministic_contracts": "44_pass",
+    "deterministic_contracts": "43_pass_latest_full_local_suite_20260927",
     "pwa_production_build": "pass",
     "provider_function_canary": "pass",
     "real_audio_provider_transcript_memory_commit_readback_voice": "pass",

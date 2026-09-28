@@ -10,7 +10,8 @@
   "dependencies": {
     "@onedayonemasterpiece/live-interaction": "file:vendor/live-interaction-0.2.5.tgz",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "@supabase/supabase-js": "2.108.2"
   },
   "devDependencies": {
     "@types/react": "^19.1.16",
