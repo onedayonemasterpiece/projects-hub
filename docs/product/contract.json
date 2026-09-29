@@ -474,19 +474,20 @@
     "android_device_command_architecture": "implemented_calendar_outbox_claim_receipt_readback",
     "backend_topology": "single_devcoveer_backend_owns_live_and_server_integrations",
     "android_signed_release": "android-v5_0.1.5_apksigner_verified",
-    "android_self_update": "implemented_retry_resume_sha256_system_installer_hosted_emulator_e2e_pending_due_runner_dns_system_ui_flakiness",
+    "android_self_update": "hosted_android14_handoff_pass_v4_to_v5_manifest_sha256_product_update_available_button_clicked_verified_download_package_installer_handoff_same_signature_in_place_update_uid_preserved",
     "android_physical_calendar_acceptance": "not_run_no_physical_adb_device",
     "android_physical_microphone_acceptance": "not_run_no_physical_adb_device",
     "event_readiness": "implemented_generic_and_podcast_checklists_follow_up_tasks",
-    "github_app_runtime_configured": false
+    "github_app_runtime_configured": false,
+    "android_self_update_final_human_installer_tap": "physical_gate_not_automated"
   },
   "current_execution_focus": {
     "as_of": "2026-09-29",
-    "slice": "stabilize hosted-emulator self-update evidence; restore owner-controlled public DNS credential; then physical Android calendar/microphone acceptance",
-    "android_update": "product implementation complete on v5; hosted-emulator gate isolated from physical final installer tap",
+    "slice": "restore public DNS edge, then physical Android calendar/microphone acceptance",
+    "android_update": "hosted handoff/in-place acceptance pass; final Android system confirmation remains physical human gate",
     "event_readiness": "implemented and deployed",
     "blocking_external_gates": [
-      "projects-hub.kenigevents.ru DNS/TLS publication requires a valid owner-controlled Yandex Cloud identity; the stale DevCoveer yc profile is not reused",
+      "projects-hub.kenigevents.ru DNS/TLS publication requires a valid owner-controlled Yandex Cloud DNS identity",
       "production GitHub App registration/private-key/webhook credential requires owner-authenticated setup",
       "physical Android ADB device is not connected to DevCoveer"
     ],
