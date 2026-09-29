@@ -20,6 +20,7 @@ jobs:
         with:
           api-level: 35
           arch: x86_64
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -dns-server 8.8.8.8,1.1.1.1
           script: python3 scripts/android_self_update_e2e.py
         env:
           GITHUB_TOKEN: ${{ github.token }}
