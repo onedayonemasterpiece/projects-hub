@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "as_of": "2026-09-28",
+  "as_of": "2026-09-29",
   "product_id": "projects-hub",
   "brand": {
     "recommended": "Содей",
@@ -444,17 +444,17 @@
   "central_agent_contract": "12-central-live-agent.md",
   "implementation_status": {
     "phase": "android_mvp_readiness_deployed_public_edge_and_physical_acceptance_pending",
-    "release_sha": "b26c76ba9e27c62af2cf2401a07939cefff76d8a",
+    "release_sha": "a6c650e2f0944884dd01b57524ab77211e8db0aa",
     "devcoveer_runtime": "pass",
-    "deterministic_contracts": "80_pytest_pass",
+    "deterministic_contracts": "main_contracts_pass",
     "pwa_production_build": "pass",
-    "provider_function_canary": "pass_post_deploy_b26c76",
+    "provider_function_canary": "pass_post_deploy_a6c650",
     "real_audio_provider_transcript_memory_commit_readback_voice": "pass",
     "service_restart_memory_recall_without_duplicate": "pass",
     "typed_runtime_log_search": "pass",
     "physical_browser_microphone_acceptance": "not_run_no_device_in_devcoveer_headless_browser",
     "public_identity_provider": "backend_configured_yandex_pkce_public_edge_dns_blocked_yc_noninteractive_auth",
-    "android_application": "implemented_signed_release_v3_build_and_emulator_launch_pass",
+    "android_application": "implemented_signed_release_v5_build_and_emulator_launch_pass",
     "github_app_connection": "server_side_implemented_runtime_credentials_not_configured",
     "client_offline_restart_safe_queue": "pwa_foreground_implemented_android_not_implemented",
     "production_product_accepted": false,
@@ -473,22 +473,22 @@
     "github_app_live_surface": "read_only_bound_repository_catalogue_only",
     "android_device_command_architecture": "implemented_calendar_outbox_claim_receipt_readback",
     "backend_topology": "single_devcoveer_backend_owns_live_and_server_integrations",
-    "android_signed_release": "android-v3_0.1.3_apksigner_verified",
-    "android_self_update": "implemented_feed_sha256_system_installer_emulator_e2e_in_progress_pr16",
+    "android_signed_release": "android-v5_0.1.5_apksigner_verified_sha256_9999603e",
+    "android_self_update": "implemented_retry_resume_manifest_sha256_system_installer_handoff_final_emulator_acceptance_pr19_in_progress",
     "android_physical_calendar_acceptance": "not_run_no_physical_adb_device",
     "android_physical_microphone_acceptance": "not_run_no_physical_adb_device",
     "event_readiness": "implemented_generic_and_podcast_checklists_follow_up_tasks",
     "github_app_runtime_configured": false
   },
   "current_execution_focus": {
-    "as_of": "2026-09-28",
-    "slice": "close Android self-update acceptance, then physical calendar/microphone acceptance",
-    "android_update": "implementation complete; emulator in-app update gate in progress on PR #16",
-    "event_readiness": "implemented and deployed on main",
+    "as_of": "2026-09-29",
+    "slice": "close self-update acceptance on current main, then physical Android calendar/microphone acceptance",
+    "android_update": "implementation complete; final hosted-emulator handoff acceptance in PR #19",
+    "event_readiness": "implemented and deployed",
     "blocking_external_gates": [
       "projects-hub.kenigevents.ru DNS/TLS publication requires restored non-interactive Yandex Cloud auth",
       "production GitHub App registration/private-key/webhook credential requires owner-authenticated setup",
-      "physical Samsung/Android ADB device is not connected to DevCoveer"
+      "physical Android device is not connected to DevCoveer for microphone/calendar acceptance"
     ],
     "explicitly_deferred": [
       "vector-search stack until ordinary indexed search proves insufficient",
