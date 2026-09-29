@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "as_of": "2026-09-28",
+  "as_of": "2026-09-29",
   "product_id": "projects-hub",
   "brand": {
     "recommended": "Содей",
@@ -443,18 +443,18 @@
   "spec_revision": 3,
   "central_agent_contract": "12-central-live-agent.md",
   "implementation_status": {
-    "phase": "android_mvp_readiness_deployed_public_edge_and_physical_acceptance_pending",
-    "release_sha": "b26c76ba9e27c62af2cf2401a07939cefff76d8a",
+    "phase": "android_v5_readiness_deployed_public_edge_and_physical_acceptance_pending",
+    "release_sha": "a6c650e2f0944884dd01b57524ab77211e8db0aa",
     "devcoveer_runtime": "pass",
     "deterministic_contracts": "80_pytest_pass",
     "pwa_production_build": "pass",
-    "provider_function_canary": "pass_post_deploy_b26c76",
+    "provider_function_canary": "pass_post_deploy_a6c650e",
     "real_audio_provider_transcript_memory_commit_readback_voice": "pass",
     "service_restart_memory_recall_without_duplicate": "pass",
     "typed_runtime_log_search": "pass",
     "physical_browser_microphone_acceptance": "not_run_no_device_in_devcoveer_headless_browser",
-    "public_identity_provider": "backend_configured_yandex_pkce_public_edge_dns_blocked_yc_noninteractive_auth",
-    "android_application": "implemented_signed_release_v3_build_and_emulator_launch_pass",
+    "public_identity_provider": "backend_configured_yandex_pkce_public_edge_dns_blocked_yandex_noninteractive_identity_unavailable",
+    "android_application": "implemented_signed_release_v5_build_and_emulator_launch_pass",
     "github_app_connection": "server_side_implemented_runtime_credentials_not_configured",
     "client_offline_restart_safe_queue": "pwa_foreground_implemented_android_not_implemented",
     "production_product_accepted": false,
@@ -473,22 +473,22 @@
     "github_app_live_surface": "read_only_bound_repository_catalogue_only",
     "android_device_command_architecture": "implemented_calendar_outbox_claim_receipt_readback",
     "backend_topology": "single_devcoveer_backend_owns_live_and_server_integrations",
-    "android_signed_release": "android-v3_0.1.3_apksigner_verified",
-    "android_self_update": "implemented_feed_sha256_system_installer_emulator_e2e_in_progress_pr16",
+    "android_signed_release": "android-v5_0.1.5_apksigner_verified",
+    "android_self_update": "implemented_retry_resume_sha256_system_installer_hosted_emulator_e2e_pending_due_runner_dns_system_ui_flakiness",
     "android_physical_calendar_acceptance": "not_run_no_physical_adb_device",
     "android_physical_microphone_acceptance": "not_run_no_physical_adb_device",
     "event_readiness": "implemented_generic_and_podcast_checklists_follow_up_tasks",
     "github_app_runtime_configured": false
   },
   "current_execution_focus": {
-    "as_of": "2026-09-28",
-    "slice": "close Android self-update acceptance, then physical calendar/microphone acceptance",
-    "android_update": "implementation complete; emulator in-app update gate in progress on PR #16",
-    "event_readiness": "implemented and deployed on main",
+    "as_of": "2026-09-29",
+    "slice": "stabilize hosted-emulator self-update evidence; restore owner-controlled public DNS credential; then physical Android calendar/microphone acceptance",
+    "android_update": "product implementation complete on v5; hosted-emulator gate isolated from physical final installer tap",
+    "event_readiness": "implemented and deployed",
     "blocking_external_gates": [
-      "projects-hub.kenigevents.ru DNS/TLS publication requires restored non-interactive Yandex Cloud auth",
+      "projects-hub.kenigevents.ru DNS/TLS publication requires a valid owner-controlled Yandex Cloud identity; the stale DevCoveer yc profile is not reused",
       "production GitHub App registration/private-key/webhook credential requires owner-authenticated setup",
-      "physical Samsung/Android ADB device is not connected to DevCoveer"
+      "physical Android ADB device is not connected to DevCoveer"
     ],
     "explicitly_deferred": [
       "vector-search stack until ordinary indexed search proves insufficient",
