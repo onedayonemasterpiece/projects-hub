@@ -88,12 +88,12 @@ GitHub authentication is still not the user identity system.
 
 Current Android/MVP evidence on 28 September 2026:
 
-- `main` / deployed release: `b26c76ba9e27c62af2cf2401a07939cefff76d8a`;
+- deployed product release: `a6c650e2f0944884dd01b57524ab77211e8db0aa`;
 - backend deployment health PASS, service active/running with zero restarts;
 - post-deploy real Gemini Live function canary PASS with backend readback, voice output and `turn_complete`;
 - Android build + unit PASS and Android emulator install + `MainActivity` launch PASS;
-- signed GitHub Releases `android-v1`, `android-v2`, `android-v3`; v3 is 0.1.3 and its release workflow passed `apksigner verify`;
-- Android updater fetches the latest release manifest, requires increasing versionCode, verifies APK SHA-256 and delegates installation to the Android package installer; interactive emulator update acceptance remains a separate gate until its workflow is green;
+- signed GitHub Releases `android-v1`…`android-v5`; v5 is 0.1.5, source `a6c650…`, and its release workflow passed `apksigner verify`;
+- Android updater fetches the latest release manifest, requires increasing versionCode, retries transient network failures, rechecks on resume, verifies APK SHA-256 and delegates installation to the Android package installer; latest manifest/APK digests are verified and PR #19 carries the final hosted-emulator handoff acceptance;
 - device-command backend and typed receipts are implemented with claim/digest/session binding and Calendar Provider readback semantics;
 - event-readiness cards, `generic`/`podcast` checklists and follow-up task lifecycle are implemented;
 - backend suite after readiness: 80 pytest PASS; PWA production build PASS;
