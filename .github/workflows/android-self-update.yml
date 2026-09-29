@@ -18,8 +18,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: 34
           arch: x86_64
+          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -dns-server 8.8.8.8,1.1.1.1
           script: python3 scripts/android_self_update_e2e.py
         env:
           GITHUB_TOKEN: ${{ github.token }}
