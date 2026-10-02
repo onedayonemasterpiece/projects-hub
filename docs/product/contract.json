@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "as_of": "2026-09-29",
+  "as_of": "2026-10-02",
   "product_id": "projects-hub",
   "brand": {
     "recommended": "Содей",
@@ -225,7 +225,13 @@
       "id": "street-story",
       "repository": "onedayonemasterpiece/street-story",
       "owner_of": "story preparation and publication",
-      "status": "later_scoped_integration"
+      "status": "poi_contradiction_review_adapter_contract_designed"
+    },
+    {
+      "id": "regional-knowledge-base",
+      "repository": "onedayonemasterpiece/regional-knowledge-base",
+      "owner_of": "regional book/journal evidence and knowledge:// provenance",
+      "status": "poi_evidence_bridge_and_shared_identity_contract_designed"
     }
   ],
   "release_gates": [
