@@ -142,6 +142,10 @@ Server-owned и device-owned tools различаются исполнителе
 
 ### Предметные owning products
 - Wonderful Lections, KenigEvents, Street Story и другие через свои существующие service contracts/adapters.
+- External expert review cases остаются объектами owning product. Projects Hub
+  хранит assignment/UX/command receipts и вызывает typed review adapter, но не
+  копирует канонические claim/evidence данные. Первый такой consumer — Street
+  Story POI contradiction journal; подробный договор — [15](15-expert-review-cases.md).
 
 Tool schemas короткие и typed. Agent не получает shell/SQL/credential access. Tool может выполнять несколько детерминированных шагов одной бизнес-операции, но не решает semantic intent отдельной моделью.
 
