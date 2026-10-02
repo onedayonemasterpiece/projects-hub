@@ -148,3 +148,25 @@ PASS требует:
 - group pilot.
 
 Пока G01–G35 не имеют evidence, они остаются `not_run`.
+
+
+## WSS и multi-user gates · 2 октября 2026
+
+Полная матрица: [WSS и многопользовательская надёжность](16-wss-multi-user-reliability.md).
+
+До утверждения, что Projects Hub пригоден нескольким людям одновременно, требуются отдельные доказательства, а не только green unit tests:
+
+- actor/workspace/conversation/session/generation isolation;
+- one-use WSS ticket/origin/resource/generation negative tests;
+- bounded per-session queues и slow-client isolation;
+- damaged-turn mutation block/recovery;
+- no mutation replay после reconnect/unknown result;
+- deterministic transport soak: минимум 20 concurrent synthetic sockets в течение 30 минут без unbounded queue/memory growth и cross-session leaks;
+- real-provider concurrency: минимум 3 независимые одновременные Live sessions с несколькими turns и read + permitted write/readback;
+- два разных actor в одном workspace с private/shared ACL и optimistic revision conflict;
+- один actor на двух устройствах: explicit conversation ownership/takeover, generation bump и отсутствие смешивания двух микрофонов;
+- настоящий production `wss://` TLS Upgrade через reverse proxy; `/healthz` недостаточно;
+- physical Android microphone/noise/poor-network/Stop/restart/offline-reboot/calendar acceptance;
+- drills для WSS disconnect, provider GoAway, resource denial, backend restart, slow client, unknown device result и DB contention.
+
+Число 20 в synthetic gate — test headroom, не обещанная коммерческая ёмкость. Provider latency/SLO задаются только после измерений. Production acceptance остаётся false, пока эти gates, public edge и GitHub App/physical-device границы не закрыты.
