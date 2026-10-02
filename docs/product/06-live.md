@@ -233,3 +233,24 @@ Reconnect/resumption:
 - ни один product tool не делает скрытый semantic LLM call.
 
 До этих прогонов документация не является runtime acceptance.
+
+
+## Транспортная ревизия 2 октября 2026: WSS target
+
+Следующий realtime transport Projects Hub — shared WSS contract `live-interaction`; полный план, multi-user isolation и rollout находятся в [WSS и многопользовательской надёжности](16-wss-multi-user-reliability.md).
+
+Ключевые правила миграции:
+
+- Python backend и центральная Gemini Live session сохраняются; отдельный gateway/sidecar ради WebSocket не нужен;
+- HTTP используется для authenticated bootstrap/control, а realtime PCM/provider events — через same-origin WSS;
+- socket admission использует одноразовый короткоживущий ticket, привязанный к actor/workspace/conversation/session/resource/generation;
+- readiness только после protocol `hello_ack`;
+- bounded sequence/capture-age/ACK/queue limits; stale или out-of-order realtime audio не replay-ится;
+- ACK подтверждает relay admission, а не понимание/действие модели;
+- после WSS attach нет silent fallback к старому HTTP-audio/event-poll path;
+- повреждённый turn не может породить новые write tools до следующей clean activity boundary;
+- accepted/unknown mutations не повторяются при reconnect — сначала authoritative readback/reconciliation;
+- transport/provider/resource/tool/transition/authorization failures различаются;
+- provider WebSocket может смениться, но product conversation не обнуляется.
+
+Текущий deployed Projects Hub runtime этой миграции ещё не доказывает. До consumer-specific regression/provider/public-TLS/physical acceptance старый HTTP Live transport остаётся фактическим baseline и не должен быть описан как уже заменённый.

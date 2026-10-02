@@ -1,6 +1,6 @@
 # Projects Hub — спецификация живой совместной работы
 
-**Ревизия 6 от 28 сентября 2026. Статус: central Live/PWA, Android-клиент, device-command calendar backend, signed GitHub Releases и event-readiness слой реализованы; полный production acceptance ещё не объявлен из-за незакрытых physical-device/public-edge/GitHub-App gates.** Имя «Содей / Sodey» остаётся предложением; технический идентификатор `projects-hub` не меняется.
+**Ревизия 7 от 2 октября 2026. Статус: central Live/PWA, Android-клиент, device-command calendar backend, signed GitHub Releases, event-readiness и expert-review слой реализованы; WSS/multi-user reliability переход спроектирован, но ещё не является runtime acceptance; полный production acceptance не объявлен из-за незакрытых physical-device/public-edge/GitHub-App/multi-user gates.** Имя «Содей / Sodey» остаётся предложением; технический идентификатор `projects-hub` не меняется.
 
 ## Центральная идея
 
@@ -105,9 +105,18 @@ Stop, «Новый разговор» и delete — разные действи�
 | [UI: тёмные плавающие острова](13-ui-floating-islands.md) | Визуальная система PWA/Android и основной экран |
 | [GitHub connections](14-github-connections.md) | GitHub App installation, repository roles и отсутствие PAT у обычных участников |
 | [Экспертные review cases](15-expert-review-cases.md) | Межпроектные экспертные проверки: assignment, evidence ACL, typed resolution и readback |
+| [WSS и многопользовательская надёжность](16-wss-multi-user-reliability.md) | Целевой realtime transport, session isolation, concurrency, capability bundles, acceptance и rollout |
 | [Live contract](live-contract.json) | Машиночитаемые архитектурные правила |
 
 Свежие требования 28 сентября не меняют central-Live архитектуру: V19 добавляет безопасный in-app путь обновления Android после первой установки; V20 добавляет class-specific checklist готовности к приближающимся событиям и создание конкретных follow-up задач по недостающим материалам. Оба пункта включаются последовательно после работающего device-command/calendar E2E, а не расширяют MVP до универсального workflow engine.
+
+## Обновление 2 октября: WSS, несколько пользователей и свежие owner review
+
+Следующий realtime этап зафиксирован в [WSS и многопользовательской надёжности](16-wss-multi-user-reliability.md). Это не декларация готовности, а обязательный план перехода: shared WSS transport, one-use tickets, bounded queues/ACK, session generations, запрет stale-audio/mutation replay, actor/workspace/conversation isolation и отдельные multi-user/physical acceptance gates. Текущий HTTP Live path остаётся фактическим runtime до завершения этой миграции.
+
+Свежий owner review `voice-20261002-174500-c34d45c8` добавляет два базовых UX-направления: light/dark theme с voice control и ненавязчивый adaptive onboarding, который помогает человеку постепенно открывать возможности продукта и может мягко напоминать давно не использованные функции. Preference/usage state должны быть actor-scoped.
+
+Owner review `voice-20261002-173201-0808cd76` фиксируется как исследовательское расширение: асинхронный экспертный дискурс может в будущем становиться evidence-backed редакционным материалом. Это не расширяет текущий MVP автоматически; до реализации нужны participant identity/provenance, privacy/publication consent и отдельная продуктовая приёмка.
 
 ## Фактический baseline и статус
 
