@@ -211,7 +211,10 @@
     "cross_resource_audience_isolation_required": true,
     "shared_dependency_ref_kind": "stable_release_tag",
     "raw_commit_dependency_interface_allowed": false,
-    "release_verification_evidence_required": true
+    "release_verification_evidence_required": true,
+    "android_foreground_single_transport": "webview_pwa_shared_wss",
+    "android_parallel_native_wss_allowed": false,
+    "android_native_future_role": "durable_background_capture_handoff_only"
   },
   "implementation_evidence": {
     "release_sha": "59b522278a1694dfb930e070149fa0de9224c6b6",
@@ -228,7 +231,7 @@
     "provider_voice_response_observed": true,
     "physical_microphone_acceptance": "not_run",
     "public_identity_provider": "not_implemented",
-    "android": "not_implemented",
+    "android": "foreground_webview_pwa_shared_wss_implemented_physical_microphone_not_run_native_background_capture_not_implemented",
     "offline_client_queue": "pwa_foreground_implemented",
     "pwa_durability_first_shared_capture": true,
     "pwa_indexeddb_offline_source_queue": true,
@@ -267,7 +270,9 @@
     "deployed_release_sha": "720f44d8771043804a5e6e4fe6cb56e38790d79b",
     "deployed_live_version": "0.3.8@v0.3.8",
     "versioned_release_deployed_acceptance": "roundtrip_pass_two_real_provider_concurrency_pass_zero_socket_failed",
-    "four_actor_wss_deterministic": "pass_handshake_cross_actor_ticket_isolation_global_capacity"
+    "four_actor_wss_deterministic": "pass_handshake_cross_actor_ticket_isolation_global_capacity",
+    "android_foreground_transport": "same_pwa_live_interaction_v0.3.8_wss_no_parallel_native_socket",
+    "android_webview_microphone_origin_boundary": "exact_hub_origin_candidate"
   },
   "transport": {
     "primary": "authenticated_same_origin_wss",

@@ -211,7 +211,11 @@
     "clients_connect_to_live_provider_directly": false,
     "clients_receive_github_credentials": false,
     "android_device_capabilities": "backend_issued_typed_command_to_bound_device_then_receipt_to_same_live_session",
-    "android_is_backend": false
+    "android_is_backend": false,
+    "foreground_android_live_transport": "webview_pwa_shared_wss",
+    "native_parallel_live_transport_allowed": false,
+    "native_android_future_capture_role": "durable_background_offline_capture_handoff_not_second_wss",
+    "android_privileged_web_permissions": "exact_projects_hub_origin_only"
   },
   "integrations": [
     {
@@ -539,7 +543,11 @@
     "live_0_3_8_local_acceptance": "104_pytest_pass_clean_npm_ci_pwa_build_pass",
     "live_0_3_8_release_commit": "f756a90f864bee16a671b54da7a53189e2e4a94e",
     "live_0_3_8_release_asset_sha256": "99b8a4ea7c04a81062547a6a63b8e161220fb62a3b6d947ddda1954c2a90ab0",
-    "live_0_3_8_deployed_acceptance": "roundtrip_pass_two_real_provider_concurrency_pass_zero_socket_failed"
+    "live_0_3_8_deployed_acceptance": "roundtrip_pass_two_real_provider_concurrency_pass_zero_socket_failed",
+    "android_foreground_live_transport": "webview_runs_same_pwa_live_interaction_v0_3_8_wss",
+    "android_webview_microphone_origin_boundary": "implemented_candidate_android_ci_pending",
+    "android_parallel_native_wss": "not_planned_would_duplicate_foreground_transport",
+    "android_background_durable_capture": "not_implemented"
   },
   "current_execution_focus": {
     "as_of": "2026-10-03",
@@ -560,6 +568,7 @@
       "duplicated canonical POI or contradiction store inside Projects Hub"
     ],
     "shared_component_dependency_policy": "use stable version/tag/capability availability; keep SHA/digest only as reproducibility evidence",
-    "latest_owner_review": "V25 voice-20261003-083638-766e61b7"
+    "latest_owner_review": "V25 voice-20261003-083638-766e61b7",
+    "android_voice": "foreground uses shared PWA WSS in WebView; accept physical WebView microphone/public edge before adding native background durable capture"
   }
 }

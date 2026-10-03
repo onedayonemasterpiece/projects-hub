@@ -96,6 +96,12 @@ GitHub authentication is still not the user identity system.
 - public edge WSS is **blocked before TLS/WebSocket acceptance** because `projects-hub.kenigevents.ru` currently does not resolve in DNS from DevCoveer; DNS/TLS/HTTP probes all fail at name resolution;
 - durable operational check is `scripts/devcoveer_wss_canary.py`: run `--mode roundtrip` and then `--mode concurrency` sequentially under the loopback dev actor. The two modes must not be run concurrently because the roundtrip itself occupies one of the actor's bounded Live slots.
 
+### Android WebView Live boundary · 3 October 2026
+
+Foreground Android is not a separate Live transport. The installed app hosts the same PWA `live-interaction v0.3.8` client in WebView, so WSS session bootstrap, one-use ticket, PCM/ACK and pushed events are the same contract as browser PWA. The native shell grants web microphone access only to the exact `PROJECTS_HUB_PUBLIC_ORIGIN`; foreign Supabase/Yandex OAuth pages may participate in PKCE navigation but are denied privileged audio capture. A stale pending permission is cancelled when navigation leaves the trusted origin and origin/current-page are rechecked after the Android permission dialog.
+
+A future native Android capture layer is reserved for reboot/background/offline durability and must hand off into the existing source/replay/Live contract. It must not create a second WSS/provider path.
+
 Current Android/MVP evidence on 28 September 2026:
 
 - deployed runtime release: `a6c650e2f0944884dd01b57524ab77211e8db0aa`; repository `main` later advanced through docs/test-only commits;
@@ -173,7 +179,7 @@ Not yet claimed:
 
 - physical microphone acceptance on the user's actual browser/device;
 - crash-durable online startup capture while the Live session POST itself is pending;
-- physical Android calendar/microphone acceptance and Android offline/reboot queue;
+- physical Android calendar/WebView-microphone acceptance and Android offline/reboot queue; foreground Android already uses the shared PWA WSS path, while native background capture remains unimplemented;
 - public DNS/TLS/WSS edge acceptance for the configured Yandex IdP boundary; current blocker is unresolved DNS, not an application WebSocket failure;
 - production GitHub App registration/credentials plus installation/callback acceptance;
 - long 3/10/30-minute buffered-source acceptance;
@@ -206,7 +212,7 @@ What is accepted on the deployed loopback backend:
 What is **not** accepted yet:
 - public `wss://projects-hub.kenigevents.ru` Upgrade, because DNS does not currently resolve;
 - 20-socket/30-minute deterministic soak and 3+ independent-user real-provider acceptance;
-- native Android WSS/capture edge and physical microphone/noise/poor-network acceptance;
+- physical Android WebView microphone/noise/poor-network acceptance over the same PWA WSS path; native parallel WSS is intentionally not a target;
 - post-WSS physical Android in-app update;
 - Regional Knowledge delegated OAuth + `knowledge_search` E2E. The Projects Hub adapter/tool contract is implemented fail-closed and the full backend suite is 104 PASS, but the Regional Knowledge project explicitly has no real Supabase/OAuth resource deployment yet, so the tool remains absent from normal Live sessions until an actor/workspace-bound delegated provider exists.
 

@@ -40,6 +40,7 @@ public final class MainActivity extends Activity {
 
     private WebView webView;
     private Button updateButton;
+    private WebOriginPolicy webOriginPolicy;
     private SecureStore secureStore;
     private ApiClient api;
     private CalendarExecutor calendar;
@@ -68,6 +69,7 @@ public final class MainActivity extends Activity {
         getWindow().setNavigationBarColor(Color.rgb(7, 7, 8));
 
         secureStore = new SecureStore(this);
+        webOriginPolicy = new WebOriginPolicy(BuildConfig.HUB_URL);
         api = new ApiClient(BuildConfig.HUB_URL);
         calendar = new CalendarExecutor(this);
         notifier = new Notifier(this);
@@ -151,6 +153,9 @@ public final class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         main.removeCallbacksAndMessages(null);
+        PermissionRequest pendingPermission = pendingWebPermission;
+        pendingWebPermission = null;
+        if (pendingPermission != null) pendingPermission.deny();
         if (deviceLoop != null) deviceLoop.stop();
         if (webView != null) {
             webView.stopLoading();
@@ -192,15 +197,37 @@ public final class MainActivity extends Activity {
             }
 
             @Override
+            public void onPageStarted(WebView webView, String url, android.graphics.Bitmap favicon) {
+                super.onPageStarted(webView, url, favicon);
+                if (!webOriginPolicy.isTrustedPageUrl(url)) {
+                    PermissionRequest pending = pendingWebPermission;
+                    pendingWebPermission = null;
+                    if (pending != null) pending.deny();
+                }
+            }
+
+            @Override
             public void onPageFinished(WebView webView, String url) {
                 super.onPageFinished(webView, url);
-                attemptPairing();
+                if (webOriginPolicy.isTrustedPageUrl(url)) {
+                    attemptPairing();
+                }
             }
         });
 
         view.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onPermissionRequest(PermissionRequest request) {
+                String origin = request.getOrigin() == null
+                        ? ""
+                        : request.getOrigin().toString();
+                String currentUrl = webView == null ? "" : webView.getUrl();
+                if (!webOriginPolicy.isTrustedPermissionOrigin(origin)
+                        || !webOriginPolicy.isTrustedPageUrl(currentUrl)) {
+                    Log.w("ProjectsHubWebView", "denied privileged web permission for foreign origin");
+                    request.deny();
+                    return;
+                }
                 boolean wantsAudio = false;
                 for (String resource : request.getResources()) {
                     if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)) {
@@ -422,8 +449,14 @@ public final class MainActivity extends Activity {
             PermissionRequest request = pendingWebPermission;
             pendingWebPermission = null;
             if (request == null) return;
+            String origin = request.getOrigin() == null
+                    ? ""
+                    : request.getOrigin().toString();
+            String currentUrl = webView == null ? "" : webView.getUrl();
             if (grantResults.length > 0
-                    && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    && grantResults[0] == PackageManager.PERMISSION_GRANTED
+                    && webOriginPolicy.isTrustedPermissionOrigin(origin)
+                    && webOriginPolicy.isTrustedPageUrl(currentUrl)) {
                 request.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
             } else {
                 request.deny();
