@@ -13,7 +13,6 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .auth import COOKIE_NAME, SESSION_TTL_SECONDS, issue_session, parse_session
-from .identity import IdentityError, SupabaseIdentityVerifier
 from .github_app import GitHubAppError
 from .github_connections import GitHubConnections
 from .device_commands import DeviceCommandService
@@ -31,8 +30,13 @@ class DevLogin(BaseModel):
     display_name: str = Field(default="Pilot user", max_length=80)
 
 
-class AuthExchange(BaseModel):
-    access_token: str = Field(min_length=20, max_length=8192)
+class InviteLogin(BaseModel):
+    token: str = Field(min_length=20, max_length=200)
+
+
+class OwnerInviteRequest(BaseModel):
+    display_name: str = Field(default="Владелец", min_length=1, max_length=80)
+    ttl_seconds: int = Field(default=15 * 60, ge=60, le=24 * 60 * 60)
 
 
 class ConversationCreate(BaseModel):
@@ -98,7 +102,7 @@ class DeviceReceipt(BaseModel):
 
 
 def _http_for_code(code: str) -> int:
-    if code in {"UNAUTHENTICATED", "DEVICE_UNAUTHENTICATED"}:
+    if code in {"UNAUTHENTICATED", "DEVICE_UNAUTHENTICATED", "INVITE_INVALID"}:
         return 401
     if code in {
         "FORBIDDEN",
@@ -209,7 +213,6 @@ def create_app(
     *,
     store: DurableStore | None = None,
     live_host: Any | None = None,
-    identity_verifier: Any | None = None,
     github_connections: Any | None = None,
     device_commands: DeviceCommandService | None = None,
     readiness: ReadinessService | None = None,
@@ -235,17 +238,9 @@ def create_app(
     app.state.settings = settings
     app.state.store = store
     app.state.live_host = live_host
-    app.state.identity_verifier = identity_verifier
     app.state.github_connections = github_connections or GitHubConnections(store, settings)
     app.state.device_commands = device_commands or DeviceCommandService(store)
     app.state.readiness = readiness or ReadinessService(store)
-    if app.state.identity_verifier is None and settings.public_auth_enabled:
-        app.state.identity_verifier = SupabaseIdentityVerifier(
-            base_url=settings.auth_supabase_url,
-            publishable_key=settings.auth_supabase_publishable_key,
-            provider=settings.auth_provider,
-        )
-
     def host() -> Any:
         if app.state.live_host is None:
             app.state.live_host = build_live_host(
@@ -320,13 +315,6 @@ def create_app(
         http = _error(exc)
         return JSONResponse(status_code=http.status_code, content={"error": http.detail})
 
-    @app.exception_handler(IdentityError)
-    async def identity_error(_request: Request, exc: IdentityError):
-        return JSONResponse(
-            status_code=_http_for_code(exc.code),
-            content={"error": {"code": exc.code, "message": str(exc)[:300]}},
-        )
-
     @app.exception_handler(GitHubAppError)
     async def github_error(_request: Request, exc: GitHubAppError):
         return JSONResponse(
@@ -340,9 +328,9 @@ def create_app(
             "ok": store.ping(),
             "storage": "sqlite-wal",
             "auth_mode": (
-                "public_yandex+loopback_dev"
+                "first_party_invite+loopback_dev"
                 if settings.public_auth_enabled and settings.dev_auth
-                else "public_yandex"
+                else "first_party_invite"
                 if settings.public_auth_enabled
                 else "loopback_dev"
                 if settings.dev_auth
@@ -358,50 +346,47 @@ def create_app(
     @app.get("/api/auth/config")
     async def auth_config() -> dict[str, Any]:
         if settings.public_auth_enabled:
-            return {
-                "mode": "yandex_pkce",
-                "supabase_url": settings.auth_supabase_url,
-                "publishable_key": settings.auth_supabase_publishable_key,
-                "provider": settings.auth_provider,
-                "redirect_url": settings.public_origin + "/",
-            }
+            return {"mode": "first_party_invite"}
         return {
             "mode": "loopback_dev" if settings.dev_auth else "disabled",
         }
 
-    @app.post("/api/auth/exchange")
-    async def auth_exchange(
-        payload: AuthExchange,
+    @app.post("/api/auth/invite")
+    async def auth_invite(
+        payload: InviteLogin,
         response: Response,
         request: Request,
     ) -> dict[str, Any]:
         if not settings.public_auth_enabled or not _public_edge_request(request, settings):
             raise HTTPException(status_code=404, detail={"code": "PUBLIC_AUTH_DISABLED"})
-        verifier = app.state.identity_verifier
-        if verifier is None:
-            raise HTTPException(status_code=503, detail={"code": "IDENTITY_PROVIDER_UNAVAILABLE"})
-        identity = await verifier.verify(payload.access_token)
-        bootstrap = store.ensure_external_workspace(
-            provider=str(identity["provider"]),
-            subject=str(identity["subject"]),
-            display_name=str(identity.get("display_name") or "Пользователь"),
-            email=identity.get("email"),
-        )
+        bootstrap = store.consume_login_invite(payload.token)
         token = issue_session(bootstrap["actor"]["id"], settings.session_secret)
         response.set_cookie(
             COOKIE_NAME,
             token,
             httponly=True,
-            secure=True,
+            secure=settings.cookie_secure,
             samesite="lax",
             max_age=SESSION_TTL_SECONDS,
             path="/",
         )
         log.info(
-            "public identity exchanged",
-            extra={"event": "auth_exchange", "result": "ok"},
+            "first-party invite consumed",
+            extra={"event": "auth_invite", "result": "ok"},
         )
         return bootstrap
+
+    @app.post("/api/dev/owner-invite")
+    async def dev_owner_invite(
+        payload: OwnerInviteRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        if not settings.dev_auth or not _loopback_dev_request(request):
+            raise HTTPException(status_code=404, detail={"code": "DEV_AUTH_DISABLED"})
+        return store.issue_platform_owner_invite(
+            payload.display_name,
+            ttl_seconds=payload.ttl_seconds,
+        )
 
     @app.post("/api/dev/login")
     async def dev_login(payload: DevLogin, response: Response, request: Request) -> dict[str, Any]:

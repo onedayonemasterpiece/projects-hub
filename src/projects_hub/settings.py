@@ -7,9 +7,6 @@ import secrets
 import stat
 from urllib.parse import urlsplit
 
-EXPECTED_AUTH_SUPABASE_URL = "https://epyznmylqmchteykjsqj.supabase.co"
-EXPECTED_AUTH_PROVIDER = "custom:yandex"
-
 
 def _flag(value: str | None, default: bool = False) -> bool:
     if value is None:
@@ -62,9 +59,6 @@ class Settings:
     model: str = "gemini-3.8-live"
     release_sha: str = "development"
     public_origin: str = ""
-    auth_supabase_url: str = ""
-    auth_supabase_publishable_key: str = ""
-    auth_provider: str = EXPECTED_AUTH_PROVIDER
     github_app_id: int | None = None
     github_app_slug: str = ""
     github_app_private_key: str = ""
@@ -72,11 +66,7 @@ class Settings:
 
     @property
     def public_auth_enabled(self) -> bool:
-        return bool(
-            self.public_origin
-            and self.auth_supabase_url
-            and self.auth_supabase_publishable_key
-        )
+        return bool(self.public_origin)
 
     @property
     def github_app_enabled(self) -> bool:
@@ -110,14 +100,7 @@ class Settings:
 
         static = Path(env.get("PROJECTS_HUB_STATIC_DIR") or "web/dist").expanduser()
         public_origin = str(env.get("PROJECTS_HUB_PUBLIC_ORIGIN") or "").strip().rstrip("/")
-        auth_url = str(env.get("PROJECTS_HUB_AUTH_SUPABASE_URL") or "").strip().rstrip("/")
-        auth_key = str(env.get("PROJECTS_HUB_AUTH_SUPABASE_PUBLISHABLE_KEY") or "").strip()
-        auth_provider = str(env.get("PROJECTS_HUB_AUTH_PROVIDER") or EXPECTED_AUTH_PROVIDER).strip()
-
-        configured = (bool(public_origin), bool(auth_url), bool(auth_key))
-        if any(configured) and not all(configured):
-            raise RuntimeError("Projects Hub public auth configuration is incomplete")
-        if all(configured):
+        if public_origin:
             parsed_origin = urlsplit(public_origin)
             if (
                 parsed_origin.scheme != "https"
@@ -129,12 +112,6 @@ class Settings:
                 or parsed_origin.fragment
             ):
                 raise RuntimeError("PROJECTS_HUB_PUBLIC_ORIGIN must be an HTTPS origin")
-            if auth_url != EXPECTED_AUTH_SUPABASE_URL:
-                raise RuntimeError("Projects Hub public auth Supabase project is unexpected")
-            if auth_provider != EXPECTED_AUTH_PROVIDER:
-                raise RuntimeError("Projects Hub public auth provider is unexpected")
-            if len(auth_key) < 20 or len(auth_key) > 4096:
-                raise RuntimeError("Projects Hub public auth publishable key is invalid")
 
         github_app_id_raw = str(env.get("PROJECTS_HUB_GITHUB_APP_ID") or "").strip()
         github_slug = str(env.get("PROJECTS_HUB_GITHUB_APP_SLUG") or "").strip()
@@ -192,9 +169,6 @@ class Settings:
             model=str(env.get("PROJECTS_HUB_LIVE_MODEL") or "gemini-3.8-live"),
             release_sha=str(env.get("PROJECTS_HUB_DEPLOY_SHA") or "development"),
             public_origin=public_origin,
-            auth_supabase_url=auth_url,
-            auth_supabase_publishable_key=auth_key,
-            auth_provider=auth_provider,
             github_app_id=github_app_id,
             github_app_slug=github_slug,
             github_app_private_key=github_private_key,

@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from projects_hub.app import create_app
 from projects_hub.device_commands import DeviceCommandService
-from projects_hub.settings import EXPECTED_AUTH_SUPABASE_URL, Settings
+from projects_hub.settings import Settings
 from projects_hub.store import DurableStore
 
 
@@ -29,9 +29,6 @@ def public_settings(tmp_path: Path) -> Settings:
         dev_auth=False,
         cookie_secure=True,
         public_origin=PUBLIC_ORIGIN,
-        auth_supabase_url=EXPECTED_AUTH_SUPABASE_URL,
-        auth_supabase_publishable_key="sb_publishable_" + ("x" * 40),
-        auth_provider="custom:yandex",
     )
 
 
@@ -180,7 +177,6 @@ def test_public_device_receipt_is_not_browser_origin_bound_but_still_device_auth
         public_settings(tmp_path),
         store=store,
         device_commands=service,
-        identity_verifier=object(),
     )
     try:
         with TestClient(app, base_url=PUBLIC_ORIGIN) as client:

@@ -33,14 +33,6 @@ AI_RESOURCE_CONTROL_URL = (
     f"ai-resource-control.git@{AI_RESOURCE_CONTROL_SHA}"
 )
 PUBLIC_ORIGIN = "https://projects-hub.kenigevents.ru"
-AUTH_SUPABASE_URL = "https://epyznmylqmchteykjsqj.supabase.co"
-AUTH_PROVIDER = "custom:yandex"
-AUTH_PUBLISHABLE_ALIASES = (
-    "PERSONALIZATION_SUPABASE_PUBLISHABLE_KEY",
-    "PUBLIC_PERSONALIZATION_SUPABASE_PUBLISHABLE_KEY",
-    "STATIC_SITE_PUBLIC_PERSONALIZATION_SUPABASE_PUBLISHABLE_KEY",
-)
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RELEASES_ROOT = Path("/home/dev/.local/share/projects-hub/releases")
 CURRENT_LINK = Path("/home/dev/.local/share/projects-hub/current")
@@ -172,23 +164,6 @@ def select_provider_environment(values: Mapping[str, str]) -> dict[str, str]:
     if not (explicit or host_alias or compatibility):
         raise DeployError("shared ai-resource-control authority binding is unavailable")
     return selected
-
-
-def select_public_auth_environment(values: Mapping[str, str]) -> dict[str, str]:
-    publishable = ""
-    for name in AUTH_PUBLISHABLE_ALIASES:
-        candidate = str(values.get(name) or "").strip()
-        if candidate:
-            publishable = candidate
-            break
-    if len(publishable) < 20 or len(publishable) > 4096:
-        raise DeployError("personalization Supabase publishable key is unavailable")
-    return {
-        "PROJECTS_HUB_PUBLIC_ORIGIN": PUBLIC_ORIGIN,
-        "PROJECTS_HUB_AUTH_SUPABASE_URL": AUTH_SUPABASE_URL,
-        "PROJECTS_HUB_AUTH_SUPABASE_PUBLISHABLE_KEY": publishable,
-        "PROJECTS_HUB_AUTH_PROVIDER": AUTH_PROVIDER,
-    }
 
 
 def render_env(values: Mapping[str, str]) -> str:
@@ -357,7 +332,6 @@ def write_runtime_environment(sha: str) -> bytes | None:
     os.chmod(LOG_ROOT, 0o700)
     host_values = _parse_env(HOST_ENV)
     provider = select_provider_environment(host_values)
-    public_auth = select_public_auth_environment(host_values)
     private_write(PROVIDER_ENV, render_env(provider))
     ensure_session_secret()
     old_service = SERVICE_ENV.read_bytes() if SERVICE_ENV.is_file() else None
@@ -374,7 +348,7 @@ def write_runtime_environment(sha: str) -> bytes | None:
                 "PROJECTS_HUB_DEPLOY_SHA": sha,
                 "PROJECTS_HUB_LOG_FILE": str(BACKEND_LOG),
                 "PROJECTS_HUB_PORT": str(PORT),
-                **public_auth,
+                "PROJECTS_HUB_PUBLIC_ORIGIN": PUBLIC_ORIGIN,
             }
         ),
     )
