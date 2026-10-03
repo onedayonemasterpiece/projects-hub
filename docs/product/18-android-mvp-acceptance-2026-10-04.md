@@ -19,9 +19,9 @@
 - physical Android microphone → public WSS → Live;
 - physical Android Calendar API insert + provider readback;
 - финальный пользовательский tap в системном Package Installer на physical device;
-- WebView/Yandex OAuth UX остаётся известным неудобством; first-party identity migration зафиксирована отдельно и не подменяется временной скрытой auth-архитектурой;
+- физический first-party invite login после удаления WebView/Yandex/Supabase auth flow ещё должен быть проверен владельцем на установленном Android;
 - GitHub App runtime credentials пока не configured; это не блокирует calendar MVP, но блокирует реальные GitHub product actions.
 
 ## Практический статус
 
-Текущий APK уже можно устанавливать как первую рабочую сборку. После первой установки штатные следующие релизы идут через GitHub Releases и обнаруживаются приложением. Следующий необходимый acceptance — не новый redesign, а один физический прогон: login → microphone → Live → calendar → readback и затем реальное подтверждение update installer.
+Текущий Android shell уже установлен и загружает актуальную PWA с backend, поэтому исправление first-party login не требует переустановки APK. Supabase Auth и обязательный Яндекс OAuth удалены из user-login path; текущий owner bootstrap — одноразовый first-party invite. Следующий необходимый acceptance — один физический прогон: invite login → microphone → Live → calendar → readback.
