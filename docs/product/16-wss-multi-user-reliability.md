@@ -248,9 +248,16 @@ Capability switch сохраняет **один пользовательский
 
 ### Shared identity
 
-Продуктовая семья использует общий Supabase Auth OAuth/OIDC issuer. Каноническая identity пользователя — `issuer + sub`.
+Каноническая identity продуктовой семьи — **first-party stable subject**, принадлежащий самой продуктовой платформе. Внешние IdP (включая Яндекс) могут быть позднее привязаны как способы подтверждения личности, но не становятся владельцем identity plane и не являются обязательным посредником входа.
 
-Это **не** означает общий bearer token:
+Текущий Projects Hub owner bootstrap использует одноразовый first-party invite:
+- backend хранит только SHA-256 одноразового кода и ограниченный срок действия;
+- код погашается один раз на exact Projects Hub public origin;
+- после погашения backend выдаёт обычную HttpOnly/Secure Projects Hub session cookie;
+- Android WebView не должен делить cookies/PKCE state с Яндексом, Supabase или другим внешним IdP;
+- unique platform owner привязан к отдельному first-party subject и не выводится из email/display name/external-provider account.
+
+Отдельно от способа входа сохраняются resource authorization boundaries:
 - Projects Hub, Regional Knowledge, Street Story и другие protected resources имеют собственные exact audiences/client bindings;
 - Projects Hub token не пересылается в Regional Knowledge;
 - private cross-service access выполняется через user-approved delegated grant к target resource;
