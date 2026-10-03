@@ -8,6 +8,7 @@ import re
 import subprocess
 import time
 import urllib.request
+import xml.etree.ElementTree as ET
 
 
 REPO = "onedayonemasterpiece/projects-hub"
@@ -174,6 +175,34 @@ def wait_adb_stable(timeout_seconds: int = 150) -> None:
     raise RuntimeError("Emulator did not become adb-stable")
 
 
+def wait_android_network(timeout_seconds: int = 120) -> None:
+    deadline = time.time() + timeout_seconds
+    last = ""
+    while time.time() < deadline:
+        last = run(
+            "adb",
+            "shell",
+            "ping",
+            "-c",
+            "1",
+            "-W",
+            "3",
+            "api.github.com",
+            check=False,
+            timeout=10,
+            retries=1,
+        )
+        if (
+            "PING api.github.com (" in last
+            or "1 received" in last
+            or "1 packets received" in last
+            or "bytes from" in last
+        ):
+            return
+        time.sleep(3)
+    raise RuntimeError(f"Android emulator network/DNS did not become ready: {last[-800:]!r}")
+
+
 def update_logs() -> str:
     return run(
         "adb",
@@ -186,6 +215,55 @@ def update_logs() -> str:
         check=False,
         timeout=20,
         retries=1,
+    )
+
+
+def wait_update_button_bounds(timeout_seconds: int = 45) -> tuple[int, int, int, int]:
+    deadline = time.time() + timeout_seconds
+    last_xml = ""
+    while time.time() < deadline:
+        run(
+            "adb",
+            "shell",
+            "uiautomator",
+            "dump",
+            "--compressed",
+            "/sdcard/projects-hub-window.xml",
+            check=False,
+            timeout=20,
+            retries=1,
+        )
+        last_xml = run(
+            "adb",
+            "exec-out",
+            "cat",
+            "/sdcard/projects-hub-window.xml",
+            check=False,
+            timeout=20,
+            retries=1,
+        )
+        try:
+            root = ET.fromstring(last_xml)
+        except ET.ParseError:
+            time.sleep(1)
+            continue
+        for node in root.iter("node"):
+            text = str(node.attrib.get("text") or "")
+            if not text.startswith("Доступно обновление"):
+                continue
+            match = re.fullmatch(
+                r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]",
+                str(node.attrib.get("bounds") or ""),
+            )
+            if not match:
+                continue
+            left, top, right, bottom = map(int, match.groups())
+            if right > left and bottom > top:
+                return left, top, right, bottom
+        time.sleep(1)
+    raise RuntimeError(
+        "Update button was not found in Android UI hierarchy; "
+        f"tail={last_xml[-1200:]!r}"
     )
 
 
@@ -270,6 +348,7 @@ def main() -> None:
     run("adb", "start-server", timeout=20, retries=3)
     run("adb", "wait-for-device", timeout=90, retries=6)
     wait_adb_stable()
+    wait_android_network()
 
     run("adb", "install", "-r", str(old_apk), timeout=90, retries=15)
     before = package_state()
@@ -281,17 +360,17 @@ def main() -> None:
     run("adb", "shell", "am", "start", "-W", "-n", ACTIVITY, timeout=30, retries=3)
 
     wait_log(rf"update_available versionCode={new_code}\b", timeout_seconds=150)
-    bounds = wait_log(
+    wait_log(
         rf"update_button_ready versionCode={new_code} bounds=(\d+),(\d+),(\d+),(\d+)",
         timeout_seconds=60,
     )
-    left, top, right, bottom = map(int, bounds.groups())
-    if right <= left or bottom <= top:
-        raise RuntimeError("Updater button bounds are invalid")
+    left, top, right, bottom = wait_update_button_bounds()
     x = (left + right) // 2
     y = (top + bottom) // 2
-    print(f"app update button: ready bounds={left},{top},{right},{bottom}")
+    print(f"app update button: ui bounds={left},{top},{right},{bottom}")
 
+    run("adb", "shell", "input", "keyevent", "KEYCODE_WAKEUP", timeout=15, retries=3)
+    run("adb", "shell", "wm", "dismiss-keyguard", check=False, timeout=15, retries=1)
     run("adb", "shell", "input", "tap", str(x), str(y), timeout=15, retries=3)
     wait_log(rf"update_button_clicked versionCode={new_code}\b", timeout_seconds=30)
 
@@ -302,6 +381,22 @@ def main() -> None:
     if permission_required:
         # Emulator-only acceptance helper. Production continues to require the
         # user's standard Android "Allow from this source" confirmation.
+        # The Settings activity launch is asynchronous: wait for it before
+        # changing the app-op, otherwise KEYCODE_BACK can race the transition
+        # and Projects Hub never receives onResume().
+        deadline = time.time() + 45
+        last_focus = ""
+        while time.time() < deadline:
+            last_focus = current_focus()
+            if "com.android.settings" in last_focus:
+                break
+            time.sleep(1)
+        else:
+            raise RuntimeError(
+                "Unknown-app-sources Settings did not become foreground: "
+                + repr(last_focus)
+            )
+
         run(
             "adb",
             "shell",
@@ -322,6 +417,10 @@ def main() -> None:
             timeout=15,
             retries=3,
         )
+        # Do not require Projects Hub to remain foreground here. onResume()
+        # may immediately resume the pending update and launch PackageInstaller
+        # before a polling loop ever observes the app window again. The durable
+        # product receipts below are the authoritative transition evidence.
 
     wait_log(rf"update_download_start versionCode={new_code}\b", timeout_seconds=60)
     wait_log(rf"update_verified versionCode={new_code}\b", timeout_seconds=180)

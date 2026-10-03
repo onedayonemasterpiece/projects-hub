@@ -84,22 +84,21 @@ PWA использует общий browser transport/AudioWorklet из `live-in
 6. pending offline source не удаляется до terminal server disposition/readback;
 7. старые HTTP Live endpoints могут временно существовать как explicit compatibility/canary path, но **не являются автоматическим fallback** активной WSS-сессии.
 
-## 4. Android: от WebView-микрофона к native reliable voice edge
+## 4. Android: один foreground WSS, native только для Android-specific durability
 
-Текущий Android Projects Hub в основном является WebView-контейнером поверх PWA, плюс уже имеет важные native возможности: Keystore/device binding, Calendar Provider, notifications и signed self-update.
+Фактический Android Projects Hub — WebView-контейнер общего PWA плюс native возможности: Keystore/device binding, Calendar Provider, notifications и signed self-update. Внутри WebView запускается **тот же PWA `live-interaction v0.3.8` WSS client**, поэтому foreground Android уже не нуждается во втором native WebSocket transport.
 
-Для устойчивого голосового продукта целевая Android-архитектура следующая:
+Целевая граница:
 
-- UI и продуктовые состояния могут продолжать использовать общий floating-islands frontend;
-- microphone capture, native VAD/admission, audio queue, WSS transport и playback переходят в native Android слой через **shared Java LiveSocketTransport** из digest-verified `live-interaction` archive;
-- WebView ↔ native bridge остаётся узким typed boundary: start/stop, state/events, transcript projection, playback/status; provider credentials через него не проходят;
+- foreground UI, microphone capture, WSS framing, ACK/backpressure и playback остаются в общем PWA/shared-browser Live path;
+- WebView выдаёт `RESOURCE_AUDIO_CAPTURE` только exact Projects Hub origin; Supabase/Yandex OAuth страницы могут проходить PKCE navigation, но не получают microphone permission;
+- Android native слой не открывает параллельную Live-сессию и не создаёт второй WSS transport;
 - Gemini/API key/GitHub credentials остаются только на backend;
-- native transport не является вторым agent/backend;
-- Stop останавливает hardware capture немедленно;
-- VAD pulse показывает реально admitted speech, а не просто открытую сессию;
-- source audio для offline/reboot recovery хранится product-owned durable способом и не смешивается с realtime WSS resend queue.
+- Android-specific native развитие относится к **durable/background/offline capture** и системным capabilities. Такой capture должен передавать source в существующий Projects Hub Live/replay contract, а не обходить его альтернативным provider/socket path;
+- Stop и UI state остаются согласованы с одной central Live session;
+- PWA IndexedDB foreground queue не выдаётся за reboot/background durability Android.
 
-Из Street Story следует важный урок физического телефона: prepared PCM и emulator не доказывают качество реального микрофона. Источник AudioRecord, VAD, suppression/AEC/NS и playback tail должны диагностироваться на настоящем устройстве. Конкретная Street Story калибровка VAD не копируется вслепую: Projects Hub принимает её как исходную гипотезу и калибрует на собственных trace.
+Из Street Story переносим проверенные принципы bounded audio, явного setup/listening state, physical-microphone diagnostics и запрета silent HTTP fallback, но не копируем domain controller и не создаём native transport только ради технологического совпадения. В shared `live-interaction v0.3.8` native Java source сам всё ещё маркирует transport как `0.3.7-rc.1`, поэтому он не является основанием объявлять native Android edge стабильным. Prepared PCM/emulator также не заменяют физическую проверку микрофона.
 
 ## 5. Многопользовательская модель — обязательный архитектурный инвариант
 
@@ -236,9 +235,10 @@ Capability switch сохраняет **один пользовательский
 - 3+ independent-user real-provider sessions / live multi-actor soak; four-actor deterministic acceptance это не заменяет;
 - public production `wss://` Upgrade; current blocker is unresolved DNS;
 - same-conversation multi-device takeover lease;
-- native Android WSS/capture edge;
+- physical Android WebView microphone over the shared PWA WSS path; public edge must resolve first;
 - physical microphone/noise/poor-network acceptance;
 - post-candidate physical Android in-app update;
+- Android reboot/background durable capture; native implementation must hand off to the existing Live/replay contract rather than open a parallel WSS;
 - Regional Knowledge delegated OAuth E2E.
 
 ## 15. Shared OAuth, Regional Knowledge и canonical POI ownership

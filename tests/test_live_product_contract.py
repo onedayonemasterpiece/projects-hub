@@ -133,3 +133,11 @@ def test_revision_five_docs_are_cross_linked():
     reliability = (DOCS / "08-reliability.md").read_text(encoding="utf-8")
     for n in range(1, 36):
         assert f"G{n:02d}" in reliability
+
+def test_android_foreground_reuses_one_pwa_wss_transport():
+    registry = load("contract.json")
+    platform = registry["platform_decision"]
+    assert platform["foreground_android_live_transport"] == "webview_pwa_shared_wss"
+    assert platform["native_parallel_live_transport_allowed"] is False
+    assert platform["android_privileged_web_permissions"] == "exact_projects_hub_origin_only"
+    assert "handoff_not_second_wss" in platform["native_android_future_capture_role"]
