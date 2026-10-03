@@ -267,7 +267,7 @@ user ↔ Mira / Projects Hub
           │
           └─ progressive capability: regional_knowledge
                   │
-                  └─ knowledge_search(query, max_evidence<=3)
+                  └─ knowledge_search(query, default=3, hard max_evidence=5)
                           │ user-approved Knowledge-audience token
                           ▼
                     Regional Knowledge
@@ -278,7 +278,11 @@ user ↔ Mira / Projects Hub
 - нормальный Live profile возвращает небольшой evidence pack с точными provenance refs;
 - отсутствие Regional Knowledge деградирует только эту capability, а не весь разговор;
 - Mira не повышает discovery snippet до verified fact без evidence;
-- интеграция считается спроектированной, но **не реализованной E2E**, пока delegated OAuth/API не развёрнуты и не приняты.
+- Projects Hub уже имеет transport-agnostic `RegionalKnowledgeAdapter`: он жёстко связывает provider с текущими `actor_sub + workspace_id`, ограничивает размер evidence/provenance и добавляет единственный `knowledge_search` в Live tool list только когда backend реально вернул user-delegated provider;
+- без delegation/provider `knowledge_search` вообще не попадает в конфигурацию Live; неправильная actor/workspace binding, не-HTTPS evidence или сломанный provider fail-closed и не ломают остальные capabilities;
+- Projects Hub не реализует service-role или bearer-token fallback для этого пути;
+- adapter contract покрыт regression tests; после его добавления полный backend suite — **102 PASS**;
+- полная интеграция всё ещё **не реализована E2E**: сам Regional Knowledge проект фиксирует, что отдельный Supabase/S3/OAuth resource ещё не развёрнут, поэтому реальный delegated OAuth grant и network call остаются acceptance gate.
 
 ### POI ownership
 

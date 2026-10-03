@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from .device_commands import DeviceCommandService
 from .expert_reviews import ExpertReviewAdapter
+from .regional_knowledge import RegionalKnowledgeAdapter
 from .live_adapter import ProjectsHubLiveAdapter
 from .live_admission import ProjectsHubAdmissionMixin
 from .live_resources import live_resource_environment
@@ -51,6 +52,9 @@ def build_live_host(
     expert_reviews_factory: (
         Callable[[str, str], ExpertReviewAdapter | None] | None
     ) = None,
+    regional_knowledge_factory: (
+        Callable[[str, str], RegionalKnowledgeAdapter | None] | None
+    ) = None,
 ) -> Any:
     """Build the canonical shared host lazily so offline store/API tests need no provider SDK."""
 
@@ -92,6 +96,7 @@ def build_live_host(
             device_commands=device_commands,
             readiness=readiness,
             expert_reviews_factory=expert_reviews_factory,
+            regional_knowledge_factory=regional_knowledge_factory,
             **shared,
         ),
         managed_runner=managed_runner,

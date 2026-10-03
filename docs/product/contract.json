@@ -480,7 +480,7 @@
     "phase": "wss_backend_deployed_loopback_real_provider_pass_public_dns_blocked",
     "release_sha": "59b522278a1694dfb930e070149fa0de9224c6b6",
     "devcoveer_runtime": "pass",
-    "deterministic_contracts": "94_pytest_pass",
+    "deterministic_contracts": "102_pytest_pass",
     "pwa_production_build": "pass",
     "provider_function_canary": "pass_previous_function_canary_plus_wss_runtime_roundtrip",
     "real_audio_provider_transcript_memory_commit_readback_voice": "pass",
@@ -521,8 +521,8 @@
     "wss_integration_tests": "6_pass_full_backend_94_pass",
     "multi_user_live_capacity": "bounded_global_default_16_per_actor_default_2_duplicate_buffered_source_blocked_runtime_same_actor_2_pass_cross_actor_deterministic_pass_multi_actor_soak_pending",
     "requirements_guard": "devcoveer_manifest_enabled_digest_7670191ca2430162027c0e7b50c3b1deb2a52048b770fb626f0fea45e8a47e6a",
-    "regional_knowledge_live_capability": "designed_not_implemented",
-    "cross_resource_delegated_oauth": "designed_not_implemented",
+    "regional_knowledge_live_capability": "adapter_contract_implemented_tool_hidden_until_actor_workspace_delegation_provider_configured",
+    "cross_resource_delegated_oauth": "resource_boundary_designed_projects_hub_adapter_ready_real_grant_e2e_pending",
     "canonical_poi_ownership": "regional_knowledge_evidence_street_story_poi_projects_hub_expert_surface",
     "wss_runtime_roundtrip": "pass_binary_pcm_ack_http_fallback_409_output_transcript_binary_audio_turn_complete_server_close",
     "wss_runtime_concurrency": "pass_two_real_provider_sessions_same_actor_third_429",
@@ -531,7 +531,7 @@
   },
   "current_execution_focus": {
     "as_of": "2026-10-03",
-    "slice": "restore/publish public DNS edge and verify public WSS Upgrade; then multi-actor/physical Android acceptance; implement Regional Knowledge delegated capability only after its OAuth resource is ready",
+    "slice": "restore/publish public DNS edge and verify public WSS Upgrade; then multi-actor/physical Android acceptance; Regional Knowledge adapter is ready but real delegated OAuth E2E waits for the separate RKB Supabase/OAuth resource deployment",
     "android_update": "existing signed GitHub Release self-update path preserved; hosted in-place handoff evidence exists; final physical installer confirmation remains a human gate",
     "event_readiness": "implemented and preserved",
     "blocking_external_gates": [

@@ -208,6 +208,6 @@ What is **not** accepted yet:
 - 4+/20-socket multi-actor soak and 3+ independent-user real-provider acceptance;
 - native Android WSS/capture edge and physical microphone/noise/poor-network acceptance;
 - post-WSS physical Android in-app update;
-- Regional Knowledge delegated OAuth + `knowledge_search` E2E.
+- Regional Knowledge delegated OAuth + `knowledge_search` E2E. The Projects Hub adapter/tool contract is implemented fail-closed and the full backend suite is 102 PASS, but the Regional Knowledge project explicitly has no real Supabase/OAuth resource deployment yet, so the tool remains absent from normal Live sessions until an actor/workspace-bound delegated provider exists.
 
 Until public DNS is restored, the correct next transport task is the edge/DNS publication gate, not another rewrite of the WSS runtime.
