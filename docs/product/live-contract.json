@@ -257,7 +257,7 @@
     "full_backend_regression_suite": "107_pass",
     "actor_fairness_and_duplicate_buffered_source_admission": "pass",
     "multi_user_load_acceptance": "four_actor_wss_deterministic_pass_same_actor_two_real_provider_pass_3plus_independent_user_real_provider_soak_pending",
-    "public_wss_edge_acceptance": "blocked_dns_unresolved",
+    "public_wss_edge_acceptance": "blocked_owner_yandex_iam_auth_dns_unresolved_inc_4e353e4e5c18ef24c5998658",
     "regional_knowledge_delegated_oauth_e2e": "not_run_rkb_supabase_oauth_not_deployed",
     "deployed_health": "pass_release_sha_match_service_active_zero_restarts",
     "deployed_wss_roundtrip": "pass_binary_pcm_ack_no_http_fallback_output_transcript_binary_audio_turn_complete_server_close",
@@ -268,13 +268,15 @@
     "versioned_release_commit": "f756a90f864bee16a671b54da7a53189e2e4a94e",
     "versioned_release_asset_sha256": "99b8a4ea7c04a81062547a6a63b8e161220fb62a3b6d947ddda1954c2a90ab0",
     "versioned_release_local_acceptance": "104_pytest_pass_clean_npm_ci_and_pwa_build_pass",
-    "deployed_release_sha": "720f44d8771043804a5e6e4fe6cb56e38790d79b",
+    "deployed_release_sha": "074409cc55a3396dd9d06a6f2787934196a454e5",
     "deployed_live_version": "0.3.8@v0.3.8",
-    "versioned_release_deployed_acceptance": "roundtrip_pass_two_real_provider_concurrency_pass_zero_socket_failed",
+    "versioned_release_deployed_acceptance": "roundtrip_pass_two_real_provider_concurrency_pass_zero_socket_failed_recent_window",
     "four_actor_wss_deterministic": "pass_handshake_cross_actor_ticket_isolation_global_capacity",
     "android_foreground_transport": "same_pwa_live_interaction_v0.3.8_wss_no_parallel_native_socket",
-    "android_webview_microphone_origin_boundary": "exact_hub_origin_candidate",
-    "same_conversation_live_owner_lease": "implemented_candidate_duplicate_active_and_starting_race_rejected_live_busy"
+    "android_webview_microphone_origin_boundary": "merged_released_android_v6_exact_projects_hub_origin",
+    "same_conversation_live_owner_lease": "deployed_active_and_starting_duplicate_guard",
+    "android_release": "android-v6_0.1.6_signed_release_published",
+    "android_self_update_e2e": "pass_android_v4_to_v5_update_available_real_button_verified_download_package_installer_handoff_same_signature_uid_preserved"
   },
   "transport": {
     "primary": "authenticated_same_origin_wss",
