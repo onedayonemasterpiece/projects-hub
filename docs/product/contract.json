@@ -488,7 +488,7 @@
   "spec_revision": 5,
   "central_agent_contract": "12-central-live-agent.md",
   "implementation_status": {
-    "phase": "android_v7_self_update_and_real_provider_calendar_chain_accepted_physical_android_os_acceptance_pending",
+    "phase": "first_party_invite_auth_correction_candidate_physical_android_acceptance_pending",
     "release_sha": "771990de78f90fde555d880cd4f7838be1eb9df8",
     "devcoveer_runtime": "pass",
     "deterministic_contracts": "107_pytest_pass",
@@ -498,8 +498,8 @@
     "service_restart_memory_recall_without_duplicate": "pass",
     "typed_runtime_log_search": "pass",
     "physical_browser_microphone_acceptance": "not_run_no_device_in_devcoveer_headless_browser",
-    "public_identity_provider": "backend_configured_public_dns_tls_https_wss_pass",
-    "android_application": "implemented_signed_release_v7_build_hosted_self_update_v6_to_v7_pass_physical_acceptance_pending",
+    "public_identity_provider": "first_party_invite_owner_bootstrap_candidate_supabase_auth_removed_from_user_login",
+    "android_application": "signed_android_v7_shell_existing_pwa_first_party_invite_auth_candidate_physical_acceptance_pending",
     "github_app_connection": "server_side_implemented_runtime_credentials_not_configured",
     "client_offline_restart_safe_queue": "pwa_foreground_implemented_android_not_implemented",
     "production_product_accepted": false,
@@ -559,11 +559,12 @@
     "browser_live_0_3_11_release_commit": "129edcd38208e3d3daa4fb033c75288d83575dea",
     "browser_live_0_3_11_release_asset_sha256": "e713de774b5a7c513f4ec8f5281865a160ebf8ed3878987316eb4bc233a8c58c",
     "browser_live_0_3_11_acceptance": "clean_npm_ci_long_speech_regression_pwa_production_build_pass_deployed_public_wss_roundtrip_pass",
-    "real_provider_calendar_device_chain": "pass_live_tool_call_durable_device_command_simulated_device_applied_readback_event_readiness_card_final_live_transcript_and_audio_physical_android_calendar_api_pending"
+    "real_provider_calendar_device_chain": "pass_live_tool_call_durable_device_command_simulated_device_applied_readback_event_readiness_card_final_live_transcript_and_audio_physical_android_calendar_api_pending",
+    "android_auth": "same_origin_first_party_single_use_invite_no_supabase_auth_no_required_external_idp"
   },
   "current_execution_focus": {
     "as_of": "2026-10-04",
-    "slice": "install android-v7 for physical Android WebView microphone/OAuth/calendar/final-installer acceptance; server-side Live calendar chain and hosted self-update are accepted",
+    "slice": "deploy first-party invite auth correction, issue one owner invite, then physical Android login -> microphone -> Live -> calendar acceptance",
     "android_update": "android-v6_to_android-v7 hosted self-update PASS including manifest SHA256, update UI, verified download, Package Installer handoff, same-signature in-place update and UID preservation; final physical installer confirmation remains a human gate",
     "event_readiness": "implemented and preserved",
     "blocking_external_gates": [
@@ -580,10 +581,11 @@
     ],
     "shared_component_dependency_policy": "use stable version/tag/capability availability; keep SHA/digest only as reproducibility evidence",
     "latest_owner_review": "V25 voice-20261003-083638-766e61b7",
-    "android_voice": "foreground uses shared PWA WSS in WebView with browser live-interaction v0.3.11; public WSS and real-provider calendar tool chain accepted, next gate is physical WebView microphone plus real Android Calendar API readback",
+    "android_voice": "foreground remains shared PWA WSS in WebView; authentication is same-origin first-party invite and no longer depends on external OAuth inside WebView",
     "multi_user_reliability": "single live owner per actor+conversation implemented/tested; rollout pending; 3plus independent real users remain acceptance gate",
     "public_ingress": "accepted_direct_dns_78_111_90_230_to_devcoveer_local_tls_sni_reverse_proxy_to_127_0_0_1_8196",
     "external_edge_allowed": false,
-    "public_ingress_status": "accepted_dns_tls_https_public_wss_roundtrip_real_provider_calendar_chain"
+    "public_ingress_status": "accepted_dns_tls_https_public_wss_roundtrip_real_provider_calendar_chain",
+    "android_auth": "first_party_invite_owner_bootstrap_no_supabase_auth_external_idp_optional_future_link"
   }
 }
