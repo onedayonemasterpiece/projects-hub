@@ -1,6 +1,6 @@
 # Projects Hub — WSS, многопользовательская надёжность и следующий продуктовый этап
 
-**Проектное решение от 2 октября 2026; implementation update от 3 октября 2026. Статус: target architecture + source implementation candidate, не production acceptance.**
+**Проектное решение от 2 октября 2026; runtime update от 3 октября 2026. Статус: target architecture + deployed backend WSS candidate; public edge / multi-actor / physical acceptance ещё не завершены, поэтому production acceptance не объявлен.**
 
 Этот документ фиксирует следующий обязательный архитектурный переход Projects Hub: realtime-голос переводится на общий WSS-контракт `live-interaction`, а одновременно вводятся явные инварианты многопользовательской изоляции, bounded backpressure, recovery, capability routing и измеримой приёмки.
 
@@ -31,7 +31,7 @@
 - transport/capture generation и playback generation различаются: закрытие provider не должно обрезать уже полученный ответ;
 - исправления WSS/framework выпускаются как immutable versioned release с consumer-specific acceptance, а не «подменяются на лету».
 
-Projects Hub source candidate от 3 октября 2026 фиксирует shared `live-interaction 0.3.7-rc.1` на exact commit `b6a051a7cf53f84433ebf48a52b623d91fcc6478` и использует тот же WSS contract, который был отработан в Street Story. Следующая смена framework version выполняется только через новый consumer-specific acceptance; moving HEAD не используется как runtime dependency.
+Projects Hub deployed candidate от 3 октября 2026 фиксирует shared `live-interaction 0.3.7-rc.1` на exact commit `b6a051a7cf53f84433ebf48a52b623d91fcc6478` и использует тот же WSS contract, который был отработан в Street Story. Следующая смена framework version выполняется только через новый consumer-specific acceptance; moving HEAD не используется как runtime dependency.
 
 ## 2. Целевой transport flow
 
@@ -201,7 +201,7 @@ Capability switch сохраняет **один пользовательский
 
 ## 14. Implementation checkpoint · 3 октября 2026
 
-Целевая архитектура выше уже частично материализована в source candidate Projects Hub, но этот checkpoint **не заменяет** public/runtime/physical acceptance.
+Целевая архитектура выше материализована в deployed backend candidate Projects Hub на SHA `59b522278a1694dfb930e070149fa0de9224c6b6`, но этот checkpoint **не заменяет** public-edge, multi-actor и physical acceptance.
 
 Реализовано:
 - backend использует shared `LiveSocketSessionHost`, а не собственный несовместимый WebSocket engine;
@@ -217,19 +217,24 @@ Capability switch сохраняет **один пользовательский
 - один `client_source_id` нельзя одновременно replay-ить в двух Live sessions одного actor;
 - существующий Android signed GitHub Releases updater сохранён без отдельной параллельной update-системы.
 
-Фактическое локальное evidence candidate:
+Фактическое evidence candidate:
 - WSS integration suite: **6 PASS**;
 - full backend regression suite: **94 PASS**;
 - PWA production build: **PASS**;
 - clean `npm ci` + production build: **PASS**;
 - cross-actor ticket renewal negative test: чужая session не раскрывается;
 - global capacity, per-actor fairness и duplicate buffered-source admission защищены regression tests;
-- protected product requirements включены через `.devcoveer/requirements.json`.
+- protected product requirements включены через `.devcoveer/requirements.json`;
+- exact SHA `59b522278a1694dfb930e070149fa0de9224c6b6` развёрнут на DevCoveer; service health PASS и restart count 0;
+- deployed WSS roundtrip через реальный Gemini Live: binary PCM ACK, no-HTTP-fallback 409, pushed transcript + binary audio + turn_complete + graceful server close — **PASS**;
+- deployed concurrency: **2 real-provider sessions одновременно PASS**, третья того же actor получает **429 LIVE_BUSY**;
+- постоянный runtime check: `scripts/devcoveer_wss_canary.py --mode roundtrip`, затем отдельно `--mode concurrency`;
+- public edge probes: **BLOCKED — DNS name does not resolve**, поэтому TLS/Upgrade ещё не проверены.
 
 Не считать выполненным по этому checkpoint:
 - 20-socket/30-minute deterministic soak;
-- 3+ real-provider sessions;
-- public production `wss://` Upgrade;
+- 3+ independent-user real-provider sessions / live multi-actor soak;
+- public production `wss://` Upgrade; current blocker is unresolved DNS;
 - same-conversation multi-device takeover lease;
 - native Android WSS/capture edge;
 - physical microphone/noise/poor-network acceptance;
