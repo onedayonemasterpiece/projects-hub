@@ -1,8 +1,8 @@
 {
   "schema_version": 2,
   "spec_revision": 4,
-  "as_of": "2026-10-02",
-  "status": "wss_platform_reliability_candidate",
+  "as_of": "2026-10-03",
+  "status": "wss_backend_deployed_loopback_acceptance_public_edge_pending",
   "owner_input": {
     "id": "U04",
     "kind": "direct_user_wss_reliability_and_cross_project_update",
@@ -211,7 +211,7 @@
     "cross_resource_audience_isolation_required": true
   },
   "implementation_evidence": {
-    "release_sha": "c179ac0d00df3a3600df744c836a847bd3744bb0",
+    "release_sha": "59b522278a1694dfb930e070149fa0de9224c6b6",
     "shared_live_interaction": "0.3.7-rc.1@b6a051a7cf53f84433ebf48a52b623d91fcc6478",
     "shared_ai_resource_control": "0.1.7",
     "realtime_browser_transport_wired": true,
@@ -240,18 +240,22 @@
     "project_memory_semantic_only": true,
     "full_provider_source_actor_private": true,
     "legacy_memory_schema_migration": "pass_with_post_migration_live_readback",
-    "candidate_base_sha": "660aa091f2dc1d120f55d1646ea94c5ec22ac97b",
-    "working_tree_candidate": true,
-    "wss_backend_source": "implemented_candidate",
-    "wss_browser_transport": "implemented_candidate",
+    "candidate_base_sha": "59b522278a1694dfb930e070149fa0de9224c6b6",
+    "working_tree_candidate": false,
+    "wss_backend_source": "deployed",
+    "wss_browser_transport": "deployed_candidate",
     "buffered_replay_binary_pcm": "implemented_candidate",
     "clean_npm_ci_and_pwa_build": "pass",
     "wss_integration_test": "6_pass",
     "full_backend_regression_suite": "94_pass",
     "actor_fairness_and_duplicate_buffered_source_admission": "pass",
-    "multi_user_load_acceptance": "not_run",
-    "public_wss_edge_acceptance": "not_run",
-    "regional_knowledge_delegated_oauth_e2e": "not_run"
+    "multi_user_load_acceptance": "partial_same_actor_two_real_provider_cross_actor_deterministic_pass_4plus_multi_actor_soak_pending",
+    "public_wss_edge_acceptance": "blocked_dns_unresolved",
+    "regional_knowledge_delegated_oauth_e2e": "not_run",
+    "deployed_health": "pass_release_sha_match_service_active_zero_restarts",
+    "deployed_wss_roundtrip": "pass_binary_pcm_ack_no_http_fallback_output_transcript_binary_audio_turn_complete_server_close",
+    "deployed_real_provider_concurrency": "pass_two_same_actor_sessions_third_429",
+    "runtime_canary": "scripts/devcoveer_wss_canary.py"
   },
   "transport": {
     "primary": "authenticated_same_origin_wss",

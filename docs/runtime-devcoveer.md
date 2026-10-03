@@ -31,9 +31,7 @@ window, result limit and small context without arbitrary host-file access.
 
 The consumer is pinned to:
 
-- `live-interaction` **0.3.7-rc.1** exact commit `b6a051a7cf53f84433ebf48a52b623d91fcc6478`; Projects Hub client↔backend primary Live transport is WSS.
-  `c9de297020087235d80ce4155e52f63f88c642bf` for both browser and Python;
-  this exact pin is used until a matching versioned GitHub Release/tag exists;
+- `live-interaction` **0.3.7-rc.1** exact commit `b6a051a7cf53f84433ebf48a52b623d91fcc6478` for both browser and Python; Projects Hub client↔backend primary Live transport is WSS, and any future framework update requires a new consumer-specific acceptance;
 - deployment-installed `ai-resource-control` 0.1.7:
   `51e9c043ce40dfefea8b2cb4f4956019819bd9d4`.
 
@@ -85,6 +83,18 @@ and the publisher passes DNS/TLS/HTTPS readback, the public edge remains blocked
 GitHub authentication is still not the user identity system.
 
 ## Acceptance evidence
+
+### Current WSS runtime · 3 October 2026
+
+- deployed exact release: `59b522278a1694dfb930e070149fa0de9224c6b6`;
+- `projects-hub.service` is active/running with zero restart count after rollout; health returns the same release SHA;
+- source/integration acceptance before merge: **6 WSS tests PASS**, **94 backend tests PASS**, PWA production build PASS, and prior clean `npm ci` + build PASS;
+- deployed real-provider WSS roundtrip PASS: `hello_ack`, `configuration_ready`, binary PCM ingress + `audio_ack`, HTTP input rejection with `LIVE_TRANSPORT_MISMATCH` after WSS attach, provider `output_transcript`, binary output audio, `turn_complete`, and server-driven close after Stop;
+- deployed concurrency canary PASS: two real Gemini Live provider sessions for the same actor coexist and both complete WSS handshake/close; a third concurrent session is rejected with HTTP 429 / `LIVE_BUSY`, proving the per-actor fairness boundary;
+- deterministic regression also proves cross-actor session/ticket isolation; a live multi-actor production soak is still pending and is not replaced by the same-actor canary;
+- the first ad-hoc runtime canary produced one `LIVE_SOCKET_IO` only because the test client closed immediately after Stop; the corrected canary waits for server close and subsequent roundtrip/concurrency runs produced no new `socket_failed` evidence;
+- public edge WSS is **blocked before TLS/WebSocket acceptance** because `projects-hub.kenigevents.ru` currently does not resolve in DNS from DevCoveer; DNS/TLS/HTTP probes all fail at name resolution;
+- durable operational check is `scripts/devcoveer_wss_canary.py`: run `--mode roundtrip` and then `--mode concurrency` sequentially under the loopback dev actor. The two modes must not be run concurrently because the roundtrip itself occupies one of the actor's bounded Live slots.
 
 Current Android/MVP evidence on 28 September 2026:
 
@@ -164,10 +174,10 @@ Not yet claimed:
 - physical microphone acceptance on the user's actual browser/device;
 - crash-durable online startup capture while the Live session POST itself is pending;
 - physical Android calendar/microphone acceptance and Android offline/reboot queue;
-- public DNS/TLS edge acceptance for the configured Yandex IdP boundary;
+- public DNS/TLS/WSS edge acceptance for the configured Yandex IdP boundary; current blocker is unresolved DNS, not an application WebSocket failure;
 - production GitHub App registration/credentials plus installation/callback acceptance;
 - long 3/10/30-minute buffered-source acceptance;
-- multi-user/collaboration gates.
+- live multi-actor / 4+ actor soak, same-conversation multi-device takeover, and broader collaboration gates.
 
 ## Deployment
 
@@ -179,20 +189,25 @@ matching healthy `release_sha`. A failed health check restores the prior
 `current` target and service environment when a prior release exists.
 
 
-## WSS migration status · 2 октября 2026
+## WSS runtime status · 3 October 2026
 
-Этот runtime **ещё не считается WSS-migrated**. Фактический deployed baseline использует ранее принятый Projects Hub Live consumer и HTTP session/input/events control path. Новый WSS target описан в [product/16-wss-multi-user-reliability.md](product/16-wss-multi-user-reliability.md).
+The single DevCoveer backend **is now WSS-migrated as a deployed candidate** at exact release `59b522278a1694dfb930e070149fa0de9224c6b6`. New PWA Live sessions use the shared `live-interaction 0.3.7-rc.1` WSS path; HTTP remains bootstrap/auth/control and is not a silent media fallback after WSS attach.
 
-При реализации нельзя просто заменить dependency pin:
+What is accepted on the deployed loopback backend:
+1. provider-ready session bootstrap;
+2. one-use ticket/subprotocol handshake and `hello_ack`;
+3. binary PCM ingress + relay ACK;
+4. pushed provider transcript/audio/events;
+5. HTTP media fallback rejection after WSS attach;
+6. graceful Stop/server close;
+7. two simultaneous real provider sessions for one actor plus deterministic per-actor admission of the third request;
+8. deterministic cross-actor isolation and duplicate buffered-source exclusion.
 
-1. выбрать актуальный shared `live-interaction` WSS candidate/release и exact digest;
-2. добавить Projects Hub backend socket binding + one-use ticket/origin/resource/generation tests;
-3. перевести PWA на shared WSS push/binary transport без silent HTTP fallback;
-4. отдельно сохранить product-owned IndexedDB buffered/offline source;
-5. после browser acceptance подключить shared Java WSS transport/native capture в Android через узкий WebView/native bridge;
-6. прогнать public TLS Upgrade, real provider, multi-user load и physical phone gates;
-7. только после этого обновлять acceptance status.
+What is **not** accepted yet:
+- public `wss://projects-hub.kenigevents.ru` Upgrade, because DNS does not currently resolve;
+- 4+/20-socket multi-actor soak and 3+ independent-user real-provider acceptance;
+- native Android WSS/capture edge and physical microphone/noise/poor-network acceptance;
+- post-WSS physical Android in-app update;
+- Regional Knowledge delegated OAuth + `knowledge_search` E2E.
 
-Текущий Street Story/shared framework candidate порядка `0.3.7-rc.1` является источником проверенных transport решений, но не переносится как номер версии вслепую. Projects Hub pin должен указывать на конкретный consumer-accepted immutable release/archive.
-
-До отдельной приёмки startup catchup PWA WSS должен считать `hello_ack` границей готовности и не маскировать старую речь увеличенным capture-age window. Realtime stale speech не replay-ится; длительный offline source доставляется отдельным explicit buffered Live turn.
+Until public DNS is restored, the correct next transport task is the edge/DNS publication gate, not another rewrite of the WSS runtime.
