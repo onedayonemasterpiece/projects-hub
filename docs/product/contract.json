@@ -550,11 +550,12 @@
     "android_background_durable_capture": "not_implemented",
     "same_conversation_live_owner_lease": "deployed_074409cc_active_and_starting_duplicate_guard_post_deploy_wss_roundtrip_and_concurrency_pass",
     "android_self_update_e2e": "pass_historical_android_v4_to_v5_real_release_assets_button_sha256_installer_handoff_same_signature",
-    "android_latest_release": "android-v6_0.1.6_published_signed_apk_sha256_03b343bddc3c8be0d0c19072c62c451a465ebb52b3f2e6c2fa4264e3f88a4d17"
+    "android_latest_release": "android-v6_0.1.6_published_signed_apk_sha256_03b343bddc3c8be0d0c19072c62c451a465ebb52b3f2e6c2fa4264e3f88a4d17",
+    "public_ingress": "pending_direct_dns_and_local_tls_sni_readback_no_external_edge"
   },
   "current_execution_focus": {
     "as_of": "2026-10-03",
-    "slice": "restore owner-controlled Yandex Cloud auth and publish public DNS/TLS/WSS edge; then 3plus independent-user real-provider soak and physical Android microphone/update acceptance; Regional Knowledge real delegated OAuth E2E waits for its resource deployment",
+    "slice": "publish direct DNS for projects-hub.kenigevents.ru to the DevCoveer public IP and verify the existing server-local TLS/SNI reverse proxy to 127.0.0.1:8196; no external paid edge. Then complete 3plus independent-user real-provider soak and physical Android acceptance; Regional Knowledge real delegated OAuth E2E waits for its resource deployment",
     "android_update": "existing signed GitHub Release self-update path preserved; hosted in-place handoff evidence exists; final physical installer confirmation remains a human gate",
     "event_readiness": "implemented and preserved",
     "blocking_external_gates": [
@@ -573,6 +574,8 @@
     "shared_component_dependency_policy": "use stable version/tag/capability availability; keep SHA/digest only as reproducibility evidence",
     "latest_owner_review": "V25 voice-20261003-083638-766e61b7",
     "android_voice": "foreground uses shared PWA WSS in WebView; accept physical WebView microphone/public edge before adding native background durable capture",
-    "multi_user_reliability": "single live owner per actor+conversation implemented/tested; rollout pending; 3plus independent real users remain acceptance gate"
+    "multi_user_reliability": "single live owner per actor+conversation implemented/tested; rollout pending; 3plus independent real users remain acceptance gate",
+    "public_ingress": "direct_dns_to_devcoveer_public_ip_then_local_tls_sni_reverse_proxy_to_127_0_0_1_8196",
+    "external_edge_allowed": false
   }
 }
