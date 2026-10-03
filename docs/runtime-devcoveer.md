@@ -31,7 +31,7 @@ window, result limit and small context without arbitrary host-file access.
 
 The consumer is pinned to:
 
-- `live-interaction` **0.3.7-rc.1** exact commit `b6a051a7cf53f84433ebf48a52b623d91fcc6478` for both browser and Python; Projects Hub client↔backend primary Live transport is WSS, and any future framework update requires a new consumer-specific acceptance;
+- `live-interaction` **0.3.8** via stable release tag `v0.3.8` for browser and Python; the tag resolves to release commit `f756a90f864bee16a671b54da7a53189e2e4a94e`, and the published release asset SHA-256 is `99b8a4ea7c04a81062547a6a63b8e161220fb62a3b6d947ddda1954c2a90ab0`. Version/tag is the dependency interface; commit/digest are verification evidence. Every framework update still requires consumer-specific acceptance;
 - deployment-installed `ai-resource-control` 0.1.7:
   `51e9c043ce40dfefea8b2cb4f4956019819bd9d4`.
 
@@ -191,7 +191,7 @@ matching healthy `release_sha`. A failed health check restores the prior
 
 ## WSS runtime status · 3 October 2026
 
-The single DevCoveer backend **is now WSS-migrated as a deployed candidate** at exact release `59b522278a1694dfb930e070149fa0de9224c6b6`. New PWA Live sessions use the shared `live-interaction 0.3.7-rc.1` WSS path; HTTP remains bootstrap/auth/control and is not a silent media fallback after WSS attach.
+The single DevCoveer backend **is WSS-migrated as a deployed candidate** at exact Projects Hub release `9f740303120a0efd673ed6661237768d63a1ddee`; that deployed release still uses the previously accepted `live-interaction 0.3.7-rc.1` package. The versioned `live-interaction v0.3.8` consumer candidate has passed local 102-pytest plus clean `npm ci`/PWA acceptance and is pending rollout. HTTP remains bootstrap/auth/control and is not a silent media fallback after WSS attach.
 
 What is accepted on the deployed loopback backend:
 1. provider-ready session bootstrap;

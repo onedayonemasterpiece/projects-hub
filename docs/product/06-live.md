@@ -1,6 +1,6 @@
 # Live, общий лимиттер и центральный агент
 
-> **U04 / 2 октября 2026:** primary client↔backend transport — authenticated same-origin WSS через `LiveSocketSessionHost` (`live-interaction 0.3.7-rc.1` exact pin). После WSS attach silent HTTP audio fallback запрещён; ticket/reconnect/backpressure contract — в [16-wss-multi-user-reliability.md](16-wss-multi-user-reliability.md).
+> **U05 / 3 октября 2026:** primary client↔backend transport — authenticated same-origin WSS через `LiveSocketSessionHost`; Projects Hub consumer использует stable `live-interaction v0.3.8`. Release commit/digest — verification evidence, а не dependency interface. После WSS attach silent HTTP audio fallback запрещён; ticket/reconnect/backpressure contract — в [16-wss-multi-user-reliability.md](16-wss-multi-user-reliability.md).
 
 [Индекс](README.md) · [Центральный Live-агент](12-central-live-agent.md) · [Архитектура](04-architecture.md) · [Память](10-conversation-memory.md).
 
