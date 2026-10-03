@@ -121,20 +121,23 @@ def test_expired_invite_is_rejected(tmp_path: Path, monkeypatch):
 
 def test_dev_owner_invite_is_loopback_only(tmp_path: Path):
     settings = public_settings(tmp_path)
-    app = create_app(settings)
+    store = DurableStore(tmp_path / "operator-data")
+    app = create_app(settings, store=store)
+    try:
+        with TestClient(app, base_url="http://127.0.0.1:8000") as client:
+            issued = client.post(
+                "/api/dev/owner-invite",
+                json={"display_name": "Owner", "ttl_seconds": 600},
+            )
+            assert issued.status_code == 200
+            assert len(issued.json()["token"]) >= 20
 
-    with TestClient(app, base_url="http://127.0.0.1:8000") as client:
-        issued = client.post(
-            "/api/dev/owner-invite",
-            json={"display_name": "Owner", "ttl_seconds": 600},
-        )
-        assert issued.status_code == 200
-        assert len(issued.json()["token"]) >= 20
-
-    with TestClient(app, base_url=PUBLIC_ORIGIN) as client:
-        blocked = client.post(
-            "/api/dev/owner-invite",
-            json={"display_name": "Owner"},
-            headers=public_headers(),
-        )
-        assert blocked.status_code == 404
+        with TestClient(app, base_url=PUBLIC_ORIGIN) as client:
+            blocked = client.post(
+                "/api/dev/owner-invite",
+                json={"display_name": "Owner"},
+                headers=public_headers(),
+            )
+            assert blocked.status_code == 404
+    finally:
+        store.close()
