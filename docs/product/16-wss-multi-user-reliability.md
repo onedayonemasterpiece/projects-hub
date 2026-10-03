@@ -333,3 +333,15 @@ WSS rollout не заменяет существующий updater.
 - это не оправдание для нового централизованного gateway, второго semantic agent или тяжёлой regex-бюрократии.
 
 Projects Hub применяет это правило первым к `live-interaction v0.3.8`: Python и browser manifests используют `v0.3.8`, lock разрешает tag в immutable release commit, full backend + clean PWA acceptance выполняются на этой версии, а deployed `720f44d8…` повторно прошёл real-provider WSS roundtrip/concurrency без новых `socket_failed`.
+
+
+### 12.4 Android release v6 · 3 октября 2026
+
+PR #31 прошёл backend/PWA, Android build+unit, emulator smoke и self-update E2E. После merge GitHub Actions опубликовал signed release `android-v6` / `0.1.6`:
+- `projects-hub.apk`: SHA-256 `03b343bddc3c8be0d0c19072c62c451a465ebb52b3f2e6c2fa4264e3f88a4d17`;
+- `update.json`: release asset опубликован вместе с APK;
+- stable signing material проверен release workflow;
+- foreground Android WebView microphone permission ограничен exact Projects Hub origin;
+- self-update E2E на реальных GitHub release assets доказал путь `android-v4 → android-v5`: update discovery, реальная кнопка, SHA-256 verified download, Package Installer handoff, same-signature in-place update и сохранение UID.
+
+Это не заменяет physical-device acceptance текущего `v5 → v6`: финальный системный installer tap и реальный WebView microphone остаются human/device gates.
