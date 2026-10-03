@@ -218,14 +218,14 @@ Capability switch сохраняет **один пользовательский
 - существующий Android signed GitHub Releases updater сохранён без отдельной параллельной update-системы.
 
 Фактическое evidence candidate:
-- WSS integration suite: **6 PASS**;
-- full backend regression suite: **94 PASS**;
+- WSS integration suite: **7 PASS**;
+- full backend regression suite: **104 PASS**;
 - PWA production build: **PASS**;
 - clean `npm ci` + production build: **PASS**;
-- cross-actor ticket renewal negative test: чужая session не раскрывается;
+- four-actor deterministic WSS acceptance PASS: четыре actor одновременно держат WSS handshake, чужой socket-ticket не раскрывается, пятая сессия упирается в global `LIVE_BUSY`;
 - global capacity, per-actor fairness и duplicate buffered-source admission защищены regression tests;
 - protected product requirements включены через `.devcoveer/requirements.json`;
-- exact SHA `59b522278a1694dfb930e070149fa0de9224c6b6` развёрнут на DevCoveer; service health PASS и restart count 0;
+- exact Projects Hub SHA `720f44d8771043804a5e6e4fe6cb56e38790d79b` с `live-interaction v0.3.8` развёрнут на DevCoveer; service health PASS и restart count 0;
 - deployed WSS roundtrip через реальный Gemini Live: binary PCM ACK, no-HTTP-fallback 409, pushed transcript + binary audio + turn_complete + graceful server close — **PASS**;
 - deployed concurrency: **2 real-provider sessions одновременно PASS**, третья того же actor получает **429 LIVE_BUSY**;
 - постоянный runtime check: `scripts/devcoveer_wss_canary.py --mode roundtrip`, затем отдельно `--mode concurrency`;
@@ -233,7 +233,7 @@ Capability switch сохраняет **один пользовательский
 
 Не считать выполненным по этому checkpoint:
 - 20-socket/30-minute deterministic soak;
-- 3+ independent-user real-provider sessions / live multi-actor soak;
+- 3+ independent-user real-provider sessions / live multi-actor soak; four-actor deterministic acceptance это не заменяет;
 - public production `wss://` Upgrade; current blocker is unresolved DNS;
 - same-conversation multi-device takeover lease;
 - native Android WSS/capture edge;
@@ -281,7 +281,7 @@ user ↔ Mira / Projects Hub
 - Projects Hub уже имеет transport-agnostic `RegionalKnowledgeAdapter`: он жёстко связывает provider с текущими `actor_sub + workspace_id`, ограничивает размер evidence/provenance и добавляет единственный `knowledge_search` в Live tool list только когда backend реально вернул user-delegated provider;
 - без delegation/provider `knowledge_search` вообще не попадает в конфигурацию Live; неправильная actor/workspace binding, не-HTTPS evidence или сломанный provider fail-closed и не ломают остальные capabilities;
 - Projects Hub не реализует service-role или bearer-token fallback для этого пути;
-- adapter contract покрыт regression tests; после его добавления полный backend suite — **102 PASS**;
+- adapter contract покрыт regression tests; после его добавления полный backend suite — **104 PASS**;
 - полная интеграция всё ещё **не реализована E2E**: сам Regional Knowledge проект фиксирует, что отдельный Supabase/S3/OAuth resource ещё не развёрнут, поэтому реальный delegated OAuth grant и network call остаются acceptance gate.
 
 ### POI ownership
@@ -332,4 +332,4 @@ WSS rollout не заменяет существующий updater.
 - инцидент общего Live-компонента должен быть доступен всем consumers, которых он касается;
 - это не оправдание для нового централизованного gateway, второго semantic agent или тяжёлой regex-бюрократии.
 
-Projects Hub применяет это правило первым к `live-interaction v0.3.8`: Python и browser manifests используют `v0.3.8`, lock разрешает tag в immutable release commit, а full backend + clean PWA acceptance выполняются на этой версии.
+Projects Hub применяет это правило первым к `live-interaction v0.3.8`: Python и browser manifests используют `v0.3.8`, lock разрешает tag в immutable release commit, full backend + clean PWA acceptance выполняются на этой версии, а deployed `720f44d8…` повторно прошёл real-provider WSS roundtrip/concurrency без новых `socket_failed`.

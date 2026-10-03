@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import struct
+from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
@@ -403,5 +404,81 @@ def test_actor_fairness_and_duplicate_buffered_source_admission(tmp_path: Path):
                 assert client.post(
                     f"{base}/{started.json()['session_id']}/stop"
                 ).status_code == 200
+    finally:
+        store.close()
+
+
+def test_four_actors_hold_isolated_wss_sessions_and_global_capacity(tmp_path: Path):
+    store = DurableStore(tmp_path / "data")
+    provider = Provider()
+    host = make_host(
+        store,
+        provider,
+        max_sessions=4,
+        max_sessions_per_actor=2,
+    )
+    settings = _settings(tmp_path)
+    app = create_app(settings, store=store, live_host=host)
+    try:
+        actors = [
+            _actor(store, f"four-user-{index}", f"User {index}")
+            for index in range(4)
+        ]
+        conversations = [
+            store.create_conversation(
+                actor["actor"]["id"],
+                actor["workspace"]["id"],
+                actor["projects"][0]["id"],
+            )
+            for actor in actors
+        ]
+
+        with TestClient(app) as client:
+            started: list[dict] = []
+            sockets = []
+            with ExitStack() as stack:
+                for index, (actor, conversation) in enumerate(
+                    zip(actors, conversations, strict=True)
+                ):
+                    actor_id = actor["actor"]["id"]
+                    _act_as(client, settings, actor_id)
+                    response = client.post(
+                        f"/api/live/{conversation['id']}/sessions",
+                        json={
+                            "transport": "wss",
+                            "attempt_id": f"four_actor_{index}",
+                        },
+                    )
+                    assert response.status_code == 200, response.text
+                    value = response.json()
+                    started.append(value)
+                    ws = stack.enter_context(socket(client, value))
+                    hello(ws, value)
+                    sockets.append(ws)
+
+                for index, actor in enumerate(actors):
+                    _act_as(client, settings, actor["actor"]["id"])
+                    other_index = (index + 1) % len(actors)
+                    other = started[other_index]
+                    other_conversation = conversations[other_index]
+                    cross = client.post(
+                        f"/api/live/{other_conversation['id']}/sessions/"
+                        f"{other['session_id']}/socket-ticket"
+                    )
+                    assert cross.status_code == 404
+
+                _act_as(client, settings, actors[0]["actor"]["id"])
+                overflow = client.post(
+                    f"/api/live/{conversations[0]['id']}/sessions",
+                    json={
+                        "transport": "wss",
+                        "attempt_id": "four_actor_global_overflow",
+                    },
+                )
+                assert overflow.status_code == 429
+                assert overflow.json()["detail"]["code"] == "LIVE_BUSY"
+
+                for ws in sockets:
+                    ws.send_json({"type": "stop"})
     finally:
         store.close()

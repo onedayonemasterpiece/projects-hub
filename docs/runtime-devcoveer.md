@@ -86,12 +86,12 @@ GitHub authentication is still not the user identity system.
 
 ### Current WSS runtime · 3 October 2026
 
-- deployed exact release: `59b522278a1694dfb930e070149fa0de9224c6b6`;
+- deployed exact release: `720f44d8771043804a5e6e4fe6cb56e38790d79b` with `live-interaction v0.3.8`;
 - `projects-hub.service` is active/running with zero restart count after rollout; health returns the same release SHA;
-- source/integration acceptance before merge: **6 WSS tests PASS**, **94 backend tests PASS**, PWA production build PASS, and prior clean `npm ci` + build PASS;
+- source/integration acceptance: **7 WSS tests PASS**, **104 backend tests PASS**, clean `npm ci` + PWA production build PASS;
 - deployed real-provider WSS roundtrip PASS: `hello_ack`, `configuration_ready`, binary PCM ingress + `audio_ack`, HTTP input rejection with `LIVE_TRANSPORT_MISMATCH` after WSS attach, provider `output_transcript`, binary output audio, `turn_complete`, and server-driven close after Stop;
 - deployed concurrency canary PASS: two real Gemini Live provider sessions for the same actor coexist and both complete WSS handshake/close; a third concurrent session is rejected with HTTP 429 / `LIVE_BUSY`, proving the per-actor fairness boundary;
-- deterministic regression also proves cross-actor session/ticket isolation; a live multi-actor production soak is still pending and is not replaced by the same-actor canary;
+- deterministic regression proves four simultaneous actors can each hold an authenticated WSS handshake, cross-actor socket-ticket renewal stays hidden, and the fifth session hits the global capacity boundary; a 3+ independent-user real-provider production soak is still pending;
 - the first ad-hoc runtime canary produced one `LIVE_SOCKET_IO` only because the test client closed immediately after Stop; the corrected canary waits for server close and subsequent roundtrip/concurrency runs produced no new `socket_failed` evidence;
 - public edge WSS is **blocked before TLS/WebSocket acceptance** because `projects-hub.kenigevents.ru` currently does not resolve in DNS from DevCoveer; DNS/TLS/HTTP probes all fail at name resolution;
 - durable operational check is `scripts/devcoveer_wss_canary.py`: run `--mode roundtrip` and then `--mode concurrency` sequentially under the loopback dev actor. The two modes must not be run concurrently because the roundtrip itself occupies one of the actor's bounded Live slots.
@@ -191,7 +191,7 @@ matching healthy `release_sha`. A failed health check restores the prior
 
 ## WSS runtime status · 3 October 2026
 
-The single DevCoveer backend **is WSS-migrated as a deployed candidate** at exact Projects Hub release `9f740303120a0efd673ed6661237768d63a1ddee`; that deployed release still uses the previously accepted `live-interaction 0.3.7-rc.1` package. The versioned `live-interaction v0.3.8` consumer candidate has passed local 102-pytest plus clean `npm ci`/PWA acceptance and is pending rollout. HTTP remains bootstrap/auth/control and is not a silent media fallback after WSS attach.
+The single DevCoveer backend **is WSS-migrated as a deployed candidate** at exact Projects Hub release `720f44d8771043804a5e6e4fe6cb56e38790d79b` and now runs the versioned `live-interaction v0.3.8` consumer. Local acceptance is 104 pytest plus clean `npm ci`/PWA build; post-deploy real-provider roundtrip and two-session concurrency both PASS, with no new `socket_failed`. HTTP remains bootstrap/auth/control and is not a silent media fallback after WSS attach.
 
 What is accepted on the deployed loopback backend:
 1. provider-ready session bootstrap;
@@ -201,13 +201,13 @@ What is accepted on the deployed loopback backend:
 5. HTTP media fallback rejection after WSS attach;
 6. graceful Stop/server close;
 7. two simultaneous real provider sessions for one actor plus deterministic per-actor admission of the third request;
-8. deterministic cross-actor isolation and duplicate buffered-source exclusion.
+8. deterministic four-actor WSS handshake/cross-ticket isolation/global capacity plus duplicate buffered-source exclusion.
 
 What is **not** accepted yet:
 - public `wss://projects-hub.kenigevents.ru` Upgrade, because DNS does not currently resolve;
-- 4+/20-socket multi-actor soak and 3+ independent-user real-provider acceptance;
+- 20-socket/30-minute deterministic soak and 3+ independent-user real-provider acceptance;
 - native Android WSS/capture edge and physical microphone/noise/poor-network acceptance;
 - post-WSS physical Android in-app update;
-- Regional Knowledge delegated OAuth + `knowledge_search` E2E. The Projects Hub adapter/tool contract is implemented fail-closed and the full backend suite is 102 PASS, but the Regional Knowledge project explicitly has no real Supabase/OAuth resource deployment yet, so the tool remains absent from normal Live sessions until an actor/workspace-bound delegated provider exists.
+- Regional Knowledge delegated OAuth + `knowledge_search` E2E. The Projects Hub adapter/tool contract is implemented fail-closed and the full backend suite is 104 PASS, but the Regional Knowledge project explicitly has no real Supabase/OAuth resource deployment yet, so the tool remains absent from normal Live sessions until an actor/workspace-bound delegated provider exists.
 
 Until public DNS is restored, the correct next transport task is the edge/DNS publication gate, not another rewrite of the WSS runtime.
