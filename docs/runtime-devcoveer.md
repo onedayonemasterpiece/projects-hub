@@ -86,9 +86,9 @@ GitHub authentication is still not the user identity system.
 
 ### Current WSS runtime · 3 October 2026
 
-- deployed exact release: `720f44d8771043804a5e6e4fe6cb56e38790d79b` with `live-interaction v0.3.8`;
+- deployed exact release: `074409cc55a3396dd9d06a6f2787934196a454e5` with the accepted shared WSS consumer;
 - `projects-hub.service` is active/running with zero restart count after rollout; health returns the same release SHA;
-- source/integration acceptance: **7 WSS tests PASS**, **104 backend tests PASS**, clean `npm ci` + PWA production build PASS;
+- source/integration acceptance: **9 WSS tests PASS**, **107 backend tests PASS**, clean `npm ci` + PWA production build PASS;
 - deployed real-provider WSS roundtrip PASS: `hello_ack`, `configuration_ready`, binary PCM ingress + `audio_ack`, HTTP input rejection with `LIVE_TRANSPORT_MISMATCH` after WSS attach, provider `output_transcript`, binary output audio, `turn_complete`, and server-driven close after Stop;
 - deployed concurrency canary PASS: two real Gemini Live provider sessions for the same actor coexist and both complete WSS handshake/close; a third concurrent session is rejected with HTTP 429 / `LIVE_BUSY`, proving the per-actor fairness boundary;
 - deterministic regression proves four simultaneous actors can each hold an authenticated WSS handshake, cross-actor socket-ticket renewal stays hidden, and the fifth session hits the global capacity boundary; a 3+ independent-user real-provider production soak is still pending;
@@ -175,7 +175,7 @@ All synthetic-audio canaries explicitly keep
 `physical_microphone_acceptance=not_run`; deterministic PCM is not a substitute for a
 real browser/device microphone gate.
 
-Candidate after the deployed v0.3.8 baseline adds a same-conversation Live owner lease: one actor cannot start a second active/starting Live session for the same conversation, while another conversation remains available within per-actor capacity. Duplicate active start and a pre-provider-ready race are both covered; WSS suite is 9 PASS and full backend suite is 107 PASS. This candidate is not yet counted as deployed until its own merge/rollout.
+The same-conversation Live owner lease is now deployed in `074409cc…`: a second active/starting Live session for the same actor+conversation receives `LIVE_BUSY`, while another conversation remains available within per-actor capacity. Post-deploy WSS roundtrip and two-real-provider concurrency both PASS; recent `socket_failed` count is 0.
 
 Not yet claimed:
 
@@ -219,3 +219,8 @@ What is **not** accepted yet:
 - Regional Knowledge delegated OAuth + `knowledge_search` E2E. The Projects Hub adapter/tool contract is implemented fail-closed and the full backend suite is 104 PASS, but the Regional Knowledge project explicitly has no real Supabase/OAuth resource deployment yet, so the tool remains absent from normal Live sessions until an actor/workspace-bound delegated provider exists.
 
 Until public DNS is restored, the correct next transport task is the edge/DNS publication gate, not another rewrite of the WSS runtime.
+
+
+### Android release evidence · 3 October 2026
+
+Android `android-v6` / `0.1.6` was published automatically after PR #31 with stable signing material. The signed APK release asset SHA-256 is `03b343bddc3c8be0d0c19072c62c451a465ebb52b3f2e6c2fa4264e3f88a4d17`; `update.json` is published alongside it. PR acceptance included build/unit, emulator launch and self-update E2E using real GitHub release assets. The E2E proved the historical `android-v4 → android-v5` in-app path through update discovery, UI click, verified APK download and Package Installer handoff. Physical `v5 → v6` final installer tap remains a human gate.
