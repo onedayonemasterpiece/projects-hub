@@ -71,10 +71,12 @@ has been written and read back with the expected SHA-256.
 
 ## Authentication boundary of this first vertical
 
-The current DevCoveer runtime keeps loopback dev-auth for bounded local canaries
-and also has the public Yandex/Supabase identity boundary configured. Health reports
-`auth_mode=public_yandex+loopback_dev` and the fixed public origin is
-`https://projects-hub.kenigevents.ru`.
+The DevCoveer runtime keeps loopback dev-auth for bounded local canaries and
+uses a first-party one-time invite for the current public owner bootstrap. Health reports
+`auth_mode=first_party_invite+loopback_dev` and the fixed public origin is
+`https://projects-hub.kenigevents.ru`. Projects Hub user login does not depend on
+Supabase Auth or an external IdP; external providers may be linked later as optional
+authentication methods without becoming the canonical user identity.
 
 The public origin is now reachable through the approved direct, provider-minimal path:
 
@@ -106,7 +108,7 @@ GitHub authentication is still not the user identity system.
 
 ### Android WebView Live boundary · 3 October 2026
 
-Foreground Android is not a separate Live transport. The installed app hosts the same PWA `live-interaction v0.3.8` client in WebView, so WSS session bootstrap, one-use ticket, PCM/ACK and pushed events are the same contract as browser PWA. The native shell grants web microphone access only to the exact `PROJECTS_HUB_PUBLIC_ORIGIN`; foreign Supabase/Yandex OAuth pages may participate in PKCE navigation but are denied privileged audio capture. A stale pending permission is cancelled when navigation leaves the trusted origin and origin/current-page are rechecked after the Android permission dialog.
+Foreground Android is not a separate Live transport. The installed app hosts the same PWA browser client in WebView, so WSS session bootstrap, one-use ticket, PCM/ACK and pushed events are the same contract as browser PWA. The native shell grants web microphone access only to the exact `PROJECTS_HUB_PUBLIC_ORIGIN`. User authentication is same-origin first-party invite bootstrap; it does not navigate the Android WebView through Yandex or Supabase. A stale pending permission is cancelled when navigation leaves the trusted origin and origin/current-page are rechecked after the Android permission dialog.
 
 A future native Android capture layer is reserved for reboot/background/offline durability and must hand off into the existing source/replay/Live contract. It must not create a second WSS/provider path.
 
