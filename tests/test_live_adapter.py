@@ -75,3 +75,27 @@ async def test_live_adapter_persists_audio_transcript_and_verified_memory(tmp_pa
         assert len(store.list_memories(actor_id, workspace_id, project_id)) == 1
     finally:
         store.close()
+
+
+def test_system_instruction_has_runtime_scoped_capability_tour(tmp_path: Path):
+    store = DurableStore(tmp_path)
+    try:
+        boot = store.ensure_dev_workspace("Capabilities")
+        actor_id = boot["actor"]["id"]
+        workspace_id = boot["workspace"]["id"]
+        project_id = boot["projects"][0]["id"]
+        conversation = store.create_conversation(actor_id, workspace_id, project_id)
+        binding = ConversationScope(workspace_id, actor_id, conversation["id"]).resource_binding()
+        initialized = ProjectsHubLiveAdapter(store).initialize(
+            resource_id=binding,
+            actor={"subject": actor_id, "tenant_id": workspace_id},
+            model="gemini-3.8-live",
+            conversation_id=conversation["id"],
+        )
+        instruction = initialized["configuration"]["system_instruction"]
+        assert "# CAPABILITY TOUR" in instruction
+        assert "configuration.functions" in instruction
+        assert "что ты умеешь" in instruction
+        assert "не подключённые capabilities" in instruction
+    finally:
+        store.close()
