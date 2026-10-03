@@ -13,6 +13,13 @@ from .expert_reviews import (
     ExpertReviewConflict,
     ExpertReviewError,
 )
+from .regional_knowledge import (
+    RegionalKnowledgeAccessError,
+    RegionalKnowledgeAdapter,
+    RegionalKnowledgeContractError,
+    RegionalKnowledgeInputError,
+    RegionalKnowledgeUnavailable,
+)
 from .live_resources import ConversationScope
 from .readiness import ReadinessService
 from .store import DurableStore, StoreError
@@ -20,7 +27,11 @@ from .store import DurableStore, StoreError
 log = logging.getLogger("projects_hub.live")
 
 
-def _functions(*, expert_reviews: bool = False) -> list[dict[str, Any]]:
+def _functions(
+    *,
+    expert_reviews: bool = False,
+    regional_knowledge: bool = False,
+) -> list[dict[str, Any]]:
     functions = [
         {
             "name": "projects_list_accessible",
@@ -173,6 +184,31 @@ def _functions(*, expert_reviews: bool = False) -> list[dict[str, Any]]:
             },
         },
     ]
+    if regional_knowledge:
+        functions.append(
+            {
+                "name": "knowledge_search",
+                "description": (
+                    "Search the current user's authorized Regional Knowledge "
+                    "books and journals. Returns a small source-backed evidence "
+                    "pack with stable URLs/provenance. Use when regional factual "
+                    "evidence is useful; absence of a result is not proof that a "
+                    "claim is false."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "maxLength": 1000},
+                        "max_evidence": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 5,
+                        },
+                    },
+                    "required": ["query"],
+                },
+            }
+        )
     if expert_reviews:
         functions.extend(
             [
@@ -197,8 +233,7 @@ def _functions(*, expert_reviews: bool = False) -> list[dict[str, Any]]:
                                     ],
                                 },
                             }
-                        },
-                    },
+                        },                    },
                 },
                 {
                     "name": "expert_reviews_get",
@@ -331,6 +366,12 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Говори «событие создано» только если calendar_create_event_on_device вернул status=applied и device readback. pending/claimed означает, что подтверждение на телефоне ещё ожидается; outcome_unknown означает, что итог надо сверить.
 - Если tool отказал, объясни результат и продолжи разговор, не выдумывая успешное действие.
 
+# REGIONAL KNOWLEDGE
+- knowledge_search присутствует только когда backend подтвердил отдельный user-authorized grant к Regional Knowledge resource.
+- Используй его для региональных фактов, когда полезны книги/журналы и provenance. Отвечай по evidence, сохраняй различие между источником и своим выводом.
+- Отсутствие результата не доказывает ложность факта. Не выдавай snippets без evidence за проверенную истину.
+- Projects Hub token не является Knowledge token; доступ и ACL проверяет сам Knowledge resource.
+
 # EXPERT REVIEWS
 - Expert-review tools присутствуют только когда backend подтвердил owning-service grant и verified expert profile.
 - Не решай противоречие сама: объясняй evidence и вызывай typed expert tool только после явного решения эксперта.
@@ -357,12 +398,16 @@ class ProjectsHubLiveAdapter:
         expert_reviews_factory: (
             Callable[[str, str], ExpertReviewAdapter | None] | None
         ) = None,
+        regional_knowledge_factory: (
+            Callable[[str, str], RegionalKnowledgeAdapter | None] | None
+        ) = None,
         **_shared: Any,
     ):
         self.store = store
         self.device_commands = device_commands or DeviceCommandService(store)
         self.readiness = readiness or ReadinessService(store)
         self.expert_reviews_factory = expert_reviews_factory
+        self.regional_knowledge_factory = regional_knowledge_factory
 
     def _expert_reviews(
         self,
@@ -376,6 +421,24 @@ class ProjectsHubLiveAdapter:
             raise StoreError(
                 "FORBIDDEN",
                 "Expert review profile does not match current actor",
+            )
+        return adapter
+
+    def _regional_knowledge(
+        self,
+        actor_id: str,
+        workspace_id: str,
+    ) -> RegionalKnowledgeAdapter | None:
+        if self.regional_knowledge_factory is None:
+            return None
+        adapter = self.regional_knowledge_factory(actor_id, workspace_id)
+        if adapter is not None and (
+            adapter.actor_sub != actor_id
+            or adapter.workspace_id != workspace_id
+        ):
+            raise StoreError(
+                "FORBIDDEN",
+                "Regional Knowledge grant does not match current actor/workspace",
             )
         return adapter
 
@@ -397,8 +460,7 @@ class ProjectsHubLiveAdapter:
         expected = ConversationScope(
             workspace_id=conversation["workspace_id"],
             subject_id=actor_id,
-            conversation_id=conversation_id,
-        ).resource_binding()
+            conversation_id=conversation_id,        ).resource_binding()
         if resource_id != expected:
             raise StoreError("FORBIDDEN", "Conversation resource binding mismatch")
         source = self.store.create_source(
@@ -411,6 +473,10 @@ class ProjectsHubLiveAdapter:
             source = self.store.reset_source_for_replay(actor_id, source["id"])
         projects = self.store.list_projects(actor_id, conversation["workspace_id"])
         expert_reviews = self._expert_reviews(
+            actor_id,
+            conversation["workspace_id"],
+        )
+        regional_knowledge = self._regional_knowledge(
             actor_id,
             conversation["workspace_id"],
         )
@@ -447,7 +513,8 @@ class ProjectsHubLiveAdapter:
             "configuration": {
                 "system_instruction": system_instruction,
                 "functions": _functions(
-                    expert_reviews=expert_reviews is not None
+                    expert_reviews=expert_reviews is not None,
+                    regional_knowledge=regional_knowledge is not None,
                 ),
                 "voice": "Aoede",
                 "search_enabled": False,
@@ -464,6 +531,7 @@ class ProjectsHubLiveAdapter:
                 "source_status": source["status"],
                 "source_reused": source_reused,
                 "expert_reviews_enabled": expert_reviews is not None,
+                "regional_knowledge_enabled": regional_knowledge is not None,
                 "source_terminal": source["status"] in {"archived", "ephemeral_processed"},
             },
         }
@@ -597,8 +665,7 @@ class ProjectsHubLiveAdapter:
                 command_id=command["id"],
                 timeout_seconds=40.0,
             )
-            if (
-                result.get("status") == "applied"
+            if (                result.get("status") == "applied"
                 and isinstance(result.get("result"), dict)
                 and result["result"].get("readback_verified") is True
             ):
@@ -671,6 +738,36 @@ class ProjectsHubLiveAdapter:
                 task_id=str(args.get("task_id") or ""),
                 state=str(args.get("state") or ""),
             )
+
+        if name == "knowledge_search":
+            adapter = self._regional_knowledge(actor_id, workspace_id)
+            if adapter is None:
+                raise StoreError(
+                    "TOOL_NOT_AVAILABLE",
+                    "Regional Knowledge is not connected for this actor",
+                )
+            try:
+                return await adapter.search(
+                    str(args.get("query") or ""),
+                    max_evidence=args.get("max_evidence", 3),
+                )
+            except RegionalKnowledgeInputError as exc:
+                raise StoreError("INVALID_ARGUMENT", str(exc)) from exc
+            except RegionalKnowledgeAccessError as exc:
+                raise StoreError("FORBIDDEN", str(exc)) from exc
+            except RegionalKnowledgeContractError as exc:
+                log.warning(
+                    "regional knowledge contract rejected",
+                    extra={
+                        "event": "tool_result",
+                        "tool": name,
+                        "conversation_id": conversation_id,
+                        "result": "invalid_contract",
+                    },
+                )
+                raise StoreError("KNOWLEDGE_UNAVAILABLE", str(exc)) from exc
+            except RegionalKnowledgeUnavailable as exc:
+                raise StoreError("KNOWLEDGE_UNAVAILABLE", str(exc)) from exc
 
         if name.startswith("expert_reviews_"):
             adapter = self._expert_reviews(actor_id, workspace_id)
@@ -797,7 +894,6 @@ class ProjectsHubLiveAdapter:
             )
             return result
 
-        if name == "memory_finish_ephemeral":
-            return self.store.finish_ephemeral(actor_id, state["source_id"])
+        if name == "memory_finish_ephemeral":            return self.store.finish_ephemeral(actor_id, state["source_id"])
 
         raise StoreError("TOOL_NOT_AVAILABLE", f"Unknown function: {name}")

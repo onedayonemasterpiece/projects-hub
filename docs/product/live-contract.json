@@ -247,15 +247,16 @@
     "buffered_replay_binary_pcm": "implemented_candidate",
     "clean_npm_ci_and_pwa_build": "pass",
     "wss_integration_test": "6_pass",
-    "full_backend_regression_suite": "94_pass",
+    "full_backend_regression_suite": "102_pass",
     "actor_fairness_and_duplicate_buffered_source_admission": "pass",
     "multi_user_load_acceptance": "partial_same_actor_two_real_provider_cross_actor_deterministic_pass_4plus_multi_actor_soak_pending",
     "public_wss_edge_acceptance": "blocked_dns_unresolved",
-    "regional_knowledge_delegated_oauth_e2e": "not_run",
+    "regional_knowledge_delegated_oauth_e2e": "not_run_rkb_supabase_oauth_not_deployed",
     "deployed_health": "pass_release_sha_match_service_active_zero_restarts",
     "deployed_wss_roundtrip": "pass_binary_pcm_ack_no_http_fallback_output_transcript_binary_audio_turn_complete_server_close",
     "deployed_real_provider_concurrency": "pass_two_same_actor_sessions_third_429",
-    "runtime_canary": "scripts/devcoveer_wss_canary.py"
+    "runtime_canary": "scripts/devcoveer_wss_canary.py",
+    "regional_knowledge_adapter_contract": "implemented_fail_closed_tool_hidden_without_actor_workspace_bound_provider"
   },
   "transport": {
     "primary": "authenticated_same_origin_wss",

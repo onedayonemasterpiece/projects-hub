@@ -4,6 +4,10 @@ from .expert_reviews import (
     ExpertReviewAdapter,
     ExpertReviewProvider,
 )
+from .regional_knowledge import (
+    RegionalKnowledgeAdapter,
+    RegionalKnowledgeProvider,
+)
 from .live_resources import (
     ConversationScope,
     ProjectScope,
@@ -15,6 +19,8 @@ __all__ = [
     "ExpertProfile",
     "ExpertReviewAdapter",
     "ExpertReviewProvider",
+    "RegionalKnowledgeAdapter",
+    "RegionalKnowledgeProvider",
     "ConversationScope",
     "ProjectScope",
     "run_conversation_dialogue",

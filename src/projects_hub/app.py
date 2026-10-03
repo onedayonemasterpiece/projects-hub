@@ -213,6 +213,7 @@ def create_app(
     github_connections: Any | None = None,
     device_commands: DeviceCommandService | None = None,
     readiness: ReadinessService | None = None,
+    regional_knowledge_factory: Any | None = None,
 ) -> FastAPI:
     configure_logging()
     settings = settings or Settings.from_env()
@@ -251,6 +252,7 @@ def create_app(
                 store,
                 device_commands=app.state.device_commands,
                 readiness=app.state.readiness,
+                regional_knowledge_factory=regional_knowledge_factory,
             )
         return app.state.live_host
 
