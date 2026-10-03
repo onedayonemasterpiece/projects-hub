@@ -103,6 +103,32 @@
         "Onboarding offers one or a few relevant tips and can stop when the user declines.",
         "Onboarding state is product metadata, not a second semantic agent."
       ]
+    },
+    {
+      "id": "CORE-FIRST-PARTY-IDENTITY-AUTHZ",
+      "statement": "The product family has one first-party stable user identity and authorization plane shared by mobile apps, web apps and MCP clients; external identity providers are optional authentication methods rather than the canonical user identity, and access to applications, services and Projects Hub projects is granted explicitly.",
+      "critical": true,
+      "acceptance": [
+        "One stable first-party subject identifies the same person across product-family applications and MCP resources.",
+        "A newly authenticated person receives no implicit platform-owner role, all-application access or all-project access.",
+        "The unique platform owner is explicitly bound to a stable first-party subject and is never inferred from email, display name or external-provider account.",
+        "Application/MCP resource grants have explicit audiences/scopes and can be revoked independently.",
+        "Projects Hub maintains explicit workspace/project memberships and lists only projects granted to the current actor.",
+        "Android authentication does not depend on an embedded WebView sharing cookies with an external provider; first-party passkey/invite authentication is the preferred target and external IdPs remain optional linked methods.",
+        "Street Story authentication is not migrated until its current functional acceptance is complete."
+      ]
+    },
+    {
+      "id": "CORE-OWNER-SELF-DEVELOPMENT",
+      "statement": "Only the explicit platform owner may use Projects Hub to turn conversation-discovered product gaps into a durable development backlog and explicitly launch bounded implementation batches through the existing GitHub/DevCoveer delivery path; ordinary users have no development fallback.",
+      "critical": true,
+      "acceptance": [
+        "Mira can create/refine typed development requests containing the observed gap, desired outcome, relevant project/repository, acceptance criteria and evidence/context.",
+        "Development requests are durable, reviewable and batchable; conversation alone never authorizes implementation.",
+        "Starting implementation requires an explicit current owner command and produces durable batch status, tests/CI and deployment/readback evidence.",
+        "Owner-only development tools are absent from ordinary users' Live tool surfaces and direct API calls are independently authorization-checked.",
+        "Android changes delivered through self-development end in the normal signed release/update-manifest path so installed apps can self-update."
+      ]
     }
   ]
 }
