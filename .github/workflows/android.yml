@@ -58,4 +58,6 @@ jobs:
         with:
           api-level: 35
           arch: x86_64
+          emulator-boot-timeout: 900
+          disable-animations: false
           script: bash scripts/android_emulator_smoke.sh

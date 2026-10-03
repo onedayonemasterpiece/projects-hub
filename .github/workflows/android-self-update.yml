@@ -20,6 +20,8 @@ jobs:
         with:
           api-level: 34
           arch: x86_64
+          emulator-boot-timeout: 900
+          disable-animations: false
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: python3 scripts/android_self_update_e2e.py
         env:
