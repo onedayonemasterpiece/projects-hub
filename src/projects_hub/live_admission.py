@@ -28,6 +28,7 @@ class ProjectsHubAdmissionMixin:
         self.max_sessions_per_actor = max_sessions_per_actor
         self._projects_hub_admission_lock = asyncio.Lock()
         self._projects_hub_starting_by_actor: Counter[str] = Counter()
+        self._projects_hub_starting_resources: set[tuple[str, str]] = set()
         self._projects_hub_starting_sources: set[tuple[str, str]] = set()
 
     async def start(
@@ -43,6 +44,7 @@ class ProjectsHubAdmissionMixin:
         actor_id = _actor_id(actor)
         if not actor_id:
             raise LiveError("INVALID_ARGUMENT", "Live actor identity is required")
+        resource_key = (actor_id, resource_id)
         source_key = (actor_id, client_source_id) if client_source_id else None
 
         async with self._projects_hub_admission_lock:
@@ -53,6 +55,18 @@ class ProjectsHubAdmissionMixin:
             starting_for_actor = self._projects_hub_starting_by_actor[actor_id]
             if active_for_actor + starting_for_actor >= self.max_sessions_per_actor:
                 raise LiveError("LIVE_BUSY", "Live session limit reached for this actor")
+
+            resource_active = any(
+                not session.closed
+                and _session_actor_id(session) == actor_id
+                and getattr(session, "resource_id", None) == resource_id
+                for session in self.sessions.values()
+            )
+            if resource_active or resource_key in self._projects_hub_starting_resources:
+                raise LiveError(
+                    "LIVE_BUSY",
+                    "This conversation already has an active Live session",
+                )
 
             if source_key is not None:
                 source_active = any(
@@ -66,6 +80,7 @@ class ProjectsHubAdmissionMixin:
                     raise LiveError("LIVE_BUSY", "This buffered source is already being replayed")
 
             self._projects_hub_starting_by_actor[actor_id] += 1
+            self._projects_hub_starting_resources.add(resource_key)
             if source_key is not None:
                 self._projects_hub_starting_sources.add(source_key)
 
@@ -83,5 +98,6 @@ class ProjectsHubAdmissionMixin:
                     self._projects_hub_starting_by_actor[actor_id] = remaining
                 else:
                     self._projects_hub_starting_by_actor.pop(actor_id, None)
+                self._projects_hub_starting_resources.discard(resource_key)
                 if source_key is not None:
                     self._projects_hub_starting_sources.discard(source_key)

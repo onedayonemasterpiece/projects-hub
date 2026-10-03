@@ -175,6 +175,8 @@ All synthetic-audio canaries explicitly keep
 `physical_microphone_acceptance=not_run`; deterministic PCM is not a substitute for a
 real browser/device microphone gate.
 
+Candidate after the deployed v0.3.8 baseline adds a same-conversation Live owner lease: one actor cannot start a second active/starting Live session for the same conversation, while another conversation remains available within per-actor capacity. Duplicate active start and a pre-provider-ready race are both covered; WSS suite is 9 PASS and full backend suite is 107 PASS. This candidate is not yet counted as deployed until its own merge/rollout.
+
 Not yet claimed:
 
 - physical microphone acceptance on the user's actual browser/device;
@@ -183,7 +185,7 @@ Not yet claimed:
 - public DNS/TLS/WSS edge acceptance for the configured Yandex IdP boundary; current blocker is unresolved DNS, not an application WebSocket failure;
 - production GitHub App registration/credentials plus installation/callback acceptance;
 - long 3/10/30-minute buffered-source acceptance;
-- live multi-actor / 4+ actor soak, same-conversation multi-device takeover, and broader collaboration gates.
+- live 3+ independent-user real-provider soak, physical same-conversation multi-device takeover UX, and broader collaboration gates.
 
 ## Deployment
 

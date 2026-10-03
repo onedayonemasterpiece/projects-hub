@@ -217,8 +217,8 @@ Capability switch сохраняет **один пользовательский
 - существующий Android signed GitHub Releases updater сохранён без отдельной параллельной update-системы.
 
 Фактическое evidence candidate:
-- WSS integration suite: **7 PASS**;
-- full backend regression suite: **104 PASS**;
+- WSS integration suite: **9 PASS**;
+- full backend regression suite: **107 PASS**;
 - PWA production build: **PASS**;
 - clean `npm ci` + production build: **PASS**;
 - four-actor deterministic WSS acceptance PASS: четыре actor одновременно держат WSS handshake, чужой socket-ticket не раскрывается, пятая сессия упирается в global `LIVE_BUSY`;
@@ -234,7 +234,7 @@ Capability switch сохраняет **один пользовательский
 - 20-socket/30-minute deterministic soak;
 - 3+ independent-user real-provider sessions / live multi-actor soak; four-actor deterministic acceptance это не заменяет;
 - public production `wss://` Upgrade; current blocker is unresolved DNS;
-- same-conversation multi-device takeover lease;
+- same-conversation multi-device physical/takeover UX acceptance; deterministic single-owner lease is implemented/tested but not yet deployed;
 - physical Android WebView microphone over the shared PWA WSS path; public edge must resolve first;
 - physical microphone/noise/poor-network acceptance;
 - post-candidate physical Android in-app update;

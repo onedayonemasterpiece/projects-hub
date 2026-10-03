@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import struct
@@ -8,13 +9,14 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from live_interaction import LiveSocketSessionHost
+from live_interaction import LiveError, LiveSocketSessionHost
 from starlette.websockets import WebSocketDisconnect
 
 from projects_hub.app import create_app
 from projects_hub.auth import COOKIE_NAME, issue_session
 from projects_hub.live_adapter import ProjectsHubLiveAdapter
 from projects_hub.live_admission import ProjectsHubAdmissionMixin
+from projects_hub.live_resources import ConversationScope
 from projects_hub.live_runtime import (
     _live_max_sessions,
     _live_max_sessions_per_actor,
@@ -348,7 +350,19 @@ def test_actor_fairness_and_duplicate_buffered_source_admission(tmp_path: Path):
             actor["workspace"]["id"],
             actor["projects"][0]["id"],
         )
+        second_conversation = store.create_conversation(
+            actor["actor"]["id"],
+            actor["workspace"]["id"],
+            actor["projects"][0]["id"],
+        )
+        third_conversation = store.create_conversation(
+            actor["actor"]["id"],
+            actor["workspace"]["id"],
+            actor["projects"][0]["id"],
+        )
         base = f"/api/live/{conversation['id']}/sessions"
+        second_base = f"/api/live/{second_conversation['id']}/sessions"
+        third_base = f"/api/live/{third_conversation['id']}/sessions"
         source_id = "local_" + ("a" * 32)
 
         with TestClient(app) as client:
@@ -378,7 +392,7 @@ def test_actor_fairness_and_duplicate_buffered_source_admission(tmp_path: Path):
             assert duplicate.json()["detail"]["code"] == "LIVE_BUSY"
 
             second_distinct = client.post(
-                base,
+                second_base,
                 json={
                     "transport": "wss",
                     "attempt_id": "buffered_two",
@@ -389,7 +403,7 @@ def test_actor_fairness_and_duplicate_buffered_source_admission(tmp_path: Path):
             assert second_distinct.status_code == 200
 
             actor_over_limit = client.post(
-                base,
+                third_base,
                 json={
                     "transport": "wss",
                     "attempt_id": "buffered_three",
@@ -400,10 +414,12 @@ def test_actor_fairness_and_duplicate_buffered_source_admission(tmp_path: Path):
             assert actor_over_limit.status_code == 429
             assert actor_over_limit.json()["detail"]["code"] == "LIVE_BUSY"
 
-            for started in (first, second_distinct):
-                assert client.post(
-                    f"{base}/{started.json()['session_id']}/stop"
-                ).status_code == 200
+            assert client.post(
+                f"{base}/{first.json()['session_id']}/stop"
+            ).status_code == 200
+            assert client.post(
+                f"{second_base}/{second_distinct.json()['session_id']}/stop"
+            ).status_code == 200
     finally:
         store.close()
 
@@ -482,3 +498,132 @@ def test_four_actors_hold_isolated_wss_sessions_and_global_capacity(tmp_path: Pa
                     ws.send_json({"type": "stop"})
     finally:
         store.close()
+
+
+def test_same_actor_same_conversation_has_single_live_owner(tmp_path: Path):
+    store = DurableStore(tmp_path / "data")
+    provider = Provider()
+    host = make_host(store, provider, max_sessions=4, max_sessions_per_actor=2)
+    settings = _settings(tmp_path)
+    app = create_app(settings, store=store, live_host=host)
+    try:
+        actor = _actor(store, "lease-user", "Lease")
+        actor_id = actor["actor"]["id"]
+        conversation = store.create_conversation(
+            actor_id,
+            actor["workspace"]["id"],
+            actor["projects"][0]["id"],
+        )
+        second_conversation = store.create_conversation(
+            actor_id,
+            actor["workspace"]["id"],
+            actor["projects"][0]["id"],
+        )
+
+        with TestClient(app) as client:
+            _act_as(client, settings, actor_id)
+            first = client.post(
+                f"/api/live/{conversation['id']}/sessions",
+                json={"transport": "wss", "attempt_id": "lease_first"},
+            )
+            assert first.status_code == 200, first.text
+
+            duplicate = client.post(
+                f"/api/live/{conversation['id']}/sessions",
+                json={"transport": "wss", "attempt_id": "lease_duplicate"},
+            )
+            assert duplicate.status_code == 429
+            assert duplicate.json()["detail"]["code"] == "LIVE_BUSY"
+
+            parallel_other_conversation = client.post(
+                f"/api/live/{second_conversation['id']}/sessions",
+                json={"transport": "wss", "attempt_id": "lease_other_conversation"},
+            )
+            assert parallel_other_conversation.status_code == 200
+
+            for conv, started in (
+                (conversation, first),
+                (second_conversation, parallel_other_conversation),
+            ):
+                assert client.post(
+                    f"/api/live/{conv['id']}/sessions/{started.json()['session_id']}/stop"
+                ).status_code == 200
+
+            restarted = client.post(
+                f"/api/live/{conversation['id']}/sessions",
+                json={"transport": "wss", "attempt_id": "lease_restarted"},
+            )
+            assert restarted.status_code == 200
+            assert client.post(
+                f"/api/live/{conversation['id']}/sessions/{restarted.json()['session_id']}/stop"
+            ).status_code == 200
+    finally:
+        store.close()
+
+
+def test_same_conversation_start_race_is_reserved_before_provider_ready(tmp_path: Path):
+    async def scenario():
+        store = DurableStore(tmp_path / "data")
+        provider = Provider()
+        host = make_host(store, provider, max_sessions=4, max_sessions_per_actor=2)
+        try:
+            actor_record = _actor(store, "lease-race-user", "Lease Race")
+            actor_id = actor_record["actor"]["id"]
+            workspace_id = actor_record["workspace"]["id"]
+            conversation = store.create_conversation(
+                actor_id,
+                workspace_id,
+                actor_record["projects"][0]["id"],
+            )
+            resource_id = ConversationScope(
+                workspace_id=workspace_id,
+                subject_id=actor_id,
+                conversation_id=conversation["id"],
+            ).resource_binding()
+            actor = {"subject": actor_id, "tenant_id": workspace_id}
+
+            entered = asyncio.Event()
+            release = asyncio.Event()
+            original_initialize = host.adapter.initialize
+
+            async def delayed_initialize(**kwargs):
+                entered.set()
+                await release.wait()
+                return original_initialize(**kwargs)
+
+            host.adapter.initialize = delayed_initialize
+
+            first_task = asyncio.create_task(
+                host.start(
+                    resource_id=resource_id,
+                    actor=actor,
+                    conversation_id=conversation["id"],
+                    audio_mode="realtime",
+                    client_source_id=None,
+                    attempt_id="lease_race_first",
+                )
+            )
+            await asyncio.wait_for(entered.wait(), timeout=1)
+
+            with pytest.raises(LiveError) as duplicate:
+                await host.start(
+                    resource_id=resource_id,
+                    actor=actor,
+                    conversation_id=conversation["id"],
+                    audio_mode="realtime",
+                    client_source_id=None,
+                    attempt_id="lease_race_duplicate",
+                )
+            assert duplicate.value.code == "LIVE_BUSY"
+
+            release.set()
+            started = await asyncio.wait_for(first_task, timeout=2)
+            await host.stop(
+                session_id=started["session_id"],
+                resource_id=resource_id,
+                actor=actor,
+            )
+        finally:
+            store.close()
+
+    asyncio.run(scenario())
