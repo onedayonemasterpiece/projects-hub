@@ -1,6 +1,6 @@
 # Projects Hub — WSS, многопользовательская надёжность и следующий продуктовый этап
 
-**Проектное решение от 2 октября 2026; runtime update от 3 октября 2026. Статус: target architecture + deployed backend WSS candidate; public ingress / multi-actor / physical acceptance ещё не завершены, поэтому production acceptance не объявлен.**
+**Проектное решение от 2 октября 2026; runtime update от 3 октября 2026. Статус: deployed backend + direct public DNS/TLS/HTTPS/WSS acceptance PASS; 3+ independent-user real-provider soak и physical acceptance ещё не завершены, поэтому полный production acceptance не объявлен.**
 
 Этот документ фиксирует следующий обязательный архитектурный переход Projects Hub: realtime-голос переводится на общий WSS-контракт `live-interaction`, а одновременно вводятся явные инварианты многопользовательской изоляции, bounded backpressure, recovery, capability routing и измеримой приёмки.
 
@@ -228,14 +228,14 @@ Capability switch сохраняет **один пользовательский
 - deployed WSS roundtrip через реальный Gemini Live: binary PCM ACK, no-HTTP-fallback 409, pushed transcript + binary audio + turn_complete + graceful server close — **PASS**;
 - deployed concurrency: **2 real-provider sessions одновременно PASS**, третья того же actor получает **429 LIVE_BUSY**;
 - постоянный runtime check: `scripts/devcoveer_wss_canary.py --mode roundtrip`, затем отдельно `--mode concurrency`;
-- public ingress probes: **BLOCKED — DNS name does not resolve**, поэтому TLS/Upgrade ещё не проверены.
+- public ingress: **PASS** — DNS `projects-hub.kenigevents.ru → 78.111.90.230`, TLS 1.3/Let's Encrypt hostname validation PASS, public `/healthz` 200, public real-provider WSS roundtrip PASS, public two-session concurrency PASS and third same-actor request `429 LIVE_BUSY`.
 
 Не считать выполненным по этому checkpoint:
 - 20-socket/30-minute deterministic soak;
 - 3+ independent-user real-provider sessions / live multi-actor soak; four-actor deterministic acceptance это не заменяет;
-- public production `wss://` Upgrade; current blocker is unresolved DNS;
+- public production `wss://projects-hub.kenigevents.ru` Upgrade is accepted; remaining realtime acceptance is broader independent-user/physical-device testing;
 - same-conversation multi-device physical/takeover UX acceptance; deterministic single-owner lease is implemented/tested but not yet deployed;
-- physical Android WebView microphone over the shared PWA WSS path; public ingress must resolve first;
+- physical Android WebView microphone over the already accepted shared public PWA WSS path;
 - physical microphone/noise/poor-network acceptance;
 - post-candidate physical Android in-app update;
 - Android reboot/background durable capture; native implementation must hand off to the existing Live/replay contract rather than open a parallel WSS;
@@ -364,8 +364,13 @@ WebSocket Upgrade terminates through the same local HTTPS ingress and is proxied
 
 If the domain's DNS zone happens to be managed in Yandex Cloud DNS, that does not make Yandex an application edge: only the DNS record is managed there. Failure of a `yc` CLI profile or an old Yandex publisher is not a Projects Hub runtime blocker and must not trigger a fallback to external infrastructure.
 
-Current remaining public acceptance work is therefore:
-1. publish/verify the direct DNS record;
-2. add/verify the Projects Hub hostname in the existing local TLS/SNI ingress;
-3. require DNS → TLS → HTTPS → WSS readback;
-4. keep `127.0.0.1:8196` private.
+Accepted on 3 October 2026:
+1. DNS A resolves `projects-hub.kenigevents.ru` to DevCoveer `78.111.90.230`;
+2. the existing local TLS/SNI ingress serves the hostname with a valid Let's Encrypt SAN and proxies only to `127.0.0.1:8196`;
+3. Projects Hub receives its required forwarded host/proto/port values without enabling client-IP forwarding for the shared ingress;
+4. public HTTPS `/healthz` PASS;
+5. public real-provider WSS roundtrip PASS, including binary PCM ACK, provider transcript/audio, `turn_complete`, graceful close and HTTP-fallback rejection;
+6. public real-provider concurrency PASS for two sessions; third same-actor session is bounded by `429 LIVE_BUSY`;
+7. `127.0.0.1:8196` remains private.
+
+Public ingress is therefore no longer a release blocker.
