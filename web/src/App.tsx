@@ -16,6 +16,7 @@ import {
   getMemories,
   getEventCards,
   getAuthConfig,
+  exchangeInvite,
   login,
   setTaskState,
   startGitHubInstall,
@@ -26,7 +27,6 @@ import {
   type MemoryItem,
   type EventCard,
 } from "./api";
-import { finishPublicAuth, startPublicAuth } from "./auth";
 import { replayLocalVoiceSource } from "./bufferedReplay";
 import {
   acknowledgeDeliveredSource,
@@ -102,6 +102,7 @@ export default function App() {
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [eventOpen, setEventOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [inviteCode, setInviteCode] = useState("");
   const [networkOnline, setNetworkOnline] = useState(() => navigator.onLine);
   const [pendingSources, setPendingSources] = useState<LocalVoiceSource[]>([]);
   const [githubStatus, setGitHubStatus] = useState<GitHubStatus | null>(null);
@@ -215,14 +216,6 @@ export default function App() {
         if (cancelled) return;
         setAuthConfig(config);
 
-        if (config.mode === "yandex_pkce") {
-          const callbackBootstrap = await finishPublicAuth(config);
-          if (callbackBootstrap) {
-            await applyBootstrap(callbackBootstrap);
-            return;
-          }
-        }
-
         try {
           await applyBootstrap(await bootstrap());
         } catch (error) {
@@ -317,8 +310,11 @@ export default function App() {
     setBusy(true);
     setNotice(null);
     try {
-      if (authConfig?.mode === "yandex_pkce") {
-        await startPublicAuth(authConfig);
+      if (authConfig?.mode === "first_party_invite") {
+        const value = inviteCode.trim();
+        if (!value) throw new Error("Введите одноразовый код приглашения.");
+        setBoot(await exchangeInvite(value));
+        setInviteCode("");
         return;
       }
       if (authConfig?.mode === "disabled") {
@@ -566,11 +562,36 @@ export default function App() {
           <p className="login-copy">
             Один Live‑собеседник слышит вас, понимает контекст проекта и вызывает только разрешённые действия.
           </p>
-          <button className="primary-action" onClick={signIn} disabled={busy}>
+          {authConfig?.mode === "first_party_invite" && (
+            <>
+              <label className="invite-label" htmlFor="invite-code">Одноразовый код</label>
+              <input
+                id="invite-code"
+                className="invite-input"
+                type="text"
+                inputMode="text"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                value={inviteCode}
+                onChange={event => setInviteCode(event.target.value)}
+                onKeyDown={event => {
+                  if (event.key === "Enter" && !busy && inviteCode.trim()) void signIn();
+                }}
+                placeholder="Вставьте код из Telegram"
+              />
+              <p className="invite-help">Код выдаёт Projects Hub. Яндекс и сторонний auth‑посредник для входа не нужны.</p>
+            </>
+          )}
+          <button
+            className="primary-action"
+            onClick={signIn}
+            disabled={busy || (authConfig?.mode === "first_party_invite" && !inviteCode.trim())}
+          >
             {busy
               ? "Вхожу…"
-              : authConfig?.mode === "yandex_pkce"
-                ? "Войти через Яндекс"
+              : authConfig?.mode === "first_party_invite"
+                ? "Войти по приглашению"
                 : "Войти в пилот"}
           </button>
           {notice && <p className="notice" role="alert">{notice}</p>}
