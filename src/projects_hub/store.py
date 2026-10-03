@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 from pathlib import Path
 import sqlite3
 import threading
@@ -74,6 +75,20 @@ class DurableStore:
         );
         CREATE INDEX IF NOT EXISTS external_identities_actor_idx
             ON external_identities(actor_id);
+        CREATE TABLE IF NOT EXISTS platform_owner(
+            slot INTEGER PRIMARY KEY CHECK(slot=1),
+            actor_id TEXT NOT NULL UNIQUE REFERENCES actors(id),
+            created_at_ms INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS login_invites(
+            token_sha256 TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL REFERENCES actors(id),
+            expires_at_ms INTEGER NOT NULL,
+            used_at_ms INTEGER,
+            created_at_ms INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS login_invites_actor_idx
+            ON login_invites(actor_id, expires_at_ms);
         CREATE TABLE IF NOT EXISTS workspaces(
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -494,6 +509,119 @@ class DurableStore:
                 self.db.execute("ROLLBACK")
                 raise
         return self.bootstrap(actor_id, workspace_id)
+
+    def ensure_platform_owner(self, display_name: str = "Владелец") -> dict[str, Any]:
+        """Create or return the one explicitly designated platform owner."""
+        name = (display_name or "Владелец").strip()[:80] or "Владелец"
+        now = _now_ms()
+        with self._lock:
+            row = self.db.execute(
+                "SELECT actor_id FROM platform_owner WHERE slot=1"
+            ).fetchone()
+            if row:
+                return self.bootstrap(row["actor_id"])
+
+            actor_id = _id("usr")
+            workspace_id = _id("ws")
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self.db.execute(
+                    "SELECT actor_id FROM platform_owner WHERE slot=1"
+                ).fetchone()
+                if row:
+                    self.db.execute("COMMIT")
+                    return self.bootstrap(row["actor_id"])
+                self.db.execute(
+                    "INSERT INTO actors(id,display_name,created_at_ms) VALUES(?,?,?)",
+                    (actor_id, name, now),
+                )
+                self.db.execute(
+                    "INSERT INTO workspaces(id,name,created_at_ms) VALUES(?,?,?)",
+                    (workspace_id, "Личное пространство", now),
+                )
+                self.db.execute(
+                    "INSERT INTO memberships(actor_id,workspace_id,role) VALUES(?,?,?)",
+                    (actor_id, workspace_id, "owner"),
+                )
+                for project_name in ("Projects Hub", "Wonderful Lections", "KenigEvents"):
+                    self.db.execute(
+                        "INSERT INTO projects(id,workspace_id,name,status,created_at_ms) VALUES(?,?,?,?,?)",
+                        (_id("prj"), workspace_id, project_name, "active", now),
+                    )
+                self.db.execute(
+                    "INSERT INTO platform_owner(slot,actor_id,created_at_ms) VALUES(1,?,?)",
+                    (actor_id, now),
+                )
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
+        return self.bootstrap(actor_id, workspace_id)
+
+    def issue_platform_owner_invite(
+        self,
+        display_name: str = "Владелец",
+        *,
+        ttl_seconds: int = 15 * 60,
+    ) -> dict[str, Any]:
+        ttl_seconds = int(ttl_seconds)
+        if not 60 <= ttl_seconds <= 24 * 60 * 60:
+            raise StoreError("INVALID_ARGUMENT", "Invite TTL is outside the supported bound")
+        owner = self.ensure_platform_owner(display_name)
+        token = secrets.token_urlsafe(32)
+        token_sha256 = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        now = _now_ms()
+        expires_at_ms = now + ttl_seconds * 1000
+        with self._lock:
+            self.db.execute(
+                "DELETE FROM login_invites WHERE used_at_ms IS NOT NULL OR expires_at_ms<?",
+                (now,),
+            )
+            self.db.execute(
+                """INSERT INTO login_invites
+                   (token_sha256,actor_id,expires_at_ms,used_at_ms,created_at_ms)
+                   VALUES(?,?,?,?,?)""",
+                (token_sha256, owner["actor"]["id"], expires_at_ms, None, now),
+            )
+        return {
+            "token": token,
+            "expires_at_ms": expires_at_ms,
+            "actor_id": owner["actor"]["id"],
+            "workspace_id": owner["workspace"]["id"],
+        }
+
+    def consume_login_invite(self, token: str) -> dict[str, Any]:
+        value = str(token or "").strip()
+        if not 20 <= len(value) <= 200:
+            raise StoreError("INVITE_INVALID", "Invite code is invalid or expired")
+        digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+        now = _now_ms()
+        with self._lock:
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self.db.execute(
+                    """SELECT actor_id,expires_at_ms,used_at_ms
+                       FROM login_invites WHERE token_sha256=?""",
+                    (digest,),
+                ).fetchone()
+                if (
+                    row is None
+                    or row["used_at_ms"] is not None
+                    or int(row["expires_at_ms"]) < now
+                ):
+                    raise StoreError("INVITE_INVALID", "Invite code is invalid or expired")
+                actor_id = str(row["actor_id"])
+                self.db.execute(
+                    "UPDATE login_invites SET used_at_ms=? WHERE token_sha256=? AND used_at_ms IS NULL",
+                    (now, digest),
+                )
+                if self.db.execute("SELECT changes()").fetchone()[0] != 1:
+                    raise StoreError("INVITE_INVALID", "Invite code is invalid or expired")
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
+        return self.bootstrap(actor_id)
 
     def ensure_external_workspace(
         self,
