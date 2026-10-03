@@ -194,7 +194,6 @@ def test_public_github_webhook_does_not_require_browser_origin(tmp_path: Path):
         public_settings(tmp_path),
         store=store,
         github_connections=github,
-        identity_verifier=object(),
     )
     with TestClient(app, base_url=PUBLIC_ORIGIN) as client:
         response = client.post(
