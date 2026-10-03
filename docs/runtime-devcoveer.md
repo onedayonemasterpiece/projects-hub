@@ -76,16 +76,19 @@ and also has the public Yandex/Supabase identity boundary configured. Health rep
 `auth_mode=public_yandex+loopback_dev` and the fixed public origin is
 `https://projects-hub.kenigevents.ru`.
 
-This does **not** mean the public pilot is reachable yet. The approved public path is
-direct and provider-minimal:
+The public origin is now reachable through the approved direct, provider-minimal path:
 
-`public DNS → DevCoveer public IP → server-local HTTPS/SNI reverse proxy on 80/443 → 127.0.0.1:8196`.
+`public DNS → DevCoveer public IP 78.111.90.230 → server-local HTTPS/SNI reverse proxy on 80/443 → 127.0.0.1:8196`.
 
-No Yandex ALB/CDN/Functions/external paid edge belongs in this path. If the DNS zone is
-managed through Yandex Cloud DNS, only the DNS record itself is relevant; application
-traffic still terminates directly on DevCoveer. The current public blocker is simply
-that `projects-hub.kenigevents.ru` does not resolve yet. GitHub authentication is still
-not the user identity system.
+No Yandex ALB/CDN/Functions/external paid edge belongs in this path. The migrated public
+ingress is the host-networked nginx container `record-idea-hub-backend-edge-1`, whose
+persisted runtime configuration lives under
+`/home/dev/.local/state/my-data-hub-control-plane/edge/`. The Projects Hub vhost uses
+the existing `my-data-hub-local-edge` Let's Encrypt certificate and an explicit
+Projects-Hub-only forwarded-origin header set because the backend public-auth boundary
+requires `Host`, `X-Forwarded-Host`, `X-Forwarded-Proto=https`, and
+`X-Forwarded-Port=443`. Shared ingress defaults for other services remain unchanged.
+GitHub authentication is still not the user identity system.
 
 ## Acceptance evidence
 
@@ -98,7 +101,7 @@ not the user identity system.
 - deployed concurrency canary PASS: two real Gemini Live provider sessions for the same actor coexist and both complete WSS handshake/close; a third concurrent session is rejected with HTTP 429 / `LIVE_BUSY`, proving the per-actor fairness boundary;
 - deterministic regression proves four simultaneous actors can each hold an authenticated WSS handshake, cross-actor socket-ticket renewal stays hidden, and the fifth session hits the global capacity boundary; a 3+ independent-user real-provider production soak is still pending;
 - the first ad-hoc runtime canary produced one `LIVE_SOCKET_IO` only because the test client closed immediately after Stop; the corrected canary waits for server close and subsequent roundtrip/concurrency runs produced no new `socket_failed` evidence;
-- public WSS ingress is **pending before TLS/WebSocket acceptance** because `projects-hub.kenigevents.ru` currently does not resolve; DNS/TLS/HTTP probes fail at name resolution. This is a direct DNS/local-ingress publication task, not a Yandex edge/IAM dependency;
+- direct public ingress **PASS**: `projects-hub.kenigevents.ru` resolves to `78.111.90.230`; TLS 1.3 validates with a Let's Encrypt SAN containing the hostname; public `/healthz` returns 200; public WSS roundtrip passes `hello_ack`, binary PCM ACK, output transcript/audio, `turn_complete`, graceful close and HTTP-fallback rejection; public concurrency passes two real-provider WSS sessions with the third same-actor session rejected as `429 LIVE_BUSY`;
 - durable operational check is `scripts/devcoveer_wss_canary.py`: run `--mode roundtrip` and then `--mode concurrency` sequentially under the loopback dev actor. The two modes must not be run concurrently because the roundtrip itself occupies one of the actor's bounded Live slots.
 
 ### Android WebView Live boundary · 3 October 2026
@@ -120,7 +123,7 @@ Current Android/MVP evidence on 28 September 2026:
 - backend suite after readiness: 80 pytest PASS; PWA production build PASS;
 - physical Android microphone/calendar acceptance remains `not_run` because no physical ADB device is connected to DevCoveer;
 - production GitHub App code exists, but runtime health reports `github_app_configured=false`;
-- public ingress remains pending because the Projects Hub hostname has no resolving direct DNS route to DevCoveer yet; external Yandex edge publication is explicitly not part of the architecture.
+- direct public ingress is accepted on `78.111.90.230`; external Yandex edge publication is explicitly not part of the architecture.
 
 Implemented and deterministically covered:
 
@@ -187,7 +190,7 @@ Not yet claimed:
 - physical microphone acceptance on the user's actual browser/device;
 - crash-durable online startup capture while the Live session POST itself is pending;
 - physical Android calendar/WebView-microphone acceptance and Android offline/reboot queue; foreground Android already uses the shared PWA WSS path, while native background capture remains unimplemented;
-- public DNS/TLS/WSS ingress acceptance on the direct DevCoveer path; current blocker is unresolved DNS/local ingress routing, not an application WebSocket failure;
+- physical-device acceptance remains separate even though direct public DNS/TLS/HTTPS/WSS ingress is now accepted;
 - production GitHub App registration/credentials plus installation/callback acceptance;
 - long 3/10/30-minute buffered-source acceptance;
 - live 3+ independent-user real-provider soak, physical same-conversation multi-device takeover UX, and broader collaboration gates.
@@ -217,15 +220,31 @@ What is accepted on the deployed loopback backend:
 8. deterministic four-actor WSS handshake/cross-ticket isolation/global capacity plus duplicate buffered-source exclusion.
 
 What is **not** accepted yet:
-- public `wss://projects-hub.kenigevents.ru` Upgrade, because DNS does not currently resolve;
+- public `wss://projects-hub.kenigevents.ru` Upgrade is accepted; remaining realtime gates are physical-device and broader independent-user soak;
 - 20-socket/30-minute deterministic soak and 3+ independent-user real-provider acceptance;
 - physical Android WebView microphone/noise/poor-network acceptance over the same PWA WSS path; native parallel WSS is intentionally not a target;
 - post-WSS physical Android in-app update;
 - Regional Knowledge delegated OAuth + `knowledge_search` E2E. The Projects Hub adapter/tool contract is implemented fail-closed and the full backend suite is 104 PASS, but the Regional Knowledge project explicitly has no real Supabase/OAuth resource deployment yet, so the tool remains absent from normal Live sessions until an actor/workspace-bound delegated provider exists.
 
-Until public DNS is restored, the correct next transport task is direct DNS plus local TLS/SNI ingress readback on DevCoveer, not an external edge service and not another rewrite of the WSS runtime.
+With direct public DNS/TLS/HTTPS/WSS accepted, the next transport acceptance is physical Android WebView microphone/noise/poor-network testing and broader independent-user soak; no external edge service or WSS rewrite is required.
 
 
 ### Android release evidence · 3 October 2026
 
 Android `android-v6` / `0.1.6` was published automatically after PR #31 with stable signing material. The signed APK release asset SHA-256 is `03b343bddc3c8be0d0c19072c62c451a465ebb52b3f2e6c2fa4264e3f88a4d17`; `update.json` is published alongside it. PR acceptance included build/unit, emulator launch and self-update E2E using real GitHub release assets. The E2E proved the historical `android-v4 → android-v5` in-app path through update discovery, UI click, verified APK download and Package Installer handoff. Physical `v5 → v6` final installer tap remains a human gate.
+
+
+### Direct public ingress acceptance · 3 October 2026
+
+The install-facing public path is now accepted:
+
+- DNS: `projects-hub.kenigevents.ru → 78.111.90.230`;
+- TLS: TLS 1.3, Let's Encrypt, SAN includes `projects-hub.kenigevents.ru`, certificate expiry 1 January 2027;
+- HTTPS: public `GET /healthz` returns 200 for deployed backend `074409cc55a3396dd9d06a6f2787934196a454e5`;
+- auth-origin boundary: the Projects Hub vhost supplies exact forwarded host/proto/port while continuing to clear client-IP forwarding; a public-origin POST reaches endpoint validation instead of `PUBLIC_ORIGIN_REQUIRED`;
+- public WSS roundtrip: PASS through `wss://projects-hub.kenigevents.ru` with real provider transcript/audio and no HTTP media fallback;
+- public WSS concurrency: PASS for two simultaneous real-provider sessions; third same-actor session receives `429 LIVE_BUSY`;
+- sibling public routes remained healthy after nginx reload;
+- backend port `8196` remains loopback-only.
+
+This closes the server-side install-readiness blocker. Physical Android acceptance is now the next gate.
