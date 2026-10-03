@@ -27,10 +27,7 @@ the buffered turn early.
 
 ## Shared Live/runtime contracts
 
-- `live-interaction` **0.3.7-rc.1** is pinned to exact commit `b6a051a7cf53f84433ebf48a52b623d91fcc6478` for the WSS migration candidate.
-  to exact commit `c9de297020087235d80ce4155e52f63f88c642bf`. The commit contains the
-  shared durability-first browser capture primitive; it remains an exact commit pin
-  until the corresponding GitHub Release/tag is published.
+- `live-interaction` **0.3.8** is consumed through stable release tag `v0.3.8` for browser and Python. The release resolves to commit `f756a90f864bee16a671b54da7a53189e2e4a94e`; release asset SHA-256 `99b8a4ea7c04a81062547a6a63b8e161220fb62a3b6d947ddda1954c2a90ab0` is verification evidence, not the dependency interface.
 - DevCoveer deployment pins `ai-resource-control` **0.1.7** at
   `51e9c043ce40dfefea8b2cb4f4956019819bd9d4`.
 - Projects Hub uses only its `GOOGLE_API_KEY4` authority-outage fallback source alias;

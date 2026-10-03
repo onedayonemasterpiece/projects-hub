@@ -31,7 +31,7 @@
 - transport/capture generation и playback generation различаются: закрытие provider не должно обрезать уже полученный ответ;
 - исправления WSS/framework выпускаются как immutable versioned release с consumer-specific acceptance, а не «подменяются на лету».
 
-Projects Hub deployed candidate от 3 октября 2026 фиксирует shared `live-interaction 0.3.7-rc.1` на exact commit `b6a051a7cf53f84433ebf48a52b623d91fcc6478` и использует тот же WSS contract, который был отработан в Street Story. Следующая смена framework version выполняется только через новый consumer-specific acceptance; moving HEAD не используется как runtime dependency.
+Projects Hub consumer candidate от 3 октября 2026 использует stable release `live-interaction v0.3.8`. Dependency interface — версия/tag; release tag разрешается в commit `f756a90f864bee16a671b54da7a53189e2e4a94e`, а опубликованный asset имеет SHA-256 `99b8a4ea7c04a81062547a6a63b8e161220fb62a3b6d947ddda1954c2a90ab0`. Commit/digest сохраняются как verification evidence, но межпроектный контракт не привязывается к raw SHA. Следующая смена framework version выполняется только через новый consumer-specific acceptance; moving HEAD не используется.
 
 ## 2. Целевой transport flow
 
@@ -319,3 +319,17 @@ WSS rollout не заменяет существующий updater.
 Нормальный UX: **«Новая версия доступна → Обновить → verified download → Android installer»**. Пользователю не нужно снова искать APK в GitHub/source. Бесшумную privileged install без Android confirmation продукт не обещает.
 
 Предыдущее hosted Android 14 evidence v4→v5 остаётся валидным для updater-механики; новый physical post-WSS update gate остаётся отдельным acceptance.
+
+
+## 17. Versioned reuse / U05 · 3 октября 2026
+
+Свежий owner review `voice-20261003-083638-766e61b7` добавляет общий инженерный инвариант: перед созданием нового transport/helper/limiter/capability агент разработки обязан выполнить semantic discovery существующих решений, посмотреть их фактический runtime, ретроспективу и связанные инциденты. Цель — не процесс ради процесса, а снижение фрагментарности и повторное использование проверенного кода.
+
+Для shared components:
+- consumer зависит от стабильной версии/release/capability availability, а не от raw commit SHA;
+- SHA/digest остаются evidence того, что именно было принято и собрано;
+- consumer-specific acceptance обязателен после смены версии;
+- инцидент общего Live-компонента должен быть доступен всем consumers, которых он касается;
+- это не оправдание для нового централизованного gateway, второго semantic agent или тяжёлой regex-бюрократии.
+
+Projects Hub применяет это правило первым к `live-interaction v0.3.8`: Python и browser manifests используют `v0.3.8`, lock разрешает tag в immutable release commit, а full backend + clean PWA acceptance выполняются на этой версии.

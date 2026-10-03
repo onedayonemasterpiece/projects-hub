@@ -1,13 +1,13 @@
 {
   "schema_version": 2,
-  "spec_revision": 4,
+  "spec_revision": 5,
   "as_of": "2026-10-03",
-  "status": "wss_backend_deployed_loopback_acceptance_public_edge_pending",
+  "status": "wss_versioned_shared_component_candidate",
   "owner_input": {
-    "id": "U04",
-    "kind": "direct_user_wss_reliability_and_cross_project_update",
-    "date": "2026-10-02",
-    "summary": "Projects Hub adopts the shared Street Story WSS transport pattern, must remain predictable for several concurrent users, preserves in-app Android self-update, protects critical requirements, and integrates Regional Knowledge/POI through shared identity with resource-specific authorization."
+    "id": "U05",
+    "kind": "owner_voice_cross_project_versioned_component_reuse",
+    "date": "2026-10-03",
+    "summary": "Shared Live and other cross-project infrastructure must be discovered/reused as versioned capabilities with runtime and incident history visible to consumers; consumer dependencies use stable releases/versions rather than raw SHA pins, while SHA/digests remain verification evidence."
   },
   "applications": {
     "pwa": "full_application",
@@ -200,7 +200,7 @@
     "current_provider_transcript_projection_limit_chars": 2000,
     "current_session_event_ring_size": 320,
     "current_browser_transcript_preview_is_bounded": true,
-    "shared_live_interaction": "0.3.7-rc.1@b6a051a7cf53f84433ebf48a52b623d91fcc6478",
+    "shared_live_interaction": "0.3.8@v0.3.8",
     "same_origin_wss_required": true,
     "one_use_socket_ticket_required": true,
     "binary_pcm_wss_required": true,
@@ -208,11 +208,14 @@
     "damaged_turn_mutation_guard_required": true,
     "bounded_socket_ingress_egress_required": true,
     "multi_user_actor_workspace_conversation_isolation_required": true,
-    "cross_resource_audience_isolation_required": true
+    "cross_resource_audience_isolation_required": true,
+    "shared_dependency_ref_kind": "stable_release_tag",
+    "raw_commit_dependency_interface_allowed": false,
+    "release_verification_evidence_required": true
   },
   "implementation_evidence": {
     "release_sha": "59b522278a1694dfb930e070149fa0de9224c6b6",
-    "shared_live_interaction": "0.3.7-rc.1@b6a051a7cf53f84433ebf48a52b623d91fcc6478",
+    "shared_live_interaction": "0.3.8@v0.3.8_local_consumer_acceptance",
     "shared_ai_resource_control": "0.1.7",
     "realtime_browser_transport_wired": true,
     "buffered_manual_activity_product_path": true,
@@ -256,12 +259,18 @@
     "deployed_wss_roundtrip": "pass_binary_pcm_ack_no_http_fallback_output_transcript_binary_audio_turn_complete_server_close",
     "deployed_real_provider_concurrency": "pass_two_same_actor_sessions_third_429",
     "runtime_canary": "scripts/devcoveer_wss_canary.py",
-    "regional_knowledge_adapter_contract": "implemented_fail_closed_tool_hidden_without_actor_workspace_bound_provider"
+    "regional_knowledge_adapter_contract": "implemented_fail_closed_tool_hidden_without_actor_workspace_bound_provider",
+    "versioned_release_ref": "v0.3.8",
+    "versioned_release_commit": "f756a90f864bee16a671b54da7a53189e2e4a94e",
+    "versioned_release_asset_sha256": "99b8a4ea7c04a81062547a6a63b8e161220fb62a3b6d947ddda1954c2a90ab0",
+    "versioned_release_local_acceptance": "102_pytest_pass_clean_npm_ci_and_pwa_build_pass",
+    "deployed_release_sha": "9f740303120a0efd673ed6661237768d63a1ddee",
+    "deployed_live_version_before_v0_3_8_rollout": "0.3.7-rc.1"
   },
   "transport": {
     "primary": "authenticated_same_origin_wss",
     "protocol": "wl-live-v1",
-    "shared_live_interaction": "0.3.7-rc.1@b6a051a7cf53f84433ebf48a52b623d91fcc6478",
+    "shared_live_interaction": "0.3.8@v0.3.8",
     "socket_ticket": "one_use_short_lived_subprotocol_only",
     "query_credentials_allowed": false,
     "same_origin_required": true,

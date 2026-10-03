@@ -7,10 +7,10 @@
     "latin": "Sodey",
     "status": "proposed_not_cleared"
   },
-  "specification_status": "wss_platform_reliability_candidate",
+  "specification_status": "wss_versioned_shared_components_candidate",
   "production_product_accepted": false,
   "source_repository": "onedayonemasterpiece/idea-hub",
-  "source_snapshot": "df979d33aade6fc045d5032b34bf299eba6dd8ab",
+  "source_snapshot": "c346ac7a526870501350c0277678276429224e0a",
   "runtime_baseline": "d4f740df85f7c79e687a88b95e5f86bcee11e8bf",
   "sources": [
     {
@@ -180,14 +180,21 @@
       "group": "core",
       "theme": "Голосовое переключение темы и адаптивный onboarding Миры",
       "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/df979d33aade6fc045d5032b34bf299eba6dd8ab/inbox/voice/2026/10/voice-20261002-174500-c34d45c8.md"
+    },
+    {
+      "id": "V25",
+      "voice_id": "voice-20261003-083638-766e61b7",
+      "group": "core",
+      "theme": "Версионированное переиспользование общих компонентов, semantic discovery и incident routing",
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/c346ac7a526870501350c0277678276429224e0a/inbox/voice/2026/10/voice-20261003-083638-766e61b7.md"
     }
   ],
   "experience_contract": "live-contract.json",
   "owner_revision": {
-    "id": "U04",
-    "kind": "direct_user_wss_reliability_and_cross_project_update",
-    "date": "2026-10-02",
-    "spec_revision": 4
+    "id": "U05",
+    "kind": "owner_voice_cross_project_versioned_component_reuse",
+    "date": "2026-10-03",
+    "spec_revision": 5
   },
   "platform_decision": {
     "status": "owner_clarified_for_implementation",
@@ -223,7 +230,7 @@
       "id": "live-interaction",
       "repository": "onedayonemasterpiece/live-interaction",
       "owner_of": "shared voice transport and lifecycle",
-      "status": "0.3.7_rc1_exact_commit_b6a051a7cf53f84433ebf48a52b623d91fcc6478_wss_migration_candidate"
+      "status": "v0.3.8_stable_release_tag_consumer_candidate_release_commit_f756a90f864bee16a671b54da7a53189e2e4a94e"
     },
     {
       "id": "ai-resource-control",
@@ -474,11 +481,11 @@
       "evidence": []
     }
   ],
-  "spec_revision": 4,
+  "spec_revision": 5,
   "central_agent_contract": "12-central-live-agent.md",
   "implementation_status": {
     "phase": "wss_backend_deployed_loopback_real_provider_pass_public_dns_blocked",
-    "release_sha": "59b522278a1694dfb930e070149fa0de9224c6b6",
+    "release_sha": "9f740303120a0efd673ed6661237768d63a1ddee",
     "devcoveer_runtime": "pass",
     "deterministic_contracts": "102_pytest_pass",
     "pwa_production_build": "pass",
@@ -492,7 +499,7 @@
     "github_app_connection": "server_side_implemented_runtime_credentials_not_configured",
     "client_offline_restart_safe_queue": "pwa_foreground_implemented_android_not_implemented",
     "production_product_accepted": false,
-    "shared_live_interaction": "0.3.7-rc.1_b6a051a7cf53f84433ebf48a52b623d91fcc6478",
+    "shared_live_interaction": "0.3.8_v0.3.8_release_candidate",
     "pwa_foreground_offline_queue": "implemented",
     "offline_partial_delivery_same_source_retry": "pass",
     "offline_retry_duplicate_memory_objects": 0,
@@ -527,11 +534,15 @@
     "wss_runtime_roundtrip": "pass_binary_pcm_ack_http_fallback_409_output_transcript_binary_audio_turn_complete_server_close",
     "wss_runtime_concurrency": "pass_two_real_provider_sessions_same_actor_third_429",
     "public_wss_edge": "blocked_dns_name_does_not_resolve",
-    "runtime_wss_canary": "scripts/devcoveer_wss_canary.py"
+    "runtime_wss_canary": "scripts/devcoveer_wss_canary.py",
+    "versioned_shared_component_policy": "dependency_interface_is_release_version_or_capability_not_raw_sha",
+    "live_0_3_8_local_acceptance": "102_pytest_pass_clean_npm_ci_pwa_build_pass",
+    "live_0_3_8_release_commit": "f756a90f864bee16a671b54da7a53189e2e4a94e",
+    "live_0_3_8_release_asset_sha256": "99b8a4ea7c04a81062547a6a63b8e161220fb62a3b6d947ddda1954c2a90ab0"
   },
   "current_execution_focus": {
     "as_of": "2026-10-03",
-    "slice": "restore/publish public DNS edge and verify public WSS Upgrade; then multi-actor/physical Android acceptance; Regional Knowledge adapter is ready but real delegated OAuth E2E waits for the separate RKB Supabase/OAuth resource deployment",
+    "slice": "roll out accepted live-interaction v0.3.8 consumer, then restore/publish public DNS/WSS edge and continue multi-actor/physical Android acceptance; Regional Knowledge real delegated OAuth E2E waits for its resource deployment",
     "android_update": "existing signed GitHub Release self-update path preserved; hosted in-place handoff evidence exists; final physical installer confirmation remains a human gate",
     "event_readiness": "implemented and preserved",
     "blocking_external_gates": [
@@ -546,6 +557,8 @@
       "generic BPM/workflow engine",
       "privileged silent Android updater",
       "duplicated canonical POI or contradiction store inside Projects Hub"
-    ]
+    ],
+    "shared_component_dependency_policy": "use stable version/tag/capability availability; keep SHA/digest only as reproducibility evidence",
+    "latest_owner_review": "V25 voice-20261003-083638-766e61b7"
   }
 }
