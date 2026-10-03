@@ -177,7 +177,6 @@ def test_public_device_receipt_is_not_browser_origin_bound_but_still_device_auth
         public_settings(tmp_path),
         store=store,
         device_commands=service,
-        identity_verifier=object(),
     )
     try:
         with TestClient(app, base_url=PUBLIC_ORIGIN) as client:
