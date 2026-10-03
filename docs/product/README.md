@@ -1,8 +1,8 @@
 # Projects Hub — спецификация живой совместной работы
 
-> **Обновление 3 октября 2026:** WSS/multi-user source candidate реализован поверх shared `live-interaction v0.3.8` release: same-origin one-use tickets, binary PCM/ACK, pushed events, no silent HTTP fallback, bounded global/per-actor admission и duplicate buffered-source exclusion. WSS integration tests и полный backend regression suite (107) проходят; clean `npm ci` + PWA production build проходит. Это ещё не production acceptance: public WSS edge, 3+ independent-user real-provider soak и physical Android gates остаются открыты. Канонический design/status: [WSS и многопользовательская надёжность](16-wss-multi-user-reliability.md).
+> **Обновление 3 октября 2026:** WSS/multi-user source candidate реализован поверх shared `live-interaction v0.3.8` release: same-origin one-use tickets, binary PCM/ACK, pushed events, no silent HTTP fallback, bounded global/per-actor admission и duplicate buffered-source exclusion. WSS integration tests и полный backend regression suite (107) проходят; clean `npm ci` + PWA production build проходит. Это ещё не production acceptance: public WSS ingress, 3+ independent-user real-provider soak и physical Android gates остаются открыты. Канонический design/status: [WSS и многопользовательская надёжность](16-wss-multi-user-reliability.md).
 
-**Ревизия 8 от 3 октября 2026. Статус: central Live/PWA и foreground Android WebView работают через единый WSS consumer `live-interaction v0.3.8`; Android device-command/calendar, signed GitHub Releases, event-readiness и expert-review слой реализованы; полный production acceptance не объявлен из-за незакрытых physical-device/public-edge/GitHub-App/multi-user/Regional-Knowledge gates.** Имя «Содей / Sodey» остаётся предложением; технический идентификатор `projects-hub` не меняется.
+**Ревизия 8 от 3 октября 2026. Статус: central Live/PWA и foreground Android WebView работают через единый WSS consumer `live-interaction v0.3.8`; Android device-command/calendar, signed GitHub Releases, event-readiness и expert-review слой реализованы; полный production acceptance не объявлен из-за незакрытых physical-device/public-ingress/GitHub-App/multi-user/Regional-Knowledge gates.** Имя «Содей / Sodey» остаётся предложением; технический идентификатор `projects-hub` не меняется.
 
 ## U05 / 3 октября: versioned shared components
 
@@ -122,7 +122,7 @@ Stop, «Новый разговор» и delete — разные действи�
 
 ## Обновление 2 октября: WSS, несколько пользователей и свежие owner review
 
-Realtime этап зафиксирован в [WSS и многопользовательской надёжности](16-wss-multi-user-reliability.md). Source candidate уже реализует shared WSS transport, one-use tickets, bounded queues/ACK, session generations, запрет stale-audio/mutation replay и actor/workspace/conversation isolation. Deployed production/runtime пока не считается мигрированным до отдельного rollout и public-edge/real-provider/physical acceptance.
+Realtime этап зафиксирован в [WSS и многопользовательской надёжности](16-wss-multi-user-reliability.md). Source candidate уже реализует shared WSS transport, one-use tickets, bounded queues/ACK, session generations, запрет stale-audio/mutation replay и actor/workspace/conversation isolation. Deployed production/runtime пока не считается мигрированным до отдельного rollout и public-ingress/real-provider/physical acceptance.
 
 Свежий owner review `voice-20261002-174500-c34d45c8` добавляет два базовых UX-направления: light/dark theme с voice control и ненавязчивый adaptive onboarding, который помогает человеку постепенно открывать возможности продукта и может мягко напоминать давно не использованные функции. Preference/usage state должны быть actor-scoped.
 
@@ -136,4 +136,4 @@ Android теперь существует как отдельное устана
 
 После подтверждённого calendar result backend автоматически создаёт event card. Реализованы bounded templates `generic` и `podcast`, checklist готовности и follow-up tasks со статусами proposed/accepted/done/snoozed/rejected; UI показывает это в существующих floating islands. Backend suite после этого слоя: 80 pytest PASS; PWA production build PASS.
 
-Не закрыты и поэтому не подменяются mock/unit evidence: physical Android WebView-microphone/calendar E2E, Android offline/reboot capture, публичный DNS/TLS edge `projects-hub.kenigevents.ru` (bounded publisher блокируется отсутствием рабочего non-interactive Yandex Cloud auth) и production GitHub App registration/credentials (`github_app_configured=false`). Работающий Record Idea Hub не выключается до отдельной физической приёмки нового Android capture/recovery пути.
+Не закрыты и поэтому не подменяются mock/unit evidence: physical Android WebView-microphone/calendar E2E, Android offline/reboot capture, публичный DNS/TLS/WSS ingress `projects-hub.kenigevents.ru` по прямому пути на DevCoveer (DNS → локальный TLS/SNI → `127.0.0.1:8196`); внешний Yandex edge не используется и production GitHub App registration/credentials (`github_app_configured=false`). Работающий Record Idea Hub не выключается до отдельной физической приёмки нового Android capture/recovery пути.
