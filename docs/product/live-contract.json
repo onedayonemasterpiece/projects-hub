@@ -215,7 +215,9 @@
     "android_foreground_single_transport": "webview_pwa_shared_wss",
     "android_parallel_native_wss_allowed": false,
     "android_native_future_role": "durable_background_capture_handoff_only",
-    "same_actor_conversation_single_live_owner_required": true
+    "same_actor_conversation_single_live_owner_required": true,
+    "public_ingress": "direct_dns_to_devcoveer_public_ip_local_tls_sni_reverse_proxy_only",
+    "external_paid_edge_allowed": false
   },
   "implementation_evidence": {
     "release_sha": "59b522278a1694dfb930e070149fa0de9224c6b6",
@@ -257,7 +259,7 @@
     "full_backend_regression_suite": "107_pass",
     "actor_fairness_and_duplicate_buffered_source_admission": "pass",
     "multi_user_load_acceptance": "four_actor_wss_deterministic_pass_same_actor_two_real_provider_pass_3plus_independent_user_real_provider_soak_pending",
-    "public_wss_edge_acceptance": "blocked_owner_yandex_iam_auth_dns_unresolved_inc_4e353e4e5c18ef24c5998658",
+    "public_wss_edge_acceptance": "pending_direct_dns_and_local_devcoveer_tls_sni_readback_external_edge_not_used",
     "regional_knowledge_delegated_oauth_e2e": "not_run_rkb_supabase_oauth_not_deployed",
     "deployed_health": "pass_release_sha_match_service_active_zero_restarts",
     "deployed_wss_roundtrip": "pass_binary_pcm_ack_no_http_fallback_output_transcript_binary_audio_turn_complete_server_close",

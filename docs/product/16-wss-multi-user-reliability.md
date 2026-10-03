@@ -1,6 +1,6 @@
 # Projects Hub — WSS, многопользовательская надёжность и следующий продуктовый этап
 
-**Проектное решение от 2 октября 2026; runtime update от 3 октября 2026. Статус: target architecture + deployed backend WSS candidate; public edge / multi-actor / physical acceptance ещё не завершены, поэтому production acceptance не объявлен.**
+**Проектное решение от 2 октября 2026; runtime update от 3 октября 2026. Статус: target architecture + deployed backend WSS candidate; public ingress / multi-actor / physical acceptance ещё не завершены, поэтому production acceptance не объявлен.**
 
 Этот документ фиксирует следующий обязательный архитектурный переход Projects Hub: realtime-голос переводится на общий WSS-контракт `live-interaction`, а одновременно вводятся явные инварианты многопользовательской изоляции, bounded backpressure, recovery, capability routing и измеримой приёмки.
 
@@ -228,14 +228,14 @@ Capability switch сохраняет **один пользовательский
 - deployed WSS roundtrip через реальный Gemini Live: binary PCM ACK, no-HTTP-fallback 409, pushed transcript + binary audio + turn_complete + graceful server close — **PASS**;
 - deployed concurrency: **2 real-provider sessions одновременно PASS**, третья того же actor получает **429 LIVE_BUSY**;
 - постоянный runtime check: `scripts/devcoveer_wss_canary.py --mode roundtrip`, затем отдельно `--mode concurrency`;
-- public edge probes: **BLOCKED — DNS name does not resolve**, поэтому TLS/Upgrade ещё не проверены.
+- public ingress probes: **BLOCKED — DNS name does not resolve**, поэтому TLS/Upgrade ещё не проверены.
 
 Не считать выполненным по этому checkpoint:
 - 20-socket/30-minute deterministic soak;
 - 3+ independent-user real-provider sessions / live multi-actor soak; four-actor deterministic acceptance это не заменяет;
 - public production `wss://` Upgrade; current blocker is unresolved DNS;
 - same-conversation multi-device physical/takeover UX acceptance; deterministic single-owner lease is implemented/tested but not yet deployed;
-- physical Android WebView microphone over the shared PWA WSS path; public edge must resolve first;
+- physical Android WebView microphone over the shared PWA WSS path; public ingress must resolve first;
 - physical microphone/noise/poor-network acceptance;
 - post-candidate physical Android in-app update;
 - Android reboot/background durable capture; native implementation must hand off to the existing Live/replay contract rather than open a parallel WSS;
@@ -345,3 +345,27 @@ PR #31 прошёл backend/PWA, Android build+unit, emulator smoke и self-upda
 - self-update E2E на реальных GitHub release assets доказал путь `android-v4 → android-v5`: update discovery, реальная кнопка, SHA-256 verified download, Package Installer handoff, same-signature in-place update и сохранение UID.
 
 Это не заменяет physical-device acceptance текущего `v5 → v6`: финальный системный installer tap и реальный WebView microphone остаются human/device gates.
+
+
+## 18. Public ingress: direct to DevCoveer
+
+Projects Hub does **not** use an external Yandex/Cloud edge, ALB, CDN or Functions hop.
+
+Approved path:
+
+```text
+projects-hub.kenigevents.ru
+  → DNS A/AAAA to DevCoveer public IP
+  → local HTTPS/SNI reverse proxy already listening on DevCoveer :80/:443
+  → 127.0.0.1:8196 Projects Hub
+```
+
+WebSocket Upgrade terminates through the same local HTTPS ingress and is proxied to the loopback backend. This keeps the path simple and avoids an unnecessary paid traffic layer.
+
+If the domain's DNS zone happens to be managed in Yandex Cloud DNS, that does not make Yandex an application edge: only the DNS record is managed there. Failure of a `yc` CLI profile or an old Yandex publisher is not a Projects Hub runtime blocker and must not trigger a fallback to external infrastructure.
+
+Current remaining public acceptance work is therefore:
+1. publish/verify the direct DNS record;
+2. add/verify the Projects Hub hostname in the existing local TLS/SNI ingress;
+3. require DNS → TLS → HTTPS → WSS readback;
+4. keep `127.0.0.1:8196` private.

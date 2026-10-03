@@ -76,11 +76,16 @@ and also has the public Yandex/Supabase identity boundary configured. Health rep
 `auth_mode=public_yandex+loopback_dev` and the fixed public origin is
 `https://projects-hub.kenigevents.ru`.
 
-This does **not** mean the public pilot is reachable yet. The bounded edge publisher
-currently fails before DNS mutation because the installed Yandex Cloud CLI lacks a
-working non-interactive credential. Until that owner-controlled credential is restored
-and the publisher passes DNS/TLS/HTTPS readback, the public edge remains blocked.
-GitHub authentication is still not the user identity system.
+This does **not** mean the public pilot is reachable yet. The approved public path is
+direct and provider-minimal:
+
+`public DNS → DevCoveer public IP → server-local HTTPS/SNI reverse proxy on 80/443 → 127.0.0.1:8196`.
+
+No Yandex ALB/CDN/Functions/external paid edge belongs in this path. If the DNS zone is
+managed through Yandex Cloud DNS, only the DNS record itself is relevant; application
+traffic still terminates directly on DevCoveer. The current public blocker is simply
+that `projects-hub.kenigevents.ru` does not resolve yet. GitHub authentication is still
+not the user identity system.
 
 ## Acceptance evidence
 
@@ -93,7 +98,7 @@ GitHub authentication is still not the user identity system.
 - deployed concurrency canary PASS: two real Gemini Live provider sessions for the same actor coexist and both complete WSS handshake/close; a third concurrent session is rejected with HTTP 429 / `LIVE_BUSY`, proving the per-actor fairness boundary;
 - deterministic regression proves four simultaneous actors can each hold an authenticated WSS handshake, cross-actor socket-ticket renewal stays hidden, and the fifth session hits the global capacity boundary; a 3+ independent-user real-provider production soak is still pending;
 - the first ad-hoc runtime canary produced one `LIVE_SOCKET_IO` only because the test client closed immediately after Stop; the corrected canary waits for server close and subsequent roundtrip/concurrency runs produced no new `socket_failed` evidence;
-- public edge WSS is **blocked before TLS/WebSocket acceptance** because `projects-hub.kenigevents.ru` currently does not resolve in DNS from DevCoveer; DNS/TLS/HTTP probes all fail at name resolution;
+- public WSS ingress is **pending before TLS/WebSocket acceptance** because `projects-hub.kenigevents.ru` currently does not resolve; DNS/TLS/HTTP probes fail at name resolution. This is a direct DNS/local-ingress publication task, not a Yandex edge/IAM dependency;
 - durable operational check is `scripts/devcoveer_wss_canary.py`: run `--mode roundtrip` and then `--mode concurrency` sequentially under the loopback dev actor. The two modes must not be run concurrently because the roundtrip itself occupies one of the actor's bounded Live slots.
 
 ### Android WebView Live boundary · 3 October 2026
@@ -115,7 +120,7 @@ Current Android/MVP evidence on 28 September 2026:
 - backend suite after readiness: 80 pytest PASS; PWA production build PASS;
 - physical Android microphone/calendar acceptance remains `not_run` because no physical ADB device is connected to DevCoveer;
 - production GitHub App code exists, but runtime health reports `github_app_configured=false`;
-- public edge remains BLOCKED by Yandex Cloud DNS authentication before any DNS/TLS mutation.
+- public ingress remains pending because the Projects Hub hostname has no resolving direct DNS route to DevCoveer yet; external Yandex edge publication is explicitly not part of the architecture.
 
 Implemented and deterministically covered:
 
@@ -182,7 +187,7 @@ Not yet claimed:
 - physical microphone acceptance on the user's actual browser/device;
 - crash-durable online startup capture while the Live session POST itself is pending;
 - physical Android calendar/WebView-microphone acceptance and Android offline/reboot queue; foreground Android already uses the shared PWA WSS path, while native background capture remains unimplemented;
-- public DNS/TLS/WSS edge acceptance for the configured Yandex IdP boundary; current blocker is unresolved DNS, not an application WebSocket failure;
+- public DNS/TLS/WSS ingress acceptance on the direct DevCoveer path; current blocker is unresolved DNS/local ingress routing, not an application WebSocket failure;
 - production GitHub App registration/credentials plus installation/callback acceptance;
 - long 3/10/30-minute buffered-source acceptance;
 - live 3+ independent-user real-provider soak, physical same-conversation multi-device takeover UX, and broader collaboration gates.
@@ -218,7 +223,7 @@ What is **not** accepted yet:
 - post-WSS physical Android in-app update;
 - Regional Knowledge delegated OAuth + `knowledge_search` E2E. The Projects Hub adapter/tool contract is implemented fail-closed and the full backend suite is 104 PASS, but the Regional Knowledge project explicitly has no real Supabase/OAuth resource deployment yet, so the tool remains absent from normal Live sessions until an actor/workspace-bound delegated provider exists.
 
-Until public DNS is restored, the correct next transport task is the edge/DNS publication gate, not another rewrite of the WSS runtime.
+Until public DNS is restored, the correct next transport task is direct DNS plus local TLS/SNI ingress readback on DevCoveer, not an external edge service and not another rewrite of the WSS runtime.
 
 
 ### Android release evidence · 3 October 2026
