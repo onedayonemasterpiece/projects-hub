@@ -191,7 +191,12 @@ def wait_android_network(timeout_seconds: int = 120) -> None:
             timeout=10,
             retries=1,
         )
-        if "1 received" in last or "1 packets received" in last or "bytes from" in last:
+        if (
+            "PING api.github.com (" in last
+            or "1 received" in last
+            or "1 packets received" in last
+            or "bytes from" in last
+        ):
             return
         time.sleep(3)
     raise RuntimeError(f"Android emulator network/DNS did not become ready: {last[-800:]!r}")
