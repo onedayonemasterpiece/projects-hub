@@ -491,7 +491,7 @@
     "phase": "wss_backend_deployed_loopback_real_provider_pass_public_dns_blocked",
     "release_sha": "720f44d8771043804a5e6e4fe6cb56e38790d79b",
     "devcoveer_runtime": "pass",
-    "deterministic_contracts": "104_pytest_pass",
+    "deterministic_contracts": "107_pytest_pass",
     "pwa_production_build": "pass",
     "provider_function_canary": "pass_previous_function_canary_plus_wss_runtime_roundtrip",
     "real_audio_provider_transcript_memory_commit_readback_voice": "pass",
@@ -529,8 +529,8 @@
     "wss_browser_primary": "deployed_candidate",
     "wss_buffered_replay_binary_pcm": "implemented_candidate",
     "wss_clean_npm_ci_and_production_build": "pass",
-    "wss_integration_tests": "7_pass_full_backend_104_pass",
-    "multi_user_live_capacity": "bounded_global_default_16_per_actor_default_2_duplicate_buffered_source_blocked_runtime_same_actor_2_real_provider_pass_four_actor_wss_deterministic_pass_independent_user_real_provider_soak_pending",
+    "wss_integration_tests": "9_pass_full_backend_107_pass",
+    "multi_user_live_capacity": "bounded_global_default_16_per_actor_default_2_single_actor_conversation_live_owner_lease_duplicate_buffered_source_blocked_runtime_same_actor_2_real_provider_pass_four_actor_wss_deterministic_pass_independent_user_real_provider_soak_pending",
     "requirements_guard": "devcoveer_manifest_enabled_digest_7670191ca2430162027c0e7b50c3b1deb2a52048b770fb626f0fea45e8a47e6a",
     "regional_knowledge_live_capability": "adapter_contract_implemented_tool_hidden_until_actor_workspace_delegation_provider_configured",
     "cross_resource_delegated_oauth": "resource_boundary_designed_projects_hub_adapter_ready_real_grant_e2e_pending",
@@ -547,7 +547,8 @@
     "android_foreground_live_transport": "webview_runs_same_pwa_live_interaction_v0_3_8_wss",
     "android_webview_microphone_origin_boundary": "implemented_candidate_android_ci_pending",
     "android_parallel_native_wss": "not_planned_would_duplicate_foreground_transport",
-    "android_background_durable_capture": "not_implemented"
+    "android_background_durable_capture": "not_implemented",
+    "same_conversation_live_owner_lease": "implemented_candidate_active_and_starting_race_guard_9_wss_107_full_pass"
   },
   "current_execution_focus": {
     "as_of": "2026-10-03",
@@ -569,6 +570,7 @@
     ],
     "shared_component_dependency_policy": "use stable version/tag/capability availability; keep SHA/digest only as reproducibility evidence",
     "latest_owner_review": "V25 voice-20261003-083638-766e61b7",
-    "android_voice": "foreground uses shared PWA WSS in WebView; accept physical WebView microphone/public edge before adding native background durable capture"
+    "android_voice": "foreground uses shared PWA WSS in WebView; accept physical WebView microphone/public edge before adding native background durable capture",
+    "multi_user_reliability": "single live owner per actor+conversation implemented/tested; rollout pending; 3plus independent real users remain acceptance gate"
   }
 }
