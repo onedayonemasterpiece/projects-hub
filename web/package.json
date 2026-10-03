@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc --noEmit && vite build"
+    "build": "tsc --noEmit && vite build",
+    "test:live-framework": "node --test tests/live-framework.test.mjs"
   },
   "dependencies": {
-    "@onedayonemasterpiece/live-interaction": "git+https://github.com/onedayonemasterpiece/live-interaction.git#v0.3.8",
+    "@onedayonemasterpiece/live-interaction": "git+https://github.com/onedayonemasterpiece/live-interaction.git#v0.3.11",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "@supabase/supabase-js": "2.108.2"
@@ -22,9 +23,10 @@
   },
   "liveFramework": {
     "repository": "https://github.com/onedayonemasterpiece/live-interaction",
-    "version": "0.3.8",
-    "ref": "v0.3.8",
-    "release_commit": "f756a90f864bee16a671b54da7a53189e2e4a94e",
-    "release_asset_sha256": "99b8a4ea7c04a81062547a6a63b8e161220fb62a3b6d947ddda1954c2a90ab0"
+    "binding": "browser",
+    "version": "0.3.11",
+    "ref": "v0.3.11",
+    "release_commit": "129edcd38208e3d3daa4fb033c75288d83575dea",
+    "release_asset_sha256": "e713de774b5a7c513f4ec8f5281865a160ebf8ed3878987316eb4bc233a8c58c"
   }
 }
