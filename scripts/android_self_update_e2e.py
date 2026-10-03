@@ -381,6 +381,22 @@ def main() -> None:
     if permission_required:
         # Emulator-only acceptance helper. Production continues to require the
         # user's standard Android "Allow from this source" confirmation.
+        # The Settings activity launch is asynchronous: wait for it before
+        # changing the app-op, otherwise KEYCODE_BACK can race the transition
+        # and Projects Hub never receives onResume().
+        deadline = time.time() + 45
+        last_focus = ""
+        while time.time() < deadline:
+            last_focus = current_focus()
+            if "com.android.settings" in last_focus:
+                break
+            time.sleep(1)
+        else:
+            raise RuntimeError(
+                "Unknown-app-sources Settings did not become foreground: "
+                + repr(last_focus)
+            )
+
         run(
             "adb",
             "shell",
@@ -401,6 +417,19 @@ def main() -> None:
             timeout=15,
             retries=3,
         )
+
+        deadline = time.time() + 45
+        last_focus = ""
+        while time.time() < deadline:
+            last_focus = current_focus()
+            if PACKAGE in last_focus:
+                break
+            time.sleep(1)
+        else:
+            raise RuntimeError(
+                "Projects Hub did not return to foreground after install permission: "
+                + repr(last_focus)
+            )
 
     wait_log(rf"update_download_start versionCode={new_code}\b", timeout_seconds=60)
     wait_log(rf"update_verified versionCode={new_code}\b", timeout_seconds=180)
