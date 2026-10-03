@@ -13,7 +13,7 @@ export type Conversation = {
   focus_project_name: string | null;
 };
 export type AuthConfig =
-  | { mode: "yandex_pkce"; supabase_url: string; publishable_key: string; provider: string; redirect_url: string }
+  | { mode: "first_party_invite" }
   | { mode: "loopback_dev" | "disabled" };
 
 export type MemoryItem = {
@@ -133,10 +133,10 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
 
 export const getAuthConfig = () => api<AuthConfig>("/api/auth/config");
 
-export const exchangePublicAuth = (accessToken: string) =>
-  api<Bootstrap>("/api/auth/exchange", {
+export const exchangeInvite = (token: string) =>
+  api<Bootstrap>("/api/auth/invite", {
     method: "POST",
-    body: JSON.stringify({ access_token: accessToken }),
+    body: JSON.stringify({ token }),
   });
 
 export const login = () =>
