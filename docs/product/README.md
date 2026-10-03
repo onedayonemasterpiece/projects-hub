@@ -1,12 +1,14 @@
 # Projects Hub — спецификация живой совместной работы
 
-> **Обновление 3 октября 2026:** WSS/multi-user source candidate реализован поверх shared `live-interaction v0.3.8` release: same-origin one-use tickets, binary PCM/ACK, pushed events, no silent HTTP fallback, bounded global/per-actor admission и duplicate buffered-source exclusion. WSS integration tests и полный backend regression suite (104) проходят; clean `npm ci` + PWA production build проходит. Это ещё не production acceptance: public WSS edge, 3+ independent-user real-provider soak и physical Android gates остаются открыты. Канонический design/status: [WSS и многопользовательская надёжность](16-wss-multi-user-reliability.md).
+> **Обновление 3 октября 2026:** WSS/multi-user source candidate реализован поверх shared `live-interaction v0.3.8` release: same-origin one-use tickets, binary PCM/ACK, pushed events, no silent HTTP fallback, bounded global/per-actor admission и duplicate buffered-source exclusion. WSS integration tests и полный backend regression suite (107) проходят; clean `npm ci` + PWA production build проходит. Это ещё не production acceptance: public WSS edge, 3+ independent-user real-provider soak и physical Android gates остаются открыты. Канонический design/status: [WSS и многопользовательская надёжность](16-wss-multi-user-reliability.md).
 
 **Ревизия 8 от 3 октября 2026. Статус: central Live/PWA и foreground Android WebView работают через единый WSS consumer `live-interaction v0.3.8`; Android device-command/calendar, signed GitHub Releases, event-readiness и expert-review слой реализованы; полный production acceptance не объявлен из-за незакрытых physical-device/public-edge/GitHub-App/multi-user/Regional-Knowledge gates.** Имя «Содей / Sodey» остаётся предложением; технический идентификатор `projects-hub` не меняется.
 
 ## U05 / 3 октября: versioned shared components
 
 Свежий owner review `voice-20261003-083638-766e61b7` требует перед новой реализацией искать и переиспользовать уже отработанные межпроектные решения вместе с их runtime/incidents. Общий Live-контур подключается по стабильной версии/capability contract, а не по raw SHA. Поэтому Projects Hub consumer переведён на stable `live-interaction v0.3.8`; release commit и asset digest остаются evidence воспроизводимости, но не интерфейсом зависимости.
+
+> **Runtime update · 3 октября:** backend release `074409cc…` с same-conversation Live owner lease развёрнут; post-deploy roundtrip/concurrency PASS, service restarts 0, recent `socket_failed` 0. Android `android-v6` / `0.1.6` опубликован signed release workflow; PR #31 прошёл emulator-smoke и self-update E2E.
 
 ## Центральная идея
 
