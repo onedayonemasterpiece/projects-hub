@@ -488,7 +488,7 @@
   "spec_revision": 5,
   "central_agent_contract": "12-central-live-agent.md",
   "implementation_status": {
-    "phase": "wss_backend_deployed_loopback_real_provider_pass_public_dns_blocked",
+    "phase": "wss_backend_and_direct_public_ingress_accepted_physical_and_independent_user_soak_pending",
     "release_sha": "074409cc55a3396dd9d06a6f2787934196a454e5",
     "devcoveer_runtime": "pass",
     "deterministic_contracts": "107_pytest_pass",
@@ -498,8 +498,8 @@
     "service_restart_memory_recall_without_duplicate": "pass",
     "typed_runtime_log_search": "pass",
     "physical_browser_microphone_acceptance": "not_run_no_device_in_devcoveer_headless_browser",
-    "public_identity_provider": "backend_configured_public_dns_unresolved",
-    "android_application": "implemented_signed_release_v5_build_and_emulator_launch_pass",
+    "public_identity_provider": "backend_configured_public_dns_tls_https_wss_pass",
+    "android_application": "implemented_signed_release_v6_build_emulator_self_update_e2e_pass_physical_acceptance_pending",
     "github_app_connection": "server_side_implemented_runtime_credentials_not_configured",
     "client_offline_restart_safe_queue": "pwa_foreground_implemented_android_not_implemented",
     "production_product_accepted": false,
@@ -518,7 +518,7 @@
     "github_app_live_surface": "read_only_bound_repository_catalogue_only",
     "android_device_command_architecture": "implemented_calendar_outbox_claim_receipt_readback",
     "backend_topology": "single_devcoveer_backend_owns_live_and_server_integrations",
-    "android_signed_release": "android-v5_0.1.5_apksigner_verified",
+    "android_signed_release": "android-v6_0.1.6_signed_release_published",
     "android_self_update": "hosted_android14_handoff_pass_v4_to_v5_manifest_sha256_product_update_available_button_clicked_verified_download_package_installer_handoff_same_signature_in_place_update_uid_preserved",
     "android_physical_calendar_acceptance": "not_run_no_physical_adb_device",
     "android_physical_microphone_acceptance": "not_run_no_physical_adb_device",
@@ -537,7 +537,7 @@
     "canonical_poi_ownership": "regional_knowledge_evidence_street_story_poi_projects_hub_expert_surface",
     "wss_runtime_roundtrip": "pass_binary_pcm_ack_http_fallback_409_output_transcript_binary_audio_turn_complete_server_close",
     "wss_runtime_concurrency": "pass_two_real_provider_sessions_same_actor_third_429",
-    "public_wss_edge": "blocked_dns_name_does_not_resolve",
+    "public_wss_edge": "pass_direct_public_ingress_dns_tls_https_wss_roundtrip_and_concurrency",
     "runtime_wss_canary": "scripts/devcoveer_wss_canary.py",
     "versioned_shared_component_policy": "dependency_interface_is_release_version_or_capability_not_raw_sha",
     "live_0_3_8_local_acceptance": "104_pytest_pass_clean_npm_ci_pwa_build_pass",
@@ -551,15 +551,18 @@
     "same_conversation_live_owner_lease": "deployed_074409cc_active_and_starting_duplicate_guard_post_deploy_wss_roundtrip_and_concurrency_pass",
     "android_self_update_e2e": "pass_historical_android_v4_to_v5_real_release_assets_button_sha256_installer_handoff_same_signature",
     "android_latest_release": "android-v6_0.1.6_published_signed_apk_sha256_03b343bddc3c8be0d0c19072c62c451a465ebb52b3f2e6c2fa4264e3f88a4d17",
-    "public_ingress": "pending_direct_dns_and_local_tls_sni_readback_no_external_edge"
+    "public_ingress": "accepted_direct_dns_78_111_90_230_local_tls_sni_to_loopback_8196_public_wss_roundtrip_and_concurrency_pass",
+    "public_ingress_tls": "pass_tls13_lets_encrypt_san_projects_hub_not_after_2027_01_01",
+    "public_ingress_origin_headers": "projects_hub_vhost_explicit_host_x_forwarded_host_proto_port_shared_client_ip_forwarding_remains_cleared",
+    "public_wss_roundtrip": "pass_hello_ack_binary_pcm_ack_real_provider_transcript_audio_turn_complete_server_close_http_fallback_rejected",
+    "public_wss_concurrency": "pass_two_real_provider_sessions_third_same_actor_429_live_busy"
   },
   "current_execution_focus": {
     "as_of": "2026-10-03",
-    "slice": "publish direct DNS for projects-hub.kenigevents.ru to the DevCoveer public IP and verify the existing server-local TLS/SNI reverse proxy to 127.0.0.1:8196; no external paid edge. Then complete 3plus independent-user real-provider soak and physical Android acceptance; Regional Knowledge real delegated OAuth E2E waits for its resource deployment",
+    "slice": "install android-v6 for physical Android WebView microphone/OAuth/calendar acceptance; then complete 3plus independent-user real-provider soak, production GitHub App setup, and Regional Knowledge delegated OAuth E2E",
     "android_update": "existing signed GitHub Release self-update path preserved; hosted in-place handoff evidence exists; final physical installer confirmation remains a human gate",
     "event_readiness": "implemented and preserved",
     "blocking_external_gates": [
-      "projects-hub.kenigevents.ru currently does not resolve in DNS; public TLS/WSS Upgrade cannot be accepted until the owner-controlled DNS edge is published",
       "production GitHub App registration/private-key/webhook credentials require owner-authenticated setup",
       "physical Android ADB device is not connected to DevCoveer for microphone/update acceptance",
       "Regional Knowledge delegated OAuth resource/API must be deployed before Projects Hub can complete knowledge_search E2E"
@@ -573,9 +576,10 @@
     ],
     "shared_component_dependency_policy": "use stable version/tag/capability availability; keep SHA/digest only as reproducibility evidence",
     "latest_owner_review": "V25 voice-20261003-083638-766e61b7",
-    "android_voice": "foreground uses shared PWA WSS in WebView; accept physical WebView microphone/public edge before adding native background durable capture",
+    "android_voice": "foreground uses shared PWA WSS in WebView; public WSS accepted, next gate is physical WebView microphone/OAuth/noise/poor-network acceptance before native background durable capture",
     "multi_user_reliability": "single live owner per actor+conversation implemented/tested; rollout pending; 3plus independent real users remain acceptance gate",
-    "public_ingress": "direct_dns_to_devcoveer_public_ip_then_local_tls_sni_reverse_proxy_to_127_0_0_1_8196",
-    "external_edge_allowed": false
+    "public_ingress": "accepted_direct_dns_78_111_90_230_to_devcoveer_local_tls_sni_reverse_proxy_to_127_0_0_1_8196",
+    "external_edge_allowed": false,
+    "public_ingress_status": "accepted_dns_tls_https_public_wss_roundtrip_and_concurrency"
   }
 }
