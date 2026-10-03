@@ -8,6 +8,7 @@ import re
 import subprocess
 import time
 import urllib.request
+import xml.etree.ElementTree as ET
 
 
 REPO = "onedayonemasterpiece/projects-hub"
@@ -217,6 +218,55 @@ def update_logs() -> str:
     )
 
 
+def wait_update_button_bounds(timeout_seconds: int = 45) -> tuple[int, int, int, int]:
+    deadline = time.time() + timeout_seconds
+    last_xml = ""
+    while time.time() < deadline:
+        run(
+            "adb",
+            "shell",
+            "uiautomator",
+            "dump",
+            "--compressed",
+            "/sdcard/projects-hub-window.xml",
+            check=False,
+            timeout=20,
+            retries=1,
+        )
+        last_xml = run(
+            "adb",
+            "exec-out",
+            "cat",
+            "/sdcard/projects-hub-window.xml",
+            check=False,
+            timeout=20,
+            retries=1,
+        )
+        try:
+            root = ET.fromstring(last_xml)
+        except ET.ParseError:
+            time.sleep(1)
+            continue
+        for node in root.iter("node"):
+            text = str(node.attrib.get("text") or "")
+            if not text.startswith("Доступно обновление"):
+                continue
+            match = re.fullmatch(
+                r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]",
+                str(node.attrib.get("bounds") or ""),
+            )
+            if not match:
+                continue
+            left, top, right, bottom = map(int, match.groups())
+            if right > left and bottom > top:
+                return left, top, right, bottom
+        time.sleep(1)
+    raise RuntimeError(
+        "Update button was not found in Android UI hierarchy; "
+        f"tail={last_xml[-1200:]!r}"
+    )
+
+
 def wait_log(pattern: str, timeout_seconds: int = 120) -> re.Match[str]:
     compiled = re.compile(pattern)
     deadline = time.time() + timeout_seconds
@@ -310,17 +360,17 @@ def main() -> None:
     run("adb", "shell", "am", "start", "-W", "-n", ACTIVITY, timeout=30, retries=3)
 
     wait_log(rf"update_available versionCode={new_code}\b", timeout_seconds=150)
-    bounds = wait_log(
+    wait_log(
         rf"update_button_ready versionCode={new_code} bounds=(\d+),(\d+),(\d+),(\d+)",
         timeout_seconds=60,
     )
-    left, top, right, bottom = map(int, bounds.groups())
-    if right <= left or bottom <= top:
-        raise RuntimeError("Updater button bounds are invalid")
+    left, top, right, bottom = wait_update_button_bounds()
     x = (left + right) // 2
     y = (top + bottom) // 2
-    print(f"app update button: ready bounds={left},{top},{right},{bottom}")
+    print(f"app update button: ui bounds={left},{top},{right},{bottom}")
 
+    run("adb", "shell", "input", "keyevent", "KEYCODE_WAKEUP", timeout=15, retries=3)
+    run("adb", "shell", "wm", "dismiss-keyguard", check=False, timeout=15, retries=1)
     run("adb", "shell", "input", "tap", str(x), str(y), timeout=15, retries=3)
     wait_log(rf"update_button_clicked versionCode={new_code}\b", timeout_seconds=30)
 
