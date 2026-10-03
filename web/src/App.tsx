@@ -291,6 +291,7 @@ export default function App() {
   useEffect(() => {
     if (!boot) return;
     const client = createLiveClient({
+      transport: "wss",
       onState: state => {
         setVoiceState(state);
         if (state === "listening") setNotice(null);
@@ -455,7 +456,7 @@ export default function App() {
         url: `/api/live/${current.id}/sessions`,
         body: {},
         microphone: true,
-        captureDuringStart: true,
+        captureDuringStart: false,
         authorize: async () => {},
       });
       if (!client.sessionId && !navigator.onLine) {

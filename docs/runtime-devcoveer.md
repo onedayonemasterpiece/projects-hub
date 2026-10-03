@@ -31,7 +31,7 @@ window, result limit and small context without arbitrary host-file access.
 
 The consumer is pinned to:
 
-- `live-interaction` **0.2.6 candidate** exact commit
+- `live-interaction` **0.3.7-rc.1** exact commit `b6a051a7cf53f84433ebf48a52b623d91fcc6478`; Projects Hub client↔backend primary Live transport is WSS.
   `c9de297020087235d80ce4155e52f63f88c642bf` for both browser and Python;
   this exact pin is used until a matching versioned GitHub Release/tag exists;
 - deployment-installed `ai-resource-control` 0.1.7:

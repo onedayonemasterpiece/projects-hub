@@ -27,7 +27,7 @@ the buffered turn early.
 
 ## Shared Live/runtime contracts
 
-- `live-interaction` **0.2.6 candidate** is pinned for both browser and Python
+- `live-interaction` **0.3.7-rc.1** is pinned to exact commit `b6a051a7cf53f84433ebf48a52b623d91fcc6478` for the WSS migration candidate.
   to exact commit `c9de297020087235d80ce4155e52f63f88c642bf`. The commit contains the
   shared durability-first browser capture primitive; it remains an exact commit pin
   until the corresponding GitHub Release/tag is published.

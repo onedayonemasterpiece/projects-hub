@@ -12,15 +12,6 @@ import {
 
 const TERMINAL = new Set(["archived", "ephemeral_processed"]);
 
-function pcmBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let text = "";
-  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-    text += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-  }
-  return btoa(text);
-}
-
 async function serverSource(
   source: LocalVoiceSource,
 ): Promise<SourceReceipt | null> {
@@ -79,6 +70,7 @@ export async function replayLocalVoiceSource(
   }, 120_000);
 
   const client = createLiveClient({
+    transport: "wss",
     onState: state => callbacks.onState?.(state),
     onNotice: (kind, error) => {
       if (kind === "connection_error" || kind === "transport_error" || kind === "start_error") {
@@ -124,7 +116,8 @@ export async function replayLocalVoiceSource(
     await client.input({ activity_start: true });
     for (const chunk of chunks) {
       await client.input({
-        audio_base64: pcmBase64(chunk.pcm),
+        pcm: new Int16Array(chunk.pcm),
+        sample_rate: 16000,
       });
     }
     await client.input({ activity_end: true });

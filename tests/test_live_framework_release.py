@@ -3,14 +3,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "web"
-EXPECTED_COMMIT = "c9de297020087235d80ce4155e52f63f88c642bf"
+EXPECTED_COMMIT = "b6a051a7cf53f84433ebf48a52b623d91fcc6478"
+EXPECTED_VERSION = "0.3.7-rc.1"
 
 
 def test_live_framework_candidate_is_immutable_and_pinned():
     package = json.loads((WEB / "package.json").read_text(encoding="utf-8"))
     assert package["liveFramework"] == {
         "repository": "https://github.com/onedayonemasterpiece/live-interaction",
-        "version": "0.2.6-candidate",
+        "version": EXPECTED_VERSION,
         "commit": EXPECTED_COMMIT,
     }
     dependency = package["dependencies"]["@onedayonemasterpiece/live-interaction"]

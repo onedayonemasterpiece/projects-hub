@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "project": "projects-hub",
+  "requirements": [
+    {
+      "id": "CORE-CENTRAL-MIRA",
+      "statement": "Projects Hub has one central Mira Live agent as the sole semantic orchestrator of the conversation; transport and product tools do not introduce a second hidden ASR/LLM router or deterministic semantic brain.",
+      "critical": true,
+      "acceptance": [
+        "Online speech reaches the configured Live model as audio in the same conversational session.",
+        "Offline saved speech is deliberately replayed to that same central Live agent rather than summarized or transcribed by a second semantic pipeline.",
+        "Deterministic code is limited to transport, authentication, bounded orchestration, schemas, persistence, idempotency, telemetry, mechanical formatting and fail-closed checks."
+      ]
+    },
+    {
+      "id": "CORE-LIVE-WSS",
+      "statement": "The primary online voice transport is authenticated same-origin WSS between the Projects Hub client and Projects Hub backend, which alone talks to the Live provider; once a session attaches WSS it never silently falls back to HTTP audio input.",
+      "critical": true,
+      "acceptance": [
+        "Bootstrap returns a same-origin socket URL, one-use short-lived ticket, attempt identifier and versioned protocol.",
+        "Tickets are transported only through the WebSocket subprotocol and are rejected when stale, reused, cross-resource, query-carried or foreign-origin.",
+        "PCM uses bounded binary frames with relay ACK/backpressure; model events and audio are pushed over the socket.",
+        "A transport gap during an open speech turn cannot execute a mutation until a later clean turn is admitted."
+      ]
+    },
+    {
+      "id": "CORE-MULTIUSER-ISOLATION",
+      "statement": "Several people may use Projects Hub concurrently without sharing conversations, Live sessions, tool permissions or results; every session and tool call remains bound to the authenticated issuer subject, workspace and conversation, with explicit bounded capacity.",
+      "critical": true,
+      "acceptance": [
+        "Conversation resource bindings include workspace, authenticated subject and conversation identity.",
+        "A user cannot renew, attach to, read events from, stop or mutate another user's Live session by guessing identifiers.",
+        "Global Live concurrency is bounded and configurable; overload fails visibly instead of creating unbounded queues or cross-session degradation.",
+        "Capacity and authorization remain correct under concurrent session starts."
+      ]
+    },
+    {
+      "id": "CORE-DURABLE-VOICE",
+      "statement": "Voice capture and replay are loss-aware: accepted/durable source state is explicit, stale unacknowledged transport audio is not replayed after a gap, and reconnect/retry cannot duplicate an accepted semantic mutation.",
+      "critical": true,
+      "acceptance": [
+        "Offline audio is durably stored on-device before deliberate replay and is deleted only after confirmed server disposition.",
+        "WSS reconnect uses a fresh ticket/generation and does not replay expired pending PCM.",
+        "Mutating tools remain idempotent and success is claimed only after authoritative receipt/readback."
+      ]
+    },
+    {
+      "id": "CORE-SHARED-OAUTH-RESOURCE-ISOLATION",
+      "statement": "Projects Hub participates in the common product-family OAuth/OIDC identity plane using stable issuer+subject identity while preserving separate resource audiences, ACLs and delegated grants for every connected project.",
+      "critical": true,
+      "acceptance": [
+        "A token minted for Projects Hub is never forwarded to Regional Knowledge, Street Story or another protected resource.",
+        "Cross-project access obtains a resource-specific user-authorized token/grant and every target service re-authorizes the subject.",
+        "No global service-role impersonation is used for normal user actions."
+      ]
+    },
+    {
+      "id": "CORE-REGIONAL-KNOWLEDGE",
+      "statement": "Mira can use the user's authorized Regional Knowledge Base as a read capability inside the same Projects Hub conversation, through a narrow evidence-returning knowledge search interface rather than a second conversational agent.",
+      "critical": true,
+      "acceptance": [
+        "The Live tool surface exposes Regional Knowledge progressively and keeps the active capability bundle small.",
+        "Knowledge results preserve exact evidence/provenance references and inherited access controls.",
+        "Regional Knowledge unavailability is surfaced without breaking unrelated Projects Hub conversation capabilities."
+      ]
+    },
+    {
+      "id": "CORE-POI-OWNERSHIP",
+      "statement": "Cross-project POI integration has one ownership model: Regional Knowledge owns source/book evidence, Street Story owns the canonical regional POI identity/claims/contradiction state, and Projects Hub acts as an authorized expert-review/work surface without duplicating those authoritative stores.",
+      "critical": true,
+      "acceptance": [
+        "Ambiguous POI identity creates an unresolved review path rather than a silent duplicate or merge.",
+        "Expert decisions are written back to the owning service and are considered saved only after receipt/readback.",
+        "Projects Hub does not create a parallel canonical fact or contradiction database."
+      ]
+    },
+    {
+      "id": "CORE-ANDROID-SELF-UPDATE",
+      "statement": "After the first Android installation, normal product updates are discoverable from inside the app: the user is notified that a signed release is available and can start download/verification/system installation with a simple update action instead of reacquiring the APK from source.",
+      "critical": true,
+      "acceptance": [
+        "The app checks the public release manifest on launch/resume and exposes a visible update action when versionCode increases.",
+        "Downloaded APK bytes are SHA-256 verified and Android's package installer/signature protections remain in the path.",
+        "Update failure leaves the currently installed app usable and retryable."
+      ]
+    },
+    {
+      "id": "CORE-REQUIREMENTS-GUARD",
+      "statement": "Critical Projects Hub requirements are a protected development contract: implementation may evolve, but a tool or agent must not silently weaken or reinterpret a critical requirement without an explicit owner requirement-change instruction.",
+      "critical": true,
+      "acceptance": [
+        "DevCoveer exposes this requirements manifest automatically to implementation/review tasks.",
+        "Changes that conflict with a critical statement are surfaced as a conflict rather than normalized into a new requirement.",
+        "An intentional requirement change uses the requirements-update path with an explicit authorization reference."
+      ]
+    },
+    {
+      "id": "UX-ADAPTIVE-ONBOARDING-THEME",
+      "statement": "Mira may control light/dark theme by voice and provides incremental adaptive onboarding based on capabilities the user has not recently used, without dumping a long feature list or bloating the default Live tool surface.",
+      "critical": false,
+      "acceptance": [
+        "Theme control is a small deterministic UI capability.",
+        "Onboarding offers one or a few relevant tips and can stop when the user declines.",
+        "Onboarding state is product metadata, not a second semantic agent."
+      ]
+    }
+  ]
+}

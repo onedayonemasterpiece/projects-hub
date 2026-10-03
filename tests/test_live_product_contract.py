@@ -29,7 +29,7 @@ def test_full_application_parity_and_voice_first_ui():
 def test_one_central_live_agent_owns_all_semantics():
     c = contract()
     agent = c["central_agent"]
-    assert c["spec_revision"] == 3
+    assert c["spec_revision"] == 4
     assert agent["sole_semantic_orchestrator"]
     assert agent["online_input"] == "raw_audio_direct_to_live"
     assert agent["offline_input"] == "raw_audio_deliberate_buffered_replay_to_live"
@@ -85,12 +85,18 @@ def test_framework_gaps_are_explicit_not_silently_assumed_solved():
     assert req["manual_activity_start_end_required"]
     assert req["conversation_scope_not_single_project_scope_required"]
     assert req["product_durable_capture_above_transport_required"]
+    assert req["same_origin_wss_required"]
+    assert req["one_use_socket_ticket_required"]
+    assert req["binary_pcm_wss_required"]
+    assert req["no_silent_http_audio_fallback"]
+    assert req["damaged_turn_mutation_guard_required"]
+    assert req["multi_user_actor_workspace_conversation_isolation_required"]
 
 
-def test_product_registry_tracks_revision_three_and_35_gates():
+def test_product_registry_tracks_revision_four_and_35_gates():
     registry = load("contract.json")
-    assert registry["spec_revision"] == 3
-    assert registry["owner_revision"]["id"] == "U03"
+    assert registry["spec_revision"] == 4
+    assert registry["owner_revision"]["id"] == "U04"
     assert registry["central_agent_contract"] == "12-central-live-agent.md"
     gates = registry["release_gates"]
     assert len(gates) == 35
@@ -115,11 +121,12 @@ def test_docs_do_not_reintroduce_superseded_cognitive_pipeline():
     assert "activityStart" in central and "activityEnd" in central
 
 
-def test_revision_three_docs_are_cross_linked():
+def test_revision_four_docs_are_cross_linked():
     index = (DOCS / "README.md").read_text(encoding="utf-8")
     assert "12-central-live-agent.md" in index
     assert "10-conversation-memory.md" in index
     assert "11-routing-and-vocabulary.md" in index
+    assert "16-wss-multi-user-reliability.md" in index
     reliability = (DOCS / "08-reliability.md").read_text(encoding="utf-8")
     for n in range(1, 36):
         assert f"G{n:02d}" in reliability

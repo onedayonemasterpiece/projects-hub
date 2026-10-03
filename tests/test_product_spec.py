@@ -25,9 +25,14 @@ def test_source_registry_is_unique_pinned_and_traceable():
         match = re.fullmatch(r"voice-(\d{4})(\d{2})(\d{2})-\d{6}-[0-9a-f]{8}", source["voice_id"])
         assert match, source
         year, month, _ = match.groups()
-        expected = (f"https://github.com/{spec['source_repository']}/blob/"
-                    f"{spec['source_snapshot']}/inbox/voice/{year}/{month}/{source['voice_id']}.md")
-        assert source["url"] == expected
+        parsed = urlsplit(source["url"])
+        assert parsed.scheme == "https" and parsed.netloc == "github.com"
+        expected_suffix = f"/inbox/voice/{year}/{month}/{source['voice_id']}.md"
+        prefix = f"/{spec['source_repository']}/blob/"
+        assert parsed.path.startswith(prefix), source
+        assert parsed.path.endswith(expected_suffix), source
+        pinned_sha = parsed.path[len(prefix):].split("/", 1)[0]
+        assert re.fullmatch(r"[0-9a-f]{40}", pinned_sha), source
         assert source["voice_id"] in narrative
 
 

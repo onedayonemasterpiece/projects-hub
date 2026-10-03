@@ -7,10 +7,10 @@ import time
 import uuid
 from typing import Any, Literal
 
-from fastapi import Body, FastAPI, HTTPException, Request, Response
+from fastapi import Body, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .auth import COOKIE_NAME, SESSION_TTL_SECONDS, issue_session, parse_session
 from .identity import IdentityError, SupabaseIdentityVerifier
@@ -41,11 +41,19 @@ class ConversationCreate(BaseModel):
 
 
 class LiveStart(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     audio_mode: Literal["realtime", "buffered"] = "realtime"
     client_source_id: str | None = Field(
         default=None,
         pattern=r"^local_[0-9a-f]{32}$",
         max_length=38,
+    )
+    transport: Literal["wss"] = "wss"
+    attempt_id: str | None = Field(
+        default=None,
+        pattern=r"^[A-Za-z0-9._:-]{1,96}$",
+        max_length=96,
     )
 
 
@@ -122,6 +130,8 @@ def _http_for_code(code: str) -> int:
         "DEVICE_COMMAND_CONFLICT",
         "DEVICE_COMMAND_OUTCOME_UNKNOWN",
         "DEVICE_READBACK_REQUIRED",
+        "LIVE_TRANSPORT_MISMATCH",
+        "LIVE_SOCKET_BUSY",
     }:
         return 409
     if code.startswith("INVALID") or code in {"SOURCE_TRANSCRIPT_PENDING"}:
@@ -172,6 +182,26 @@ def _public_edge_request(request: Request, settings: Settings) -> bool:
         and not request.headers.get("forwarded")
         and not request.headers.get("x-forwarded-for")
     )
+
+
+async def _live_start_payload(request: Request) -> LiveStart:
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw.extend(chunk)
+        if len(raw) > 4096:
+            raise HTTPException(
+                status_code=413,
+                detail={"code": "LIVE_BOOTSTRAP_TOO_LARGE"},
+            )
+    if not raw:
+        return LiveStart()
+    try:
+        return LiveStart.model_validate_json(bytes(raw))
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_ARGUMENT", "message": "Invalid Live bootstrap"},
+        ) from exc
 
 
 def create_app(
@@ -680,9 +710,9 @@ def create_app(
     async def live_start(
         conversation_id: str,
         request: Request,
-        payload: LiveStart = Body(default_factory=LiveStart),
     ) -> dict[str, Any]:
         actor_id = actor_id_from_request(request)
+        payload = await _live_start_payload(request)
         conversation, resource_id, actor = live_context(actor_id, conversation_id)
         try:
             started = await host().start(
@@ -692,6 +722,7 @@ def create_app(
                 conversation_id=conversation_id,
                 audio_mode=payload.audio_mode,
                 client_source_id=payload.client_source_id,
+                attempt_id=payload.attempt_id,
             )
         except Exception as exc:
             raise _error(exc) from exc
@@ -705,7 +736,105 @@ def create_app(
                 "result": "started",
             },
         )
-        return {**started, "conversation": conversation}
+        return {
+            **started,
+            "conversation": conversation,
+            "transport": "wss",
+            "socket_url": (
+                f"/api/live/{conversation_id}/sessions/"
+                f"{started['session_id']}/socket"
+            ),
+        }
+
+    @app.post("/api/live/{conversation_id}/sessions/{session_id}/socket-ticket")
+    async def live_socket_ticket(
+        conversation_id: str,
+        session_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        actor_id = actor_id_from_request(request)
+        _conversation, resource_id, actor = live_context(actor_id, conversation_id)
+        try:
+            ticket = host().issue_socket_ticket(
+                session_id=session_id,
+                resource_id=resource_id,
+                actor=actor,
+            )
+        except Exception as exc:
+            raise _error(exc) from exc
+        return {
+            **ticket,
+            "socket_url": f"/api/live/{conversation_id}/sessions/{session_id}/socket",
+        }
+
+    @app.websocket("/api/live/{conversation_id}/sessions/{session_id}/socket")
+    async def live_socket(
+        websocket: WebSocket,
+        conversation_id: str,
+        session_id: str,
+    ) -> None:
+        from live_interaction import LiveError
+        from live_interaction.socket_transport import (
+            SOCKET_PROTOCOL,
+            same_origin,
+            serve_socket,
+            socket_ticket as parse_socket_ticket,
+        )
+
+        if websocket.scope.get("query_string") or not same_origin(
+            websocket.headers.get("origin"),
+            websocket.headers.get("host"),
+        ):
+            await websocket.close(code=1008)
+            return
+
+        actor_id = parse_session(
+            websocket.cookies.get(COOKIE_NAME),
+            settings.session_secret,
+        )
+        if not actor_id:
+            await websocket.close(code=1008)
+            return
+        try:
+            store.bootstrap(actor_id)
+            _conversation, resource_id, _actor = live_context(actor_id, conversation_id)
+            ticket = parse_socket_ticket(websocket.scope.get("subprotocols", []))
+            binding = host().open_socket(
+                session_id=session_id,
+                resource_id=resource_id,
+                ticket=ticket,
+            )
+        except (HTTPException, StoreError, LiveError):
+            await websocket.close(code=1008)
+            return
+
+        try:
+            await websocket.accept(subprotocol=SOCKET_PROTOCOL)
+        except Exception:
+            await binding.close()
+            raise
+
+        async def receive() -> str | bytes | None:
+            try:
+                message = await websocket.receive()
+            except WebSocketDisconnect:
+                return None
+            if message["type"] == "websocket.disconnect":
+                return None
+            if message.get("bytes") is not None:
+                return message["bytes"]
+            return message.get("text")
+
+        async def send(payload: str | bytes) -> None:
+            if isinstance(payload, bytes):
+                await websocket.send_bytes(payload)
+            else:
+                await websocket.send_text(payload)
+
+        async def close(code: int, reason: str) -> None:
+            await websocket.close(code=code, reason=reason)
+
+        await serve_socket(binding, receive=receive, send=send, close=close)
 
     @app.post("/api/live/{conversation_id}/sessions/{session_id}/input")
     async def live_input(

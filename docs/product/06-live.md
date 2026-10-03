@@ -1,5 +1,7 @@
 # Live, общий лимиттер и центральный агент
 
+> **U04 / 2 октября 2026:** primary client↔backend transport — authenticated same-origin WSS через `LiveSocketSessionHost` (`live-interaction 0.3.7-rc.1` exact pin). После WSS attach silent HTTP audio fallback запрещён; ticket/reconnect/backpressure contract — в [16-wss-multi-user-reliability.md](16-wss-multi-user-reliability.md).
+
 [Индекс](README.md) · [Центральный Live-агент](12-central-live-agent.md) · [Архитектура](04-architecture.md) · [Память](10-conversation-memory.md).
 
 **Ревизия 4, 28 сентября 2026.** Live — не один из сервисов обработки Projects Hub, а центральная интерактивная модель продукта. **Gemini Live provider session существует на единственном Projects Hub backend на DevCoveer; PWA и Android не подключаются к Gemini напрямую.** Общий resource controller ограничивает её ресурс; tools дают ей руки; durable capture не даёт потерять речь.
@@ -196,61 +198,3 @@ Fallback меняет credential/resource path, **не интеллект и н�
 
 Stop:
 - немедленно прекращает local capture/playback current turn;
-- закрывает/останавливает provider lifecycle согласно framework;
-- не удаляет durable source;
-- не отменяет подтверждённую mutation.
-
-Reconnect/resumption:
-- не повторяет mutations;
-- сохраняет same model/resource semantics;
-- product source journal переживает provider session;
-- если audio не был надёжно услышан/обработан, central agent получает deliberate recovery turn.
-
-## 13. Тяжёлая работа
-
-В MVP не вводить скрытый “offline thinking agent” внутри tools.
-
-Если central Live-model способна выполнить задачу через доступные tools/extended-thinking режим — она делает это. Если позднее нужен отдельный долгий сильный агент, это видимый тип операции с собственной ролью, а не внутренний этап каждой реплики.
-
-Основной разговор и semantic ownership остаются у Live.
-
-## 14. Provider/data gates
-
-Условия региона, возраста, класса данных и paid/unpaid обработки проверяются отдельно для normal и fallback scopes. Resource lease не доказывает юридическую/продуктовую допустимость передачи содержимого.
-
-При запрещённом provider path capture может продолжать durable offline, но source не отправляется модели до появления допустимого пути.
-
-## 15. Приёмка Live-центра
-
-Обязательные реальные сценарии:
-- online raw audio → input transcript → model understanding → function call → readback → voice response;
-- один разговор переключается между тремя проектами без ручного selector;
-- buffered 3/10/30 минут попадает **raw audio** central agent и не вызывает ответ по первой паузе;
-- framework lossless transcript sink получает начало/середину/конец без 2000-char потери;
-- network loss во время buffered replay → source остаётся, recovery не дублирует mutation;
-- agent сам решает archive/ephemeral через function call;
-- vocabulary update делается agentом через project docs/tools;
-- ни один product tool не делает скрытый semantic LLM call.
-
-До этих прогонов документация не является runtime acceptance.
-
-
-## Транспортная ревизия 2 октября 2026: WSS target
-
-Следующий realtime transport Projects Hub — shared WSS contract `live-interaction`; полный план, multi-user isolation и rollout находятся в [WSS и многопользовательской надёжности](16-wss-multi-user-reliability.md).
-
-Ключевые правила миграции:
-
-- Python backend и центральная Gemini Live session сохраняются; отдельный gateway/sidecar ради WebSocket не нужен;
-- HTTP используется для authenticated bootstrap/control, а realtime PCM/provider events — через same-origin WSS;
-- socket admission использует одноразовый короткоживущий ticket, привязанный к actor/workspace/conversation/session/resource/generation;
-- readiness только после protocol `hello_ack`;
-- bounded sequence/capture-age/ACK/queue limits; stale или out-of-order realtime audio не replay-ится;
-- ACK подтверждает relay admission, а не понимание/действие модели;
-- после WSS attach нет silent fallback к старому HTTP-audio/event-poll path;
-- повреждённый turn не может породить новые write tools до следующей clean activity boundary;
-- accepted/unknown mutations не повторяются при reconnect — сначала authoritative readback/reconciliation;
-- transport/provider/resource/tool/transition/authorization failures различаются;
-- provider WebSocket может смениться, но product conversation не обнуляется.
-
-Текущий deployed Projects Hub runtime этой миграции ещё не доказывает. До consumer-specific regression/provider/public-TLS/physical acceptance старый HTTP Live transport остаётся фактическим baseline и не должен быть описан как уже заменённый.

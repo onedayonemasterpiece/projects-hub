@@ -1,6 +1,6 @@
 # Projects Hub — WSS, многопользовательская надёжность и следующий продуктовый этап
 
-**Проектное решение от 2 октября 2026. Статус: target architecture / implementation plan, не production acceptance.**
+**Проектное решение от 2 октября 2026; implementation update от 3 октября 2026. Статус: target architecture + source implementation candidate, не production acceptance.**
 
 Этот документ фиксирует следующий обязательный архитектурный переход Projects Hub: realtime-голос переводится на общий WSS-контракт `live-interaction`, а одновременно вводятся явные инварианты многопользовательской изоляции, bounded backpressure, recovery, capability routing и измеримой приёмки.
 
@@ -31,7 +31,7 @@
 - transport/capture generation и playback generation различаются: закрытие provider не должно обрезать уже полученный ответ;
 - исправления WSS/framework выпускаются как immutable versioned release с consumer-specific acceptance, а не «подменяются на лету».
 
-Текущий shared candidate Street Story использует рамку порядка `live-interaction 0.3.7-rc.1`. Projects Hub не должен механически копировать номер версии: перед внедрением нужно выбрать актуальный release/candidate, сверить SHA/archive integrity и прогнать собственные regression gates.
+Projects Hub source candidate от 3 октября 2026 фиксирует shared `live-interaction 0.3.7-rc.1` на exact commit `b6a051a7cf53f84433ebf48a52b623d91fcc6478` и использует тот же WSS contract, который был отработан в Street Story. Следующая смена framework version выполняется только через новый consumer-specific acceptance; moving HEAD не используется как runtime dependency.
 
 ## 2. Целевой transport flow
 
@@ -198,229 +198,115 @@ Capability switch сохраняет **один пользовательский
 
 ## 8. Свежие owner review 2 октября
 
-### 8.1 Light/dark theme
 
-Voice packet `voice-20261002-174500-c34d45c8` прямо требует поддержки светлой и тёмной темы Projects Hub. Основной путь может быть голосовым:
+## 14. Implementation checkpoint · 3 октября 2026
 
-- «Мира, переключи на тёмную тему»;
-- «Мира, переключи на светлую тему».
+Целевая архитектура выше уже частично материализована в source candidate Projects Hub, но этот checkpoint **не заменяет** public/runtime/physical acceptance.
 
-Решение:
+Реализовано:
+- backend использует shared `LiveSocketSessionHost`, а не собственный несовместимый WebSocket engine;
+- HTTP session bootstrap ограничен 4096 bytes, transport — WSS-only для нового клиента;
+- bootstrap возвращает same-origin `socket_url`, one-use `socket_ticket`, `attempt_id` и `wl-live-v1`;
+- socket проверяет query/origin/login/conversation-resource до consumption ticket;
+- PCM идёт бинарно, relay ACK и output events/audio обслуживаются shared framework;
+- после WSS attach старый HTTP audio input получает `LIVE_TRANSPORT_MISMATCH`;
+- PWA normal Live client использует WSS;
+- deliberate buffered/offline replay передаёт сохранённый PCM бинарно в WSS и сохраняет manual activity semantics;
+- local admission: global default 16 (`PROJECTS_HUB_LIVE_MAX_SESSIONS`, hard range 1…64);
+- actor fairness: default 2 active/starting sessions на actor (`PROJECTS_HUB_LIVE_MAX_SESSIONS_PER_ACTOR`, не больше global cap);
+- один `client_source_id` нельзя одновременно replay-ить в двух Live sessions одного actor;
+- существующий Android signed GitHub Releases updater сохранён без отдельной параллельной update-системы.
 
-- preference actor-scoped, не process/global и не workspace-wide по умолчанию;
-- typed tool `ui_theme_set(theme=light|dark|system)`;
-- readback возвращает сохранённое preference;
-- UI применяет значение без перезапуска разговора;
-- optional GUI toggle не является обязательным условием voice-first MVP.
+Фактическое локальное evidence candidate:
+- WSS integration suite: **6 PASS**;
+- full backend regression suite: **94 PASS**;
+- PWA production build: **PASS**;
+- clean `npm ci` + production build: **PASS**;
+- cross-actor ticket renewal negative test: чужая session не раскрывается;
+- global capacity, per-actor fairness и duplicate buffered-source admission защищены regression tests;
+- protected product requirements включены через `.devcoveer/requirements.json`.
 
-### 8.2 Adaptive onboarding
+Не считать выполненным по этому checkpoint:
+- 20-socket/30-minute deterministic soak;
+- 3+ real-provider sessions;
+- public production `wss://` Upgrade;
+- same-conversation multi-device takeover lease;
+- native Android WSS/capture edge;
+- physical microphone/noise/poor-network acceptance;
+- post-candidate physical Android in-app update;
+- Regional Knowledge delegated OAuth E2E.
 
-Тот же review требует ненавязчиво учить человека возможностям продукта.
+## 15. Shared OAuth, Regional Knowledge и canonical POI ownership
 
-Целевое поведение:
+Межпроектная синергия строится через **общую identity plane, но отдельные resource authorization boundaries**.
 
-- при запуске максимум одна короткая полезная подсказка по умолчанию;
-- она не перебивает уже начатую пользовательскую задачу;
-- hints выбираются из разрешённых capabilities пользователя;
-- хранится actor-scoped `first_seen / last_hint / use_count / last_used`;
-- давно не использованную функцию допустимо мягко напомнить повторно;
-- «расскажи, что ты умеешь» открывает полноценный voice-driven capability tour;
-- telemetry оценивает не количество показанных подсказок, а discovery → последующее использование;
-- onboarding не должен превращать каждый старт в длинную рекламную реплику.
+### Shared identity
 
-### 8.3 Expert discourse → editorial publication
+Продуктовая семья использует общий Supabase Auth OAuth/OIDC issuer. Каноническая identity пользователя — `issuer + sub`.
 
-Voice packet `voice-20261002-173201-0808cd76` формулирует исследовательское направление: асинхронные мнения нескольких экспертов могут накапливаться, выявлять сильные расхождения/противоречия и затем становиться редакционным материалом.
+Это **не** означает общий bearer token:
+- Projects Hub, Regional Knowledge, Street Story и другие protected resources имеют собственные exact audiences/client bindings;
+- Projects Hub token не пересылается в Regional Knowledge;
+- private cross-service access выполняется через user-approved delegated grant к target resource;
+- target service заново применяет свои ACL/RLS/roles;
+- global service-role credential не используется для impersonation обычного пользователя.
 
-Это **не обязательный текущий MVP**. Сохраняем как следующий capability track с предварительными условиями:
+### Regional Knowledge как capability Миры
 
-- отдельная identity/role каждого участника;
-- provenance каждой позиции;
-- private/shared/public ACL;
-- различие «сказал эксперт» и «редакционный синтез модели»;
-- participant/editor consent на публичное цитирование/пересказ;
-- contradiction detection остаётся semantic/model-owned, deterministic слой лишь хранит evidence/relations;
-- draft всегда reviewable;
-- publish требует отдельной явной confirmation/readback;
-- до реализации провести интервью с потенциальными экспертами.
+Projects Hub является пользовательской conversational surface, но не владельцем корпуса Regional Knowledge.
 
-Эта ветка естественно расширяет уже появившийся expert-review слой, но не должна загрязнять core Live tool list.
+Целевой Live path:
 
-## 9. UX-инварианты realtime
+```text
+user ↔ Mira / Projects Hub
+          │
+          └─ progressive capability: regional_knowledge
+                  │
+                  └─ knowledge_search(query, max_evidence<=3)
+                          │ user-approved Knowledge-audience token
+                          ▼
+                    Regional Knowledge
+```
 
-Интерфейс должен показывать реальное состояние, а не оптимистичную догадку:
+Правила:
+- capability подключается прогрессивно и не раздувает core tool bundle;
+- нормальный Live profile возвращает небольшой evidence pack с точными provenance refs;
+- отсутствие Regional Knowledge деградирует только эту capability, а не весь разговор;
+- Mira не повышает discovery snippet до verified fact без evidence;
+- интеграция считается спроектированной, но **не реализованной E2E**, пока delegated OAuth/API не развёрнуты и не приняты.
 
-- «Подключаюсь» до `hello_ack`;
-- «Слушаю» только когда capture готов;
-- pulse — только admitted speech;
-- «Думаю/работаю с инструментом» — служебная строка, не фальшивая реплика Миры и не часть model history;
-- transport/provider/resource/tool/authorization errors имеют разные human-friendly сообщения;
-- «сохранено/создано/изменено» появляется только после readback;
-- Stop немедленный;
-- восстановление transport не создаёт новый видимый разговор;
-- capability transition не заставляет пользователя повторять намерение.
+### POI ownership
 
-## 10. Observability без нарушения приватности
+Чтобы не создать три конкурирующие «истины»:
+- **Regional Knowledge** владеет книгами/журналами, page-region provenance, author/source verification и evidence extraction;
+- **Street Story** владеет canonical regional `poi_id`, aliases/external identities, atomic POI claims, evidence sets, contradiction ledger и arbitration state;
+- **Projects Hub** владеет conversation/expert-review work surface, но не canonical POI/fact store.
 
-Default production telemetry хранит идентификаторы и измерения, а не содержимое личной беседы.
+Поток evidence:
 
-Обязательные correlations:
+```text
+Regional Knowledge source/evidence
+→ typed POI evidence event
+→ Street Story canonical poi_id / claim / contradiction
+→ optional expert review case in Projects Hub
+→ expert typed decision
+→ owning-service receipt + readback
+```
 
-- `attempt_id`, `session_id`, `conversation_id`;
-- actor/workspace as opaque IDs;
-- connection/provider generation;
-- framework/protocol/config digest;
-- active capability/transition ID;
-- model/provider;
-- device/client kind;
-- tool name + lifecycle/error code;
-- resource grant/denial;
-- capture/queue/playback counters.
+Ambiguous POI identity создаёт unresolved review state; нельзя молча merge-ить или дублировать POI. Иллюстрация книги, относящаяся к POI, сохраняет source/provenance reference и может позднее использоваться Street Story как historical visual evidence, но Projects Hub не создаёт отдельный media/POI source of truth.
 
-Обязательные metrics/events:
+## 16. Android self-update boundary
 
-- session requested/hello/ready/fail/stop;
-- WSS ticket issue/consume/reuse rejection;
-- socket buffer and capture-age high-water marks;
-- admitted/dropped/stale/out-of-order frames;
-- first input transcript and first output audio timestamps;
-- provider GoAway/resume/close;
-- capability transition requested/ready/fail;
-- tool start/success/error/readback;
-- resource wait/deny;
-- playback drain/interrupt;
-- disconnect/recovery reason.
+WSS rollout не заменяет существующий updater.
 
-По умолчанию не логируются API keys, tickets, resumption handles, raw PCM/images, full transcripts, tool args/results и full system prompt. Временный transcript diagnostic mode возможен отдельно и только как явное диагностическое решение с bounded retention; Street Story 7-day transcript policy не переносится автоматически в Projects Hub.
+После первой установки Android:
+1. на launch/resume проверяет GitHub Releases;
+2. читает `update.json` и сравнивает `versionCode`;
+3. показывает пользователю доступность новой версии/notification;
+4. по действию пользователя скачивает APK;
+5. проверяет SHA-256;
+6. сохраняет системный Android package-installer/signature boundary.
 
-## 11. Acceptance matrix
+Нормальный UX: **«Новая версия доступна → Обновить → verified download → Android installer»**. Пользователю не нужно снова искать APK в GitHub/source. Бесшумную privileged install без Android confirmation продукт не обещает.
 
-Production-ready нельзя вывести из наличия кода или одного provider canary.
-
-### Protocol/contract
-
-Должны проходить:
-- wrong/reused/expired ticket;
-- wrong origin/resource/generation;
-- frame sequence/age/size limits;
-- `hello_ack` readiness;
-- bounded ACK window/queue;
-- slow consumer isolation;
-- ping/pong timeout;
-- damaged turn → mutation blocked → clean-turn recovery;
-- Stop;
-- no automatic HTTP fallback;
-- duplicate provider call ID does not duplicate transition/write.
-
-### Deterministic concurrency
-
-До public pilot:
-- минимум 20 concurrent synthetic WSS sessions в transport/load test;
-- минимум 30 минут soak;
-- independent actor/workspace/conversation streams;
-- mixed read/write workload;
-- no cross-session audio/event/state leak;
-- no duplicate mutations;
-- bounded memory/queue growth;
-- slow/failing client does not stall healthy clients.
-
-20 — test headroom, а не обещание бизнесовой ёмкости.
-
-### Real provider concurrency
-
-До заявления, что «несколько человек могут пользоваться одновременно»:
-- минимум 3 реальные независимые Live sessions одновременно;
-- несколько последовательных turns;
-- хотя бы один read + один permitted write/readback;
-- одного клиента можно остановить/оборвать без деградации двух других;
-- resource accounting/leases проверены по каждой session.
-
-### Same-workspace collaboration
-
-Отдельные тесты:
-- два разных actor в одном workspace;
-- общий project object с optimistic revision;
-- private conversation/source не виден второму actor;
-- shared result виден только после разрешённой materialization;
-- конфликт edits не silently last-write-wins.
-
-### Same-user multi-device
-
-- второе устройство не смешивает microphone stream;
-- takeover bump generation;
-- старый connection лишается authority;
-- accepted write receipt остаётся единственным.
-
-### Public edge
-
-Нужен настоящий `wss://` TLS Upgrade через production reverse proxy. `/healthz = 200` не является доказательством WSS.
-
-### Physical Android
-
-Нужны:
-- реальный микрофон;
-- несколько непрерывных turns;
-- interruption;
-- шум/короткие transients;
-- poor network;
-- Stop/restart;
-- offline/reboot durable capture;
-- calendar command confirmation/readback;
-- playback drain;
-- update после разговора без потери identity/pending source.
-
-### Failure drills
-
-- WSS disconnect mid-turn;
-- provider GoAway;
-- resource budget denial;
-- backend restart;
-- slow client;
-- lost device receipt/unknown write outcome;
-- DB contention;
-- capability transition failure.
-
-Критерий: источник не теряется там, где обещана durability; mutation не дублируется; ошибки атрибутируемы; следующий чистый turn способен восстановить работу.
-
-## 12. Rollout без «большого взрыва»
-
-### Phase 0 — защищённые product requirements
-В новом рабочем окне создать `.devcoveer/requirements.json` через новый `requirements_update` и зафиксировать критические цели продукта. Изменение этих требований — только по явному owner intent.
-
-### Phase 1 — shared framework pin
-Выбрать актуальный accepted `live-interaction` WSS candidate/release, pin exact source/archive digest, добавить backend socket binding и conformance tests. Доменная логика не переписывается.
-
-### Phase 2 — PWA WSS
-Перевести realtime capture/events на WSS; оставить durable offline source отдельно; `captureDuringStart=false` до отдельной приёмки. HTTP Live path — только explicit compatibility/rollback, не silent fallback.
-
-### Phase 3 — Android native voice edge
-Подключить shared Java WSS transport, native capture/VAD/playback и typed bridge к floating-islands UI. Не трогать уже принятые Calendar/Keystore/update boundaries.
-
-### Phase 4 — capability decomposition
-Разбить flat tool catalog на core/router + bounded capability bundles с safe Gemini resumption.
-
-### Phase 5 — multi-user gates
-Прогнать concurrency, same-workspace ACL/revision, same-user takeover и failure drills. Исправлять contention/state leaks до public pilot.
-
-### Phase 6 — public edge + physical pilot
-Закрыть DNS/TLS, GitHub App, real browser/Android microphone и минимум несколько одновременных пользователей. До этого production acceptance остаётся false.
-
-### Phase 7 — product growth
-Theme/onboarding входят в базовый product UX. Shared resources и expert discourse/editorial развиваются отдельными capabilities после core reliability.
-
-## 13. Неприкосновенные границы
-
-Во время WSS-перехода запрещено без отдельного продуктового решения:
-
-- вводить второй semantic agent/ASR-router перед центральной Live-моделью;
-- переносить provider/GitHub credentials в PWA/Android;
-- заменять durable offline source WebSocket resend-очередью;
-- делать automatic retry unknown write;
-- смешивать личные conversations пользователей;
-- превращать project focus в ACL;
-- расширять один flat tool list по мере появления каждой новой функции;
-- обещать physical reliability по emulator/prepared PCM;
-- выключать работающий Record Idea Hub до физической приёмки Projects Hub capture/recovery;
-- считать expert editorial track обязательным MVP без отдельного исследования/согласования.
-
-Главный критерий: транспорт, модель, инструменты и UI могут эволюционировать, но пользователь всегда получает один непрерывный понятный разговор, надёжную сохранность обещанных данных, строгую изоляцию и проверяемый результат действий.
+Предыдущее hosted Android 14 evidence v4→v5 остаётся валидным для updater-механики; новый physical post-WSS update gate остаётся отдельным acceptance.

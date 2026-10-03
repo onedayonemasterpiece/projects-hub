@@ -1,6 +1,8 @@
 # Projects Hub — спецификация живой совместной работы
 
-**Ревизия 7 от 2 октября 2026. Статус: central Live/PWA, Android-клиент, device-command calendar backend, signed GitHub Releases, event-readiness и expert-review слой реализованы; WSS/multi-user reliability переход спроектирован, но ещё не является runtime acceptance; полный production acceptance не объявлен из-за незакрытых physical-device/public-edge/GitHub-App/multi-user gates.** Имя «Содей / Sodey» остаётся предложением; технический идентификатор `projects-hub` не меняется.
+> **Обновление 3 октября 2026:** WSS/multi-user source candidate реализован поверх shared `live-interaction 0.3.7-rc.1@b6a051a7…`: same-origin one-use tickets, binary PCM/ACK, pushed events, no silent HTTP fallback, bounded global/per-actor admission и duplicate buffered-source exclusion. Локальные WSS integration tests (6) и полный backend regression suite (94) проходят; PWA production build проходит. Это ещё не production acceptance: public WSS edge, real-provider concurrency и physical Android gates остаются открыты. Канонический design/status: [WSS и многопользовательская надёжность](16-wss-multi-user-reliability.md).
+
+**Ревизия 8 от 3 октября 2026. Статус: central Live/PWA, Android-клиент, device-command calendar backend, signed GitHub Releases, event-readiness и expert-review слой реализованы; WSS/multi-user implementation candidate реализован и тестируется перед runtime rollout; полный production acceptance не объявлен из-за незакрытых physical-device/public-edge/GitHub-App/multi-user/Regional-Knowledge gates.** Имя «Содей / Sodey» остаётся предложением; технический идентификатор `projects-hub` не меняется.
 
 ## Центральная идея
 
@@ -74,6 +76,8 @@ Stop, «Новый разговор» и delete — разные действи�
 
 ## Найденные framework gaps
 
+> Историческая фиксация аудита 27–28 сентября. В WSS candidate от 3 октября manual activity и socket transport уже есть в pinned shared framework; актуальные незакрытые acceptance gaps перечислены в [16-wss-multi-user-reliability.md](16-wss-multi-user-reliability.md).
+
 Аудит фактического `live-interaction` выявил важные зависимости:
 - input transcription уже включена;
 - provider сейчас обрезает projected transcript event до 2000 символов;
@@ -105,14 +109,14 @@ Stop, «Новый разговор» и delete — разные действи�
 | [UI: тёмные плавающие острова](13-ui-floating-islands.md) | Визуальная система PWA/Android и основной экран |
 | [GitHub connections](14-github-connections.md) | GitHub App installation, repository roles и отсутствие PAT у обычных участников |
 | [Экспертные review cases](15-expert-review-cases.md) | Межпроектные экспертные проверки: assignment, evidence ACL, typed resolution и readback |
-| [WSS и многопользовательская надёжность](16-wss-multi-user-reliability.md) | Целевой realtime transport, session isolation, concurrency, capability bundles, acceptance и rollout |
+| [WSS и многопользовательская надёжность](16-wss-multi-user-reliability.md) | Целевой realtime transport, session isolation, concurrency, capability bundles, shared OAuth/Regional Knowledge/POI ownership, implementation evidence, acceptance и rollout |
 | [Live contract](live-contract.json) | Машиночитаемые архитектурные правила |
 
 Свежие требования 28 сентября не меняют central-Live архитектуру: V19 добавляет безопасный in-app путь обновления Android после первой установки; V20 добавляет class-specific checklist готовности к приближающимся событиям и создание конкретных follow-up задач по недостающим материалам. Оба пункта включаются последовательно после работающего device-command/calendar E2E, а не расширяют MVP до универсального workflow engine.
 
 ## Обновление 2 октября: WSS, несколько пользователей и свежие owner review
 
-Следующий realtime этап зафиксирован в [WSS и многопользовательской надёжности](16-wss-multi-user-reliability.md). Это не декларация готовности, а обязательный план перехода: shared WSS transport, one-use tickets, bounded queues/ACK, session generations, запрет stale-audio/mutation replay, actor/workspace/conversation isolation и отдельные multi-user/physical acceptance gates. Текущий HTTP Live path остаётся фактическим runtime до завершения этой миграции.
+Realtime этап зафиксирован в [WSS и многопользовательской надёжности](16-wss-multi-user-reliability.md). Source candidate уже реализует shared WSS transport, one-use tickets, bounded queues/ACK, session generations, запрет stale-audio/mutation replay и actor/workspace/conversation isolation. Deployed production/runtime пока не считается мигрированным до отдельного rollout и public-edge/real-provider/physical acceptance.
 
 Свежий owner review `voice-20261002-174500-c34d45c8` добавляет два базовых UX-направления: light/dark theme с voice control и ненавязчивый adaptive onboarding, который помогает человеку постепенно открывать возможности продукта и может мягко напоминать давно не использованные функции. Preference/usage state должны быть actor-scoped.
 
