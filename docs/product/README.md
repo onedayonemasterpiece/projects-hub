@@ -1,6 +1,8 @@
 # Projects Hub — спецификация живой совместной работы
 
-**Ревизия 6 от 28 сентября 2026. Статус: central Live/PWA, Android-клиент, device-command calendar backend, signed GitHub Releases и event-readiness слой реализованы; полный production acceptance ещё не объявлен из-за незакрытых physical-device/public-edge/GitHub-App gates.** Имя «Содей / Sodey» остаётся предложением; технический идентификатор `projects-hub` не меняется.
+> **Обновление 2 октября 2026:** основной голосовой transport переводится на shared WSS-контур `live-interaction 0.3.7-rc.1` с same-origin one-use tickets, binary PCM/ACK, reconnect generations и запретом silent HTTP fallback. Multi-user, shared OAuth/resource isolation, Regional Knowledge и POI ownership зафиксированы в [WSS/platform reliability](16-wss-platform-reliability.md). Production acceptance этого перехода пока не объявлен.
+
+**Ревизия 7 от 2 октября 2026. Статус: central Live/PWA, Android-клиент, device-command calendar backend, signed GitHub Releases и event-readiness слой реализованы; полный production acceptance ещё не объявлен из-за незакрытых physical-device/public-edge/GitHub-App gates.** Имя «Содей / Sodey» остаётся предложением; технический идентификатор `projects-hub` не меняется.
 
 ## Центральная идея
 
@@ -74,6 +76,8 @@ Stop, «Новый разговор» и delete — разные действи�
 
 ## Найденные framework gaps
 
+> Историческая фиксация аудита 27–28 сентября. В WSS candidate от 2 октября manual activity и socket transport уже есть в pinned shared framework; актуальные незакрытые acceptance gaps перечислены в [16-wss-platform-reliability.md](16-wss-platform-reliability.md).
+
 Аудит фактического `live-interaction` выявил важные зависимости:
 - input transcription уже включена;
 - provider сейчас обрезает projected transcript event до 2000 символов;
@@ -105,6 +109,7 @@ Stop, «Новый разговор» и delete — разные действи�
 | [UI: тёмные плавающие острова](13-ui-floating-islands.md) | Визуальная система PWA/Android и основной экран |
 | [GitHub connections](14-github-connections.md) | GitHub App installation, repository roles и отсутствие PAT у обычных участников |
 | [Экспертные review cases](15-expert-review-cases.md) | Межпроектные экспертные проверки: assignment, evidence ACL, typed resolution и readback |
+| [WSS/platform reliability](16-wss-platform-reliability.md) | WSS, multi-user, shared OAuth, Regional Knowledge, POI ownership, self-update и production gates |
 | [Live contract](live-contract.json) | Машиночитаемые архитектурные правила |
 
 Свежие требования 28 сентября не меняют central-Live архитектуру: V19 добавляет безопасный in-app путь обновления Android после первой установки; V20 добавляет class-specific checklist готовности к приближающимся событиям и создание конкретных follow-up задач по недостающим материалам. Оба пункта включаются последовательно после работающего device-command/calendar E2E, а не расширяют MVP до универсального workflow engine.

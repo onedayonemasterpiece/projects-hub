@@ -7,10 +7,10 @@
     "latin": "Sodey",
     "status": "proposed_not_cleared"
   },
-  "specification_status": "design_for_implementation",
+  "specification_status": "wss_platform_reliability_candidate",
   "production_product_accepted": false,
   "source_repository": "onedayonemasterpiece/idea-hub",
-  "source_snapshot": "958264b169ab60c3e7d2bde3510d156ed0eb0337",
+  "source_snapshot": "df979d33aade6fc045d5032b34bf299eba6dd8ab",
   "runtime_baseline": "d4f740df85f7c79e687a88b95e5f86bcee11e8bf",
   "sources": [
     {
@@ -152,14 +152,42 @@
       "group": "core",
       "theme": "Event readiness checklist and secretary follow-up",
       "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/958264b169ab60c3e7d2bde3510d156ed0eb0337/inbox/voice/2026/09/voice-20260928-152848-96c08200.md"
+    },
+    {
+      "id": "V21",
+      "voice_id": "voice-20261002-122522-dc517f1b",
+      "group": "core",
+      "theme": "Защита ключевых требований от незаметной мутации",
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/df979d33aade6fc045d5032b34bf299eba6dd8ab/inbox/voice/2026/10/voice-20261002-122522-dc517f1b.md"
+    },
+    {
+      "id": "V22",
+      "voice_id": "voice-20261002-152036-8d69118b",
+      "group": "core",
+      "theme": "Физический voice review Street Story: видимый прогресс и ложный speech turn от системного transient",
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/df979d33aade6fc045d5032b34bf299eba6dd8ab/inbox/voice/2026/10/voice-20261002-152036-8d69118b.md"
+    },
+    {
+      "id": "V23",
+      "voice_id": "voice-20261002-173201-0808cd76",
+      "group": "core",
+      "theme": "Асинхронный экспертный дискурс и редакционный синтез противоречий",
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/df979d33aade6fc045d5032b34bf299eba6dd8ab/inbox/voice/2026/10/voice-20261002-173201-0808cd76.md"
+    },
+    {
+      "id": "V24",
+      "voice_id": "voice-20261002-174500-c34d45c8",
+      "group": "core",
+      "theme": "Голосовое переключение темы и адаптивный onboarding Миры",
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/df979d33aade6fc045d5032b34bf299eba6dd8ab/inbox/voice/2026/10/voice-20261002-174500-c34d45c8.md"
     }
   ],
   "experience_contract": "live-contract.json",
   "owner_revision": {
-    "id": "U03",
-    "kind": "direct_user_architecture_correction",
-    "date": "2026-09-27",
-    "spec_revision": 3
+    "id": "U04",
+    "kind": "direct_user_wss_reliability_and_cross_project_update",
+    "date": "2026-10-02",
+    "spec_revision": 4
   },
   "platform_decision": {
     "status": "owner_clarified_for_implementation",
@@ -195,7 +223,7 @@
       "id": "live-interaction",
       "repository": "onedayonemasterpiece/live-interaction",
       "owner_of": "shared voice transport and lifecycle",
-      "status": "0.2.6_candidate_exact_commit_durability_first_capture_offline_retry_canary_pass_physical_mic_pending"
+      "status": "0.3.7_rc1_exact_commit_b6a051a7cf53f84433ebf48a52b623d91fcc6478_wss_migration_candidate"
     },
     {
       "id": "ai-resource-control",
@@ -224,14 +252,14 @@
     {
       "id": "street-story",
       "repository": "onedayonemasterpiece/street-story",
-      "owner_of": "story preparation and publication",
-      "status": "poi_contradiction_review_adapter_contract_designed"
+      "owner_of": "canonical regional POI identity/claims/contradictions plus Street Story publication workflow",
+      "status": "wss_reference_consumer_and_canonical_poi_owner_cross_project_contract_designed"
     },
     {
       "id": "regional-knowledge-base",
       "repository": "onedayonemasterpiece/regional-knowledge-base",
-      "owner_of": "regional book/journal evidence and knowledge:// provenance",
-      "status": "poi_evidence_bridge_and_shared_identity_contract_designed"
+      "owner_of": "regional book/journal evidence, provenance and knowledge search",
+      "status": "shared_oidc_resource_delegation_knowledge_search_and_poi_evidence_bridge_designed"
     }
   ],
   "release_gates": [
@@ -446,10 +474,10 @@
       "evidence": []
     }
   ],
-  "spec_revision": 3,
+  "spec_revision": 4,
   "central_agent_contract": "12-central-live-agent.md",
   "implementation_status": {
-    "phase": "android_v5_readiness_deployed_public_edge_and_physical_acceptance_pending",
+    "phase": "wss_0_3_7_migration_candidate_clean_pwa_pass_backend_acceptance_in_progress",
     "release_sha": "a6c650e2f0944884dd01b57524ab77211e8db0aa",
     "devcoveer_runtime": "pass",
     "deterministic_contracts": "80_pytest_pass",
@@ -464,7 +492,7 @@
     "github_app_connection": "server_side_implemented_runtime_credentials_not_configured",
     "client_offline_restart_safe_queue": "pwa_foreground_implemented_android_not_implemented",
     "production_product_accepted": false,
-    "shared_live_interaction": "0.2.6_candidate_c9de297020087235d80ce4155e52f63f88c642bf",
+    "shared_live_interaction": "0.3.7-rc.1_b6a051a7cf53f84433ebf48a52b623d91fcc6478",
     "pwa_foreground_offline_queue": "implemented",
     "offline_partial_delivery_same_source_retry": "pass",
     "offline_retry_duplicate_memory_objects": 0,
@@ -485,24 +513,35 @@
     "android_physical_microphone_acceptance": "not_run_no_physical_adb_device",
     "event_readiness": "implemented_generic_and_podcast_checklists_follow_up_tasks",
     "github_app_runtime_configured": false,
-    "android_self_update_final_human_installer_tap": "physical_gate_not_automated"
+    "android_self_update_final_human_installer_tap": "physical_gate_not_automated",
+    "wss_backend_source": "implemented_candidate",
+    "wss_browser_primary": "implemented_candidate",
+    "wss_buffered_replay_binary_pcm": "implemented_candidate",
+    "wss_clean_npm_ci_and_production_build": "pass",
+    "wss_integration_tests": "6_pass_full_backend_94_pass",
+    "multi_user_live_capacity": "bounded_global_default_16_per_actor_default_2_duplicate_buffered_source_blocked_load_acceptance_pending",
+    "requirements_guard": "devcoveer_manifest_enabled_digest_7670191ca2430162027c0e7b50c3b1deb2a52048b770fb626f0fea45e8a47e6a",
+    "regional_knowledge_live_capability": "designed_not_implemented",
+    "cross_resource_delegated_oauth": "designed_not_implemented",
+    "canonical_poi_ownership": "regional_knowledge_evidence_street_story_poi_projects_hub_expert_surface"
   },
   "current_execution_focus": {
-    "as_of": "2026-09-29",
-    "slice": "restore public DNS edge, then physical Android calendar/microphone acceptance",
-    "android_update": "hosted handoff/in-place acceptance pass; final Android system confirmation remains physical human gate",
-    "event_readiness": "implemented and deployed",
+    "as_of": "2026-10-02",
+    "slice": "finish WSS backend/integration acceptance, then public WebSocket edge and physical multi-user/Android voice acceptance; implement Regional Knowledge delegated capability only after its OAuth resource is ready",
+    "android_update": "existing signed GitHub Release self-update path preserved; hosted in-place handoff evidence exists; final physical installer confirmation remains a human gate",
+    "event_readiness": "implemented and preserved",
     "blocking_external_gates": [
-      "projects-hub.kenigevents.ru DNS/TLS publication requires a valid owner-controlled Yandex Cloud DNS identity",
-      "production GitHub App registration/private-key/webhook credential requires owner-authenticated setup",
-      "physical Android ADB device is not connected to DevCoveer"
+      "public projects-hub.kenigevents.ru TLS/WebSocket upgrade requires the production edge to be available",
+      "production GitHub App registration/private-key/webhook credentials require owner-authenticated setup",
+      "physical Android ADB device is not connected to DevCoveer for microphone/update acceptance",
+      "Regional Knowledge delegated OAuth resource/API must be deployed before Projects Hub can complete knowledge_search E2E"
     ],
     "explicitly_deferred": [
-      "vector-search stack until ordinary indexed search proves insufficient",
+      "Redis or broker solely for WebSocket transport",
+      "a second voice/ASR/semantic router",
       "generic BPM/workflow engine",
       "privileged silent Android updater",
-      "full shared resource library",
-      "mass external-channel synchronization"
+      "duplicated canonical POI or contradiction store inside Projects Hub"
     ]
   }
 }

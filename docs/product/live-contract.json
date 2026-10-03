@@ -1,13 +1,13 @@
 {
   "schema_version": 2,
-  "spec_revision": 3,
-  "as_of": "2026-09-27",
-  "status": "first_vertical_implemented_partial_product_acceptance",
+  "spec_revision": 4,
+  "as_of": "2026-10-02",
+  "status": "wss_platform_reliability_candidate",
   "owner_input": {
-    "id": "U03",
-    "kind": "direct_user_architecture_correction",
-    "date": "2026-09-27",
-    "summary": "One central Live agent is the sole semantic orchestrator. Online and buffered offline raw audio go to that Live model; its input transcription and function calls drive memory, project routing, vocabulary and actions. Deterministic infrastructure may not hide a second ASR/LLM router/classifier/summarizer."
+    "id": "U04",
+    "kind": "direct_user_wss_reliability_and_cross_project_update",
+    "date": "2026-10-02",
+    "summary": "Projects Hub adopts the shared Street Story WSS transport pattern, must remain predictable for several concurrent users, preserves in-app Android self-update, protects critical requirements, and integrates Regional Knowledge/POI through shared identity with resource-specific authorization."
   },
   "applications": {
     "pwa": "full_application",
@@ -199,11 +199,20 @@
     "product_durable_capture_above_transport_required": true,
     "current_provider_transcript_projection_limit_chars": 2000,
     "current_session_event_ring_size": 320,
-    "current_browser_transcript_preview_is_bounded": true
+    "current_browser_transcript_preview_is_bounded": true,
+    "shared_live_interaction": "0.3.7-rc.1@b6a051a7cf53f84433ebf48a52b623d91fcc6478",
+    "same_origin_wss_required": true,
+    "one_use_socket_ticket_required": true,
+    "binary_pcm_wss_required": true,
+    "no_silent_http_audio_fallback": true,
+    "damaged_turn_mutation_guard_required": true,
+    "bounded_socket_ingress_egress_required": true,
+    "multi_user_actor_workspace_conversation_isolation_required": true,
+    "cross_resource_audience_isolation_required": true
   },
   "implementation_evidence": {
     "release_sha": "c179ac0d00df3a3600df744c836a847bd3744bb0",
-    "shared_live_interaction": "0.2.6-candidate@c9de297020087235d80ce4155e52f63f88c642bf",
+    "shared_live_interaction": "0.3.7-rc.1@b6a051a7cf53f84433ebf48a52b623d91fcc6478",
     "shared_ai_resource_control": "0.1.7",
     "realtime_browser_transport_wired": true,
     "buffered_manual_activity_product_path": true,
@@ -230,6 +239,70 @@
     "multi_project_memory_objects_for_source": 2,
     "project_memory_semantic_only": true,
     "full_provider_source_actor_private": true,
-    "legacy_memory_schema_migration": "pass_with_post_migration_live_readback"
+    "legacy_memory_schema_migration": "pass_with_post_migration_live_readback",
+    "candidate_base_sha": "660aa091f2dc1d120f55d1646ea94c5ec22ac97b",
+    "working_tree_candidate": true,
+    "wss_backend_source": "implemented_candidate",
+    "wss_browser_transport": "implemented_candidate",
+    "buffered_replay_binary_pcm": "implemented_candidate",
+    "clean_npm_ci_and_pwa_build": "pass",
+    "wss_integration_test": "6_pass",
+    "full_backend_regression_suite": "94_pass",
+    "actor_fairness_and_duplicate_buffered_source_admission": "pass",
+    "multi_user_load_acceptance": "not_run",
+    "public_wss_edge_acceptance": "not_run",
+    "regional_knowledge_delegated_oauth_e2e": "not_run"
+  },
+  "transport": {
+    "primary": "authenticated_same_origin_wss",
+    "protocol": "wl-live-v1",
+    "shared_live_interaction": "0.3.7-rc.1@b6a051a7cf53f84433ebf48a52b623d91fcc6478",
+    "socket_ticket": "one_use_short_lived_subprotocol_only",
+    "query_credentials_allowed": false,
+    "same_origin_required": true,
+    "binary_pcm": true,
+    "relay_audio_ack": true,
+    "ack_semantics": "relay_admission_only",
+    "pushed_events_and_audio": true,
+    "silent_http_fallback_after_wss_attach": false,
+    "reconnect_fresh_ticket_and_generation": true,
+    "replay_stale_unacked_pcm_after_gap": false,
+    "damaged_open_turn_blocks_mutations_until_clean_boundary": true,
+    "bounded_bootstrap_bytes": 4096,
+    "bounded_ingress_and_egress": true
+  },
+  "multi_user": {
+    "resource_binding": [
+      "workspace_id",
+      "issuer_subject",
+      "conversation_id"
+    ],
+    "per_tool_authorization": true,
+    "session_cross_actor_access": false,
+    "global_live_admission": "bounded",
+    "default_max_sessions": 16,
+    "default_max_sessions_per_actor": 2,
+    "duplicate_client_source_parallel_replay_allowed": false,
+    "hard_max_sessions": 64,
+    "provider_capacity_owner": "ai-resource-control",
+    "load_acceptance_required": [
+      1,
+      4,
+      8,
+      "configured_max"
+    ]
+  },
+  "cross_project_resources": {
+    "shared_identity": "oidc_issuer_plus_sub",
+    "shared_authorization_boundary": false,
+    "forward_projects_hub_token_to_other_resources": false,
+    "delegated_resource_tokens_required": true,
+    "regional_knowledge_live_profile": [
+      "knowledge_search"
+    ],
+    "regional_knowledge_owns": "source_book_journal_evidence_and_provenance",
+    "street_story_owns": "canonical_regional_poi_identity_claims_contradictions_and_arbitration",
+    "projects_hub_owns": "conversation_and_expert_review_work_surface",
+    "expert_write_success_requires": "owning_service_receipt_and_readback"
   }
 }

@@ -1,5 +1,7 @@
 # Платформы, архитектура и связность проектов
 
+> **U04 / 2 октября 2026:** network transport, multi-user identity, shared OAuth/resource isolation, Regional Knowledge capability и POI ownership уточнены в [16-wss-platform-reliability.md](16-wss-platform-reliability.md). Центральный one-agent backend boundary не меняется.
+
 [Индекс](README.md) · [Центральный Live-агент](12-central-live-agent.md) · [UX](03-product-and-ux.md) · [Память](10-conversation-memory.md) · [Маршрутизация и словари](11-routing-and-vocabulary.md).
 
 **Ревизия 4, 28 сентября 2026.** Центральный интеллект продукта — Gemini Live в пользовательском разговоре. Backend не содержит параллельного смыслового конвейера. **Backend Projects Hub один: provider connection к Gemini Live, GitHub App и все server-owned integrations живут на DevCoveer; PWA/Android не подключаются к Gemini/GitHub в обход backend.**

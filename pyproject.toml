@@ -12,7 +12,7 @@ dependencies = [
   "uvicorn[standard]>=0.35,<1",
   "httpx>=0.28,<1",
   "PyJWT[crypto]>=2.10,<3",
-  "live-interaction @ git+https://github.com/onedayonemasterpiece/live-interaction.git@c9de297020087235d80ce4155e52f63f88c642bf",
+  "live-interaction @ git+https://github.com/onedayonemasterpiece/live-interaction.git@b6a051a7cf53f84433ebf48a52b623d91fcc6478",
 ]
 
 [project.optional-dependencies]

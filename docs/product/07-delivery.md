@@ -1,5 +1,7 @@
 # Насыщенный MVP и порядок реализации
 
+> **U04 / 2 октября 2026:** WSS migration и multi-user acceptance выполняются поверх существующего продукта. Android self-update через signed GitHub Releases сохраняется как обязательный нормальный путь; подробности и rollout gates — [16-wss-platform-reliability.md](16-wss-platform-reliability.md).
+
 [Индекс](README.md) · [Центральный Live-агент](12-central-live-agent.md) · [Архитектура](04-architecture.md) · [Память](10-conversation-memory.md).
 
 **Ревизия 4, 28 сентября 2026.** MVP строится вокруг одной умной Live-модели и её function calls. **Live provider connection и server integrations находятся на одном Projects Hub backend на DevCoveer.** Никакой промежуточный ASR/router/classifier не должен незаметно стать реальным мозгом продукта.

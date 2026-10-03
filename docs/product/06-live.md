@@ -1,5 +1,7 @@
 # Live, общий лимиттер и центральный агент
 
+> **U04 / 2 октября 2026:** primary client↔backend transport — authenticated same-origin WSS через `LiveSocketSessionHost` (`live-interaction 0.3.7-rc.1` exact pin). После WSS attach silent HTTP audio fallback запрещён; ticket/reconnect/backpressure contract — в [16-wss-platform-reliability.md](16-wss-platform-reliability.md).
+
 [Индекс](README.md) · [Центральный Live-агент](12-central-live-agent.md) · [Архитектура](04-architecture.md) · [Память](10-conversation-memory.md).
 
 **Ревизия 4, 28 сентября 2026.** Live — не один из сервисов обработки Projects Hub, а центральная интерактивная модель продукта. **Gemini Live provider session существует на единственном Projects Hub backend на DevCoveer; PWA и Android не подключаются к Gemini напрямую.** Общий resource controller ограничивает её ресурс; tools дают ей руки; durable capture не даёт потерять речь.

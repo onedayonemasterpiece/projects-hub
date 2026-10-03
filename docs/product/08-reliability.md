@@ -1,5 +1,7 @@
 # Качество: Live понимает, инфраструктура не теряет
 
+> **U04 / 2 октября 2026:** к существующим release gates добавлен WSS/multi-user acceptance checklist: ticket/origin/query, binary PCM/ACK, no HTTP fallback, reconnect/no stale PCM, 4+ actor isolation, public WebSocket edge и physical Android voice/update. Канонический список — [16-wss-platform-reliability.md](16-wss-platform-reliability.md).
+
 [Индекс](README.md) · [Центральный Live-агент](12-central-live-agent.md) · [Память](10-conversation-memory.md).
 
 **Ревизия 3, 27 сентября 2026.** Надёжность оценивается одновременно по сохранности source и по тому, что центральный Live-agent действительно услышал весь материал и выполнил ровно нужные function calls.

@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build"
   },
   "dependencies": {
-    "@onedayonemasterpiece/live-interaction": "git+https://github.com/onedayonemasterpiece/live-interaction.git#c9de297020087235d80ce4155e52f63f88c642bf",
+    "@onedayonemasterpiece/live-interaction": "git+https://github.com/onedayonemasterpiece/live-interaction.git#b6a051a7cf53f84433ebf48a52b623d91fcc6478",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "@supabase/supabase-js": "2.108.2"
@@ -22,7 +22,7 @@
   },
   "liveFramework": {
     "repository": "https://github.com/onedayonemasterpiece/live-interaction",
-    "version": "0.2.6-candidate",
-    "commit": "c9de297020087235d80ce4155e52f63f88c642bf"
+    "version": "0.3.7-rc.1",
+    "commit": "b6a051a7cf53f84433ebf48a52b623d91fcc6478"
   }
 }

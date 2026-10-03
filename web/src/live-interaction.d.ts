@@ -40,6 +40,7 @@ declare module "@onedayonemasterpiece/live-interaction/browser" {
   };
 
   export function createLiveClient(options: {
+    transport?: "http" | "wss";
     onEvent?: (event: LiveEvent, generation: number) => void;
     onState?: (state: string, detail?: Record<string, unknown>) => void;
     onNotice?: (notice: string, error?: unknown) => void;

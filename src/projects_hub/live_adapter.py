@@ -4,9 +4,15 @@ import base64
 import hashlib
 import json
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from .device_commands import DeviceCommandService
+from .expert_reviews import (
+    ExpertReviewAccessError,
+    ExpertReviewAdapter,
+    ExpertReviewConflict,
+    ExpertReviewError,
+)
 from .live_resources import ConversationScope
 from .readiness import ReadinessService
 from .store import DurableStore, StoreError
@@ -14,8 +20,8 @@ from .store import DurableStore, StoreError
 log = logging.getLogger("projects_hub.live")
 
 
-def _functions() -> list[dict[str, Any]]:
-    return [
+def _functions(*, expert_reviews: bool = False) -> list[dict[str, Any]]:
+    functions = [
         {
             "name": "projects_list_accessible",
             "description": "List projects the current actor may use in this workspace. Use when project context is unclear.",
@@ -167,6 +173,135 @@ def _functions() -> list[dict[str, Any]]:
             },
         },
     ]
+    if expert_reviews:
+        functions.extend(
+            [
+                {
+                    "name": "expert_reviews_list_assigned",
+                    "description": (
+                        "List expert review cases the current verified expert is "
+                        "allowed and qualified to review."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "statuses": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string",
+                                    "enum": [
+                                        "open",
+                                        "assigned",
+                                        "in_review",
+                                        "deferred",
+                                    ],
+                                },
+                            }
+                        },
+                    },
+                },
+                {
+                    "name": "expert_reviews_get",
+                    "description": (
+                        "Read one assigned/accessible expert review case with its "
+                        "competing claims and evidence references."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "review_case_id": {"type": "string"}
+                        },
+                        "required": ["review_case_id"],
+                    },
+                },
+                {
+                    "name": "expert_reviews_accept",
+                    "description": (
+                        "Accept one expert review assignment using the current "
+                        "verified expertise snapshot."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "review_case_id": {"type": "string"},
+                            "expected_revision": {
+                                "type": "integer",
+                                "minimum": 1,
+                            },
+                        },
+                        "required": [
+                            "review_case_id",
+                            "expected_revision",
+                        ],
+                    },
+                },
+                {
+                    "name": "expert_reviews_resolve",
+                    "description": (
+                        "Submit a typed expert decision with rationale. The result "
+                        "is trusted only after owning-service receipt and readback."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "review_case_id": {"type": "string"},
+                            "expected_revision": {
+                                "type": "integer",
+                                "minimum": 1,
+                            },
+                            "resolution": {
+                                "type": "string",
+                                "enum": [
+                                    "prefer_left",
+                                    "prefer_right",
+                                    "both_valid_scope",
+                                    "both_valid_temporal",
+                                    "unresolved",
+                                    "needs_more_sources",
+                                    "wrong_poi_link",
+                                ],
+                            },
+                            "rationale": {"type": "string"},
+                            "confidence": {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 1,
+                            },
+                        },
+                        "required": [
+                            "review_case_id",
+                            "expected_revision",
+                            "resolution",
+                            "rationale",
+                        ],
+                    },
+                },
+                {
+                    "name": "expert_reviews_request_research",
+                    "description": (
+                        "Keep the case unresolved and request additional sources "
+                        "with an expert rationale."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "review_case_id": {"type": "string"},
+                            "expected_revision": {
+                                "type": "integer",
+                                "minimum": 1,
+                            },
+                            "rationale": {"type": "string"},
+                        },
+                        "required": [
+                            "review_case_id",
+                            "expected_revision",
+                            "rationale",
+                        ],
+                    },
+                },
+            ]
+        )
+    return functions
 
 
 SYSTEM_INSTRUCTION = """# ROLE
@@ -196,6 +331,13 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Говори «событие создано» только если calendar_create_event_on_device вернул status=applied и device readback. pending/claimed означает, что подтверждение на телефоне ещё ожидается; outcome_unknown означает, что итог надо сверить.
 - Если tool отказал, объясни результат и продолжи разговор, не выдумывая успешное действие.
 
+# EXPERT REVIEWS
+- Expert-review tools присутствуют только когда backend подтвердил owning-service grant и verified expert profile.
+- Не решай противоречие сама: объясняй evidence и вызывай typed expert tool только после явного решения эксперта.
+- Verification score — сила evidence, а не вероятность истины.
+- "Нужны ещё источники" является нормальным экспертным исходом.
+- Объявляй решение сохранённым только после receipt/readback owning service.
+
 # EVENT READINESS
 - После подтверждённого calendar event backend автоматически создаёт event card. Для записи подкаста передавай event_type=podcast, иначе generic.
 - Перед событием используй event_cards_list и называй только фактические незакрытые пункты checklist.
@@ -212,11 +354,30 @@ class ProjectsHubLiveAdapter:
         *,
         device_commands: DeviceCommandService | None = None,
         readiness: ReadinessService | None = None,
+        expert_reviews_factory: (
+            Callable[[str, str], ExpertReviewAdapter | None] | None
+        ) = None,
         **_shared: Any,
     ):
         self.store = store
         self.device_commands = device_commands or DeviceCommandService(store)
         self.readiness = readiness or ReadinessService(store)
+        self.expert_reviews_factory = expert_reviews_factory
+
+    def _expert_reviews(
+        self,
+        actor_id: str,
+        workspace_id: str,
+    ) -> ExpertReviewAdapter | None:
+        if self.expert_reviews_factory is None:
+            return None
+        adapter = self.expert_reviews_factory(actor_id, workspace_id)
+        if adapter is not None and adapter.profile.subject != actor_id:
+            raise StoreError(
+                "FORBIDDEN",
+                "Expert review profile does not match current actor",
+            )
+        return adapter
 
     def initialize(
         self,
@@ -249,6 +410,10 @@ class ProjectsHubLiveAdapter:
         if source_reused and source["status"] not in {"archived", "ephemeral_processed"}:
             source = self.store.reset_source_for_replay(actor_id, source["id"])
         projects = self.store.list_projects(actor_id, conversation["workspace_id"])
+        expert_reviews = self._expert_reviews(
+            actor_id,
+            conversation["workspace_id"],
+        )
         system_instruction = SYSTEM_INSTRUCTION
         if audio_mode == "buffered":
             system_instruction += """
@@ -281,7 +446,9 @@ class ProjectsHubLiveAdapter:
             },
             "configuration": {
                 "system_instruction": system_instruction,
-                "functions": _functions(),
+                "functions": _functions(
+                    expert_reviews=expert_reviews is not None
+                ),
                 "voice": "Aoede",
                 "search_enabled": False,
                 "manual_activity_detection": audio_mode == "buffered",
@@ -296,6 +463,7 @@ class ProjectsHubLiveAdapter:
                 "client_source_id": client_source_id,
                 "source_status": source["status"],
                 "source_reused": source_reused,
+                "expert_reviews_enabled": expert_reviews is not None,
                 "source_terminal": source["status"] in {"archived", "ephemeral_processed"},
             },
         }
@@ -503,6 +671,79 @@ class ProjectsHubLiveAdapter:
                 task_id=str(args.get("task_id") or ""),
                 state=str(args.get("state") or ""),
             )
+
+        if name.startswith("expert_reviews_"):
+            adapter = self._expert_reviews(actor_id, workspace_id)
+            if adapter is None:
+                raise StoreError(
+                    "TOOL_NOT_AVAILABLE",
+                    "Expert reviews are not connected for this actor",
+                )
+            try:
+                if name == "expert_reviews_list_assigned":
+                    statuses = args.get("statuses")
+                    return {
+                        "review_cases": await adapter.list_assigned(
+                            statuses
+                            if isinstance(statuses, list)
+                            else ("assigned", "in_review", "open")
+                        )
+                    }
+                if name == "expert_reviews_get":
+                    return await adapter.get(
+                        str(args.get("review_case_id") or "")
+                    )
+                try:
+                    expected_revision = int(args.get("expected_revision"))
+                except (TypeError, ValueError):
+                    raise ExpertReviewError(
+                        "expected_revision_invalid"
+                    ) from None
+                command_id, _args_sha = self._command_id(
+                    session,
+                    name,
+                    args,
+                )
+                review_case_id = str(
+                    args.get("review_case_id") or ""
+                )
+                if name == "expert_reviews_accept":
+                    return await adapter.accept(
+                        review_case_id,
+                        expected_revision=expected_revision,
+                        command_id=command_id,
+                    )
+                if name == "expert_reviews_resolve":
+                    confidence = args.get("confidence")
+                    return await adapter.resolve(
+                        review_case_id,
+                        expected_revision=expected_revision,
+                        resolution=str(args.get("resolution") or ""),
+                        rationale=str(args.get("rationale") or ""),
+                        confidence=(
+                            float(confidence)
+                            if confidence is not None
+                            else None
+                        ),
+                        command_id=command_id,
+                    )
+                if name == "expert_reviews_request_research":
+                    return await adapter.request_research(
+                        review_case_id,
+                        expected_revision=expected_revision,
+                        rationale=str(args.get("rationale") or ""),
+                        command_id=command_id,
+                    )
+                raise StoreError(
+                    "TOOL_NOT_AVAILABLE",
+                    f"Unknown expert review function: {name}",
+                )
+            except ExpertReviewAccessError as exc:
+                raise StoreError("FORBIDDEN", str(exc)) from exc
+            except ExpertReviewConflict as exc:
+                raise StoreError("CONFLICT", str(exc)) from exc
+            except ExpertReviewError as exc:
+                raise StoreError("INVALID_ARGUMENT", str(exc)) from exc
 
         if name == "conversation_set_focus":
             project_id = str(args.get("project_id") or "")
