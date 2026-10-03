@@ -578,6 +578,10 @@ class DurableStore:
                 (now,),
             )
             self.db.execute(
+                "DELETE FROM login_invites WHERE actor_id=? AND used_at_ms IS NULL",
+                (owner["actor"]["id"],),
+            )
+            self.db.execute(
                 """INSERT INTO login_invites
                    (token_sha256,actor_id,expires_at_ms,used_at_ms,created_at_ms)
                    VALUES(?,?,?,?,?)""",
