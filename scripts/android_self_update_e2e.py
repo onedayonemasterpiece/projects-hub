@@ -174,6 +174,29 @@ def wait_adb_stable(timeout_seconds: int = 150) -> None:
     raise RuntimeError("Emulator did not become adb-stable")
 
 
+def wait_android_network(timeout_seconds: int = 120) -> None:
+    deadline = time.time() + timeout_seconds
+    last = ""
+    while time.time() < deadline:
+        last = run(
+            "adb",
+            "shell",
+            "ping",
+            "-c",
+            "1",
+            "-W",
+            "3",
+            "api.github.com",
+            check=False,
+            timeout=10,
+            retries=1,
+        )
+        if "1 received" in last or "1 packets received" in last or "bytes from" in last:
+            return
+        time.sleep(3)
+    raise RuntimeError(f"Android emulator network/DNS did not become ready: {last[-800:]!r}")
+
+
 def update_logs() -> str:
     return run(
         "adb",
@@ -270,6 +293,7 @@ def main() -> None:
     run("adb", "start-server", timeout=20, retries=3)
     run("adb", "wait-for-device", timeout=90, retries=6)
     wait_adb_stable()
+    wait_android_network()
 
     run("adb", "install", "-r", str(old_apk), timeout=90, retries=15)
     before = package_state()
