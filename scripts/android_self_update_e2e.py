@@ -417,19 +417,10 @@ def main() -> None:
             timeout=15,
             retries=3,
         )
-
-        deadline = time.time() + 45
-        last_focus = ""
-        while time.time() < deadline:
-            last_focus = current_focus()
-            if PACKAGE in last_focus:
-                break
-            time.sleep(1)
-        else:
-            raise RuntimeError(
-                "Projects Hub did not return to foreground after install permission: "
-                + repr(last_focus)
-            )
+        # Do not require Projects Hub to remain foreground here. onResume()
+        # may immediately resume the pending update and launch PackageInstaller
+        # before a polling loop ever observes the app window again. The durable
+        # product receipts below are the authoritative transition evidence.
 
     wait_log(rf"update_download_start versionCode={new_code}\b", timeout_seconds=60)
     wait_log(rf"update_verified versionCode={new_code}\b", timeout_seconds=180)
