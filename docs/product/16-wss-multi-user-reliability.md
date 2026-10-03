@@ -224,11 +224,12 @@ Capability switch сохраняет **один пользовательский
 - four-actor deterministic WSS acceptance PASS: четыре actor одновременно держат WSS handshake, чужой socket-ticket не раскрывается, пятая сессия упирается в global `LIVE_BUSY`;
 - global capacity, per-actor fairness и duplicate buffered-source admission защищены regression tests;
 - protected product requirements включены через `.devcoveer/requirements.json`;
-- exact Projects Hub SHA `720f44d8771043804a5e6e4fe6cb56e38790d79b` с `live-interaction v0.3.8` развёрнут на DevCoveer; service health PASS и restart count 0;
+- exact Projects Hub SHA `771990de78f90fde555d880cd4f7838be1eb9df8` развёрнут на DevCoveer; Python binding остаётся на `live-interaction v0.3.8`, browser binding обновлён до `v0.3.11`; service health PASS и restart count 0;
 - deployed WSS roundtrip через реальный Gemini Live: binary PCM ACK, no-HTTP-fallback 409, pushed transcript + binary audio + turn_complete + graceful server close — **PASS**;
 - deployed concurrency: **2 real-provider sessions одновременно PASS**, третья того же actor получает **429 LIVE_BUSY**;
 - постоянный runtime check: `scripts/devcoveer_wss_canary.py --mode roundtrip`, затем отдельно `--mode concurrency`;
 - public ingress: **PASS** — DNS `projects-hub.kenigevents.ru → 78.111.90.230`, TLS 1.3/Let's Encrypt hostname validation PASS, public `/healthz` 200, public real-provider WSS roundtrip PASS, public two-session concurrency PASS and third same-actor request `429 LIVE_BUSY`.
+- real-provider calendar chain: **PASS на server/device-command boundary** — Gemini Live вызвал `calendar_create_event_on_device`, backend выдал durable command, simulated device client вернул `applied + readback_verified`, появилась readiness-card, затем та же Live session выдала transcript + audio; физический Android Calendar API остаётся отдельным acceptance gate.
 
 Не считать выполненным по этому checkpoint:
 - 20-socket/30-minute deterministic soak;
@@ -237,7 +238,7 @@ Capability switch сохраняет **один пользовательский
 - same-conversation multi-device physical/takeover UX acceptance; deterministic single-owner lease is implemented/tested but not yet deployed;
 - physical Android WebView microphone over the already accepted shared public PWA WSS path;
 - physical microphone/noise/poor-network acceptance;
-- post-candidate physical Android in-app update;
+- hosted Android 14 self-update `android-v6 → android-v7`: **PASS** (manifest SHA-256, app update UI, verified download, Package Installer handoff, same-signature in-place update, UID preserved); финальный пользовательский tap остаётся physical gate;
 - Android reboot/background durable capture; native implementation must hand off to the existing Live/replay contract rather than open a parallel WSS;
 - Regional Knowledge delegated OAuth E2E.
 
