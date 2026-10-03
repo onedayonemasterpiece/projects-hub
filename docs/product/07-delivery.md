@@ -1,6 +1,6 @@
 # Насыщенный MVP и порядок реализации
 
-> **U04 / 2 октября 2026:** WSS migration и multi-user acceptance выполняются поверх существующего продукта. Android self-update через signed GitHub Releases сохраняется как обязательный нормальный путь; подробности и rollout gates — [16-wss-platform-reliability.md](16-wss-platform-reliability.md).
+> **U04 / 2 октября 2026:** WSS migration и multi-user acceptance выполняются поверх существующего продукта. Android self-update через signed GitHub Releases сохраняется как обязательный нормальный путь; подробности и rollout gates — [16-wss-multi-user-reliability.md](16-wss-multi-user-reliability.md).
 
 [Индекс](README.md) · [Центральный Live-агент](12-central-live-agent.md) · [Архитектура](04-architecture.md) · [Память](10-conversation-memory.md).
 
@@ -197,17 +197,3 @@ Projects Hub backend on DevCoveer: единственная Live provider sessio
 PWA/Android: capture/UI/local durable queue. Android дополнительно исполняет allowlisted device-local commands; он не является backend и не получает GitHub/provider credentials.
 
 `live-interaction`: shared transport/provider protocol, buffered activity mode, transcript delivery; provider host используется backend-side, capture primitive переиспользуется клиентами.
-
-`ai-resource-control`: provider resource admission.
-
-Record Idea Hub: проверенные capture/VAD/durable queue patterns до извлечения reusable части.
-
-Owning products: свои документы и предметные mutations.
-
-## Договор реализации
-
-Перед каждым крупным решением задавать контрольный вопрос:
-
-> Это инфраструктура, которая помогает Live-agent надёжно работать, или новый слой, который сам начинает понимать пользователя вместо Live-agent?
-
-Если второе — остановиться и обосновать отдельное продуктовое решение. По умолчанию такое усложнение запрещено.

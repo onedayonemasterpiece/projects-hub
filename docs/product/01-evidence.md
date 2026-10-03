@@ -30,7 +30,7 @@
 
 ## U04: свежий review и межпроектная архитектура, 2 октября 2026
 
-V21–V24 подтверждают, что WSS-переход нельзя рассматривать отдельно от эксплуатационных инвариантов. Требования Projects Hub теперь дополнительно защищены в `.devcoveer/requirements.json`; WSS/multi-user, shared OAuth, Regional Knowledge, POI ownership и Android self-update сведены в [16-wss-platform-reliability.md](16-wss-platform-reliability.md).
+V21–V24 подтверждают, что WSS-переход нельзя рассматривать отдельно от эксплуатационных инвариантов. Требования Projects Hub теперь дополнительно защищены в `.devcoveer/requirements.json`; WSS/multi-user, shared OAuth, Regional Knowledge, POI ownership и Android self-update сведены в [16-wss-multi-user-reliability.md](16-wss-multi-user-reliability.md).
 
 Межпроектная граница фиксируется так: Regional Knowledge владеет книгами/журналами и evidence/provenance, Street Story — canonical regional POI identity/claims/contradictions, Projects Hub — разговором и экспертной work surface. Мира получает Regional Knowledge как узкую evidence capability после user-approved resource-bound OAuth delegation, а не как второго агента и не через пересылку Projects Hub token.
 

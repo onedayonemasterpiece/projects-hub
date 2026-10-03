@@ -1,6 +1,6 @@
 # Live, общий лимиттер и центральный агент
 
-> **U04 / 2 октября 2026:** primary client↔backend transport — authenticated same-origin WSS через `LiveSocketSessionHost` (`live-interaction 0.3.7-rc.1` exact pin). После WSS attach silent HTTP audio fallback запрещён; ticket/reconnect/backpressure contract — в [16-wss-platform-reliability.md](16-wss-platform-reliability.md).
+> **U04 / 2 октября 2026:** primary client↔backend transport — authenticated same-origin WSS через `LiveSocketSessionHost` (`live-interaction 0.3.7-rc.1` exact pin). После WSS attach silent HTTP audio fallback запрещён; ticket/reconnect/backpressure contract — в [16-wss-multi-user-reliability.md](16-wss-multi-user-reliability.md).
 
 [Индекс](README.md) · [Центральный Live-агент](12-central-live-agent.md) · [Архитектура](04-architecture.md) · [Память](10-conversation-memory.md).
 
@@ -198,40 +198,3 @@ Fallback меняет credential/resource path, **не интеллект и н�
 
 Stop:
 - немедленно прекращает local capture/playback current turn;
-- закрывает/останавливает provider lifecycle согласно framework;
-- не удаляет durable source;
-- не отменяет подтверждённую mutation.
-
-Reconnect/resumption:
-- не повторяет mutations;
-- сохраняет same model/resource semantics;
-- product source journal переживает provider session;
-- если audio не был надёжно услышан/обработан, central agent получает deliberate recovery turn.
-
-## 13. Тяжёлая работа
-
-В MVP не вводить скрытый “offline thinking agent” внутри tools.
-
-Если central Live-model способна выполнить задачу через доступные tools/extended-thinking режим — она делает это. Если позднее нужен отдельный долгий сильный агент, это видимый тип операции с собственной ролью, а не внутренний этап каждой реплики.
-
-Основной разговор и semantic ownership остаются у Live.
-
-## 14. Provider/data gates
-
-Условия региона, возраста, класса данных и paid/unpaid обработки проверяются отдельно для normal и fallback scopes. Resource lease не доказывает юридическую/продуктовую допустимость передачи содержимого.
-
-При запрещённом provider path capture может продолжать durable offline, но source не отправляется модели до появления допустимого пути.
-
-## 15. Приёмка Live-центра
-
-Обязательные реальные сценарии:
-- online raw audio → input transcript → model understanding → function call → readback → voice response;
-- один разговор переключается между тремя проектами без ручного selector;
-- buffered 3/10/30 минут попадает **raw audio** central agent и не вызывает ответ по первой паузе;
-- framework lossless transcript sink получает начало/середину/конец без 2000-char потери;
-- network loss во время buffered replay → source остаётся, recovery не дублирует mutation;
-- agent сам решает archive/ephemeral через function call;
-- vocabulary update делается agentом через project docs/tools;
-- ни один product tool не делает скрытый semantic LLM call.
-
-До этих прогонов документация не является runtime acceptance.

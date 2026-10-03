@@ -1,6 +1,6 @@
 # Центральный Live-агент: единственное когнитивное звено
 
-> **U04 / 2 октября 2026:** WSS меняет транспорт, но не когнитивную архитектуру. Мира остаётся единственным semantic orchestrator; Regional Knowledge подключается как узкая evidence capability, а не второй агент. См. [16-wss-platform-reliability.md](16-wss-platform-reliability.md).
+> **U04 / 2 октября 2026:** WSS меняет транспорт, но не когнитивную архитектуру. Мира остаётся единственным semantic orchestrator; Regional Knowledge подключается как узкая evidence capability, а не второй агент. См. [16-wss-multi-user-reliability.md](16-wss-multi-user-reliability.md).
 
 [Индекс](README.md) · [UX](03-product-and-ux.md) · [Память](10-conversation-memory.md) · [Проекты/словарь](11-routing-and-vocabulary.md).
 
@@ -198,81 +198,3 @@ Thin tools не генерируют semantic aliases отдельной мод�
 Tool может содержать сложную прикладную транзакцию, retries, idempotency и reconciliation. Это не делает его “интеллектом”.
 
 ### Запрещено по умолчанию
-
-За function call не должен скрываться:
-- другой LLM, который решает, что имел в виду пользователь;
-- LLM-маршрутизатор проектов;
-- LLM-суммаризатор речи перед центральным агентом;
-- LLM-классификатор ценности/типа записи;
-- отдельный conversation agent, который переписывает ответ Live-модели;
-- незаявленный fallback на старую AI-архитектуру.
-
-Если когда-нибудь появляется отдельная специализированная модель, это отдельное осознанное продуктовое решение с видимой ролью. Она не может незаметно стать “настоящим мозгом”, оставив Live-модель озвучивать её результат.
-
-## 9. Что должно быть детерминированным обязательно
-
-Чтобы Live-агент был умным, а не хрупким, детерминированный слой обязан делать вещи, где “догадка модели” недопустима:
-- захват/локальная сохранность аудио;
-- sequence/manifest/checksum и resumable transfer;
-- auth/ACL;
-- resource limits/leases;
-- idempotency;
-- optimistic concurrency;
-- command/result ledger;
-- readback и reconciliation;
-- database constraints;
-- retention по уже принятому disposition;
-- формирование безопасного tool schema;
-- transport backpressure;
-- строгая привязка команд к device/user/session;
-- indexes/retrieval как доступ к данным.
-
-Это инфраструктура вокруг мозга, а не замена мозга.
-
-## 10. Обнаруженные несовместимости текущего shared framework
-
-Аудит текущего `live-interaction` показал несколько важных ограничений, которые нельзя пропустить при реализации Projects Hub.
-
-### A. Reconnect сейчас сознательно не хранит речь
-
-В `provider.py` есть правило: при отсутствии WebSocket capture отбрасывается — “Never queue or replay old speech”. Для обычного realtime recovery это разумно, но Projects Hub требует product-owned durable capture.
-
-Решение: не превращать transport reconnect buffer в вечную очередь. Projects Hub сохраняет аудио **до** transport; после восстановления намеренно создаёт buffered Live turn и передаёт source через новый bounded framework path.
-
-### B. Input transcription включена уже сейчас
-
-`setup_config()` содержит `inputAudioTranscription: {}`. Отдельный ASR перед Live не нужен для базовой архитектуры.
-
-### C. Transcript event режется до 2000 символов
-
-Текущий provider делает `text[:2000]`. Это недопустимая граница для source archive длинных пользовательских реплик.
-
-Нужное изменение framework: полный provider transcription event должен быть доступен product observer/persistence. Bounded UI/event projection может быть отдельной усечённой проекцией, но не источником архива.
-
-### D. Session event ring ограничен 320 событиями
-
-`LiveSessionHost` хранит 320 событий для polling UI. На него нельзя опираться как на долговечную историю. Product adapter должен сохранять source/transcript/tool receipts **до** потери из ring buffer.
-
-### E. Browser transcript preview хранит только хвост
-
-Текущий client держит последние ~1000 символов для голосового UX. Это UI preview, не transcript store. Projects Hub не читает из него архив.
-
-### F. Start history урезана
-
-Python host передаёт максимум 8 последних элементов, по 700 символов. Это допустимый lightweight bootstrap, но не память проекта. Центральный агент получает старые источники через product context/tools и conversation memory, а не надеется на provider history array.
-
-### G. Buffered turn требует явной границы activity
-
-Текущий wire знает `audio` и `audio_stream_end`, но не `activityStart/activityEnd`/manual activity mode. Для длинного offline replay framework нужно расширить версионируемо и проверить на настоящем provider.
-
-Эти пункты — **реальные implementation dependencies**, а не повод вводить отдельный ASR/agent pipeline.
-
-## 11. Критерий архитектурной чистоты
-
-Любая новая функция проходит вопрос:
-
-> Если убрать Live-модель, останется ли в tool/backend код, который самостоятельно решает смысл пользовательской речи?
-
-Если да — нужно проверить, не появился ли второй скрытый агент.
-
-Допустимы только точные deterministic policy decisions (ACL, schema, revision, quota, idempotency, retention после disposition) и механический retrieval. Смысловая интерпретация, проектная маршрутизация, диалог, выбор следующего вопроса и semantic memory disposition принадлежат центральному Live-агенту.

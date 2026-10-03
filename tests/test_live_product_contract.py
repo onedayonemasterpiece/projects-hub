@@ -126,7 +126,7 @@ def test_revision_four_docs_are_cross_linked():
     assert "12-central-live-agent.md" in index
     assert "10-conversation-memory.md" in index
     assert "11-routing-and-vocabulary.md" in index
-    assert "16-wss-platform-reliability.md" in index
+    assert "16-wss-multi-user-reliability.md" in index
     reliability = (DOCS / "08-reliability.md").read_text(encoding="utf-8")
     for n in range(1, 36):
         assert f"G{n:02d}" in reliability

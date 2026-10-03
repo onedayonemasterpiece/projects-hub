@@ -197,7 +197,8 @@ export default function App() {
     async function applyBootstrap(value: Bootstrap) {
       if (cancelled) return;
       setBoot(value);
-      const saved = localStorage.getItem("projects-hub-conversation");      if (!saved) return;
+      const saved = localStorage.getItem("projects-hub-conversation");
+      if (!saved) return;
       try {
         const current = await getConversation(saved);
         if (cancelled) return;
@@ -397,7 +398,8 @@ export default function App() {
   async function deliverSavedSource() {
     if (!networkOnline || !pendingSources.length || replayingRef.current) return;
     const source = pendingSources[0];
-    replayingRef.current = true;    setBusy(true);
+    replayingRef.current = true;
+    setBusy(true);
     setVoiceState("replaying");
     setNotice("Передаю сохранённую запись центральному Live‑агенту…");
     try {
@@ -454,7 +456,7 @@ export default function App() {
         url: `/api/live/${current.id}/sessions`,
         body: {},
         microphone: true,
-        captureDuringStart: true,
+        captureDuringStart: false,
         authorize: async () => {},
       });
       if (!client.sessionId && !navigator.onLine) {
@@ -596,7 +598,8 @@ export default function App() {
             ? "Нажмите, чтобы остановить"
             : "Нажмите и говорите";
 
-  return (    <main className="shell">
+  return (
+    <main className="shell">
       <header className="context-wrap">
         <button
           className={"island context-island" + (contextOpen ? " is-open" : "")}
@@ -795,7 +798,8 @@ export default function App() {
                 ) : (
                   <p className="empty-copy">Событий с checklist пока нет. Создайте событие голосом.</p>
                 )}
-              </div>            ) : memoryOpen ? (
+              </div>
+            ) : memoryOpen ? (
               <div className="memory-card">
                 <div className="sheet-heading">
                   <div>

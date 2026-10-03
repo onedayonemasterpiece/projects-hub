@@ -1,6 +1,6 @@
 # Платформы, архитектура и связность проектов
 
-> **U04 / 2 октября 2026:** network transport, multi-user identity, shared OAuth/resource isolation, Regional Knowledge capability и POI ownership уточнены в [16-wss-platform-reliability.md](16-wss-platform-reliability.md). Центральный one-agent backend boundary не меняется.
+> **U04 / 2 октября 2026:** network transport, multi-user identity, shared OAuth/resource isolation, Regional Knowledge capability и POI ownership уточнены в [16-wss-multi-user-reliability.md](16-wss-multi-user-reliability.md). Центральный one-agent backend boundary не меняется.
 
 [Индекс](README.md) · [Центральный Live-агент](12-central-live-agent.md) · [UX](03-product-and-ux.md) · [Память](10-conversation-memory.md) · [Маршрутизация и словари](11-routing-and-vocabulary.md).
 
@@ -198,54 +198,3 @@ Agent сам читает разрешённые проектные докуме
 - agent сам решает, что они означают и что делать.
 
 Нельзя строить отдельный LLM retrieval-router, который переписывает запрос, принимает project decision и передаёт Live только свой summary, если это не отдельное утверждённое продуктовое решение.
-
-## ADR-10: долговечные function calls
-
-Provider call id помогает внутри Live-session, но продуктовые операции используют собственный durable command/source identity.
-
-Для mutation:
-- agent выбирает tool и semantic args;
-- backend добавляет actor/scope;
-- command_id/idempotency;
-- expected revision;
-- execute;
-- readback/reconcile;
-- tool result возвращается агенту.
-
-Reconnect не превращает function call в новый смысловой запрос. Если outcome unknown, agent получает честный status и может решить следующий шаг, но backend не повторяет mutation слепо.
-
-## ADR-11: стек без космолёта
-
-Целевой backend — Python ASGI/FastAPI, модульный монолит и ограниченный worker той же кодовой базы. Прикладная PostgreSQL + outbox достаточно для MVP.
-
-PWA — TypeScript/React. Android — Kotlin. Общие API schemas, state semantics и acceptance corpus важнее буквального общего UI-кода.
-
-Backend на DevCoveer. Не Fly.io. Не self-hosted GitHub runner.
-
-## ADR-12: связность экосистемы
-
-| Owning project | Projects Hub использует | Не забирает себе |
-| --- | --- | --- |
-| idea-hub | source/provenance и разрешённые документы | весь личный archive пользователя |
-| record-idea-hub | VAD/chunk/durable capture patterns | старое приложение до приёмки замены |
-| live-interaction | provider transport, input transcription, audio response, function calls | product semantics |
-| ai-resource-control | admission/leases/budgets/fallback | user content |
-| wonderful-lections | предметные lecture tools | собственный presentation engine |
-| events-bot-new | event/announcement tools | canonical event store |
-| street-story | story tools | предметный workflow истории |
-| my-data-hub | разрешённые knowledge/data tools | автоматическое раскрытие personal data |
-
-Projects Hub связывает продукты через function calls central agent, а не копирует их business logic.
-
-## Реальные framework изменения до product acceptance
-
-1. deliberate buffered audio turn;
-2. manual activityStart/activityEnd wire/setup;
-3. lossless input-transcript observer для product source journal;
-4. отсутствие 2000-char truncation на archive path;
-5. product source persistence до 320-event UI ring;
-6. multi-project conversation resource binding;
-7. tool contracts для conversation memory/project focus/vocabulary;
-8. клиентский durable capture online и offline без второго microphone/VAD stack.
-
-Все эти изменения должны внедряться в owning repositories, версионироваться и иметь real-provider acceptance. Документирование не означает, что они уже работают.

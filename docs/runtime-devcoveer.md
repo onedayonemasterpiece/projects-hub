@@ -177,3 +177,22 @@ shared dependencies, builds the PWA, writes private runtime configuration,
 atomically activates the release, restarts the user service and requires a
 matching healthy `release_sha`. A failed health check restores the prior
 `current` target and service environment when a prior release exists.
+
+
+## WSS migration status · 2 октября 2026
+
+Этот runtime **ещё не считается WSS-migrated**. Фактический deployed baseline использует ранее принятый Projects Hub Live consumer и HTTP session/input/events control path. Новый WSS target описан в [product/16-wss-multi-user-reliability.md](product/16-wss-multi-user-reliability.md).
+
+При реализации нельзя просто заменить dependency pin:
+
+1. выбрать актуальный shared `live-interaction` WSS candidate/release и exact digest;
+2. добавить Projects Hub backend socket binding + one-use ticket/origin/resource/generation tests;
+3. перевести PWA на shared WSS push/binary transport без silent HTTP fallback;
+4. отдельно сохранить product-owned IndexedDB buffered/offline source;
+5. после browser acceptance подключить shared Java WSS transport/native capture в Android через узкий WebView/native bridge;
+6. прогнать public TLS Upgrade, real provider, multi-user load и physical phone gates;
+7. только после этого обновлять acceptance status.
+
+Текущий Street Story/shared framework candidate порядка `0.3.7-rc.1` является источником проверенных transport решений, но не переносится как номер версии вслепую. Projects Hub pin должен указывать на конкретный consumer-accepted immutable release/archive.
+
+До отдельной приёмки startup catchup PWA WSS должен считать `hello_ack` границей готовности и не маскировать старую речь увеличенным capture-age window. Realtime stale speech не replay-ится; длительный offline source доставляется отдельным explicit buffered Live turn.
