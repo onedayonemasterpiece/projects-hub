@@ -109,5 +109,5 @@ def build_live_host(
         managed_runner=managed_runner,
         max_sessions=max_sessions,
         max_sessions_per_actor=max_sessions_per_actor,
-        client_liveness_timeout_ms=75_000,
+        client_liveness_timeout_ms=180_000,
     )

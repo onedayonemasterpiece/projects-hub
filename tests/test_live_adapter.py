@@ -118,6 +118,8 @@ async def test_runtime_versions_tool_reports_exact_session_versions(tmp_path: Pa
             model="gemini-3.8-live",
             conversation_id=conversation["id"],
             client_version="0.1.18",
+            client_timezone="Europe/Kaliningrad",
+            backend_version="0.1.19",
             backend_release_sha="a" * 40,
         )
         names = {item["name"] for item in initialized["configuration"]["functions"]}
@@ -129,7 +131,68 @@ async def test_runtime_versions_tool_reports_exact_session_versions(tmp_path: Pa
         assert result == {
             "client_kind": "android",
             "android_version": "0.1.18",
+            "backend_version": "0.1.19",
             "backend_release_sha": "a" * 40,
         }
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_calendar_rejects_offset_that_contradicts_client_timezone(tmp_path: Path):
+    store = DurableStore(tmp_path)
+    try:
+        boot = store.ensure_dev_workspace("Timezone")
+        actor_id = boot["actor"]["id"]
+        workspace_id = boot["workspace"]["id"]
+        project_id = boot["projects"][0]["id"]
+        conversation = store.create_conversation(actor_id, workspace_id, project_id)
+        binding = ConversationScope(workspace_id, actor_id, conversation["id"]).resource_binding()
+        initialized = ProjectsHubLiveAdapter(store).initialize(
+            resource_id=binding,
+            actor={"subject": actor_id, "tenant_id": workspace_id},
+            model="gemini-3.8-live",
+            conversation_id=conversation["id"],
+            client_timezone="Europe/Kaliningrad",
+        )
+        assert initialized["context"]["client_timezone"] == "Europe/Kaliningrad"
+        assert initialized["configuration"]["input_audio_transcription"]["languageCodes"] == ["ru-RU"]
+        session = SimpleNamespace(state=initialized["state"])
+        with pytest.raises(Exception, match="offset does not match client timezone"):
+            await ProjectsHubLiveAdapter(store).execute_tool(
+                session,
+                {
+                    "name": "calendar_create_event_on_device",
+                    "args": {
+                        "title": "Электричка",
+                        "starts_at": "2026-10-04T13:45:00+00:00",
+                        "ends_at": "2026-10-04T14:45:00+00:00",
+                        "timezone": "Europe/Kaliningrad",
+                    },
+                },
+            )
+    finally:
+        store.close()
+
+
+def test_recent_conversation_history_crosses_live_sources(tmp_path: Path):
+    store = DurableStore(tmp_path)
+    try:
+        boot = store.ensure_dev_workspace("History")
+        actor_id = boot["actor"]["id"]
+        workspace_id = boot["workspace"]["id"]
+        conversation = store.create_conversation(actor_id, workspace_id, boot["projects"][0]["id"])
+        first = store.create_source(actor_id, conversation["id"])
+        store.append_source_event(actor_id, first["id"], "input_transcript", "Первая просьба")
+        store.append_source_event(actor_id, first["id"], "output_transcript", "Первый ответ")
+        store.append_source_event(actor_id, first["id"], "turn_complete")
+        second = store.create_source(actor_id, conversation["id"])
+        store.append_source_event(actor_id, second["id"], "input_transcript", "Задача выше")
+        history = store.recent_conversation_history(actor_id, conversation["id"])
+        assert history == [
+            {"role": "user", "text": "Первая просьба"},
+            {"role": "model", "text": "Первый ответ"},
+            {"role": "user", "text": "Задача выше"},
+        ]
     finally:
         store.close()

@@ -115,6 +115,10 @@ export default function App() {
     const match = navigator.userAgent.match(/ProjectsHubAndroid\/([^\s]+)/);
     return match?.[1] ?? null;
   }, []);
+  const clientTimezone = useMemo(
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    [],
+  );
   const [boot, setBoot] = useState<Bootstrap | null>(null);
   const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -156,6 +160,8 @@ export default function App() {
   const lastDevelopmentUpdateCheckRef = useRef(
     localStorage.getItem("projects-hub-development-update-check") ?? "",
   );
+  const userStoppedVoiceRef = useRef(false);
+  const autoRecoveryAtRef = useRef(0);
 
   useEffect(() => {
     conversationRef.current = conversation;
@@ -456,8 +462,20 @@ export default function App() {
           clientRef.current?.stop({ reason: "microphone_unavailable" });
           setMicrophoneSettingsAvailable(isAndroidApp);
           setNotice("Android/WebView не получил микрофон. Откройте настройки приложения и разрешите микрофон; если он уже разрешён, проверьте системный переключатель доступа к микрофону.");
-        } else if (kind === "transport_error") setNotice("Уже принятый сервером источник сохранён. Последние непереданные секунды не считаются сохранёнными — остановите и запустите Live снова.");
-        else if (kind === "connection_error") setNotice("Связь с Live прервалась. Можно запустить разговор снова.");
+        } else if (kind === "transport_error") {
+          setNotice("Связь с Live прервалась. Восстанавливаю разговор…");
+          const now = Date.now();
+          if (
+            !userStoppedVoiceRef.current
+            && navigator.onLine
+            && now - autoRecoveryAtRef.current > 20_000
+          ) {
+            autoRecoveryAtRef.current = now;
+            window.setTimeout(() => void recoverLiveConversation(), 1200);
+          }
+        } else if (kind === "connection_error") {
+          setNotice("Связь с Live нестабильна. Пытаюсь переподключиться…");
+        }
         else if (kind === "event_gap") setNotice("Интерфейс пропустил часть служебных событий. Источник на сервере сохраняется отдельно.");
         else if (error) setNotice(friendlyStartError(error));
       },
@@ -591,6 +609,40 @@ export default function App() {
     }
   }
 
+  function liveStartBody() {
+    return {
+      ...(nativeVersion ? { client_version: nativeVersion } : {}),
+      client_timezone: clientTimezone,
+    };
+  }
+
+  async function recoverLiveConversation() {
+    const client = clientRef.current;
+    const current = conversationRef.current;
+    if (
+      !client
+      || !current
+      || userStoppedVoiceRef.current
+      || !navigator.onLine
+      || client.sessionId
+      || client.starting
+    ) {
+      return;
+    }
+    try {
+      await client.start({
+        url: `/api/live/${current.id}/sessions`,
+        body: liveStartBody(),
+        microphone: true,
+        captureDuringStart: true,
+        authorize: async () => {},
+      });
+      if (client.sessionId) setNotice("Разговор восстановлен.");
+    } catch {
+      setNotice("Не удалось автоматически восстановить Live. Нажмите микрофон, чтобы продолжить.");
+    }
+  }
+
   async function toggleVoice() {
     const client = clientRef.current;
     if (!client || !boot || replayingRef.current) return;
@@ -600,10 +652,12 @@ export default function App() {
     }
     const active = voiceState !== "off" && voiceState !== "start_error" && voiceState !== "connection_error";
     if (active || client.sessionId || client.starting) {
+      userStoppedVoiceRef.current = true;
       client.stop({ reason: "user_stop" });
       setWait(null);
       return;
     }
+    userStoppedVoiceRef.current = false;
     setBusy(true);
     setNotice(null);
     setMicrophoneSettingsAvailable(false);
@@ -615,7 +669,7 @@ export default function App() {
       const current = await ensureConversation();
       await client.start({
         url: `/api/live/${current.id}/sessions`,
-        body: nativeVersion ? { client_version: nativeVersion } : {},
+        body: liveStartBody(),
         microphone: true,
         captureDuringStart: true,
         authorize: async () => {},

@@ -4,6 +4,8 @@ import base64
 import hashlib
 import json
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any, Callable
 
 from .device_commands import DeviceCommandService
@@ -77,7 +79,7 @@ def _functions(
         },
         {
             "name": "calendar_create_event_on_device",
-            "description": "Ask a bound Android device to create one event in the user's personal calendar. The backend creates a durable device command and waits briefly for a device receipt. Never claim the event exists unless the returned status is applied with verified readback.",
+            "description": "Ask a bound Android device to create one event in the user's personal calendar. For ordinary local times, use context.client_timezone and an RFC3339 offset matching that timezone. Set timezone_explicit=true only when the user explicitly named another timezone. Never claim the event exists unless verified readback confirms it.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -94,7 +96,11 @@ def _functions(
                     },
                     "timezone": {
                         "type": "string",
-                        "description": "IANA timezone, for example Europe/Kaliningrad."
+                        "description": "IANA timezone. For ordinary local times this must equal context.client_timezone."
+                    },
+                    "timezone_explicit": {
+                        "type": "boolean",
+                        "description": "True only when the user explicitly requested a timezone different from context.client_timezone."
                     },
                     "description": {"type": "string"},
                     "location": {"type": "string"},
@@ -109,7 +115,7 @@ def _functions(
         },
         {
             "name": "calendar_list_events_on_device",
-            "description": "Read a bounded time window from the user's personal Android calendar through a bound device. Use for questions like what is scheduled today/tomorrow/this week. This is read-only and never creates or edits events.",
+            "description": "Read a bounded local-time window from the user's personal Android calendar. For today/tomorrow/this week, use context.client_timezone and RFC3339 offsets matching it. Set timezone_explicit=true only when the user explicitly named another timezone.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -122,6 +128,14 @@ def _functions(
                     "ends_at": {
                         "type": "string",
                         "description": "RFC3339 range end with explicit UTC offset; maximum range is 31 days."
+                    },
+                    "timezone": {
+                        "type": "string",
+                        "description": "IANA timezone. For ordinary local ranges this must equal context.client_timezone."
+                    },
+                    "timezone_explicit": {
+                        "type": "boolean",
+                        "description": "True only when the user explicitly requested a timezone different from context.client_timezone."
                     },
                     "limit": {
                         "type": "integer",
@@ -466,7 +480,7 @@ SYSTEM_INSTRUCTION = """# ROLE
 
 # DIALOGUE
 - Отвечай по-русски, кратко и естественно голосом.
-- Если пользователь спрашивает текущую версию приложения/backend или пытается понять, применилось ли обновление, вызови runtime_versions_get и назови фактические значения; не угадывай по истории разговора.
+- Если пользователь спрашивает текущую версию приложения/backend или пытается понять, применилось ли обновление, вызови runtime_versions_get. Называй backend_version как версию продукта; backend_release_sha упоминай только если пользователь явно спрашивает build/SHA/provenance.
 - Не проси пользователя перепечатывать или повторять уже услышанное без необходимости.
 - Если проект неясен, уточни его разговором или сначала прочитай доступные проекты.
 - При смене проекта используй conversation_set_focus только после того, как поняла целевой проект.
@@ -494,6 +508,7 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Для чтения текущего проекта используй github_repository_read: сначала корень/каталог, затем нужный текстовый файл. Не утверждай, что прочитала repository, пока tool result не вернул фактический content.
 - Device-local действие всё равно вызывается здесь, в backend-owned Live session. Android — только исполнитель typed command.
 - Для календаря сначала используй devices_list_capabilities, если подходящий телефон неоднозначен. Для вопросов о расписании используй calendar_list_events_on_device; для создания — calendar_create_event_on_device.
+- context.client_timezone — локальная timezone устройства. Слова «сегодня», «завтра», «в 13:45» без явно названной timezone всегда интерпретируй в context.client_timezone. Никогда не подменяй локальное время UTC. Если пользователь явно назвал другую timezone, передай её и timezone_explicit=true.
 - calendar_list_events_on_device только читает локальный CalendarContract выбранного Android и возвращает ограниченное окно до 31 дня. Не придумывай события, если device readback не вернулся.
 - Говори «событие создано» только если calendar_create_event_on_device вернул status=applied и device readback. pending/claimed означает, что подтверждение на телефоне ещё ожидается; outcome_unknown означает, что итог надо сверить.
 - Если tool отказал, объясни результат и продолжи разговор, не выдумывая успешное действие.
@@ -599,6 +614,8 @@ class ProjectsHubLiveAdapter:
         audio_mode: str = "realtime",
         client_source_id: str | None = None,
         client_version: str | None = None,
+        client_timezone: str | None = None,
+        backend_version: str | None = None,
         backend_release_sha: str | None = None,
         **_args: Any,
     ) -> dict[str, Any]:
@@ -657,6 +674,8 @@ class ProjectsHubLiveAdapter:
                 "audio_mode": audio_mode,
                 "client_source_id": client_source_id,
                 "client_version": client_version,
+                "client_timezone": client_timezone,
+                "backend_version": backend_version,
                 "backend_release_sha": backend_release_sha,
             },
             "context": {
@@ -669,6 +688,8 @@ class ProjectsHubLiveAdapter:
                 "allowed_projects": [{"id": p["id"], "name": p["name"]} for p in projects],
                 "current_source_id": source["id"],
                 "client_version": client_version,
+                "client_timezone": client_timezone,
+                "backend_version": backend_version,
                 "backend_release_sha": backend_release_sha,
             },
             "configuration": {
@@ -679,6 +700,10 @@ class ProjectsHubLiveAdapter:
                     owner_development=owner_development,
                 ),
                 "voice": "Aoede",
+                "input_audio_transcription": {
+                    "languageCodes": ["ru-RU"],
+                    "customVocabulary": ["Мира", "Projects Hub", "Codex", "DevCoveer"],
+                },
                 "search_enabled": False,
                 "manual_activity_detection": audio_mode == "buffered",
             },
@@ -755,6 +780,50 @@ class ProjectsHubLiveAdapter:
         ).encode("utf-8")
         return "cmd_" + hashlib.sha256(semantic).hexdigest()[:40], args_sha
 
+    @staticmethod
+    def _calendar_args_for_client(
+        state: dict[str, Any],
+        args: dict[str, Any],
+    ) -> dict[str, Any]:
+        result = dict(args)
+        client_timezone = str(state.get("client_timezone") or "").strip()
+        explicit = bool(result.pop("timezone_explicit", False))
+        requested_timezone = str(result.get("timezone") or client_timezone).strip()
+        if not requested_timezone:
+            raise StoreError(
+                "INVALID_ARGUMENT",
+                "Calendar timezone is unavailable; retry with an explicit IANA timezone.",
+            )
+        if client_timezone and requested_timezone != client_timezone and not explicit:
+            raise StoreError(
+                "INVALID_ARGUMENT",
+                f"Calendar local time must use client timezone {client_timezone}.",
+            )
+        try:
+            zone = ZoneInfo(requested_timezone)
+        except ZoneInfoNotFoundError as exc:
+            raise StoreError("INVALID_ARGUMENT", "Calendar timezone is invalid") from exc
+
+        for field in ("starts_at", "ends_at"):
+            raw = str(result.get(field) or "").strip()
+            if not raw:
+                continue
+            try:
+                value = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise StoreError("INVALID_ARGUMENT", f"{field} must be RFC3339") from exc
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise StoreError("INVALID_ARGUMENT", f"{field} requires an explicit UTC offset")
+            local_wall = value.replace(tzinfo=None, fold=0).replace(tzinfo=zone)
+            expected_offset = local_wall.utcoffset()
+            if expected_offset != value.utcoffset() and not explicit:
+                raise StoreError(
+                    "INVALID_ARGUMENT",
+                    f"{field} offset does not match client timezone {requested_timezone}.",
+                )
+        result["timezone"] = requested_timezone
+        return result
+
     async def execute_tool(self, session: Any, call: dict[str, Any]) -> dict[str, Any]:
         name = str(call.get("name") or "")
         args = self._args(call)
@@ -771,11 +840,11 @@ class ProjectsHubLiveAdapter:
 
         if name == "runtime_versions_get":
             client_version = state.get("client_version")
-            backend_release_sha = state.get("backend_release_sha")
             return {
                 "client_kind": "android" if client_version else "web",
                 "android_version": client_version,
-                "backend_release_sha": backend_release_sha,
+                "backend_version": state.get("backend_version"),
+                "backend_release_sha": state.get("backend_release_sha"),
             }
 
         if name == "backlog_list":
@@ -879,6 +948,7 @@ class ProjectsHubLiveAdapter:
             }
 
         if name == "calendar_list_events_on_device":
+            args = self._calendar_args_for_client(state, args)
             project_id = str(args.get("project_id") or "") or None
             if project_id is None:
                 project_id = self.store.get_conversation(
@@ -913,6 +983,7 @@ class ProjectsHubLiveAdapter:
             return result
 
         if name == "calendar_create_event_on_device":
+            args = self._calendar_args_for_client(state, args)
             project_id = str(args.get("project_id") or "") or None
             if project_id is None:
                 project_id = self.store.get_conversation(
