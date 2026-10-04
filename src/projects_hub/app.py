@@ -17,6 +17,7 @@ from .auth import COOKIE_NAME, SESSION_TTL_SECONDS, issue_session, parse_session
 from .github_app import GitHubAppError
 from .github_connections import GitHubConnections
 from .device_commands import DeviceCommandService
+from .development import DevelopmentService
 from .live_resources import ConversationScope
 from .live_runtime import build_live_host
 from .logging_config import configure_logging
@@ -221,6 +222,7 @@ def create_app(
     github_connections: Any | None = None,
     device_commands: DeviceCommandService | None = None,
     readiness: ReadinessService | None = None,
+    development: DevelopmentService | None = None,
     regional_knowledge_factory: Any | None = None,
 ) -> FastAPI:
     configure_logging()
@@ -246,12 +248,14 @@ def create_app(
     app.state.github_connections = github_connections or GitHubConnections(store, settings)
     app.state.device_commands = device_commands or DeviceCommandService(store)
     app.state.readiness = readiness or ReadinessService(store)
+    app.state.development = development or DevelopmentService(store, app.state.readiness)
     def host() -> Any:
         if app.state.live_host is None:
             app.state.live_host = build_live_host(
                 store,
                 device_commands=app.state.device_commands,
                 readiness=app.state.readiness,
+                development=app.state.development,
                 github_connections=app.state.github_connections,
                 regional_knowledge_factory=regional_knowledge_factory,
             )
