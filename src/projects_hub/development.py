@@ -656,6 +656,16 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
                 "Requested reasoning effort is unavailable for this model",
             )
 
+        quality_record = available.get(QUALITY_MODEL)
+        quality_efforts = {
+            str(value) for value in (quality_record or {}).get("reasoning_efforts") or []
+        }
+        if quality_record is None or QUALITY_EFFORT not in quality_efforts:
+            raise StoreError(
+                "QUALITY_MODEL_UNAVAILABLE",
+                f"{QUALITY_MODEL}:{QUALITY_EFFORT} is required for design/review",
+            )
+
         project_name = self._project_name(actor_id, workspace_id, project_id)
         project_hint = self._project_hint(
             actor_id,
@@ -663,18 +673,21 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
             project_id,
             project_name,
         )
-        prompt = self._prompt(project_name, tasks)
         now = _now_ms()
         execution_id = "devrun_" + uuid.uuid4().hex
+        spec_path = f"docs/prompts/owner-development-{execution_id}.md"
+        prompt = self._design_prompt(project_name, tasks, spec_path)
         task_ids_json = json.dumps([item["id"] for item in tasks], separators=(",", ":"))
         with self.store._lock:
             self.store.db.execute(
                 """INSERT INTO task_executions(
                        id,actor_id,workspace_id,project_id,task_ids_json,project_hint,
-                       provider,model_profile,prompt,prompt_sha256,status,
+                       provider,model_profile,prompt,prompt_sha256,status,phase,phase_detail,
                        quota_remaining_percent,result_summary,error_code,
-                       created_at_ms,updated_at_ms,started_at_ms,finished_at_ms
-                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?, ?,? ,?, ?,?,?,?)""",
+                       created_at_ms,updated_at_ms,started_at_ms,finished_at_ms,
+                       review_cycle,spec_path
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,'queued','Ожидает quality design',
+                            ?,?,?, ?,?,?,NULL,0,?)""",
                 (
                     execution_id,
                     actor_id,
@@ -692,8 +705,8 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
                     None,
                     now,
                     now,
-                    None,
-                    None,
+                    now,
+                    spec_path,
                 ),
             )
 
@@ -701,25 +714,26 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
             result = await self.devcoveer.start_codex_task(
                 project=project_hint,
                 prompt=prompt,
-                model=selected_model,
-                reasoning_effort=selected_effort,
+                model=QUALITY_MODEL,
+                reasoning_effort=QUALITY_EFFORT,
             )
-            devcoveer_task_id = str(
+            quality_task_id = str(
                 result.get("taskId")
                 or result.get("taskReference")
                 or ""
             ).strip()
-            if not devcoveer_task_id:
-                raise StoreError("DEVCOVEER_INVALID_RESPONSE", "DevCoveer did not return a task id")
+            if not quality_task_id:
+                raise StoreError("DEVCOVEER_INVALID_RESPONSE", "DevCoveer did not return a quality task id")
             now = _now_ms()
             with self.store._lock:
                 self.store.db.execute(
                     """UPDATE task_executions
-                       SET status='running',phase='analysis',
-                           phase_detail='Codex принял пакет задач',
-                           devcoveer_task_id=?,started_at_ms=?,updated_at_ms=?
+                       SET status='running',phase='designing',
+                           phase_detail='Сильная модель проектирует задачу',
+                           quality_task_id=?,devcoveer_task_id=?,
+                           started_at_ms=?,updated_at_ms=?
                        WHERE id=?""",
-                    (devcoveer_task_id, now, now, execution_id),
+                    (quality_task_id, quality_task_id, now, now, execution_id),
                 )
                 for task in tasks:
                     if task.get("state") not in {"accepted", "done"}:
@@ -727,6 +741,14 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
                             "UPDATE tasks SET state='accepted',updated_at_ms=? WHERE id=?",
                             (now, task["id"]),
                         )
+            self._record_stage(
+                execution_id=execution_id,
+                stage="design",
+                cycle=0,
+                model=QUALITY_MODEL,
+                reasoning_effort=QUALITY_EFFORT,
+                devcoveer_task_id=quality_task_id,
+            )
         except Exception as exc:
             now = _now_ms()
             code = exc.code if isinstance(exc, StoreError) else type(exc).__name__
@@ -734,7 +756,7 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
                 self.store.db.execute(
                     """UPDATE task_executions
                        SET status='failed',phase='failed',
-                           phase_detail='Не удалось запустить Codex',
+                           phase_detail='Не удалось запустить quality design',
                            error_code=?,finished_at_ms=?,updated_at_ms=?
                        WHERE id=?""",
                     (str(code)[:120], now, now, execution_id),
