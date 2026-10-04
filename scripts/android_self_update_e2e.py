@@ -247,9 +247,10 @@ def wait_update_button_bounds(timeout_seconds: int = 45) -> tuple[int, int, int,
         except ET.ParseError:
             time.sleep(1)
             continue
+        fallback = None
         for node in root.iter("node"):
             text = str(node.attrib.get("text") or "")
-            if not text.startswith("Доступно обновление"):
+            if text != "Обновить" and not text.startswith("Доступно обновление ·"):
                 continue
             match = re.fullmatch(
                 r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]",
@@ -257,12 +258,18 @@ def wait_update_button_bounds(timeout_seconds: int = 45) -> tuple[int, int, int,
             )
             if not match:
                 continue
-            left, top, right, bottom = map(int, match.groups())
-            if right > left and bottom > top:
-                return left, top, right, bottom
+            bounds = tuple(map(int, match.groups()))
+            left, top, right, bottom = bounds
+            if right <= left or bottom <= top:
+                continue
+            if text == "Обновить":
+                return bounds
+            fallback = bounds
+        if fallback is not None:
+            return fallback
         time.sleep(1)
     raise RuntimeError(
-        "Update button was not found in Android UI hierarchy; "
+        "Update action was not found in Android UI hierarchy; "
         f"tail={last_xml[-1200:]!r}"
     )
 
@@ -372,7 +379,10 @@ def main() -> None:
     run("adb", "shell", "input", "keyevent", "KEYCODE_WAKEUP", timeout=15, retries=3)
     run("adb", "shell", "wm", "dismiss-keyguard", check=False, timeout=15, retries=1)
     run("adb", "shell", "input", "tap", str(x), str(y), timeout=15, retries=3)
-    wait_log(rf"update_button_clicked versionCode={new_code}\b", timeout_seconds=30)
+    wait_log(
+        rf"(?:update_button_clicked|update_download_start|install_permission_required) versionCode={new_code}\b",
+        timeout_seconds=30,
+    )
 
     permission_required = re.search(
         rf"install_permission_required versionCode={new_code}\b",
