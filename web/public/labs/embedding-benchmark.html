@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>E5 · тест устройства</title>
+<style>
+:root{color-scheme:light dark;font-family:system-ui,sans-serif}body{max-width:850px;margin:auto;padding:24px;line-height:1.55}h1{line-height:1.2}button,input{font:inherit;padding:12px;border:1px solid #879099;border-radius:8px}button{cursor:pointer;margin:4px 5px 4px 0}button:disabled{opacity:.5;cursor:default}.card{padding:18px;border:1px solid #879099;border-radius:12px;margin:18px 0}.muted{opacity:.75;font-size:.92rem}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.88rem;max-height:330px;overflow:auto}label{display:block;margin:10px 0}input[type=text]{max-width:90%;width:430px}progress{width:100%;height:16px}#status{font-weight:650}table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:8px;border-bottom:1px solid #879099}summary{cursor:pointer}textarea{width:96%;height:160px;font:12px monospace}
+</style></head><body>
+<p class="muted">Regional Knowledge × Projects Hub · диагностическая страница v1</p>
+<h1>E5: сможет ли ваш телефон считать векторы?</h1>
+<p>Тест выполняется <strong>на этом устройстве</strong>: CPU / WASM, один поток, без WebGPU. Он не включает локальную модель в рабочий поиск.</p>
+<div class="card"><strong>Перед запуском</strong><p>Будут загружены публичные веса E5 INT8, токенизатор и runtime (примерно 150–190 МБ с учётом runtime). Нужны интернет и свободная память. Лучше Wi-Fi; оставьте страницу открытой. Вопросы фиксированные, текст книги на телефон не передаётся. Платных AI-вызовов нет.</p><p>Измеряется совместимость с серверными векторами, скорость и устойчивость этого запуска. Общую RAM приложения браузер надёжно не сообщает — она будет отмечена как <em>не измерена</em>. Успех на одном телефоне не означает поддержку всех устройств.</p>
+<label>Метка устройства (необязательно)<br><input id="label" type="text" maxlength="100" placeholder="Например: Samsung A54, Chrome, Wi-Fi"></label>
+<label><input id="consent" type="checkbox"> Разрешаю загрузку модели и вычисления для этого теста</label>
+<button id="start">Запустить тест</button><button id="stop" disabled>Остановить</button><button id="clear">Удалить кэш только этого теста</button></div>
+<div class="card"><p id="status" role="status" aria-live="polite">Готов к запуску</p><progress id="progress" max="100" value="0"></progress><p id="detail" class="muted">Обычно после загрузки потребуется ещё несколько минут на слабом устройстве.</p><table id="summary"></table><p id="quality" class="muted">Качество поиска по 712 чанкам: не измерено на устройстве. Тест сохранит векторы 30 вопросов; отдельный серверный evaluator сравнит их с тем же приватным индексом без повторного вызова модели.</p></div>
+<div class="card"><button id="save" disabled>Сохранить результат JSON</button><button id="share" disabled>Поделиться файлом</button><button id="show" disabled>Показать JSON</button><p class="muted">Ничего автоматически не отправляется на сервер. Передайте файл результата для оценки извлечения. Перед повторным запуском сохраните JSON; страница хранит только последний checkpoint. Кэш модели можно использовать повторно.</p><textarea id="json" hidden readonly></textarea></div>
+<details><summary>Ход теста и ограничения</summary><pre id="log"></pre><p>Измерения не включают Миру, микрофон, весь путь HTTP/MCP и доставку доказательств. При сворачивании текущий запуск помечается прерванным; после возвращения можно повторить тест. При закрытии вкладки браузер не сообщает причину: это не обязательно OOM. WebView и Chrome проверяются отдельно.</p></details>
+<script id="worker-source" type="text/plain">
+const REV='761b726dd34fb83930e26aab4e9ac3899aa1fa78';
+const MODEL='Xenova/multilingual-e5-small';
+const BENCH='f77f78427984fd970c85339c7de4f53a0f253004';
+const BASE='https://raw.githubusercontent.com/onedayonemasterpiece/regional-knowledge-base/'+BENCH+'/scripts/benchmarks/';
+const CACHE='rkb-device-e5-int8-v1';
+let totalHits=0,totalMisses=0,verified={};
+const send=(type,data={})=>postMessage({type,...data});
+function norm(v){let n=0;for(const x of v){if(!Number.isFinite(x))throw Error('NONFINITE_VECTOR');n+=x*x}if(!n)throw Error('ZERO_VECTOR');n=Math.sqrt(n);return Array.from(v,x=>Math.fround(x/n))}
+function compare(a,b){if(a.length!==b.length)throw Error('DIMENSION');let dot=0,na=0,nb=0,max=0;for(let i=0;i<a.length;i++){dot+=a[i]*b[i];na+=a[i]*a[i];nb+=b[i]*b[i];max=Math.max(max,Math.abs(a[i]-b[i]))}return {cosine:dot/Math.sqrt(na*nb),max_abs_error:max}}
+function stats(a){if(!a.length)return null;const s=[...a].sort((x,y)=>x-y);const q=p=>{let i=(s.length-1)*p,j=Math.floor(i);return s[j]+(s[Math.min(j+1,s.length-1)]-s[j])*(i-j)};return {n:s.length,p50_ms:q(.5),p95_ms:q(.95),max_ms:s.at(-1)}}
+async function digest(data){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',data)),x=>x.toString(16).padStart(2,'0')).join('')}
+async function jsonFile(name){const r=await fetch(BASE+name,{credentials:'omit'});if(!r.ok)throw Error('FIXTURE_HTTP_'+r.status);const text=await r.text();return {value:JSON.parse(text),sha256:await digest(new TextEncoder().encode(text))}}
+onmessage=async()=>{try{
+ const started=performance.now();send('stage',{name:'Загрузка эталона',progress:1});
+ const fixtureFile=await jsonFile('small_embedding_compatibility.json'),fixture=fixtureFile.value;
+ const qFile=await jsonFile('small_embedding_questions.json'),questions=qFile.value.questions;
+ if(fixture.candidate!=='e5'||fixture.revision!==REV||fixture.contract.dimension!==384||fixture.cases.length!==10)throw Error('REFERENCE_CONTRACT');
+ const module=await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1/dist/transformers.min.js');
+ const {env,AutoTokenizer,AutoModel}=module;
+ env.allowLocalModels=false;env.useBrowserCache=false;env.useFSCache=false;
+ env.backends.onnx.wasm.numThreads=1;env.backends.onnx.wasm.proxy=false;
+ const check=async(key,response)=>{const s=String(key);const name=Object.keys(fixture.file_hashes).find(p=>s.endsWith('/'+p));if(name){const actual=await digest(await response.clone().arrayBuffer());if(actual!==fixture.file_hashes[name])throw Error('ASSET_HASH_MISMATCH:'+name);verified[name]=actual}return response};
+ if(typeof caches!=='undefined'){
+  const cache=await caches.open(CACHE);env.useCustomCache=true;
+  env.customCache={match:async key=>{const r=await cache.match(key);if(r){totalHits++;return check(key,r)}totalMisses++;return undefined},put:async(key,r)=>{await check(key,r);await cache.put(key,r)}};
+ }
+ send('stage',{name:'Загрузка модели — только статические файлы',progress:5});
+ let last=0;const callback=p=>{if(performance.now()-last>500){last=performance.now();send('download',{file:p.file||'',status:p.status,percent:p.progress??null})}};
+ const loadStart=performance.now();
+ const tok=await AutoTokenizer.from_pretrained(MODEL,{revision:REV,progress_callback:callback});
+ const model=await AutoModel.from_pretrained(MODEL,{revision:REV,dtype:'q8',device:'wasm',progress_callback:callback});
+ async function encode(text,role='query'){
+  const t=performance.now(),input=await tok((role==='query'?'query: ':'passage: ')+text,{padding:true,truncation:true,max_length:512});
+  const output=await model(input);const hidden=output.last_hidden_state;
+  if(!hidden||hidden.dims.length!==3||hidden.dims[0]!==1||hidden.dims[2]!==384)throw Error('OUTPUT_CONTRACT');
+  const tokenids=Array.from(input.input_ids.data,Number),mask=Array.from(input.attention_mask.data,Number),v=new Float64Array(384);let count=0;
+  for(let i=0;i<mask.length;i++){if(!mask[i])continue;count++;for(let j=0;j<384;j++)v[j]+=Number(hidden.data[i*384+j])}
+  for(let j=0;j<384;j++)v[j]=Math.fround(v[j]/count);
+  const vector=norm(v);for(const x of Object.values(output)){if(typeof x.dispose==='function')x.dispose()}
+  for(const x of Object.values(input)){if(typeof x.dispose==='function')x.dispose()}
+  return {vector,tokenids,ms:performance.now()-t};
+ }
+ const loadMs=performance.now()-loadStart,first=await encode(fixture.cases[0].text);
+ send('loaded',{runtime:env.version,backend:'wasm',threads:1,model:MODEL,revision:REV,benchmark_commit:BENCH,fixture_sha256:fixtureFile.sha256,questions_sha256:qFile.sha256,corpus_sha256:qFile.value.corpus_sha256,load_ms:loadMs,first_query_ms:first.ms,launch_to_first_ms:performance.now()-started,cache_hits:totalHits,cache_misses:totalMisses,verified_assets:verified});
+ const checks=[];
+ for(let i=0;i<fixture.cases.length;i++){
+  const c=fixture.cases[i];
+  for(const role of ['query','document']){
+   const e=await encode(c.text,role),m=compare(e.vector,c[role+'_vector']),tokens=JSON.stringify(e.tokenids)===JSON.stringify(c[role+'_token_ids']);
+   checks.push({case_index:i,role,...m,tokens_equal:tokens,pass:tokens&&m.cosine>=fixture.comparison.cosine_min&&m.max_abs_error<=fixture.comparison.absolute_component_tolerance});
+  }
+  send('stage',{name:'Совместимость '+(i+1)+'/10',progress:10+2*i});
+ }
+ send('compatibility',{checks,pass:checks.every(x=>x.pass),comparison:fixture.comparison});
+ const qrows=[];
+ for(let i=0;i<questions.length;i++){const q=questions[i],e=await encode(q.query);qrows.push({id:q.id,vector:e.vector,token_ids:e.tokenids,ms:e.ms});send('queries',{rows:[...qrows]});send('stage',{name:'Векторы вопросов '+(i+1)+'/'+questions.length,progress:30+30*(i+1)/questions.length})}
+ for(let i=0;i<5;i++)await encode(questions[i].query);
+ const lat=[];
+ for(let i=0;i<100;i++){const e=await encode(questions[i%questions.length].query);lat.push(e.ms);if(i%10===0)send('stage',{name:'Скорость '+(i+1)+'/100',progress:60+i*.25})}
+ const queued=[],busy=[];
+ for(let group=0;group<10;group++){
+  const submitted=performance.now();
+  for(let j=0;j<4;j++){const e=await encode(questions[(group*4+j)%questions.length].query);busy.push(e.ms);queued.push(performance.now()-submitted)}
+ }
+ send('performance',{warm:stats(lat),queued4:stats(queued),queued4_service:stats(busy),samples_ms:lat,queued4_ms:queued,first_quarter:stats(lat.slice(0,25)),last_quarter:stats(lat.slice(-25))});
+ await model.dispose();send('done',{progress:100});
+}catch(e){send('failed',{message:String(e?.message||e).slice(0,1600)})}};
+</script>
+<script>
+'use strict';
+const $=id=>document.getElementById(id),KEY='rkb-device-bench-last-v1',CACHE='rkb-device-e5-int8-v1';
+let worker=null,url=null,report=null,lastEvent=0,watchdog=null,frameTimer=null,frameAt=0,frames=[],hiddenEvents=[];
+function log(s){$('log').textContent=(new Date().toLocaleTimeString()+' '+s+'\n'+$('log').textContent).slice(0,14000)}
+function persist(){if(report){report.updated_at=new Date().toISOString();try{localStorage.setItem(KEY,JSON.stringify(report))}catch(e){log('Не удалось сохранить checkpoint: '+e.name)}}}
+function buttons(){const active=!!worker;$('start').disabled=active;$('stop').disabled=!active;$('clear').disabled=active;for(const b of ['save','show','share'])$(b).disabled=!report}
+function table(){const rows=[['Статус',report.status],['Совместимость',report.compatibility?(report.compatibility.pass?'20/20 проверок прошли':'Есть расхождения — автоиспользование запрещено'):'Не проверена'],['p95 кодирования',report.performance?report.performance.warm.p95_ms.toFixed(2)+' мс':'Не измерена'],['p95 очереди из 4',report.performance?report.performance.queued4.p95_ms.toFixed(2)+' мс':'Не измерена'],['Векторы вопросов',(report.queries?.length||0)+'/30'],['Общая RAM','Не измерена браузером'],['Качество извлечения','Ожидает серверного evaluator']];$('summary').replaceChildren();for(const [a,b] of rows){let tr=document.createElement('tr');for(const v of [a,b]){let td=document.createElement('td');td.textContent=v;tr.append(td)}$('summary').append(tr)}}
+function finish(status,message){if(worker)worker.terminate();worker=null;if(url)URL.revokeObjectURL(url);url=null;clearInterval(watchdog);cancelAnimationFrame(frameTimer);if(report){report.status=status;report.finished_at=new Date().toISOString();report.message=message;report.visibility_events=hiddenEvents;report.ui_frames={count:frames.length,max_gap_ms:frames.length?Math.max(...frames):null,over_100ms:frames.filter(x=>x>100).length};persist();table()}$('status').textContent=message;log(message);buttons()}
+function frame(t){if(frameAt)frames.push(t-frameAt);frameAt=t;if(frames.length>20000)frames.shift();frameTimer=requestAnimationFrame(frame)}
+function onmessage(ev){lastEvent=Date.now();const m=ev.data;
+ if(m.type==='stage'){$('status').textContent=m.name;$('progress').value=m.progress;log(m.name)}
+ if(m.type==='download'){$('detail').textContent=[m.file,m.status,m.percent===null?'':Number(m.percent).toFixed(0)+'%'].join(' ')}
+ if(m.type==='loaded'){report.loaded=m;log('Модель загружена; первая обработка '+m.first_query_ms.toFixed(1)+' мс')}
+ if(m.type==='compatibility')report.compatibility=m;
+ if(m.type==='queries')report.queries=m.rows;
+ if(m.type==='performance')report.performance=m;
+ if(m.type==='failed'){report.error=m.message;finish('failed','Тест не завершён. Серверный режим остаётся необходимым.');$('detail').textContent=m.message;return}
+ if(m.type==='done'){let ok=report.compatibility?.pass&&report.performance?.warm.p95_ms<=1000;finish(ok?'completed_candidate':'completed_review','Готово. Сохраните JSON результата.');$('progress').value=100;$('detail').textContent=ok?'Этот запуск подходит для дальнейшей проверки. Это не гарантия устойчивости всех телефонов.':'Есть расхождения или высокая задержка. Автоматическое включение на устройстве не рекомендуется.';return}
+ persist();table();buttons();
+}
+$('start').onclick=async()=>{
+ if(!$('consent').checked){$('status').textContent='Сначала подтвердите загрузку и вычисления';return}
+ if(typeof Worker==='undefined'||typeof WebAssembly==='undefined'||!crypto.subtle){$('status').textContent='Необходимы HTTPS/локальный доверенный контекст, Worker и WebAssembly';return}
+ frames=[];frameAt=0;hiddenEvents=[];
+ report={schema:'rkb-device-embedding-run.v1',app_version:'1.0.1',run_id:crypto.randomUUID?crypto.randomUUID():String(Date.now()),started_at:new Date().toISOString(),status:'running',device_label:$('label').value,environment:{user_agent:navigator.userAgent,platform:navigator.platform,language:navigator.language,hardware_concurrency_hint:navigator.hardwareConcurrency??null,device_memory_hint_gib:navigator.deviceMemory??null,secure_context:isSecureContext,cross_origin_isolated:crossOriginIsolated,display_mode:matchMedia('(display-mode: standalone)').matches?'standalone':'browser',webgpu_exposed:!!navigator.gpu},memory:{total_process_peak_bytes:null,reason:'Not measurable reliably by portable browser API; deviceMemory is a capacity hint, not process usage'},retrieval_quality:{status:'pending_offline_evaluator',reason:'Private 712-chunk index is not published to the browser'},queries:[]};
+ $('log').textContent='';$('json').hidden=true;$('progress').value=0;
+ try{report.storage_before=await navigator.storage?.estimate()}catch{}
+ url=URL.createObjectURL(new Blob([$('worker-source').textContent],{type:'text/javascript'}));worker=new Worker(url,{type:'module'});worker.onmessage=onmessage;worker.onerror=e=>{if(report)report.error=e.message;finish('failed','Ошибка worker: '+e.message)};
+ lastEvent=Date.now();watchdog=setInterval(()=>{if(Date.now()-lastEvent>240000)finish('timeout','Более 4 минут без прогресса. Запуск остановлен, сохраните частичный JSON.')},2000);
+ frameTimer=requestAnimationFrame(frame);persist();buttons();worker.postMessage({start:true});
+};
+$('stop').onclick=()=>finish('cancelled','Остановлено пользователем. Частичный JSON сохранён.');
+$('clear').onclick=async()=>{if(worker)return;try{if(typeof caches!=='undefined')await caches.delete(CACHE);$('status').textContent='Удалён только кэш модели этого теста. Аудио, проекты и вход в приложение не затронуты.'}catch(e){$('status').textContent='Очистка не выполнена: '+e.message}};
+function makeFile(){return new File([JSON.stringify(report,null,2)],'e5-device-'+report.run_id+'.json',{type:'application/json'})}
+$('save').onclick=()=>{const u=URL.createObjectURL(makeFile()),a=document.createElement('a');a.href=u;a.download='e5-device-'+report.run_id+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(u),30000)};
+$('share').onclick=async()=>{try{const file=makeFile();if(navigator.canShare?.({files:[file]}))await navigator.share({files:[file],title:'E5 device benchmark'});else $('show').click()}catch(e){if(e.name!=='AbortError'){$('detail').textContent=e.message;$('show').click()}}};
+$('show').onclick=()=>{$('json').hidden=false;$('json').value=JSON.stringify(report,null,2);$('json').select()};
+document.addEventListener('visibilitychange',()=>{if(worker){hiddenEvents.push({at:new Date().toISOString(),state:document.visibilityState});if(document.hidden)finish('interrupted_hidden','Тест прерван при сворачивании. Вернитесь и запустите повторно; кэш сохранён.')}});
+try{const last=localStorage.getItem(KEY);if(last){report=JSON.parse(last);if(report.status==='running'){report.status='interrupted_unknown';report.message='Предыдущая вкладка закрылась/была завершена; причина неизвестна, это не доказанный OOM';persist()}table();$('status').textContent='Сохранён предыдущий результат: '+report.status;buttons()}}catch{}
+window.rkbDeviceBenchmark={getReport:()=>report};
+</script></body></html>
