@@ -13,7 +13,7 @@ dependencies = [
   "httpx>=0.28,<1",
   "PyJWT[crypto]>=2.10,<3",
   "mcp>=2,<3",
-  "live-interaction @ git+https://github.com/onedayonemasterpiece/live-interaction.git@v0.3.8",
+  "live-interaction @ git+https://github.com/onedayonemasterpiece/live-interaction.git@v0.3.12",
 ]
 
 [project.optional-dependencies]
