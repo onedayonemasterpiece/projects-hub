@@ -95,6 +95,20 @@ final class WebOriginPolicy {
                 );
     }
 
+    boolean isTrustedUpdateCheckAction(String currentPageUrl, String targetUrl) {
+        if (!isTrustedPageUrl(currentPageUrl)) return false;
+        URI target = parseOrNull(targetUrl);
+        if (target == null
+                || target.getUserInfo() != null
+                || target.getQuery() != null
+                || target.getFragment() != null) {
+            return false;
+        }
+        return "projectshub".equalsIgnoreCase(target.getScheme())
+                && "update".equalsIgnoreCase(target.getHost())
+                && "/check".equals(target.getPath());
+    }
+
     boolean isTrustedMicrophoneSettingsAction(String currentPageUrl, String targetUrl) {
         if (!isTrustedPageUrl(currentPageUrl)) return false;
         URI target = parseOrNull(targetUrl);
