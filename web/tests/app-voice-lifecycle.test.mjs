@@ -117,3 +117,17 @@ test("backlog stays primary while owner development is observable and triggers u
   assert.match(api, /remaining_percent/);
   assert.match(api, /reasoning_efforts/);
 });
+
+
+test("Android shows an explicit update dialog and sends native version to Live", async () => {
+  const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  const android = await readFile(
+    new URL("../../android/app/src/main/java/com/kenigevents/projectshub/MainActivity.java", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /ProjectsHubAndroid\\\/\(\[\^\\s\]\+\)/);
+  assert.match(source, /client_version:\s*nativeVersion/);
+  assert.match(android, /Доступно обновление Projects Hub/);
+  assert.match(android, /setPositiveButton\("Обновить"/);
+  assert.match(android, /setNegativeButton\("Позже"/);
+});
