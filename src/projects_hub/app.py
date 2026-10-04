@@ -365,6 +365,16 @@ def create_app(
             "github_app_configured": app.state.github_connections.configured,
         }
 
+    @app.get("/api/runtime")
+    async def runtime_info(request: Request) -> dict[str, Any]:
+        actor_id_from_request(request)
+        return {
+            "backend_version": __version__,
+            "build": {
+                "release_sha": settings.release_sha,
+            },
+        }
+
     @app.get("/api/auth/config")
     async def auth_config() -> dict[str, Any]:
         if settings.public_auth_enabled:
