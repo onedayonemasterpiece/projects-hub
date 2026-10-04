@@ -743,6 +743,46 @@ def create_app(
             state=payload.state,
         )
 
+    @app.get("/api/development/codex-status")
+    async def development_codex_status(
+        request: Request,
+        workspace_id: str,
+    ) -> dict[str, Any]:
+        return await app.state.development.codex_status(
+            actor_id=actor_id_from_request(request),
+            workspace_id=workspace_id,
+        )
+
+    @app.get("/api/development/executions")
+    async def development_executions(
+        request: Request,
+        workspace_id: str,
+        project_id: str | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        actor_id = actor_id_from_request(request)
+        return {
+            "items": app.state.development.list_executions(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                limit=limit,
+            )
+        }
+
+    @app.get("/api/development/executions/latest")
+    async def development_execution_latest(
+        request: Request,
+        workspace_id: str,
+        sync: bool = True,
+    ) -> dict[str, Any]:
+        return await app.state.development.status(
+            actor_id=actor_id_from_request(request),
+            workspace_id=workspace_id,
+            execution_id=None,
+            sync=sync,
+        )
+
     @app.get("/api/memories")
     async def memories(
         request: Request,
