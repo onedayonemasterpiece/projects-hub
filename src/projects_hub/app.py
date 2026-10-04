@@ -428,6 +428,14 @@ def create_app(
             conversation_id=payload.conversation_id,
         )
 
+    @app.post("/api/github/app-manifest/legacy-launch")
+    async def github_app_manifest_legacy_launch(state: str):
+        app.state.github_connections.manifest_launch(state)
+        return RedirectResponse(
+            url=f"/api/github/app-manifest/launch?state={state}",
+            status_code=303,
+        )
+
     @app.get("/api/github/app-manifest/launch")
     async def github_app_manifest_launch(state: str):
         payload = app.state.github_connections.manifest_launch(state)
