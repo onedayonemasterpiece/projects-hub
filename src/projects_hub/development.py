@@ -493,10 +493,11 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
             self.store.db.execute(
                 """INSERT INTO task_executions(
                        id,actor_id,workspace_id,project_id,task_ids_json,project_hint,
-                       provider,model_profile,prompt,prompt_sha256,status,
-                       quota_remaining_percent,result_summary,error_code,
-                       created_at_ms,updated_at_ms,started_at_ms,finished_at_ms
-                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?, ?,? ,?, ?,?,?,?)""",
+                       provider,model_profile,work_branch,base_sha,phase,phase_updated_at_ms,
+                       prompt,prompt_sha256,status,quota_remaining_percent,
+                       result_summary,error_code,created_at_ms,updated_at_ms,
+                       started_at_ms,finished_at_ms
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     execution_id,
                     actor_id,
@@ -506,6 +507,10 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
                     project_hint,
                     "codex",
                     selected_model + ":" + selected_effort,
+                    None,
+                    None,
+                    "preparing",
+                    now,
                     prompt,
                     hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
                     "starting",
@@ -520,6 +525,26 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
             )
 
         try:
+            workspace = await self._prepare_workspace(
+                project_hint=project_hint,
+                execution_id=execution_id,
+            )
+            now = _now_ms()
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE task_executions
+                       SET work_branch=?,base_sha=?,phase='planning',
+                           phase_updated_at_ms=?,updated_at_ms=?
+                       WHERE id=?""",
+                    (
+                        workspace["branch"],
+                        workspace["base_sha"],
+                        now,
+                        now,
+                        execution_id,
+                    ),
+                )
+
             result = await self._call(
                 "start_task",
                 {
@@ -542,9 +567,15 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
             with self.store._lock:
                 self.store.db.execute(
                     """UPDATE task_executions
-                       SET status='running',devcoveer_task_id=?,started_at_ms=?,updated_at_ms=?
+                       SET status='running',devcoveer_task_id=?,
+                           phase=CASE WHEN phase='preparing' THEN 'planning' ELSE phase END,
+                           phase_updated_at_ms=CASE
+                               WHEN phase='preparing' THEN ?
+                               ELSE phase_updated_at_ms
+                           END,
+                           started_at_ms=?,updated_at_ms=?
                        WHERE id=?""",
-                    (devcoveer_task_id, now, now, execution_id),
+                    (devcoveer_task_id, now, now, now, execution_id),
                 )
                 for task in tasks:
                     if task.get("state") not in {"accepted", "done"}:
@@ -558,9 +589,10 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
             with self.store._lock:
                 self.store.db.execute(
                     """UPDATE task_executions
-                       SET status='failed',error_code=?,finished_at_ms=?,updated_at_ms=?
+                       SET status='failed',phase='failed',phase_updated_at_ms=?,
+                           error_code=?,finished_at_ms=?,updated_at_ms=?
                        WHERE id=?""",
-                    (str(code)[:120], now, now, execution_id),
+                    (now, str(code)[:120], now, now, execution_id),
                 )
             raise
 
