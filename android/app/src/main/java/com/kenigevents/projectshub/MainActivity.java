@@ -196,6 +196,12 @@ public final class MainActivity extends Activity {
         view.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView webView, WebResourceRequest request) {
+                String targetUrl = request.getUrl().toString();
+                String currentUrl = webView.getUrl() == null ? "" : webView.getUrl();
+                if (webOriginPolicy.isTrustedMicrophoneSettingsAction(currentUrl, targetUrl)) {
+                    openMicrophoneSettings();
+                    return true;
+                }
                 String scheme = request.getUrl().getScheme();
                 return !("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme));
             }
@@ -294,16 +300,18 @@ public final class MainActivity extends Activity {
         );
     }
 
+    private void openMicrophoneSettings() {
+        Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+        intent.setData(Uri.parse("package:" + getPackageName()));
+        startActivity(intent);
+    }
+
     private void showMicrophoneSettingsDialog() {
         if (isFinishing() || isDestroyed()) return;
         new AlertDialog.Builder(this)
                 .setTitle("Нужен доступ к микрофону")
                 .setMessage("Projects Hub использует микрофон только когда вы запускаете голосовой разговор.")
-                .setPositiveButton("Открыть настройки", (dialog, which) -> {
-                    Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
-                    intent.setData(Uri.parse("package:" + getPackageName()));
-                    startActivity(intent);
-                })
+                .setPositiveButton("Открыть настройки", (dialog, which) -> openMicrophoneSettings())
                 .setNegativeButton("Позже", null)
                 .show();
     }
