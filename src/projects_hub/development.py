@@ -329,7 +329,7 @@ class DevelopmentService:
         return project_name
 
     @staticmethod
-    def _prompt(project_name: str, tasks: list[dict[str, Any]]) -> str:
+    def _backlog_text(tasks: list[dict[str, Any]]) -> str:
         rows = []
         for index, task in enumerate(tasks, 1):
             title = str(task.get("title") or "").strip()
@@ -338,18 +338,234 @@ class DevelopmentService:
                 f"{index}. [{task['id']}] {title}"
                 + (f"\n   {description}" if description else "")
             )
-        backlog = "\n".join(rows)
-        return f"""Implement the following owner-approved Projects Hub backlog work for project {project_name}.
+        return "\n".join(rows)
 
-{backlog}
+    @classmethod
+    def _design_prompt(
+        cls,
+        project_name: str,
+        tasks: list[dict[str, Any]],
+        spec_path: str,
+    ) -> str:
+        return f"""You are the quality/design thread for an owner-approved development batch in {project_name}.
 
-Work to a concrete, verifiable product result. Preserve the project's .devcoveer requirements and existing architecture; reuse proven components rather than introducing parallel mechanisms. Keep scope to these backlog items. Add or update tests. Use the repository's normal CI and delivery path. If native Android changes are required, finish through the normal signed Android release/update path; if only backend/PWA changes are required, deploy and verify those instead. Do not weaken critical requirements. At the end report what was actually delivered, verification performed, deployment/release state, and any genuine blocker that remains."""
+Backlog:
+{cls._backlog_text(tasks)}
+
+Do NOT implement product code, merge, deploy or release in this turn. Perform a systematic engineering analysis first: inspect the current code and project requirements, identify hidden constraints and edge cases, define regression risks, test cases and a concrete Definition of Done. Update relevant project documentation when needed and write the complete implementation brief to exactly:
+{spec_path}
+
+The brief must be sufficient for a separate implementation thread to work without guessing. Include when browser acceptance, Android emulator/device acceptance, CI, deployment or signed Android release are required. Keep scope to the selected backlog tasks and preserve .devcoveer critical requirements. End with a concise summary and the exact spec path."""
+
+    @staticmethod
+    def _implementation_prompt(project_name: str, spec_path: str) -> str:
+        return f"""Implement the owner-approved development specification for {project_name} at:
+{spec_path}
+
+Read the specification and current repository state first. Implement the requested product change, add/update tests, and perform the required debugging and browser/emulator checks from the spec. Prepare a reviewable branch/PR and CI evidence, but DO NOT merge, deploy, publish a release or modify production yet. Stop when the change is ready for independent quality review. Report branch/PR, tests, debugging evidence and any blocker."""
+
+    @staticmethod
+    def _review_prompt(spec_path: str, cycle: int) -> str:
+        return f"""Review cycle {cycle} for the implementation of:
+{spec_path}
+
+You are the same quality/design thread that produced the specification. Re-read the specification, inspect the current implementation diff/PR and verification evidence, and perform an independent acceptance/code review. Check edge cases, regressions, architecture/requirements compliance, tests and required browser/emulator evidence. Do NOT implement fixes and do NOT merge/deploy/release.
+
+If the implementation is acceptable, end with the exact line:
+REVIEW_VERDICT: ACCEPTED
+
+If material fixes are required, update the specification with the concrete rework required and end with the exact line:
+REVIEW_VERDICT: REWORK_REQUIRED
+
+Before the verdict, give concise actionable findings."""
+
+    @staticmethod
+    def _rework_prompt(spec_path: str, review_summary: str, cycle: int) -> str:
+        return f"""Rework cycle {cycle}. The independent quality thread found issues in the implementation of:
+{spec_path}
+
+Review findings:
+{review_summary}
+
+Read the updated specification and fix all material findings. Re-run the required tests/debugging/browser/emulator checks. Keep the existing implementation thread and scope. Do NOT merge, deploy or release. Stop when the change is again ready for independent review and report the updated evidence."""
+
+    @staticmethod
+    def _delivery_prompt(spec_path: str) -> str:
+        return f"""Independent quality review ACCEPTED the implementation of:
+{spec_path}
+
+Now finish delivery using the repository's normal path. Merge/publish only the accepted implementation, run required CI, deploy and verify production when applicable. If native Android changed, produce the normal signed Android release/update manifest and verify the release; if only backend/PWA changed, deploy and verify that path instead. Do not broaden scope. Report the actual delivered version/release, production verification and any genuine blocker."""
+
+    @staticmethod
+    def _review_verdict(summary: str) -> str | None:
+        upper = summary.upper()
+        if "REVIEW_VERDICT: ACCEPTED" in upper:
+            return "accepted"
+        if "REVIEW_VERDICT: REWORK_REQUIRED" in upper:
+            return "rework_required"
+        return None
+
+    @staticmethod
+    def _token_usage(result: dict[str, Any]) -> dict[str, Any] | None:
+        value = result.get("tokenUsage")
+        if not isinstance(value, dict):
+            latest = result.get("latestTurn")
+            value = latest.get("tokenUsage") if isinstance(latest, dict) else None
+        if not isinstance(value, dict):
+            return None
+        clean: dict[str, Any] = {}
+        for key in (
+            "inputTokens",
+            "cachedInputTokens",
+            "outputTokens",
+            "reasoningOutputTokens",
+            "totalTokens",
+        ):
+            raw = value.get(key)
+            if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
+                clean[key] = raw
+        return clean or None
+
+    def _record_stage(
+        self,
+        *,
+        execution_id: str,
+        stage: str,
+        cycle: int,
+        model: str,
+        reasoning_effort: str,
+        devcoveer_task_id: str,
+    ) -> None:
+        now = _now_ms()
+        with self.store._lock:
+            self.store.db.execute(
+                """INSERT INTO task_execution_stages(
+                       id,execution_id,stage,cycle,model,reasoning_effort,
+                       devcoveer_task_id,status,summary,review_verdict,
+                       token_usage_json,started_at_ms,finished_at_ms,
+                       created_at_ms,updated_at_ms
+                   ) VALUES(?,?,?,?,?,?,?,'running','',NULL,NULL,?,NULL,?,?)""",
+                (
+                    "devstage_" + uuid.uuid4().hex,
+                    execution_id,
+                    stage,
+                    int(cycle),
+                    model,
+                    reasoning_effort,
+                    devcoveer_task_id,
+                    now,
+                    now,
+                    now,
+                ),
+            )
+
+    def _active_stage(self, execution_id: str) -> dict[str, Any] | None:
+        with self.store._lock:
+            row = self.store.db.execute(
+                """SELECT * FROM task_execution_stages
+                   WHERE execution_id=? AND status='running'
+                   ORDER BY created_at_ms DESC LIMIT 1""",
+                (execution_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def _finish_stage(
+        self,
+        *,
+        stage_id: str,
+        status: str,
+        summary: str,
+        review_verdict: str | None = None,
+        token_usage: dict[str, Any] | None = None,
+    ) -> None:
+        now = _now_ms()
+        with self.store._lock:
+            self.store.db.execute(
+                """UPDATE task_execution_stages
+                   SET status=?,summary=?,review_verdict=?,token_usage_json=?,
+                       finished_at_ms=?,updated_at_ms=?
+                   WHERE id=?""",
+                (
+                    status,
+                    summary[:12000],
+                    review_verdict,
+                    json.dumps(token_usage, separators=(",", ":")) if token_usage else None,
+                    now,
+                    now,
+                    stage_id,
+                ),
+            )
+
+    async def _require_stage_capacity(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        model: str,
+        reasoning_effort: str,
+    ) -> float:
+        status = await self.codex_status(actor_id=actor_id, workspace_id=workspace_id)
+        remaining = status.get("remaining_percent")
+        if (
+            status.get("eligible") is not True
+            or not isinstance(remaining, (int, float))
+            or float(remaining) <= 10.0
+        ):
+            raise StoreError(
+                "CODEX_CAPACITY_RESERVED",
+                "Native Codex capacity is unavailable or at the 10% reserve",
+            )
+        available = {
+            str(item["id"]): item
+            for item in status.get("models", [])
+            if isinstance(item, dict)
+            and isinstance(item.get("id"), str)
+            and item.get("availability") != "eol"
+        }
+        record = available.get(model)
+        if record is None:
+            raise StoreError("CODEX_MODEL_UNAVAILABLE", f"{model} is unavailable")
+        efforts = {str(value) for value in record.get("reasoning_efforts") or []}
+        if reasoning_effort not in efforts:
+            raise StoreError(
+                "CODEX_REASONING_UNAVAILABLE",
+                f"{reasoning_effort} is unavailable for {model}",
+            )
+        return float(remaining)
 
     def _execution_public(self, row: Any) -> dict[str, Any]:
         item = dict(row)
         item["task_ids"] = json.loads(item.pop("task_ids_json"))
         item.pop("prompt", None)
         item.pop("prompt_sha256", None)
+        with self.store._lock:
+            stage_rows = self.store.db.execute(
+                """SELECT * FROM task_execution_stages
+                   WHERE execution_id=? ORDER BY created_at_ms""",
+                (item["id"],),
+            ).fetchall()
+        stages = []
+        usage_by_model: dict[str, dict[str, int]] = {}
+        for stage_row in stage_rows:
+            stage = dict(stage_row)
+            raw_usage = stage.pop("token_usage_json", None)
+            usage = None
+            if isinstance(raw_usage, str) and raw_usage:
+                try:
+                    parsed = json.loads(raw_usage)
+                    usage = parsed if isinstance(parsed, dict) else None
+                except ValueError:
+                    usage = None
+            stage["token_usage"] = usage
+            stages.append(stage)
+            if usage:
+                model = str(stage.get("model") or "")
+                bucket = usage_by_model.setdefault(model, {})
+                for key, value in usage.items():
+                    if isinstance(value, int) and not isinstance(value, bool):
+                        bucket[key] = bucket.get(key, 0) + value
+        item["stages"] = stages
+        item["token_usage_by_model"] = usage_by_model
         return item
 
     def _execution_row(
