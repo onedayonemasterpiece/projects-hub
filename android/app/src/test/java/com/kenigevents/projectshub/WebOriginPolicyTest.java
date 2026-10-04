@@ -73,4 +73,32 @@ public class WebOriginPolicyTest {
     }
 
 
+    @Test
+    public void githubNavigationLeavesWebViewOnlyFromTrustedProjectsHubPage() {
+        assertTrue(policy.isTrustedExternalGitHubNavigation(
+                "https://projects-hub.kenigevents.ru/",
+                "https://projects-hub.kenigevents.ru/api/github/app-manifest/launch?state=abc_DEF-123"
+        ));
+        assertTrue(policy.isTrustedExternalGitHubNavigation(
+                "https://projects-hub.kenigevents.ru/work",
+                "https://github.com/apps/projects-hub/installations/new?state=opaque"
+        ));
+        assertTrue(policy.isTrustedExternalGitHubNavigation(
+                "https://projects-hub.kenigevents.ru/work",
+                "https://github.com/settings/installations/123"
+        ));
+        assertFalse(policy.isTrustedExternalGitHubNavigation(
+                "https://evil.example/",
+                "https://github.com/settings/installations/123"
+        ));
+        assertFalse(policy.isTrustedExternalGitHubNavigation(
+                "https://projects-hub.kenigevents.ru/",
+                "https://github.com/evil/path"
+        ));
+        assertFalse(policy.isTrustedExternalGitHubNavigation(
+                "https://projects-hub.kenigevents.ru/",
+                "https://projects-hub.kenigevents.ru/api/github/app-manifest/launch?state=a&next=evil"
+        ));
+    }
+
 }
