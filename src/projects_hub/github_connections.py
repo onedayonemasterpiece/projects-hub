@@ -151,6 +151,24 @@ class GitHubConnections:
             raise StoreError("GITHUB_INVALID_RESPONSE", "GitHub App registration response is invalid")
         return payload
 
+    def _manifest_payload(self, *, suffix: str) -> dict[str, Any]:
+        return {
+            "name": f"projects-hub-{suffix}",
+            "url": self.settings.public_origin,
+            "hook_attributes": {
+                "url": f"{self.settings.public_origin}/api/github/webhook",
+                "active": True,
+            },
+            "redirect_url": f"{self.settings.public_origin}/api/github/app-manifest/callback",
+            "setup_url": f"{self.settings.public_origin}/api/github/install/callback",
+            "setup_on_update": True,
+            "public": False,
+            "default_permissions": {
+                "metadata": "read",
+                "contents": "write",
+            },
+        }
+
     def start_manifest_registration(
         self,
         *,
@@ -178,36 +196,39 @@ class GitHubConnections:
             expires_at_ms=expires_at_ms,
             conversation_id=conversation_id,
         )
-        suffix = secrets.token_hex(4)
-        manifest = {
-            "name": f"projects-hub-{suffix}",
-            "url": self.settings.public_origin,
-            "hook_attributes": {
-                "url": f"{self.settings.public_origin}/api/github/webhook",
-                "active": True,
-            },
-            "redirect_url": f"{self.settings.public_origin}/api/github/app-manifest/callback",
-            "setup_url": f"{self.settings.public_origin}/api/github/install/callback",
-            "setup_on_update": True,
-            "public": False,
-            "default_permissions": {
-                "metadata": "read",
-                "contents": "write",
-            },
-        }
+        manifest = self._manifest_payload(suffix=secrets.token_hex(4))
         return {
+            "launch_url": f"{self.settings.public_origin}/api/github/app-manifest/launch?state={state}",
             "action_url": "https://github.com/settings/apps/new",
             "manifest": json.dumps(manifest, separators=(",", ":"), ensure_ascii=False),
             "state": state,
             "expires_at_ms": expires_at_ms,
         }
 
+    def manifest_launch(self, state: str) -> dict[str, Any]:
+        if not state or len(state) > 500:
+            raise StoreError(
+                "GITHUB_APP_MANIFEST_STATE_INVALID",
+                "GitHub App manifest state is invalid",
+            )
+        pending = self.store.github_app_manifest_state(self._state_hash(state))
+        return {
+            "action_url": "https://github.com/settings/apps/new",
+            "manifest": json.dumps(
+                self._manifest_payload(suffix=self._state_hash(state)[:8]),
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ),
+            "state": state,
+            "workspace_id": str(pending["workspace_id"]),
+        }
+
     async def complete_manifest_registration(
         self,
         *,
-        actor_id: str,
         state: str,
         code: str,
+        actor_id: str | None = None,
     ) -> dict[str, Any]:
         if (
             not state
@@ -220,9 +241,12 @@ class GitHubConnections:
                 "GITHUB_APP_MANIFEST_STATE_INVALID",
                 "GitHub App registration callback is invalid",
             )
+        raw_hash = self._state_hash(state)
+        if actor_id is None:
+            actor_id = str(self.store.github_app_manifest_state(raw_hash)["actor_id"])
         pending = self.store.consume_github_app_manifest_state(
             actor_id=actor_id,
-            state_hash=self._state_hash(state),
+            state_hash=raw_hash,
         )
         payload = await self._exchange_manifest_code(code)
         try:
@@ -280,9 +304,9 @@ class GitHubConnections:
     async def complete_install(
         self,
         *,
-        actor_id: str,
         state: str,
         installation_id: int,
+        actor_id: str | None = None,
     ) -> dict[str, Any]:
         client = self._require_client()
         if not state or len(state) > 500 or installation_id <= 0:
@@ -290,6 +314,8 @@ class GitHubConnections:
                 "GITHUB_INSTALL_STATE_INVALID",
                 "GitHub installation callback is invalid",
             )
+        if actor_id is None:
+            actor_id = str(self.store.github_install_state(self._state_hash(state))["actor_id"])
         installation = await client.get_installation(installation_id)
         if installation.get("suspended_at"):
             raise StoreError(

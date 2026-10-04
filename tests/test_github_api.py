@@ -28,13 +28,23 @@ class FakeGitHubConnections:
     def start_manifest_registration(self, *, actor_id, workspace_id, conversation_id=None):
         self.calls.append(("manifest_start", actor_id, workspace_id, conversation_id))
         return {
+            "launch_url": "https://projects-hub.kenigevents.ru/api/github/app-manifest/launch?state=manifest-state",
             "action_url": "https://github.com/settings/apps/new",
             "manifest": "{\"name\":\"projects-hub-test\"}",
             "state": "manifest-state",
             "expires_at_ms": 9999999999999,
         }
 
-    async def complete_manifest_registration(self, *, actor_id, state, code):
+    def manifest_launch(self, state):
+        self.calls.append(("manifest_launch", state))
+        return {
+            "action_url": "https://github.com/settings/apps/new",
+            "manifest": "{\"name\":\"projects-hub-test\"}",
+            "state": state,
+            "workspace_id": "ws_fake",
+        }
+
+    async def complete_manifest_registration(self, *, state, code, actor_id=None):
         self.calls.append(("manifest_callback", actor_id, state, code))
         return {
             "workspace_id": "ws_fake",
@@ -49,7 +59,7 @@ class FakeGitHubConnections:
             "expires_at_ms": 9999999999999,
         }
 
-    async def complete_install(self, *, actor_id, state, installation_id):
+    async def complete_install(self, *, state, installation_id, actor_id=None):
         self.calls.append(("callback", actor_id, state, installation_id))
         return {
             "workspace_id": "ws_fake",
@@ -175,7 +185,16 @@ def test_owner_http_flow_exposes_only_connection_metadata(tmp_path: Path):
         assert manifest.json()["action_url"] == "https://github.com/settings/apps/new"
         assert manifest.json()["state"] == "manifest-state"
 
-        manifest_callback = client.get(
+        external = TestClient(app, base_url="http://localhost")
+        launch = external.get(
+            "/api/github/app-manifest/launch",
+            params={"state": "manifest-state"},
+        )
+        assert launch.status_code == 200
+        assert 'method="post"' in launch.text
+        assert "https://github.com/settings/apps/new" in launch.text
+
+        manifest_callback = external.get(
             "/api/github/app-manifest/callback",
             params={"code": "manifestcode", "state": "manifest-state"},
             follow_redirects=False,
@@ -192,7 +211,7 @@ def test_owner_http_flow_exposes_only_connection_metadata(tmp_path: Path):
         assert started.status_code == 200
         assert started.json()["install_url"].startswith("https://github.com/apps/")
 
-        callback = client.get(
+        callback = external.get(
             "/api/github/install/callback",
             params={
                 "installation_id": 77,
@@ -202,7 +221,10 @@ def test_owner_http_flow_exposes_only_connection_metadata(tmp_path: Path):
             follow_redirects=False,
         )
         assert callback.status_code == 303
-        assert callback.headers["location"] == "/?github=connected"
+        assert callback.headers["location"] == "/api/github/return"
+        return_page = external.get("/api/github/return")
+        assert return_page.status_code == 200
+        assert "projectshub://github/connected" in return_page.text
 
         bound = client.post(
             "/api/github/repositories/101/bind",
@@ -219,7 +241,8 @@ def test_owner_http_flow_exposes_only_connection_metadata(tmp_path: Path):
         assert bound.json()["role"] == "project_docs"
 
         assert ("status", actor_id, workspace_id) in github.calls
-        assert any(call[0] == "callback" and call[3] == 77 for call in github.calls)
+        assert any(call[0] == "callback" and call[1] is None and call[3] == 77 for call in github.calls)
+        assert any(call[0] == "manifest_callback" and call[1] is None for call in github.calls)
         assert any(call[0] == "bind" and call[3] == 101 for call in github.calls)
     store.close()
 

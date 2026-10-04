@@ -564,29 +564,6 @@ export default function App() {
     }
   }
 
-  function submitGitHubManifest(result: {
-    action_url: string;
-    manifest: string;
-    state: string;
-  }) {
-    const form = document.createElement("form");
-    form.method = "POST";
-    form.action = result.action_url;
-    form.style.display = "none";
-    for (const [name, value] of Object.entries({
-      manifest: result.manifest,
-      state: result.state,
-    })) {
-      const input = document.createElement("input");
-      input.type = "hidden";
-      input.name = name;
-      input.value = value;
-      form.appendChild(input);
-    }
-    document.body.appendChild(form);
-    form.submit();
-  }
-
   async function connectGitHub() {
     if (!boot || boot.role !== "owner" || githubBusy) return;
     setGitHubBusy(true);
@@ -597,7 +574,7 @@ export default function App() {
           boot.workspace.id,
           conversationRef.current?.id ?? null,
         );
-        submitGitHubManifest(manifest);
+        window.location.assign(manifest.launch_url);
         return;
       }
       const result = await startGitHubInstall(

@@ -41,6 +41,39 @@ final class WebOriginPolicy {
         return candidate != null && candidate.getUserInfo() == null && sameOrigin(candidate);
     }
 
+    boolean isTrustedExternalGitHubNavigation(String currentPageUrl, String targetUrl) {
+        if (!isTrustedPageUrl(currentPageUrl)) return false;
+        URI target = parseOrNull(targetUrl);
+        if (target == null
+                || target.getUserInfo() != null
+                || target.getFragment() != null) {
+            return false;
+        }
+
+        if (sameOrigin(target)) {
+            String query = target.getRawQuery();
+            return "/api/github/app-manifest/launch".equals(target.getPath())
+                    && query != null
+                    && query.startsWith("state=")
+                    && !query.contains("&");
+        }
+
+        String targetScheme = target.getScheme();
+        String targetHost = target.getHost();
+        if (targetScheme == null
+                || targetHost == null
+                || !"https".equalsIgnoreCase(targetScheme)
+                || !"github.com".equalsIgnoreCase(targetHost)
+                || effectivePort(target) != 443) {
+            return false;
+        }
+        String path = target.getPath();
+        return path != null
+                && (path.startsWith("/apps/")
+                    || path.startsWith("/settings/apps/")
+                    || path.startsWith("/settings/installations/"));
+    }
+
     boolean isTrustedMicrophoneSettingsAction(String currentPageUrl, String targetUrl) {
         if (!isTrustedPageUrl(currentPageUrl)) return false;
         URI target = parseOrNull(targetUrl);

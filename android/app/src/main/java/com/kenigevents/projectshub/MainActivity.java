@@ -133,8 +133,17 @@ public final class MainActivity extends Activity {
         root.addView(updateButton, updateParams);
 
         setContentView(root);
-        webView.loadUrl(BuildConfig.HUB_URL);
+        if (!handleGitHubReturn(getIntent())) {
+            webView.loadUrl(BuildConfig.HUB_URL);
+        }
         updater.checkForUpdate();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleGitHubReturn(intent);
     }
 
     @Override
@@ -200,6 +209,10 @@ public final class MainActivity extends Activity {
                 String currentUrl = webView.getUrl() == null ? "" : webView.getUrl();
                 if (webOriginPolicy.isTrustedMicrophoneSettingsAction(currentUrl, targetUrl)) {
                     openMicrophoneSettings();
+                    return true;
+                }
+                if (webOriginPolicy.isTrustedExternalGitHubNavigation(currentUrl, targetUrl)) {
+                    openExternalBrowser(request.getUrl());
                     return true;
                 }
                 String scheme = request.getUrl().getScheme();
@@ -298,6 +311,37 @@ public final class MainActivity extends Activity {
                 new String[]{Manifest.permission.RECORD_AUDIO},
                 REQUEST_MICROPHONE
         );
+    }
+
+    private boolean handleGitHubReturn(Intent intent) {
+        Uri data = intent == null ? null : intent.getData();
+        if (data == null
+                || !"projectshub".equalsIgnoreCase(data.getScheme())
+                || !"github".equalsIgnoreCase(data.getHost())
+                || !"/connected".equals(data.getPath())
+                || data.getQuery() != null
+                || data.getFragment() != null) {
+            return false;
+        }
+        if (webView != null) {
+            webView.loadUrl(BuildConfig.HUB_URL + "?github=connected");
+        }
+        return true;
+    }
+
+    private void openExternalBrowser(Uri uri) {
+        Intent chrome = new Intent(Intent.ACTION_VIEW, uri);
+        chrome.setPackage("com.android.chrome");
+        if (chrome.resolveActivity(getPackageManager()) != null) {
+            startActivity(chrome);
+            return;
+        }
+        Intent browser = new Intent(Intent.ACTION_VIEW, uri);
+        if (browser.resolveActivity(getPackageManager()) != null) {
+            startActivity(browser);
+        } else {
+            toast("Не найден браузер для открытия GitHub.");
+        }
     }
 
     private void openMicrophoneSettings() {
