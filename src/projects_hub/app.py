@@ -755,6 +755,22 @@ def create_app(
             state=payload.state,
         )
 
+    @app.get("/api/development/backlog")
+    async def development_backlog(
+        request: Request,
+        workspace_id: str,
+        project_id: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        return {
+            "items": app.state.development.list_backlog(
+                actor_id=actor_id_from_request(request),
+                workspace_id=workspace_id,
+                project_id=project_id,
+                limit=limit,
+            )
+        }
+
     @app.get("/api/development/codex-status")
     async def development_codex_status(
         request: Request,
