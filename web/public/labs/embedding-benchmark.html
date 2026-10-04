@@ -31,7 +31,7 @@ onmessage=async()=>{try{
  const fixtureFile=await jsonFile('small_embedding_compatibility.json'),fixture=fixtureFile.value;
  const qFile=await jsonFile('small_embedding_questions.json'),questions=qFile.value.questions;
  if(fixture.candidate!=='e5'||fixture.revision!==REV||fixture.contract.dimension!==384||fixture.cases.length!==10)throw Error('REFERENCE_CONTRACT');
- const module=await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1/dist/transformers.web.min.js');
+ const module=await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1/dist/transformers.min.js');
  const {env,AutoTokenizer,AutoModel}=module;
  env.allowLocalModels=false;env.useBrowserCache=false;env.useFSCache=false;
  env.backends.onnx.wasm.numThreads=1;env.backends.onnx.wasm.proxy=false;
@@ -107,7 +107,7 @@ $('start').onclick=async()=>{
  if(!$('consent').checked){$('status').textContent='Сначала подтвердите загрузку и вычисления';return}
  if(typeof Worker==='undefined'||typeof WebAssembly==='undefined'||!crypto.subtle){$('status').textContent='Необходимы HTTPS/локальный доверенный контекст, Worker и WebAssembly';return}
  frames=[];frameAt=0;hiddenEvents=[];
- report={schema:'rkb-device-embedding-run.v1',app_version:'1.0.0',run_id:crypto.randomUUID?crypto.randomUUID():String(Date.now()),started_at:new Date().toISOString(),status:'running',device_label:$('label').value,environment:{user_agent:navigator.userAgent,platform:navigator.platform,language:navigator.language,hardware_concurrency_hint:navigator.hardwareConcurrency??null,device_memory_hint_gib:navigator.deviceMemory??null,secure_context:isSecureContext,cross_origin_isolated:crossOriginIsolated,display_mode:matchMedia('(display-mode: standalone)').matches?'standalone':'browser',webgpu_exposed:!!navigator.gpu},memory:{total_process_peak_bytes:null,reason:'Not measurable reliably by portable browser API; deviceMemory is a capacity hint, not process usage'},retrieval_quality:{status:'pending_offline_evaluator',reason:'Private 712-chunk index is not published to the browser'},queries:[]};
+ report={schema:'rkb-device-embedding-run.v1',app_version:'1.0.1',run_id:crypto.randomUUID?crypto.randomUUID():String(Date.now()),started_at:new Date().toISOString(),status:'running',device_label:$('label').value,environment:{user_agent:navigator.userAgent,platform:navigator.platform,language:navigator.language,hardware_concurrency_hint:navigator.hardwareConcurrency??null,device_memory_hint_gib:navigator.deviceMemory??null,secure_context:isSecureContext,cross_origin_isolated:crossOriginIsolated,display_mode:matchMedia('(display-mode: standalone)').matches?'standalone':'browser',webgpu_exposed:!!navigator.gpu},memory:{total_process_peak_bytes:null,reason:'Not measurable reliably by portable browser API; deviceMemory is a capacity hint, not process usage'},retrieval_quality:{status:'pending_offline_evaluator',reason:'Private 712-chunk index is not published to the browser'},queries:[]};
  $('log').textContent='';$('json').hidden=true;$('progress').value=0;
  try{report.storage_before=await navigator.storage?.estimate()}catch{}
  url=URL.createObjectURL(new Blob([$('worker-source').textContent],{type:'text/javascript'}));worker=new Worker(url,{type:'module'});worker.onmessage=onmessage;worker.onerror=e=>{if(report)report.error=e.message;finish('failed','Ошибка worker: '+e.message)};
