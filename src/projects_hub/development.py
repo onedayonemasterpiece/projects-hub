@@ -461,7 +461,9 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
             with self.store._lock:
                 self.store.db.execute(
                     """UPDATE task_executions
-                       SET status='running',devcoveer_task_id=?,started_at_ms=?,updated_at_ms=?
+                       SET status='running',phase='analysis',
+                           phase_detail='Codex принял пакет задач',
+                           devcoveer_task_id=?,started_at_ms=?,updated_at_ms=?
                        WHERE id=?""",
                     (devcoveer_task_id, now, now, execution_id),
                 )
@@ -604,14 +606,18 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
                     or (result.get("task") or {}).get("errorCategory")
                     or "DEVCOVEER_TASK_FAILED"
                 )[:120]
+            phase, phase_detail = self._phase_from_result(result, next_status)
             with self.store._lock:
                 self.store.db.execute(
                     """UPDATE task_executions
-                       SET status=?,result_summary=?,error_code=?,
+                       SET status=?,phase=?,phase_detail=?,
+                           result_summary=?,error_code=?,
                            finished_at_ms=COALESCE(?,finished_at_ms),updated_at_ms=?
                        WHERE id=?""",
                     (
                         next_status,
+                        phase,
+                        phase_detail,
                         summary,
                         error_code,
                         finished,
@@ -619,6 +625,12 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
                         item["id"],
                     ),
                 )
+                if next_status == "completed":
+                    for task_id in json.loads(item["task_ids_json"]):
+                        self.store.db.execute(
+                            "UPDATE tasks SET state='done',updated_at_ms=? WHERE id=?",
+                            (now, task_id),
+                        )
             row = self._execution_row(
                 actor_id=actor_id,
                 workspace_id=workspace_id,
@@ -655,3 +667,7 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
                     (actor_id, workspace_id, bounded),
                 ).fetchall()
         return [self._execution_public(row) for row in rows]
+
+
+    async def close(self) -> None:
+        await self.devcoveer.close()
