@@ -42,7 +42,7 @@ class DevCoveerClient:
             await asyncio.wait_for(session.initialize(), timeout=20)
             listed = await asyncio.wait_for(session.list_tools(), timeout=20)
             names = {tool.name for tool in listed.tools}
-            required = {"codex_status", "start_task", "read_task"}
+            required = {"codex_status", "list_models", "start_task", "read_task"}
             if not required.issubset(names):
                 raise DevCoveerError(
                     "DevCoveer runtime is missing owner execution capabilities"
@@ -74,7 +74,7 @@ class DevCoveerClient:
         raise DevCoveerError("DevCoveer returned no structured result")
 
     async def _call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        if name not in {"codex_status", "start_task", "read_task"}:
+        if name not in {"codex_status", "list_models", "start_task", "read_task"}:
             raise DevCoveerError("DevCoveer operation is not allowlisted")
         async with self._lock:
             try:
@@ -89,7 +89,15 @@ class DevCoveerClient:
                 raise DevCoveerError("DevCoveer connection was interrupted") from None
 
     async def status(self) -> dict[str, Any]:
-        return await self._call("codex_status", {})
+        quota = await self._call("codex_status", {})
+        models = await self._call(
+            "list_models",
+            {"provider": "codex", "verified_only": False},
+        )
+        return {
+            "quota": quota,
+            "models": models.get("models", []),
+        }
 
     async def start_codex_task(
         self,
