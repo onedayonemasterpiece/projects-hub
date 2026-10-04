@@ -42,7 +42,7 @@ class DevCoveerClient:
             await asyncio.wait_for(session.initialize(), timeout=20)
             listed = await asyncio.wait_for(session.list_tools(), timeout=20)
             names = {tool.name for tool in listed.tools}
-            required = {"codex_status", "list_models", "start_task", "read_task"}
+            required = {"codex_status", "list_models", "start_task", "continue_task", "read_task"}
             if not required.issubset(names):
                 raise DevCoveerError(
                     "DevCoveer runtime is missing owner execution capabilities"
@@ -74,7 +74,7 @@ class DevCoveerClient:
         raise DevCoveerError("DevCoveer returned no structured result")
 
     async def _call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        if name not in {"codex_status", "list_models", "start_task", "read_task"}:
+        if name not in {"codex_status", "list_models", "start_task", "continue_task", "read_task"}:
             raise DevCoveerError("DevCoveer operation is not allowlisted")
         async with self._lock:
             try:
@@ -121,6 +121,29 @@ class DevCoveerClient:
                 "reasoning_effort": reasoning_effort,
             },
         )
+
+    async def continue_codex_task(
+        self,
+        task_id: str,
+        *,
+        project: str,
+        prompt: str,
+        access: str = "write",
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+    ) -> dict[str, Any]:
+        args: dict[str, Any] = {
+            "task": task_id,
+            "project": project,
+            "prompt": prompt,
+            "access": access,
+            "provider": "codex",
+        }
+        if model:
+            args["model"] = model
+        if reasoning_effort:
+            args["reasoning_effort"] = reasoning_effort
+        return await self._call("continue_task", args)
 
     async def read_task(
         self,
