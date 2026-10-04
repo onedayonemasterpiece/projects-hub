@@ -16,8 +16,14 @@ from .store import DurableStore, StoreError
 
 ACTIVE_EXECUTION_STATES = {"starting", "running"}
 TERMINAL_EXECUTION_STATES = {"completed", "failed", "cancelled"}
+PROGRESS_PHASES = {
+    "preparing", "planning", "implementing", "testing", "ci",
+    "publishing", "releasing", "deploying", "ready", "failed", "cancelled",
+}
 DEFAULT_CODEX_PROFILE = "gpt-6.1-medium"
-DEVCOVEER_PROJECT = "projects-hub"
+OWNER_WORKSPACE_HINTS = {
+    "projects-hub": "projects-hub-owner",
+}
 
 
 def _now_ms() -> int:
@@ -49,6 +55,10 @@ class DevelopmentService:
                     project_hint TEXT NOT NULL,
                     provider TEXT NOT NULL,
                     model_profile TEXT NOT NULL,
+                    work_branch TEXT,
+                    base_sha TEXT,
+                    phase TEXT NOT NULL DEFAULT 'preparing',
+                    phase_updated_at_ms INTEGER,
                     prompt TEXT NOT NULL,
                     prompt_sha256 TEXT NOT NULL,
                     status TEXT NOT NULL,
@@ -66,6 +76,38 @@ class DevelopmentService:
                 CREATE INDEX IF NOT EXISTS task_executions_project_idx
                     ON task_executions(actor_id,workspace_id,project_id,updated_at_ms DESC);
                 """
+            )
+            columns = {
+                str(row["name"])
+                for row in self.store.db.execute(
+                    "PRAGMA table_info(task_executions)"
+                ).fetchall()
+            }
+            for name, ddl in (
+                ("work_branch", "TEXT"),
+                ("base_sha", "TEXT"),
+                ("phase", "TEXT NOT NULL DEFAULT 'preparing'"),
+                ("phase_updated_at_ms", "INTEGER"),
+            ):
+                if name not in columns:
+                    self.store.db.execute(
+                        f"ALTER TABLE task_executions ADD COLUMN {name} {ddl}"
+                    )
+            self.store.db.execute(
+                """UPDATE task_executions
+                   SET phase=CASE
+                       WHEN status='completed' THEN 'ready'
+                       WHEN status='failed' THEN 'failed'
+                       WHEN status='cancelled' THEN 'cancelled'
+                       WHEN status='running' THEN 'implementing'
+                       ELSE 'preparing'
+                   END
+                   WHERE phase IS NULL OR phase=''"""
+            )
+            self.store.db.execute(
+                """UPDATE task_executions
+                   SET phase_updated_at_ms=updated_at_ms
+                   WHERE phase_updated_at_ms IS NULL"""
             )
 
     def _authorize_owner(self, actor_id: str, workspace_id: str) -> None:
