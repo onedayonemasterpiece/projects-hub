@@ -153,5 +153,23 @@ test("runtime UX distinguishes semantic backend version from build provenance", 
   );
   assert.match(source, /backend_version/);
   assert.match(source, /backend_release_sha упоминай только/);
-  assert.match(version, /0\.1\.19/);
+  assert.match(version, /0\.1\.20/);
+});
+
+test("Projects Hub shows semantic app/server versions and bypasses update caches", async () => {
+  const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  const api = await readFile(new URL("../src/api.ts", import.meta.url), "utf8");
+  const updater = await readFile(
+    new URL("../../android/app/src/main/java/com/kenigevents/projectshub/Updater.java", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /Приложение \$\{nativeVersion/);
+  assert.match(source, /Сервер \$\{runtimeInfo\?\.backend_version/);
+  assert.match(source, /Проверить обновление/);
+  assert.match(source, /projectshub:\/\/update\/check/);
+  assert.match(api, /backend_version:\s*string/);
+  assert.match(api, /getRuntimeInfo/);
+  assert.match(updater, /setUseCaches\(false\)/);
+  assert.match(updater, /Cache-Control/);
+  assert.match(updater, /no-cache, no-store/);
 });

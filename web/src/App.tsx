@@ -15,6 +15,7 @@ import {
   getGitHubStatus,
   getMemories,
   getEventCards,
+  getRuntimeInfo,
   getTasks,
   getDevelopmentCodexStatus,
   getLatestDevelopmentExecution,
@@ -30,6 +31,7 @@ import {
   type GitHubStatus,
   type MemoryItem,
   type EventCard,
+  type RuntimeInfo,
   type TaskItem,
   type DevelopmentExecution,
   type CodexStatus,
@@ -89,6 +91,11 @@ function mergeTranscript(current: string, fragment: string) {
   return overlap >= 3 ? current + clean.slice(overlap) : current + " " + clean;
 }
 
+function versionPatch(value: string | null | undefined) {
+  const match = String(value ?? "").match(/^0\.1\.(\d+)$/);
+  return match ? Number(match[1]) : null;
+}
+
 function friendlyStartError(error: unknown) {
   const name = error && typeof error === "object" && "name" in error
     ? String((error as { name?: unknown }).name ?? "")
@@ -144,6 +151,7 @@ export default function App() {
   const [pendingSources, setPendingSources] = useState<LocalVoiceSource[]>([]);
   const [githubStatus, setGitHubStatus] = useState<GitHubStatus | null>(null);
   const [githubBusy, setGitHubBusy] = useState(false);
+  const [runtimeInfo, setRuntimeInfo] = useState<RuntimeInfo | null>(null);
   const clientRef = useRef<LiveClient | null>(null);
   const userTranscriptIndex = useRef(-1);
   const assistantTranscriptIndex = useRef(-1);
@@ -172,6 +180,28 @@ export default function App() {
     if (!element || !chatFollowRef.current) return;
     element.scrollTop = element.scrollHeight;
   }, [chatMessages]);
+
+  useEffect(() => {
+    if (!boot) {
+      setRuntimeInfo(null);
+      return;
+    }
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const info = await getRuntimeInfo();
+        if (!cancelled) setRuntimeInfo(info);
+      } catch {
+        // Version visibility must never block the main product.
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [boot]);
 
   const focusProject = useMemo(() => {
     if (!boot) return null;
@@ -471,7 +501,7 @@ export default function App() {
             && now - autoRecoveryAtRef.current > 20_000
           ) {
             autoRecoveryAtRef.current = now;
-            window.setTimeout(() => void recoverLiveConversation(), 1200);
+            window.setTimeout(() => void recoverLiveConversation(), 1800);
           }
         } else if (kind === "connection_error") {
           setNotice("Связь с Live нестабильна. Пытаюсь переподключиться…");
@@ -629,18 +659,37 @@ export default function App() {
     ) {
       return;
     }
-    try {
-      await client.start({
-        url: `/api/live/${current.id}/sessions`,
-        body: liveStartBody(),
-        microphone: true,
-        captureDuringStart: true,
-        authorize: async () => {},
-      });
-      if (client.sessionId) setNotice("Разговор восстановлен.");
-    } catch {
-      setNotice("Не удалось автоматически восстановить Live. Нажмите микрофон, чтобы продолжить.");
+
+    const delays = [1800, 4500, 9000];
+    for (let attempt = 0; attempt < delays.length; attempt += 1) {
+      if (
+        userStoppedVoiceRef.current
+        || !navigator.onLine
+        || client.sessionId
+        || client.starting
+      ) {
+        return;
+      }
+      if (attempt > 0) {
+        await new Promise(resolve => window.setTimeout(resolve, delays[attempt]));
+      }
+      try {
+        await client.start({
+          url: `/api/live/${current.id}/sessions`,
+          body: liveStartBody(),
+          microphone: true,
+          captureDuringStart: true,
+          authorize: async () => {},
+        });
+        if (client.sessionId) {
+          setNotice("Разговор восстановлен.");
+          return;
+        }
+      } catch {
+        // The previous server/provider lease may still be releasing. Retry boundedly.
+      }
     }
+    setNotice("Live не восстановился автоматически. Нажмите микрофон, чтобы продолжить.");
   }
 
   async function toggleVoice() {
@@ -850,6 +899,14 @@ export default function App() {
     eventOpen || memoryOpen || backlogOpen || ((notice || wait) && chatMessages.length === 0)
   );
   const projectCount = Math.max(0, boot.projects.length - 1);
+  const installedPatch = versionPatch(nativeVersion);
+  const backendPatch = versionPatch(runtimeInfo?.backend_version);
+  const androidUpdateLikelyAvailable = Boolean(
+    isAndroidApp
+    && installedPatch !== null
+    && backendPatch !== null
+    && backendPatch > installedPatch
+  );
   const pendingCount = pendingSources.length;
   const voiceHeadline =
     voiceState === "off" && !networkOnline
@@ -917,6 +974,26 @@ export default function App() {
               ))}
             </div>
             <p className="sheet-footnote">Сменить проект можно голосом. Live‑агент сам уточнит контекст, если он неоднозначен.</p>
+            <div className="runtime-version-card" aria-label="Версия Projects Hub">
+              <div>
+                <p className="eyebrow">Версия</p>
+                <strong>
+                  {isAndroidApp
+                    ? `Приложение ${nativeVersion ?? "неизвестно"} · Сервер ${runtimeInfo?.backend_version ?? "…"}`
+                    : `Сервер ${runtimeInfo?.backend_version ?? "…"}`}
+                </strong>
+              </div>
+              {androidUpdateLikelyAvailable ? (
+                <button
+                  className="quiet-button"
+                  onClick={() => { window.location.href = "projectshub://update/check"; }}
+                >
+                  Проверить обновление
+                </button>
+              ) : (
+                isAndroidApp && runtimeInfo && <span className="runtime-current">Актуально</span>
+              )}
+            </div>
 
             {boot.role === "owner" && (
               <div className="integration-card" aria-label="GitHub integration">

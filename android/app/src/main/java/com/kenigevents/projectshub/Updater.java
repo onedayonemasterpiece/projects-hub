@@ -257,6 +257,10 @@ final class Updater {
         HttpURLConnection connection = (HttpURLConnection) new URL(value).openConnection();
         connection.setConnectTimeout(10000);
         connection.setReadTimeout(30000);
+        connection.setUseCaches(false);
+        connection.setDefaultUseCaches(false);
+        connection.setRequestProperty("Cache-Control", "no-cache, no-store, max-age=0");
+        connection.setRequestProperty("Pragma", "no-cache");
         connection.setRequestProperty("Accept", "application/vnd.github+json, application/json");
         connection.setRequestProperty("User-Agent", "ProjectsHubAndroid/" + BuildConfig.VERSION_NAME);
         return connection;
