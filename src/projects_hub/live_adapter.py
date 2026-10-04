@@ -399,8 +399,8 @@ def _functions(
                 {
                     "name": "development_codex_status",
                     "description": (
-                        "Read native Codex quota/capacity and the owner gpt-6.1-medium "
-                        "profile. Read-only; never launches inference."
+                        "Read native Codex quota/capacity, owner profile and the current "
+                        "native Codex model catalogue. Read-only; never launches inference."
                     ),
                     "parameters": {"type": "object", "properties": {}},
                 },
@@ -422,6 +422,14 @@ def _functions(
                                 "maxItems": 5,
                                 "uniqueItems": True,
                                 "items": {"type": "string"},
+                            },
+                            "model": {
+                                "type": "string",
+                                "description": "Exact native Codex model ID only after the owner explicitly selects it when the default owner profile is unavailable."
+                            },
+                            "reasoning_effort": {
+                                "type": "string",
+                                "enum": ["low", "medium", "high", "xhigh", "max", "ultra"]
                             }
                         },
                         "required": ["task_ids"],
@@ -783,6 +791,8 @@ class ProjectsHubLiveAdapter:
                 actor_id=actor_id,
                 workspace_id=workspace_id,
                 task_ids=[str(item) for item in raw_ids],
+                model=str(args.get("model") or "") or None,
+                reasoning_effort=str(args.get("reasoning_effort") or "") or None,
             )
 
         if name == "development_execution_status":
