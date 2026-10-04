@@ -12,6 +12,11 @@ export type Conversation = {
   focus_project_id: string | null;
   focus_project_name: string | null;
 };
+export type RuntimeInfo = {
+  backend_version: string;
+  build: { release_sha: string };
+};
+
 export type AuthConfig =
   | { mode: "first_party_invite" }
   | { mode: "loopback_dev" | "disabled" };
@@ -174,6 +179,8 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
 }
 
 export const getAuthConfig = () => api<AuthConfig>("/api/auth/config");
+export const getRuntimeInfo = () => api<RuntimeInfo>("/api/runtime");
+
 
 export const exchangeInvite = (token: string) =>
   api<Bootstrap>("/api/auth/invite", {
