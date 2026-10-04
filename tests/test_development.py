@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from projects_hub.development import DevelopmentService
+from projects_hub.live_adapter import _functions
 from projects_hub.readiness import ReadinessService
 from projects_hub.store import DurableStore, StoreError
 
@@ -248,3 +249,18 @@ async def test_non_platform_owner_cannot_read_or_start_development(tmp_path: Pat
         assert owner != member
     finally:
         store.close()
+
+
+def test_owner_development_tools_are_not_exposed_to_ordinary_users():
+    ordinary = {item["name"] for item in _functions(owner_development=False)}
+    owner = {item["name"] for item in _functions(owner_development=True)}
+    assert "development_codex_status" not in ordinary
+    assert "development_execute_backlog" not in ordinary
+    assert "development_execution_status" not in ordinary
+    assert "backlog_list" not in ordinary
+    assert {
+        "development_codex_status",
+        "development_execute_backlog",
+        "development_execution_status",
+        "backlog_list",
+    } <= owner
