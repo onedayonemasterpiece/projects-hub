@@ -431,13 +431,12 @@ class DevelopmentService:
                 return str(project["name"])
         raise StoreError("PROJECT_NOT_FOUND", "Project is not available")
 
-    def _project_hint(
+    def _project_binding(
         self,
         actor_id: str,
         workspace_id: str,
         project_id: str,
-        project_name: str,
-    ) -> str:
+    ) -> tuple[str, str]:
         connections = [
             item
             for item in self.store.list_repository_connections(actor_id, workspace_id)
@@ -446,20 +445,18 @@ class DevelopmentService:
             and item.get("installation_state") == "active"
             and item.get("access_mode") == "app_managed_write"
         ]
-        if len(connections) == 1:
-            return str(connections[0]["full_name"]).rsplit("/", 1)[-1]
-        normalized = "".join(ch.lower() for ch in project_name if ch.isalnum())
-        exact = [
-            item for item in connections
-            if "".join(
-                ch.lower()
-                for ch in str(item.get("full_name") or "").rsplit("/", 1)[-1]
-                if ch.isalnum()
-            ) == normalized
-        ]
-        if len(exact) == 1:
-            return str(exact[0]["full_name"]).rsplit("/", 1)[-1]
-        return project_name
+        if len(connections) != 1:
+            raise StoreError(
+                "DEVELOPMENT_REPOSITORY_BINDING_REQUIRED",
+                "Development requires exactly one active writable repository bound to the project",
+            )
+        full_name = str(connections[0].get("full_name") or "").strip()
+        if "/" not in full_name:
+            raise StoreError(
+                "DEVELOPMENT_REPOSITORY_BINDING_INVALID",
+                "Bound development repository is invalid",
+            )
+        return full_name.rsplit("/", 1)[-1], full_name
 
     @staticmethod
     def _backlog_text(tasks: list[dict[str, Any]]) -> str:
@@ -530,13 +527,24 @@ Read the updated specification and fix all material findings. Re-run the require
 Now finish delivery using the repository's normal path. Merge/publish only the accepted implementation, run required CI, deploy and verify production when applicable. If native Android changed, produce the normal signed Android release/update manifest and verify the release; if only backend/PWA changed, deploy and verify that path instead. Do not broaden scope. Report the actual delivered version/release, production verification and any genuine blocker."""
 
     @staticmethod
-    def _review_verdict(summary: str) -> str | None:
-        upper = summary.upper()
-        if "REVIEW_VERDICT: ACCEPTED" in upper:
+    def _terminal_verdict(summary: str, prefix: str) -> str | None:
+        lines = [line.strip().upper() for line in summary.splitlines() if line.strip()]
+        if not lines:
+            return None
+        final = lines[-1]
+        if final == f"{prefix}: ACCEPTED":
             return "accepted"
-        if "REVIEW_VERDICT: REWORK_REQUIRED" in upper:
+        if final == f"{prefix}: REWORK_REQUIRED":
             return "rework_required"
         return None
+
+    @classmethod
+    def _review_verdict(cls, summary: str) -> str | None:
+        return cls._terminal_verdict(summary, "REVIEW_VERDICT")
+
+    @classmethod
+    def _acceptance_verdict(cls, summary: str) -> str | None:
+        return cls._terminal_verdict(summary, "ACCEPTANCE_VERDICT")
 
     @staticmethod
     def _token_usage(result: dict[str, Any]) -> dict[str, Any] | None:
@@ -910,7 +918,8 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
         if status in {"failed", "cancelled"}:
             return status, "Исполнение завершилось ошибкой" if status == "failed" else "Исполнение отменено"
 
-        phase = str(result.get("progressPhase") or "").strip().lower()
+        latest = result.get("latestTurn") if isinstance(result.get("latestTurn"), dict) else {}
+        phase = str(latest.get("progressPhase") or result.get("progressPhase") or "").strip().lower()
         labels = {
             "preparing": "Codex готовит запуск",
             "planning": "Codex анализирует и планирует",
@@ -935,7 +944,7 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
             return "completed"
         if clean in {"failed", "error"}:
             return "failed"
-        if clean in {"cancelled", "canceled"}:
+        if clean in {"cancelled", "canceled", "interrupted"}:
             return "cancelled"
         return "running"
 
