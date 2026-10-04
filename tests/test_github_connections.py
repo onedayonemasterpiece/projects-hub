@@ -423,7 +423,12 @@ async def test_manifest_flow_bootstraps_and_persists_github_app_without_manual_s
             workspace_id=workspace,
         )
         assert started["action_url"] == "https://github.com/settings/apps/new"
-        manifest = json.loads(started["manifest"])
+        assert started["launch_url"].endswith(
+            "/api/github/app-manifest/launch?state=" + started["state"]
+        )
+        launched = service.manifest_launch(started["state"])
+        assert launched["state"] == started["state"]
+        manifest = json.loads(launched["manifest"])
         assert manifest["url"] == "https://projects-hub.kenigevents.ru"
         assert manifest["redirect_url"].endswith("/api/github/app-manifest/callback")
         assert manifest["setup_url"].endswith("/api/github/install/callback")
@@ -436,7 +441,6 @@ async def test_manifest_flow_bootstraps_and_persists_github_app_without_manual_s
         assert "default_events" not in manifest
 
         completed = await service.complete_manifest_registration(
-            actor_id=owner,
             state=started["state"],
             code="manifestcode123",
         )
@@ -454,7 +458,6 @@ async def test_manifest_flow_bootstraps_and_persists_github_app_without_manual_s
 
         with pytest.raises(StoreError) as replay:
             await service.complete_manifest_registration(
-                actor_id=owner,
                 state=started["state"],
                 code="manifestcode123",
             )
