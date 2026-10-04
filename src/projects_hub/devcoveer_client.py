@@ -119,11 +119,17 @@ class DevCoveerClient:
             },
         )
 
-    async def read_task(self, task_id: str) -> dict[str, Any]:
-        return await self._call(
-            "read_task",
-            {"task": task_id, "detail": "summary"},
-        )
+    async def read_task(
+        self,
+        task_id: str,
+        *,
+        project: str | None = None,
+        detail: str = "summary",
+    ) -> dict[str, Any]:
+        args: dict[str, Any] = {"task": task_id, "detail": detail}
+        if project:
+            args["project"] = project
+        return await self._call("read_task", args)
 
     async def close(self) -> None:
         async with self._lock:
