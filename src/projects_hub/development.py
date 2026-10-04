@@ -183,6 +183,75 @@ class DevelopmentService:
                    WHERE active_slot=1"""
             )
 
+    def _migrate_legacy_executions_locked(self) -> None:
+        now = _now_ms()
+        active_rows = self.store.db.execute(
+            """SELECT * FROM task_executions
+               WHERE status IN ('starting','running','waiting_capacity','dispatch_unknown')
+               ORDER BY actor_id,created_at_ms DESC"""
+        ).fetchall()
+        newest_by_actor: set[str] = set()
+        for row in active_rows:
+            item = dict(row)
+            actor_id = str(item["actor_id"])
+            existing_stage = self.store.db.execute(
+                "SELECT id FROM task_execution_stages WHERE execution_id=? LIMIT 1",
+                (item["id"],),
+            ).fetchone()
+            if not existing_stage and item.get("devcoveer_task_id"):
+                profile = str(item.get("model_profile") or "gpt-5.6-sol:medium")
+                if ":" in profile:
+                    model, effort = profile.rsplit(":", 1)
+                else:
+                    model, effort = profile, "medium"
+                self.store.db.execute(
+                    """INSERT OR IGNORE INTO task_execution_stages(
+                           id,execution_id,stage,cycle,model,reasoning_effort,
+                           devcoveer_task_id,status,summary,review_verdict,
+                           token_usage_json,started_at_ms,finished_at_ms,
+                           created_at_ms,updated_at_ms,dispatch_key,dispatch_kind,
+                           transition_claimed_at_ms
+                       ) VALUES(?,?,?,?,?,?,?,'running','',NULL,NULL,?,NULL,?,?,?,'existing',NULL)""",
+                    (
+                        "devstage_" + uuid.uuid4().hex,
+                        item["id"],
+                        "implementation",
+                        0,
+                        model,
+                        effort,
+                        item["devcoveer_task_id"],
+                        item.get("started_at_ms") or item.get("created_at_ms") or now,
+                        item.get("created_at_ms") or now,
+                        now,
+                        f"legacy:{item['id']}:implementation:0",
+                    ),
+                )
+                self.store.db.execute(
+                    """UPDATE task_executions
+                       SET phase='implementing',
+                           phase_detail='Продолжается ранее запущенная разработка',
+                           updated_at_ms=?
+                       WHERE id=?""",
+                    (now, item["id"]),
+                )
+            if actor_id not in newest_by_actor:
+                newest_by_actor.add(actor_id)
+                self.store.db.execute(
+                    "UPDATE task_executions SET active_slot=1 WHERE id=?",
+                    (item["id"],),
+                )
+            else:
+                self.store.db.execute(
+                    """UPDATE task_executions
+                       SET status='needs_owner',phase='needs_owner',
+                           phase_detail='Найден параллельный legacy execution; требуется сверка',
+                           error_code='LEGACY_CONCURRENT_EXECUTION',
+                           active_slot=NULL,finished_at_ms=COALESCE(finished_at_ms,?),
+                           updated_at_ms=?
+                       WHERE id=?""",
+                    (now, now, item["id"]),
+                )
+
     def _authorize_owner(self, actor_id: str, workspace_id: str) -> None:
         self.store.require_platform_owner(actor_id)
         self.store.require_workspace_owner(actor_id, workspace_id)
