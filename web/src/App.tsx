@@ -15,6 +15,9 @@ import {
   getGitHubStatus,
   getMemories,
   getEventCards,
+  getTasks,
+  getDevelopmentCodexStatus,
+  getLatestDevelopmentExecution,
   getAuthConfig,
   exchangeInvite,
   login,
@@ -27,6 +30,9 @@ import {
   type GitHubStatus,
   type MemoryItem,
   type EventCard,
+  type TaskItem,
+  type DevelopmentExecution,
+  type CodexStatus,
 } from "./api";
 import { replayLocalVoiceSource } from "./bufferedReplay";
 import {
@@ -114,9 +120,13 @@ export default function App() {
   const [wait, setWait] = useState<WaitState>(null);
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [eventCards, setEventCards] = useState<EventCard[]>([]);
+  const [backlogTasks, setBacklogTasks] = useState<TaskItem[]>([]);
+  const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null);
+  const [developmentExecution, setDevelopmentExecution] = useState<DevelopmentExecution | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [eventOpen, setEventOpen] = useState(false);
+  const [backlogOpen, setBacklogOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
   const [networkOnline, setNetworkOnline] = useState(() => navigator.onLine);
@@ -136,6 +146,9 @@ export default function App() {
   const replayingRef = useRef(false);
   const turnHasInput = useRef(false);
   const conversationRef = useRef<Conversation | null>(null);
+  const lastDevelopmentUpdateCheckRef = useRef(
+    localStorage.getItem("projects-hub-development-update-check") ?? "",
+  );
 
   useEffect(() => {
     conversationRef.current = conversation;
