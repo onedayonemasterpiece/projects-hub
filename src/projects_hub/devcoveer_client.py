@@ -85,7 +85,10 @@ class DevCoveerClient:
                 )
                 return self._payload(result)
             except (ConnectionError, BrokenPipeError, EOFError):
-                await self.close()
+                stack, self._stack = self._stack, None
+                self._session = None
+                if stack is not None:
+                    await stack.aclose()
                 raise DevCoveerError("DevCoveer connection was interrupted") from None
 
     async def status(self) -> dict[str, Any]:
