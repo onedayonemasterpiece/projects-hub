@@ -16,6 +16,7 @@ import {
   getMemories,
   getEventCards,
   getTasks,
+  getDevelopmentBacklog,
   getDevelopmentCodexStatus,
   getLatestDevelopmentExecution,
   getAuthConfig,
@@ -188,7 +189,9 @@ export default function App() {
   const loadBacklog = useCallback(async () => {
     if (!boot) return;
     const projectId = conversationRef.current?.focus_project_id ?? null;
-    const tasks = await getTasks(boot.workspace.id, projectId);
+    const tasks = boot.role === "owner"
+      ? await getDevelopmentBacklog(boot.workspace.id, projectId)
+      : await getTasks(boot.workspace.id, projectId);
     setBacklogTasks(tasks.items);
 
     if (boot.role !== "owner") {
@@ -1078,13 +1081,14 @@ export default function App() {
                     {developmentExecution && (
                       <div className="execution-card">
                         <div>
-                          <strong>Последний запуск · {developmentExecution.status}</strong>
+                          <strong>{developmentExecution.phase_detail || developmentExecution.phase || developmentExecution.status}</strong>
                           <span>
                             {developmentExecution.model_profile}
                             {typeof developmentExecution.quota_remaining_percent === "number"
                               ? ` · старт при ${Math.round(developmentExecution.quota_remaining_percent)}%`
                               : ""}
                           </span>
+                          <span>Технически: {developmentExecution.status}</span>
                         </div>
                         {developmentExecution.result_summary && (
                           <p>{developmentExecution.result_summary}</p>
