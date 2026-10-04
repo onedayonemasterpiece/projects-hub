@@ -8,6 +8,28 @@ from projects_hub.live_resources import ConversationScope
 from projects_hub.store import DurableStore
 
 
+class FakeGitHubRead:
+    async def read_repository_path(
+        self,
+        *,
+        actor_id,
+        workspace_id,
+        repository_id,
+        path="",
+    ):
+        return {
+            "repository_id": repository_id,
+            "full_name": "owner/projects-hub",
+            "project_id": "project",
+            "default_branch": "main",
+            "kind": "file",
+            "path": path,
+            "size": 12,
+            "sha": "abc123",
+            "text": "# Projects Hub",
+        }
+
+
 @pytest.mark.asyncio
 async def test_live_only_sees_bound_repository_catalogue_and_cannot_change_github_permissions(tmp_path: Path):
     store = DurableStore(tmp_path)
@@ -60,7 +82,7 @@ async def test_live_only_sees_bound_repository_catalogue_and_cannot_change_githu
         )
 
         binding = ConversationScope(workspace, actor, conversation["id"]).resource_binding()
-        adapter = ProjectsHubLiveAdapter(store)
+        adapter = ProjectsHubLiveAdapter(store, github_connections=FakeGitHubRead())
         initialized = adapter.initialize(
             resource_id=binding,
             actor={"subject": actor, "tenant_id": workspace},
@@ -69,6 +91,7 @@ async def test_live_only_sees_bound_repository_catalogue_and_cannot_change_githu
         )
         names = {item["name"] for item in initialized["configuration"]["functions"]}
         assert "github_repositories_list" in names
+        assert "github_repository_read" in names
         assert not any(
             name in names
             for name in {
@@ -103,6 +126,17 @@ async def test_live_only_sees_bound_repository_catalogue_and_cannot_change_githu
         }
         assert "installation_id" not in str(result)
         assert "token" not in str(result).lower()
+        read = await adapter.execute_tool(
+            session,
+            {
+                "name": "github_repository_read",
+                "id": "provider-github-read",
+                "args": {"repository_id": 101, "path": "README.md"},
+            },
+        )
+        assert read["kind"] == "file"
+        assert read["path"] == "README.md"
+        assert read["text"] == "# Projects Hub"
     finally:
         store.close()
 
