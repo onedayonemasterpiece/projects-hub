@@ -654,6 +654,18 @@ export default function App() {
     }
   }
 
+  async function openBacklog() {
+    try {
+      await loadBacklog();
+      setBacklogOpen(true);
+      setEventOpen(false);
+      setMemoryOpen(false);
+      setContextOpen(false);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Не удалось прочитать backlog.");
+    }
+  }
+
   async function changeTaskState(
     taskId: string,
     state: "accepted" | "done" | "snoozed" | "rejected",
@@ -661,7 +673,7 @@ export default function App() {
     if (!boot) return;
     try {
       await setTaskState(taskId, boot.workspace.id, state);
-      await loadEventCards();
+      await Promise.all([loadEventCards(), loadBacklog()]);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Не удалось изменить задачу.");
     }
@@ -775,7 +787,7 @@ export default function App() {
 
   const voiceActive = !["off", "start_error", "connection_error", "microphone_unavailable"].includes(voiceState);
   const showWork = Boolean(
-    eventOpen || memoryOpen || ((notice || wait) && chatMessages.length === 0)
+    eventOpen || memoryOpen || backlogOpen || ((notice || wait) && chatMessages.length === 0)
   );
   const projectCount = Math.max(0, boot.projects.length - 1);
   const pendingCount = pendingSources.length;
