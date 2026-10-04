@@ -250,7 +250,8 @@ class DevelopmentService:
             and item.get("access_mode") == "app_managed_write"
         ]
         if len(connections) == 1:
-            return str(connections[0]["full_name"]).rsplit("/", 1)[-1]
+            repository_hint = str(connections[0]["full_name"]).rsplit("/", 1)[-1]
+            return OWNER_WORKSPACE_HINTS.get(repository_hint, repository_hint)
         normalized = "".join(ch.lower() for ch in project_name if ch.isalnum())
         exact = [
             item for item in connections
@@ -261,8 +262,109 @@ class DevelopmentService:
             ) == normalized
         ]
         if len(exact) == 1:
-            return str(exact[0]["full_name"]).rsplit("/", 1)[-1]
-        return project_name
+            repository_hint = str(exact[0]["full_name"]).rsplit("/", 1)[-1]
+            return OWNER_WORKSPACE_HINTS.get(repository_hint, repository_hint)
+        normalized_name = project_name.strip().lower().replace(" ", "-")
+        return OWNER_WORKSPACE_HINTS.get(normalized_name, project_name)
+
+    @staticmethod
+    def _probe_result(payload: dict[str, Any], check_id: str) -> dict[str, Any]:
+        for item in payload.get("results", []):
+            if isinstance(item, dict) and item.get("id") == check_id:
+                if item.get("status") != "ok" or not isinstance(item.get("data"), dict):
+                    raise StoreError(
+                        "DEVELOPMENT_WORKSPACE_UNAVAILABLE",
+                        f"Owner development workspace check {check_id} failed",
+                    )
+                return item["data"]
+        raise StoreError(
+            "DEVELOPMENT_WORKSPACE_UNAVAILABLE",
+            f"Owner development workspace check {check_id} is missing",
+        )
+
+    async def _prepare_workspace(
+        self,
+        *,
+        project_hint: str,
+        execution_id: str,
+    ) -> dict[str, str]:
+        probe = await self._call(
+            "project_probe",
+            {
+                "project": project_hint,
+                "checks": [{"id": "state", "kind": "git_state"}],
+            },
+        )
+        state = self._probe_result(probe, "state")
+        if state.get("clean") is not True:
+            raise StoreError(
+                "DEVELOPMENT_WORKSPACE_DIRTY",
+                "Owner development workspace has uncommitted work and must be reconciled first",
+            )
+        head = str(state.get("head") or "")
+        digest = str(state.get("tracked_workspace_digest") or "")
+        if len(head) != 40 or len(digest) != 64:
+            raise StoreError(
+                "DEVELOPMENT_WORKSPACE_UNAVAILABLE",
+                "Owner development workspace identity is invalid",
+            )
+
+        fetched = await self._call(
+            "direct_ops_v2",
+            {
+                "project": project_hint,
+                "plane": "project_action",
+                "operation": "git_fetch",
+                "payload": {"remote": "origin", "branch": "main"},
+            },
+        )
+        base_sha = str(fetched.get("fetched_sha") or "")
+        if len(base_sha) != 40:
+            raise StoreError(
+                "DEVELOPMENT_WORKSPACE_UNAVAILABLE",
+                "Current origin/main could not be resolved",
+            )
+
+        branch = "chatgpt/selfdev-" + execution_id.removeprefix("devrun_")[:16]
+        created = await self._call(
+            "direct_ops_v2",
+            {
+                "project": project_hint,
+                "plane": "project_action",
+                "operation": "git_create_branch",
+                "payload": {
+                    "branch": branch,
+                    "start_ref": "origin/main",
+                    "expected_head": head,
+                    "expected_workspace_digest": digest,
+                    "request_key": "selfdev-branch-" + execution_id.removeprefix("devrun_")[:24],
+                },
+            },
+        )
+        if created.get("status") != "ok" or created.get("start_sha") != base_sha:
+            raise StoreError(
+                "DEVELOPMENT_WORKSPACE_STALE",
+                "Owner development branch does not match the fetched origin/main",
+            )
+
+        verified = await self._call(
+            "project_probe",
+            {
+                "project": project_hint,
+                "checks": [{"id": "state", "kind": "git_state"}],
+            },
+        )
+        ready = self._probe_result(verified, "state")
+        if (
+            ready.get("clean") is not True
+            or ready.get("branch") != branch
+            or ready.get("head") != base_sha
+        ):
+            raise StoreError(
+                "DEVELOPMENT_WORKSPACE_STALE",
+                "Owner development workspace failed exact branch readback",
+            )
+        return {"branch": branch, "base_sha": base_sha}
 
     @staticmethod
     def _prompt(project_name: str, tasks: list[dict[str, Any]]) -> str:
