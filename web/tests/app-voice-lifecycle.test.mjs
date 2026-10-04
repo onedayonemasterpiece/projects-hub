@@ -76,7 +76,7 @@ test("Projects Hub keeps the conversation on the canvas and mobile context scrol
   assert.match(styles, /\.context-sheet\s*\{[\s\S]*max-height:[\s\S]*overflow-y:\s*auto/);
 });
 
-test("Android onboards and advertises calendar read capability", async () => {
+test("Android advertises calendar capability but asks permission only on first calendar action", async () => {
   const android = await readFile(
     new URL("../../android/app/src/main/java/com/kenigevents/projectshub/MainActivity.java", import.meta.url),
     "utf8",
@@ -89,10 +89,17 @@ test("Android onboards and advertises calendar read capability", async () => {
     new URL("../../android/app/src/main/java/com/kenigevents/projectshub/CalendarExecutor.java", import.meta.url),
     "utf8",
   );
-  assert.match(android, /requestCalendarAfterPairingOnce/);
+  assert.doesNotMatch(android, /requestCalendarAfterPairingOnce/);
+  assert.match(android, /requestCalendarPermissionFor/);
   assert.match(android, /calendar\.read_events/);
+  assert.doesNotMatch(android, /setTitle\("Добавить в календарь\?"\)/);
   assert.match(api, /calendar\.read_events/);
   assert.match(api, /api\/device\/capabilities/);
   assert.match(calendar, /JSONObject readEvents/);
   assert.match(calendar, /CalendarContract\.Instances/);
+});
+
+test("Projects Hub suppresses capture while Mira playback is active", async () => {
+  const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  assert.match(source, /suppressCaptureDuringPlayback:\s*true/);
 });
