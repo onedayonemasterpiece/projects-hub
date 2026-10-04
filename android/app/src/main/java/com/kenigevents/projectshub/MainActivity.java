@@ -301,7 +301,7 @@ public final class MainActivity extends Activity {
     private void requestMicrophoneAfterPairingOnce() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
                 == PackageManager.PERMISSION_GRANTED) {
-            requestCalendarAfterPairingOnce();
+            requestNotificationsOnce();
             return;
         }
         android.content.SharedPreferences prefs = getSharedPreferences(
@@ -309,34 +309,11 @@ public final class MainActivity extends Activity {
                 MODE_PRIVATE
         );
         if (prefs.getBoolean("microphone_asked", false)) {
-            requestCalendarAfterPairingOnce();
+            requestNotificationsOnce();
             return;
         }
         prefs.edit().putBoolean("microphone_asked", true).apply();
         requestNativeMicrophonePermission();
-    }
-
-    private void requestCalendarAfterPairingOnce() {
-        if (calendar.hasWritePermissions()) {
-            requestNotificationsOnce();
-            return;
-        }
-        android.content.SharedPreferences prefs = getSharedPreferences(
-                "projects_hub_ui",
-                MODE_PRIVATE
-        );
-        if (prefs.getBoolean("calendar_asked", false)) {
-            requestNotificationsOnce();
-            return;
-        }
-        prefs.edit().putBoolean("calendar_asked", true).apply();
-        requestPermissions(
-                new String[]{
-                        Manifest.permission.READ_CALENDAR,
-                        Manifest.permission.WRITE_CALENDAR
-                },
-                REQUEST_CALENDAR
-        );
     }
 
     private void requestNativeMicrophonePermission() {
@@ -515,7 +492,7 @@ public final class MainActivity extends Activity {
                 requestCalendarPermissionFor(command, completion);
                 return;
             }
-            confirmCalendar(command, completion);
+            executeCalendar(command, completion);
             return;
         }
 
@@ -569,7 +546,7 @@ public final class MainActivity extends Activity {
             return;
         }
         if ("calendar.create_event".equals(command.capability) && calendar.hasWritePermissions()) {
-            confirmCalendar(command, completion);
+            executeCalendar(command, completion);
         } else {
             completion.complete("rejected", errorResult("CALENDAR_PERMISSION_DENIED"));
         }
@@ -604,42 +581,6 @@ public final class MainActivity extends Activity {
             );
             toast("Не удалось создать событие в календаре.");
         }
-    }
-
-    private void confirmCalendar(
-            ApiClient.ClaimedCommand command,
-            DeviceCommandLoop.Completion completion
-    ) {
-        final AtomicBoolean done = new AtomicBoolean(false);
-        String title = command.payload.optString("title", "");
-        String startsAt = command.payload.optString("starts_at", "");
-        String message = title + (startsAt.isEmpty() ? "" : "\n" + startsAt);
-
-        new AlertDialog.Builder(this)
-                .setTitle("Добавить в календарь?")
-                .setMessage(message)
-                .setPositiveButton("Добавить", (dialog, which) -> {
-                    if (done.compareAndSet(false, true)) {
-                        executeCalendar(command, completion);
-                    }
-                })
-                .setNegativeButton("Отмена", (dialog, which) -> {
-                    if (done.compareAndSet(false, true)) {
-                        completion.complete(
-                                "rejected",
-                                errorResult("USER_REJECTED")
-                        );
-                    }
-                })
-                .setOnCancelListener(dialog -> {
-                    if (done.compareAndSet(false, true)) {
-                        completion.complete(
-                                "rejected",
-                                errorResult("USER_REJECTED")
-                        );
-                    }
-                })
-                .show();
     }
 
     private void requestNotificationsOnce() {
@@ -690,7 +631,7 @@ public final class MainActivity extends Activity {
             if (!granted) {
                 showMicrophoneSettingsDialog();
             }
-            requestCalendarAfterPairingOnce();
+            requestNotificationsOnce();
             return;
         }
 
