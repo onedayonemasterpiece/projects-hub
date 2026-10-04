@@ -431,8 +431,15 @@ def create_app(
     @app.post("/api/github/app-manifest/legacy-launch")
     async def github_app_manifest_legacy_launch(state: str):
         app.state.github_connections.manifest_launch(state)
+        if not state or len(state) > 200 or not all(
+            ch.isalnum() or ch in {"_", "-"} for ch in state
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "GITHUB_APP_MANIFEST_STATE_INVALID"},
+            )
         return RedirectResponse(
-            url=f"/api/github/app-manifest/launch?state={state}",
+            url=f"projectshub://browser/github?state={state}",
             status_code=303,
         )
 
