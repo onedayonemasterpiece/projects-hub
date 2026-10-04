@@ -109,6 +109,12 @@ function friendlyStartError(error: unknown) {
 
 export default function App() {
   const isAndroidApp = navigator.userAgent.includes("ProjectsHubAndroid/");
+  const nativeVersion = useMemo(() => {
+    const queryVersion = new URLSearchParams(window.location.search).get("native_version");
+    if (queryVersion) return queryVersion;
+    const match = navigator.userAgent.match(/ProjectsHubAndroid\/([^\s]+)/);
+    return match?.[1] ?? null;
+  }, []);
   const [boot, setBoot] = useState<Bootstrap | null>(null);
   const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -609,7 +615,7 @@ export default function App() {
       const current = await ensureConversation();
       await client.start({
         url: `/api/live/${current.id}/sessions`,
-        body: {},
+        body: nativeVersion ? { client_version: nativeVersion } : {},
         microphone: true,
         captureDuringStart: true,
         authorize: async () => {},

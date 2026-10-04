@@ -56,6 +56,11 @@ class LiveStart(BaseModel):
         max_length=38,
     )
     transport: Literal["wss"] = "wss"
+    client_version: str | None = Field(
+        default=None,
+        pattern=r"^[0-9A-Za-z._+-]{1,32}$",
+        max_length=32,
+    )
     attempt_id: str | None = Field(
         default=None,
         pattern=r"^[A-Za-z0-9._:-]{1,96}$",
@@ -858,6 +863,8 @@ def create_app(
                 conversation_id=conversation_id,
                 audio_mode=payload.audio_mode,
                 client_source_id=payload.client_source_id,
+                client_version=payload.client_version,
+                backend_release_sha=settings.release_sha,
                 attempt_id=payload.attempt_id,
             )
         except Exception as exc:

@@ -42,6 +42,15 @@ def _functions(
             "parameters": {"type": "object", "properties": {}},
         },
         {
+            "name": "runtime_versions_get",
+            "description": (
+                "Report the exact current Projects Hub client/app version and backend release "
+                "for this Live session. Use when the user asks which version is running, "
+                "whether the app/backend was updated, or during incident diagnosis. Never guess."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+        {
             "name": "github_repositories_list",
             "description": "List repositories already connected and explicitly bound inside this workspace. This is read-only catalogue access and cannot grant or increase GitHub permissions.",
             "parameters": {"type": "object", "properties": {}},
@@ -457,6 +466,7 @@ SYSTEM_INSTRUCTION = """# ROLE
 
 # DIALOGUE
 - Отвечай по-русски, кратко и естественно голосом.
+- Если пользователь спрашивает текущую версию приложения/backend или пытается понять, применилось ли обновление, вызови runtime_versions_get и назови фактические значения; не угадывай по истории разговора.
 - Не проси пользователя перепечатывать или повторять уже услышанное без необходимости.
 - Если проект неясен, уточни его разговором или сначала прочитай доступные проекты.
 - При смене проекта используй conversation_set_focus только после того, как поняла целевой проект.
@@ -588,6 +598,8 @@ class ProjectsHubLiveAdapter:
         conversation_id: str,
         audio_mode: str = "realtime",
         client_source_id: str | None = None,
+        client_version: str | None = None,
+        backend_release_sha: str | None = None,
         **_args: Any,
     ) -> dict[str, Any]:
         actor_id = str(actor.get("subject") or "")
@@ -644,6 +656,8 @@ class ProjectsHubLiveAdapter:
                 "source_id": source["id"],
                 "audio_mode": audio_mode,
                 "client_source_id": client_source_id,
+                "client_version": client_version,
+                "backend_release_sha": backend_release_sha,
             },
             "context": {
                 "workspace_id": conversation["workspace_id"],
@@ -654,6 +668,8 @@ class ProjectsHubLiveAdapter:
                 },
                 "allowed_projects": [{"id": p["id"], "name": p["name"]} for p in projects],
                 "current_source_id": source["id"],
+                "client_version": client_version,
+                "backend_release_sha": backend_release_sha,
             },
             "configuration": {
                 "system_instruction": system_instruction,
@@ -751,6 +767,15 @@ class ProjectsHubLiveAdapter:
             return {
                 "projects": self.store.list_projects(actor_id, workspace_id),
                 "conversation": self.store.get_conversation(actor_id, conversation_id),
+            }
+
+        if name == "runtime_versions_get":
+            client_version = state.get("client_version")
+            backend_release_sha = state.get("backend_release_sha")
+            return {
+                "client_kind": "android" if client_version else "web",
+                "android_version": client_version,
+                "backend_release_sha": backend_release_sha,
             }
 
         if name == "backlog_list":
