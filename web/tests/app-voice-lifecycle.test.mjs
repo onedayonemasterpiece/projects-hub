@@ -44,3 +44,22 @@ test("Projects Hub keeps the Android-hosted PWA network-fresh", async () => {
   assert.match(android, /webView\.clearCache\(true\)/);
   assert.match(android, /native_version=/);
 });
+
+test("Android opens GitHub without resolveActivity package-visibility gating", async () => {
+  const android = await readFile(
+    new URL("../../android/app/src/main/java/com/kenigevents/projectshub/MainActivity.java", import.meta.url),
+    "utf8",
+  );
+  const manifest = await readFile(
+    new URL("../../android/app/src/main/AndroidManifest.xml", import.meta.url),
+    "utf8",
+  );
+  const browserMethod = android.match(/private void openExternalBrowser\(Uri uri\) \{[\s\S]*?\n    \}/)?.[0] ?? "";
+  assert.match(browserMethod, /startActivity\(chrome\)/);
+  assert.match(browserMethod, /ActivityNotFoundException/);
+  assert.match(browserMethod, /startActivity\(browser\)/);
+  assert.doesNotMatch(browserMethod, /resolveActivity/);
+  assert.match(manifest, /com\.android\.chrome/);
+  assert.match(manifest, /android\.intent\.action\.VIEW/);
+  assert.match(manifest, /android:scheme="https"/);
+});
