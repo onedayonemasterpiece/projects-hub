@@ -69,6 +69,7 @@ class ReadinessService:
                     description TEXT NOT NULL,
                     assignee_role TEXT NOT NULL,
                     deadline TEXT,
+                    kind TEXT NOT NULL DEFAULT 'follow_up',
                     state TEXT NOT NULL,
                     created_at_ms INTEGER NOT NULL,
                     updated_at_ms INTEGER NOT NULL
@@ -77,6 +78,14 @@ class ReadinessService:
                     ON tasks(actor_id,workspace_id,state,updated_at_ms DESC);
                 """
             )
+            columns = {
+                str(row["name"])
+                for row in self.store.db.execute("PRAGMA table_info(tasks)").fetchall()
+            }
+            if "kind" not in columns:
+                self.store.db.execute(
+                    "ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'follow_up'"
+                )
 
     def _authorize(
         self,
@@ -309,9 +318,9 @@ class ReadinessService:
             self.store.db.execute(
                 """INSERT INTO tasks(
                        id,task_key,actor_id,workspace_id,project_id,event_card_id,
-                       title,description,assignee_role,deadline,state,
+                       title,description,assignee_role,deadline,kind,state,
                        created_at_ms,updated_at_ms
-                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     task_id,
                     command_id,
@@ -323,6 +332,7 @@ class ReadinessService:
                     description.strip()[:2000],
                     assignee_role.strip()[:80] or "owner",
                     deadline,
+                    "follow_up",
                     "proposed",
                     now,
                     now,

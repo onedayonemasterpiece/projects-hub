@@ -1103,3 +1103,48 @@ button:focus-visible {
 .backlog-task:first-child {
   border-top: 0;
 }
+
+.execution-stages {
+  display: grid;
+  gap: 7px;
+  padding-top: 4px;
+}
+
+.execution-stage {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
+  border: 1px solid var(--stroke);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.execution-stage > div {
+  display: grid;
+  gap: 3px;
+}
+
+.execution-stage span,
+.execution-usage span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.execution-stage-meta {
+  justify-items: end;
+  text-align: right;
+}
+
+.execution-usage {
+  display: grid;
+  gap: 4px;
+  padding-top: 7px;
+  border-top: 1px solid var(--stroke);
+}
+
+.execution-usage code {
+  color: #d9d9dc;
+  font-size: 10px;
+  white-space: normal;
+}

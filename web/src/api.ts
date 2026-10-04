@@ -48,7 +48,32 @@ export type TaskItem = {
   description: string;
   assignee_role: string;
   deadline: string | null;
+  kind?: string;
   state: "proposed" | "accepted" | "done" | "snoozed" | "rejected";
+  updated_at_ms: number;
+};
+
+export type DevelopmentStage = {
+  id: string;
+  execution_id: string;
+  stage: "design" | "implementation" | "review" | "rework" | "delivery";
+  cycle: number;
+  model: string;
+  reasoning_effort: string;
+  devcoveer_task_id: string | null;
+  status: string;
+  summary: string;
+  review_verdict: "accepted" | "rework_required" | null;
+  token_usage: {
+    inputTokens?: number;
+    cachedInputTokens?: number;
+    outputTokens?: number;
+    reasoningOutputTokens?: number;
+    totalTokens?: number;
+  } | null;
+  started_at_ms: number | null;
+  finished_at_ms: number | null;
+  created_at_ms: number;
   updated_at_ms: number;
 };
 
@@ -59,11 +84,19 @@ export type DevelopmentExecution = {
   project_hint: string;
   provider: string;
   model_profile: string;
-  status: "starting" | "running" | "completed" | "failed" | "cancelled";
+  status: "starting" | "running" | "completed" | "failed" | "cancelled" | "blocked";
+  phase: string;
+  phase_detail: string;
   devcoveer_task_id: string | null;
+  quality_task_id?: string | null;
+  implementation_task_id?: string | null;
+  review_cycle?: number;
+  spec_path?: string | null;
   quota_remaining_percent: number | null;
   result_summary: string;
   error_code: string | null;
+  stages: DevelopmentStage[];
+  token_usage_by_model: Record<string, Record<string, number>>;
   created_at_ms: number;
   updated_at_ms: number;
   started_at_ms: number | null;
@@ -210,6 +243,12 @@ export const getTasks = (workspaceId: string, projectId?: string | null) => {
   const params = new URLSearchParams({ workspace_id: workspaceId, limit: "50" });
   if (projectId) params.set("project_id", projectId);
   return api<{ items: TaskItem[] }>(`/api/tasks?${params}`);
+};
+
+export const getDevelopmentBacklog = (workspaceId: string, projectId?: string | null) => {
+  const params = new URLSearchParams({ workspace_id: workspaceId, limit: "50" });
+  if (projectId) params.set("project_id", projectId);
+  return api<{ items: TaskItem[] }>(`/api/development/backlog?${params}`);
 };
 
 export const getDevelopmentCodexStatus = (workspaceId: string) => {
