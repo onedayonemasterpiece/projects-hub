@@ -185,7 +185,16 @@ def test_owner_http_flow_exposes_only_connection_metadata(tmp_path: Path):
         assert manifest.json()["action_url"] == "https://github.com/settings/apps/new"
         assert manifest.json()["state"] == "manifest-state"
 
-        manifest_callback = client.get(
+        external = TestClient(app, base_url="http://localhost")
+        launch = external.get(
+            "/api/github/app-manifest/launch",
+            params={"state": "manifest-state"},
+        )
+        assert launch.status_code == 200
+        assert 'method="post"' in launch.text
+        assert "https://github.com/settings/apps/new" in launch.text
+
+        manifest_callback = external.get(
             "/api/github/app-manifest/callback",
             params={"code": "manifestcode", "state": "manifest-state"},
             follow_redirects=False,
