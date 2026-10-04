@@ -1040,6 +1040,97 @@ export default function App() {
                   <p className="empty-copy">Событий с checklist пока нет. Создайте событие голосом.</p>
                 )}
               </div>
+            ) : backlogOpen ? (
+              <div className="backlog-board">
+                <div className="sheet-heading">
+                  <div>
+                    <p className="eyebrow">Бэклог</p>
+                    <h2>{focusProject?.name ?? "Проекты"}</h2>
+                  </div>
+                  <button className="quiet-button" onClick={() => setBacklogOpen(false)}>Закрыть</button>
+                </div>
+
+                {developmentAccess === true && codexStatus && (
+                  <section className="development-status">
+                    <div className="development-heading">
+                      <div>
+                        <span>Codex</span>
+                        <strong>
+                          {typeof codexStatus.remaining_percent === "number"
+                            ? `Остаток · ${Math.round(codexStatus.remaining_percent)}%`
+                            : "Лимит неизвестен"}
+                        </strong>
+                      </div>
+                      <span className={codexStatus.eligible ? "readiness-badge is-ok" : "readiness-badge"}>
+                        {codexStatus.eligible ? "можно запускать" : "резерв / недоступен"}
+                      </span>
+                    </div>
+                    {!codexStatus.profile.catalog_available && codexStatus.models.length > 0 && (
+                      <div className="model-list">
+                        <span>Owner profile сейчас недоступен. Доступны:</span>
+                        {codexStatus.models.slice(0, 6).map(model => (
+                          <code key={model.id}>
+                            {model.id} · {model.default_reasoning_effort ?? model.reasoning_efforts[0] ?? "default"}
+                          </code>
+                        ))}
+                      </div>
+                    )}
+                    {developmentExecution && (
+                      <div className="execution-card">
+                        <div>
+                          <strong>Последний запуск · {developmentExecution.status}</strong>
+                          <span>
+                            {developmentExecution.model_profile}
+                            {typeof developmentExecution.quota_remaining_percent === "number"
+                              ? ` · старт при ${Math.round(developmentExecution.quota_remaining_percent)}%`
+                              : ""}
+                          </span>
+                        </div>
+                        {developmentExecution.result_summary && (
+                          <p>{developmentExecution.result_summary}</p>
+                        )}
+                        {developmentExecution.error_code && (
+                          <p className="notice">Ошибка: {developmentExecution.error_code}</p>
+                        )}
+                      </div>
+                    )}
+                  </section>
+                )}
+
+                {backlogTasks.length ? (
+                  <div className="backlog-list">
+                    {backlogTasks.map(task => (
+                      <section className="backlog-task" key={task.id}>
+                        <div>
+                          <strong>{task.title}</strong>
+                          <span>
+                            {task.state}
+                            {task.deadline ? " · " + task.deadline : ""}
+                          </span>
+                          {task.description && <p>{task.description}</p>}
+                        </div>
+                        {task.state !== "done" && task.state !== "rejected" && (
+                          <div className="task-actions">
+                            {task.state === "proposed" && (
+                              <button className="mini-action" onClick={() => changeTaskState(task.id, "accepted")}>Принять</button>
+                            )}
+                            <button className="mini-action" onClick={() => changeTaskState(task.id, "done")}>Готово</button>
+                            <button className="mini-action" onClick={() => changeTaskState(task.id, "snoozed")}>Отложить</button>
+                          </div>
+                        )}
+                      </section>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="empty-copy">В бэклоге текущего проекта пока нет задач. Можно добавить задачу голосом.</p>
+                )}
+
+                {developmentAccess === true && (
+                  <p className="sheet-footnote">
+                    Чтобы выполнить задачу через Codex, скажите Мире, какую существующую задачу или набор задач запустить. Само добавление задачи в бэклог разработку не запускает.
+                  </p>
+                )}
+              </div>
             ) : memoryOpen ? (
               <div className="memory-card">
                 <div className="sheet-heading">
