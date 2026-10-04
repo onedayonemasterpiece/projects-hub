@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
+import re
 import time
 import uuid
-from pathlib import Path
 from typing import Any
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-
+from .devcoveer_client import DevCoveerClient, DevCoveerError
 from .readiness import ReadinessService
 from .store import DurableStore, StoreError
 
@@ -32,11 +29,11 @@ class DevelopmentService:
         store: DurableStore,
         readiness: ReadinessService,
         *,
-        command: str = "/home/dev/.local/bin/codex-mcp-server",
+        devcoveer: DevCoveerClient | None = None,
     ) -> None:
         self.store = store
         self.readiness = readiness
-        self.command = command
+        self.devcoveer = devcoveer or DevCoveerClient()
         with self.store._lock:
             self.store.db.executescript(
                 """
@@ -72,59 +69,17 @@ class DevelopmentService:
         self.store.require_platform_owner(actor_id)
         self.store.require_workspace_owner(actor_id, workspace_id)
 
-    @staticmethod
-    def _decode_tool_result(result: Any) -> dict[str, Any]:
-        structured = getattr(result, "structured_content", None)
-        if isinstance(structured, dict):
-            return structured
-        for block in getattr(result, "content", []) or []:
-            text = getattr(block, "text", None)
-            if not isinstance(text, str):
-                continue
-            try:
-                payload = json.loads(text)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(payload, dict):
-                return payload
-        return {}
-
-    async def _call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        parameters = StdioServerParameters(command=self.command, args=[])
-        try:
-            async with stdio_client(parameters) as (reader, writer):
-                async with ClientSession(reader, writer) as session:
-                    await asyncio.wait_for(session.initialize(), timeout=20)
-                    result = await asyncio.wait_for(
-                        session.call_tool(name, arguments),
-                        timeout=45,
-                    )
-        except asyncio.TimeoutError as exc:
-            raise StoreError("DEVCOVEER_TIMEOUT", "DevCoveer did not respond in time") from exc
-        except Exception as exc:
-            raise StoreError(
-                "DEVCOVEER_UNAVAILABLE",
-                f"DevCoveer is unavailable: {type(exc).__name__}",
-            ) from exc
-        payload = self._decode_tool_result(result)
-        if getattr(result, "is_error", False):
-            raise StoreError(
-                "DEVCOVEER_ERROR",
-                str(payload.get("content") or payload.get("message") or "DevCoveer tool failed")[:300],
-            )
-        return payload
-
     async def codex_status(self, *, actor_id: str, workspace_id: str) -> dict[str, Any]:
         self._authorize_owner(actor_id, workspace_id)
-        payload = await self._call("codex_status", {})
-        models_payload = await self._call(
-            "list_models",
-            {"provider": "codex", "verified_only": False},
-        )
+        try:
+            combined = await self.devcoveer.status()
+        except DevCoveerError as exc:
+            raise StoreError("DEVCOVEER_UNAVAILABLE", str(exc)) from exc
+        payload = combined.get("quota") if isinstance(combined.get("quota"), dict) else {}
         admission = payload.get("admission") if isinstance(payload.get("admission"), dict) else {}
         profile = payload.get("default_profile") if isinstance(payload.get("default_profile"), dict) else {}
         models = []
-        for item in models_payload.get("models", []):
+        for item in combined.get("models", []):
             if not isinstance(item, dict) or not isinstance(item.get("id"), str):
                 continue
             models.append({
@@ -376,16 +331,11 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
             )
 
         try:
-            result = await self._call(
-                "start_task",
-                {
-                    "project": project_hint,
-                    "prompt": prompt,
-                    "access": "write",
-                    "provider": "codex",
-                    "model": selected_model,
-                    "reasoning_effort": selected_effort,
-                },
+            result = await self.devcoveer.start_codex_task(
+                project=project_hint,
+                prompt=prompt,
+                model=selected_model,
+                reasoning_effort=selected_effort,
             )
             devcoveer_task_id = str(
                 result.get("taskId")
@@ -470,13 +420,10 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
             and item.get("status") in ACTIVE_EXECUTION_STATES
             and item.get("devcoveer_task_id")
         ):
-            result = await self._call(
-                "read_task",
-                {
-                    "project": item["project_hint"],
-                    "task": item["devcoveer_task_id"],
-                    "detail": "summary",
-                },
+            result = await self.devcoveer.read_task(
+                str(item["devcoveer_task_id"]),
+                project=str(item["project_hint"]),
+                detail="full",
             )
             next_status = self._map_task_status(
                 result.get("status")
