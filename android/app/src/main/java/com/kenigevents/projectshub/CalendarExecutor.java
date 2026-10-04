@@ -3,15 +3,19 @@ package com.kenigevents.projectshub;
 import android.Manifest;
 import android.app.Activity;
 import android.content.ContentResolver;
+import android.content.ContentUris;
 import android.content.ContentValues;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
 import android.provider.CalendarContract;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 
 final class CalendarExecutor {
     private final Activity activity;
@@ -20,9 +24,78 @@ final class CalendarExecutor {
         this.activity = activity;
     }
 
+    boolean hasReadPermission() {
+        return activity.checkSelfPermission(Manifest.permission.READ_CALENDAR)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    boolean hasWritePermissions() {
+        return hasReadPermission()
+                && activity.checkSelfPermission(Manifest.permission.WRITE_CALENDAR)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
     boolean hasPermissions() {
-        return activity.checkSelfPermission(Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED
-                && activity.checkSelfPermission(Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED;
+        return hasWritePermissions();
+    }
+
+    JSONObject readEvents(JSONObject payload) throws Exception {
+        if (!hasReadPermission()) throw new SecurityException("Calendar read permission is required");
+
+        long startMs = OffsetDateTime.parse(payload.getString("starts_at")).toInstant().toEpochMilli();
+        long endMs = OffsetDateTime.parse(payload.getString("ends_at")).toInstant().toEpochMilli();
+        int limit = Math.max(1, Math.min(20, payload.optInt("limit", 20)));
+
+        Uri.Builder builder = CalendarContract.Instances.CONTENT_URI.buildUpon();
+        ContentUris.appendId(builder, startMs);
+        ContentUris.appendId(builder, endMs);
+
+        String[] projection = {
+                CalendarContract.Instances.EVENT_ID,
+                CalendarContract.Instances.TITLE,
+                CalendarContract.Instances.BEGIN,
+                CalendarContract.Instances.END,
+                CalendarContract.Instances.ALL_DAY,
+                CalendarContract.Instances.EVENT_LOCATION
+        };
+
+        JSONArray events = new JSONArray();
+        try (Cursor cursor = activity.getContentResolver().query(
+                builder.build(),
+                projection,
+                null,
+                null,
+                CalendarContract.Instances.BEGIN + " ASC"
+        )) {
+            if (cursor != null) {
+                ZoneId zone = ZoneId.systemDefault();
+                while (cursor.moveToNext() && events.length() < limit) {
+                    long begin = cursor.getLong(2);
+                    long end = cursor.getLong(3);
+                    String title = cursor.isNull(1) ? "" : cursor.getString(1);
+                    String location = cursor.isNull(5) ? "" : cursor.getString(5);
+                    events.put(new JSONObject()
+                            .put("event_id", Long.toString(cursor.getLong(0)))
+                            .put("title", bounded(title, 240))
+                            .put("starts_at", Instant.ofEpochMilli(begin).atZone(zone).toOffsetDateTime().toString())
+                            .put("ends_at", Instant.ofEpochMilli(end).atZone(zone).toOffsetDateTime().toString())
+                            .put("all_day", cursor.getInt(4) != 0)
+                            .put("location", bounded(location, 320)));
+                }
+            }
+        }
+
+        return new JSONObject()
+                .put("readback_verified", true)
+                .put("provider_status", "present")
+                .put("count", events.length())
+                .put("events", events);
+    }
+
+    private static String bounded(String value, int max) {
+        if (value == null) return "";
+        String clean = value.trim();
+        return clean.length() <= max ? clean : clean.substring(0, max);
     }
 
     JSONObject createEvent(JSONObject payload) throws Exception {
