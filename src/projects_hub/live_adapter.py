@@ -403,74 +403,51 @@ def _functions(
             ]
         )
     if owner_development:
-        functions.extend(
-            [
-                {
-                    "name": "backlog_list",
-                    "description": (
-                        "List durable backlog tasks for the current project/workspace. "
-                        "Backlog is the primary work queue regardless of who later implements it."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "project_id": {"type": "string"},
-                            "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+        functions.append(
+            {
+                "name": "owner_development",
+                "description": (
+                    "Owner-only backlog and development control. Backlog remains the primary "
+                    "work queue. Use action=backlog_create/list to manage work without starting "
+                    "implementation; action=execute only after the platform owner explicitly "
+                    "asks to run selected existing backlog task IDs now; codex_status/status "
+                    "are read-only."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": [
+                                "backlog_create",
+                                "backlog_list",
+                                "codex_status",
+                                "execute",
+                                "status",
+                            ],
                         },
-                    },
-                },
-                {
-                    "name": "development_codex_status",
-                    "description": (
-                        "Read native Codex quota/capacity, owner profile and the current "
-                        "native Codex model catalogue. Read-only; never launches inference."
-                    ),
-                    "parameters": {"type": "object", "properties": {}},
-                },
-                {
-                    "name": "development_execute_backlog",
-                    "description": (
-                        "Start implementation for 1-5 existing durable backlog tasks. "
-                        "CALL ONLY after the platform owner explicitly asks to implement/run "
-                        "those tasks now. Discussion, prioritization or backlog creation alone "
-                        "must never call this tool. The backend rechecks owner identity, Codex "
-                        "capacity >10%, model availability and one-active-run policy."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "task_ids": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "One to five existing backlog task IDs. Backend validates count and uniqueness."
-                            },
-                            "model": {
-                                "type": "string",
-                                "description": "Exact native Codex model ID only after the owner explicitly selects it when the default owner profile is unavailable."
-                            },
-                            "reasoning_effort": {
-                                "type": "string",
-                                "enum": ["low", "medium", "high", "xhigh", "max", "ultra"]
-                            }
+                        "project_id": {"type": "string"},
+                        "title": {"type": "string"},
+                        "description": {"type": "string"},
+                        "acceptance_criteria": {
+                            "type": "array",
+                            "items": {"type": "string"},
                         },
-                        "required": ["task_ids"],
-                    },
-                },
-                {
-                    "name": "development_execution_status",
-                    "description": (
-                        "Read/synchronize the latest owner development run or a specific run. "
-                        "Use when the owner asks what Codex is doing, whether it finished, "
-                        "or what result was delivered."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "execution_id": {"type": "string"},
+                        "task_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
                         },
+                        "model": {"type": "string"},
+                        "reasoning_effort": {
+                            "type": "string",
+                            "enum": ["low", "medium", "high", "xhigh", "max", "ultra"],
+                        },
+                        "execution_id": {"type": "string"},
+                        "limit": {"type": "integer"},
                     },
+                    "required": ["action"],
                 },
-            ]
+            }
         )
     return functions
 
@@ -527,15 +504,16 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Объявляй решение сохранённым только после receipt/readback owning service.
 
 # BACKLOG AND OWNER DEVELOPMENT
-- Backlog — первичная сущность работы. task_create_follow_up создаёт durable task и может использоваться как обычная project backlog-задача даже без event_card.
-- backlog_list показывает существующие задачи проекта; не создавай параллельный «самодоработочный» список.
-- Обычное обсуждение, приоритизация, формулировка или добавление задачи в backlog НЕ разрешают запуск разработки.
-- development_execute_backlog вызывай только если текущий platform owner явно попросил реализовать/запустить конкретную существующую задачу или выбранный набор задач прямо сейчас.
-- Можно запускать 1–5 задач одного проекта одним execution. Задачи разных проектов запускай отдельными execution.
-- Перед стартом backend сам проверяет owner, native Codex quota >10%, live model catalog и отсутствие другого активного owner-run. Если owner profile недоступен, сначала вызови development_codex_status, назови доступные native модели и попроси владельца явно выбрать модель/effort. Не выбирай Astra/другую модель сама и не обходи отказ.
-- development_codex_status используй для вопросов об остатке лимита/доступности Codex; сообщай фактический remaining_percent и reset/status из tool result.
-- development_execution_status используй для «что сейчас делает Codex», «закончилось ли», «какой результат». Не объявляй разработку завершённой раньше terminal status.
-- ChatGPT/Codex, запущенные владельцем вне Projects Hub, остаются допустимыми способами выполнить ту же backlog-задачу; execution Миры — только один из путей исполнения backlog.
+- Backlog — первичная сущность работы независимо от исполнителя. Не создавай параллельный «самодоработочный» список.
+- Для owner-only операций используй единый owner_development tool.
+- action=backlog_create/list может формулировать и сохранять задачи, но НИКОГДА не означает разрешение на разработку.
+- action=execute вызывай только когда platform owner явно попросил реализовать/запустить конкретную существующую задачу или выбранный набор прямо сейчас.
+- Можно запускать 1–5 задач одного проекта одним execution; разные проекты — отдельными execution.
+- Pipeline выполняется стадиями: сильный quality design → implementation → сильный review → bounded rework → delivery → независимая post-delivery acceptance.
+- Backend сам проверяет owner, однозначный writable repository binding, native Codex quota >10%, model catalog и one-active-run guard.
+- Если gpt-6.1-medium недоступен, не подменяй его другой моделью. Сначала action=codex_status, назови доступные native варианты и попроси владельца явно выбрать model/effort.
+- action=status используй для вопросов о стадии, тестах/CI, review/rework, результате и расходе токенов по моделям. Не называй задачу готовой до terminal completed после acceptance.
+- ChatGPT/Codex, запущенные владельцем вне Projects Hub, остаются допустимыми способами выполнить ту же backlog-задачу.
 
 # EVENT READINESS
 - После подтверждённого calendar event backend автоматически создаёт event card. Для записи подкаста передавай event_type=podcast, иначе generic.
@@ -846,6 +824,79 @@ class ProjectsHubLiveAdapter:
                 "backend_version": state.get("backend_version"),
                 "backend_release_sha": state.get("backend_release_sha"),
             }
+
+        if name == "owner_development":
+            action = str(args.get("action") or "").strip()
+            project_id = str(args.get("project_id") or "") or None
+            if project_id is None:
+                project_id = self.store.get_conversation(
+                    actor_id,
+                    conversation_id,
+                ).get("focus_project_id")
+
+            if action == "backlog_create":
+                if not project_id:
+                    raise StoreError("DEVELOPMENT_PROJECT_REQUIRED", "Choose a project first")
+                command_id, _args_sha = self._command_id(session, name + ":backlog_create", args)
+                criteria = args.get("acceptance_criteria")
+                if not isinstance(criteria, list):
+                    criteria = []
+                return {
+                    "task": self.development.create_backlog_task(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        project_id=project_id,
+                        task_key=command_id,
+                        title=str(args.get("title") or ""),
+                        description=str(args.get("description") or ""),
+                        acceptance_criteria=[str(item) for item in criteria],
+                    )
+                }
+
+            if action == "backlog_list":
+                try:
+                    limit = int(args.get("limit", 30))
+                except (TypeError, ValueError):
+                    limit = 30
+                return {
+                    "tasks": self.development.list_backlog(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        project_id=project_id,
+                        limit=limit,
+                    )
+                }
+
+            if action == "codex_status":
+                return await self.development.codex_status(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                )
+
+            if action == "execute":
+                raw_ids = args.get("task_ids")
+                if not isinstance(raw_ids, list):
+                    raise StoreError("INVALID_ARGUMENT", "task_ids must be a list")
+                command_id, _args_sha = self._command_id(session, name + ":execute", args)
+                return await self.development.start(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    task_ids=[str(item) for item in raw_ids],
+                    model=str(args.get("model") or "") or None,
+                    reasoning_effort=str(args.get("reasoning_effort") or "") or None,
+                    request_key=command_id,
+                )
+
+            if action == "status":
+                execution_id = str(args.get("execution_id") or "") or None
+                return await self.development.status(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    execution_id=execution_id,
+                    sync=True,
+                )
+
+            raise StoreError("INVALID_ARGUMENT", "Unknown owner_development action")
 
         if name == "backlog_list":
             self.store.require_platform_owner(actor_id)

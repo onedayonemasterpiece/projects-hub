@@ -243,12 +243,18 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        development_service = getattr(app.state, "development", None)
+        if development_service is not None and hasattr(development_service, "start_background"):
+            await development_service.start_background()
         try:
             yield
         finally:
             host = getattr(app.state, "live_host", None)
             if host is not None and hasattr(host, "stop_all"):
                 await host.stop_all()
+            development_service = getattr(app.state, "development", None)
+            if development_service is not None and hasattr(development_service, "close"):
+                await development_service.close()
             if owned_store:
                 store.close()
 
@@ -754,6 +760,23 @@ def create_app(
             task_id=task_id,
             state=payload.state,
         )
+
+    @app.get("/api/development/backlog")
+    async def development_backlog(
+        request: Request,
+        workspace_id: str,
+        project_id: str | None = None,
+        limit: int = 30,
+    ) -> dict[str, Any]:
+        actor_id = actor_id_from_request(request)
+        return {
+            "items": app.state.development.list_backlog(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                limit=limit,
+            )
+        }
 
     @app.get("/api/development/codex-status")
     async def development_codex_status(
