@@ -20,8 +20,26 @@ class FakeGitHubConnections:
         self.calls.append(("status", actor_id, workspace_id))
         return {
             "configured": True,
+            "bootstrap_available": True,
             "installations": [],
             "repositories": [],
+        }
+
+    def start_manifest_registration(self, *, actor_id, workspace_id, conversation_id=None):
+        self.calls.append(("manifest_start", actor_id, workspace_id, conversation_id))
+        return {
+            "action_url": "https://github.com/settings/apps/new",
+            "manifest": "{\"name\":\"projects-hub-test\"}",
+            "state": "manifest-state",
+            "expires_at_ms": 9999999999999,
+        }
+
+    async def complete_manifest_registration(self, *, actor_id, state, code):
+        self.calls.append(("manifest_callback", actor_id, state, code))
+        return {
+            "workspace_id": "ws_fake",
+            "install_url": "https://github.com/apps/projects-hub/installations/new?state=install-state",
+            "expires_at_ms": 9999999999999,
         }
 
     def start_install(self, *, actor_id, workspace_id, conversation_id=None):
@@ -144,9 +162,28 @@ def test_owner_http_flow_exposes_only_connection_metadata(tmp_path: Path):
         assert status.status_code == 200
         assert status.json() == {
             "configured": True,
+            "bootstrap_available": True,
             "installations": [],
             "repositories": [],
         }
+
+        manifest = client.post(
+            "/api/github/app-manifest/start",
+            json={"workspace_id": workspace_id, "conversation_id": None},
+        )
+        assert manifest.status_code == 200
+        assert manifest.json()["action_url"] == "https://github.com/settings/apps/new"
+        assert manifest.json()["state"] == "manifest-state"
+
+        manifest_callback = client.get(
+            "/api/github/app-manifest/callback",
+            params={"code": "manifestcode", "state": "manifest-state"},
+            follow_redirects=False,
+        )
+        assert manifest_callback.status_code == 303
+        assert manifest_callback.headers["location"].startswith(
+            "https://github.com/apps/projects-hub/installations/new"
+        )
 
         started = client.post(
             "/api/github/install/start",
