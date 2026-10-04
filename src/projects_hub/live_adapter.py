@@ -383,6 +383,29 @@ def _functions(
         functions.extend(
             [
                 {
+                    "name": "backlog_create",
+                    "description": (
+                        "Create one durable development backlog task for the current "
+                        "or explicitly selected project. This only records work; it never "
+                        "starts Codex. Use when the owner asks to add/capture a product or "
+                        "engineering task in the backlog."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "project_id": {"type": "string"},
+                            "title": {"type": "string"},
+                            "description": {"type": "string"},
+                            "acceptance_criteria": {
+                                "type": "array",
+                                "maxItems": 10,
+                                "items": {"type": "string"},
+                            },
+                        },
+                        "required": ["title"],
+                    },
+                },
+                {
                     "name": "backlog_list",
                     "description": (
                         "List durable backlog tasks for the current project/workspace. "
@@ -769,13 +792,44 @@ class ProjectsHubLiveAdapter:
             except (TypeError, ValueError):
                 limit = 20
             return {
-                "tasks": self.readiness.list_tasks(
+                "tasks": self.development.list_backlog(
                     actor_id=actor_id,
                     workspace_id=workspace_id,
                     project_id=project_id,
                     limit=limit,
                 )
             }
+
+        if name == "backlog_create":
+            self.store.require_platform_owner(actor_id)
+            self.store.require_workspace_owner(actor_id, workspace_id)
+            project_id = str(args.get("project_id") or "") or None
+            if project_id is None:
+                project_id = self.store.get_conversation(
+                    actor_id,
+                    conversation_id,
+                ).get("focus_project_id")
+            if not project_id:
+                raise StoreError(
+                    "DEVELOPMENT_PROJECT_REQUIRED",
+                    "Choose a project before creating a development backlog task",
+                )
+            command_id, _args_sha = self._command_id(session, name, args)
+            raw_criteria = args.get("acceptance_criteria")
+            criteria = (
+                [str(item) for item in raw_criteria]
+                if isinstance(raw_criteria, list)
+                else []
+            )
+            return self.development.create_backlog_task(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                project_id=str(project_id),
+                task_key=command_id,
+                title=str(args.get("title") or ""),
+                description=str(args.get("description") or ""),
+                acceptance_criteria=criteria,
+            )
 
         if name == "development_codex_status":
             return await self.development.codex_status(
