@@ -187,15 +187,13 @@ class GitHubConnections:
                 "active": True,
             },
             "redirect_url": f"{self.settings.public_origin}/api/github/app-manifest/callback",
+            "setup_url": f"{self.settings.public_origin}/api/github/install/callback",
+            "setup_on_update": True,
             "public": False,
             "default_permissions": {
                 "metadata": "read",
                 "contents": "write",
             },
-            "default_events": [
-                "installation",
-                "installation_repositories",
-            ],
         }
         return {
             "action_url": "https://github.com/settings/apps/new",
