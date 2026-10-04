@@ -426,15 +426,14 @@ async def test_manifest_flow_bootstraps_and_persists_github_app_without_manual_s
         manifest = json.loads(started["manifest"])
         assert manifest["url"] == "https://projects-hub.kenigevents.ru"
         assert manifest["redirect_url"].endswith("/api/github/app-manifest/callback")
+        assert manifest["setup_url"].endswith("/api/github/install/callback")
+        assert manifest["setup_on_update"] is True
         assert manifest["hook_attributes"]["url"].endswith("/api/github/webhook")
         assert manifest["default_permissions"] == {
             "metadata": "read",
             "contents": "write",
         }
-        assert set(manifest["default_events"]) == {
-            "installation",
-            "installation_repositories",
-        }
+        assert "default_events" not in manifest
 
         completed = await service.complete_manifest_registration(
             actor_id=owner,
