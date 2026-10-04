@@ -468,6 +468,7 @@ export default function App() {
     if (!boot) return;
     const client = createLiveClient({
       transport: "wss",
+      voiceControl: null,
       suppressCaptureDuringPlayback: true,
       onState: state => {
         setVoiceState(state);
