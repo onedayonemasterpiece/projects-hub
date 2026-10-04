@@ -29,3 +29,18 @@ test("Projects Hub renders both sides of the Live conversation as a bounded mess
   assert.match(source, /className=\{"chat-row " \+ message\.role\}/);
   assert.match(source, /chatFollowRef/);
 });
+
+test("Projects Hub keeps the Android-hosted PWA network-fresh", async () => {
+  const worker = await readFile(new URL("../public/sw.js", import.meta.url), "utf8");
+  const main = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
+  const android = await readFile(
+    new URL("../../android/app/src/main/java/com/kenigevents/projectshub/MainActivity.java", import.meta.url),
+    "utf8",
+  );
+  assert.match(worker, /projects-hub-shell-v2/);
+  assert.match(worker, /cache:\s*"no-store"/);
+  assert.match(main, /updateViaCache:\s*"none"/);
+  assert.match(main, /controllerchange/);
+  assert.match(android, /webView\.clearCache\(true\)/);
+  assert.match(android, /native_version=/);
+});
