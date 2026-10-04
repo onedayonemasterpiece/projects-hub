@@ -95,6 +95,7 @@ export type RepositoryConnection = {
 
 export type GitHubStatus = {
   configured: boolean;
+  bootstrap_available: boolean;
   installations: GitHubInstallation[];
   repositories: RepositoryConnection[];
 };
@@ -183,6 +184,23 @@ export const getGitHubStatus = (workspaceId: string) => {
   const params = new URLSearchParams({ workspace_id: workspaceId });
   return api<GitHubStatus>(`/api/github/status?${params}`);
 };
+
+export const startGitHubManifest = (
+  workspaceId: string,
+  conversationId?: string | null,
+) =>
+  api<{
+    action_url: string;
+    manifest: string;
+    state: string;
+    expires_at_ms: number;
+  }>("/api/github/app-manifest/start", {
+    method: "POST",
+    body: JSON.stringify({
+      workspace_id: workspaceId,
+      conversation_id: conversationId ?? null,
+    }),
+  });
 
 export const startGitHubInstall = (
   workspaceId: string,

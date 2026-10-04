@@ -179,6 +179,17 @@ class DurableStore:
         );
         CREATE INDEX IF NOT EXISTS github_install_states_actor_idx
             ON github_install_states(actor_id, expires_at_ms);
+        CREATE TABLE IF NOT EXISTS github_app_manifest_states(
+            state_hash TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+            actor_id TEXT NOT NULL REFERENCES actors(id),
+            conversation_id TEXT REFERENCES conversations(id),
+            expires_at_ms INTEGER NOT NULL,
+            consumed_at_ms INTEGER,
+            created_at_ms INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS github_app_manifest_states_actor_idx
+            ON github_app_manifest_states(actor_id, expires_at_ms);
         CREATE TABLE IF NOT EXISTS github_installations(
             installation_id INTEGER PRIMARY KEY,
             workspace_id TEXT NOT NULL REFERENCES workspaces(id),
@@ -708,6 +719,91 @@ class DurableStore:
         role = self.workspace_role(actor_id, workspace_id)
         if role != "owner":
             raise StoreError("FORBIDDEN", "Workspace owner permission is required")
+
+    def require_platform_owner(self, actor_id: str) -> None:
+        with self._lock:
+            row = self.db.execute(
+                "SELECT actor_id FROM platform_owner WHERE slot=1"
+            ).fetchone()
+            if not row or row["actor_id"] != actor_id:
+                raise StoreError("FORBIDDEN", "Platform owner permission is required")
+
+    def create_github_app_manifest_state(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        state_hash: str,
+        expires_at_ms: int,
+        conversation_id: str | None = None,
+    ) -> dict[str, Any]:
+        if len(state_hash) != 64:
+            raise StoreError("INVALID_ARGUMENT", "GitHub App manifest state is invalid")
+        now = _now_ms()
+        if expires_at_ms <= now or expires_at_ms > now + 60 * 60 * 1000:
+            raise StoreError("INVALID_ARGUMENT", "GitHub App manifest state expiry is invalid")
+        with self._lock:
+            self.require_platform_owner(actor_id)
+            self.require_workspace_owner(actor_id, workspace_id)
+            if conversation_id is not None:
+                conversation = self.get_conversation(actor_id, conversation_id)
+                if conversation["workspace_id"] != workspace_id:
+                    raise StoreError("FORBIDDEN", "Conversation workspace mismatch")
+            self.db.execute(
+                """INSERT INTO github_app_manifest_states
+                   (state_hash,workspace_id,actor_id,conversation_id,expires_at_ms,
+                    consumed_at_ms,created_at_ms)
+                   VALUES(?,?,?,?,?,NULL,?)""",
+                (
+                    state_hash,
+                    workspace_id,
+                    actor_id,
+                    conversation_id,
+                    int(expires_at_ms),
+                    now,
+                ),
+            )
+        return {
+            "workspace_id": workspace_id,
+            "conversation_id": conversation_id,
+            "expires_at_ms": int(expires_at_ms),
+        }
+
+    def consume_github_app_manifest_state(
+        self,
+        *,
+        actor_id: str,
+        state_hash: str,
+    ) -> dict[str, Any]:
+        now = _now_ms()
+        with self._lock:
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self.db.execute(
+                    "SELECT * FROM github_app_manifest_states WHERE state_hash=?",
+                    (state_hash,),
+                ).fetchone()
+                if (
+                    not row
+                    or row["actor_id"] != actor_id
+                    or row["consumed_at_ms"] is not None
+                    or int(row["expires_at_ms"]) < now
+                ):
+                    raise StoreError(
+                        "GITHUB_APP_MANIFEST_STATE_INVALID",
+                        "GitHub App manifest state is invalid or expired",
+                    )
+                self.require_platform_owner(actor_id)
+                self.require_workspace_owner(actor_id, row["workspace_id"])
+                self.db.execute(
+                    "UPDATE github_app_manifest_states SET consumed_at_ms=? WHERE state_hash=?",
+                    (now, state_hash),
+                )
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
+            return dict(row)
 
     def create_github_install_state(
         self,

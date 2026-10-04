@@ -384,3 +384,80 @@ async def test_install_callback_rolls_back_state_and_metadata_if_catalogue_persi
         assert state_row["consumed_at_ms"] is not None
     finally:
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_manifest_flow_bootstraps_and_persists_github_app_without_manual_secrets(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    store = DurableStore(data_dir)
+    boot = store.ensure_platform_owner("Owner")
+    dynamic = Settings(
+        data_dir=data_dir,
+        static_dir=tmp_path / "dist",
+        session_secret="s" * 48,
+        dev_auth=True,
+        cookie_secure=False,
+        public_origin="https://projects-hub.kenigevents.ru",
+    )
+
+    async def exchange(code: str):
+        assert code == "manifestcode123"
+        return {
+            "id": 9001,
+            "slug": "projects-hub-abcd1234",
+            "pem": "-----BEGIN RSA PRIVATE KEY-----\ntest-only\n-----END RSA PRIVATE KEY-----",
+            "webhook_secret": "webhook-secret-from-github-12345",
+        }
+
+    service = GitHubConnections(
+        store,
+        dynamic,
+        now=time.time,
+        manifest_exchange=exchange,
+    )
+    try:
+        owner = boot["actor"]["id"]
+        workspace = boot["workspace"]["id"]
+        started = service.start_manifest_registration(
+            actor_id=owner,
+            workspace_id=workspace,
+        )
+        assert started["action_url"] == "https://github.com/settings/apps/new"
+        manifest = json.loads(started["manifest"])
+        assert manifest["url"] == "https://projects-hub.kenigevents.ru"
+        assert manifest["redirect_url"].endswith("/api/github/app-manifest/callback")
+        assert manifest["setup_url"].endswith("/api/github/install/callback")
+        assert manifest["setup_on_update"] is True
+        assert manifest["hook_attributes"]["url"].endswith("/api/github/webhook")
+        assert manifest["default_permissions"] == {
+            "metadata": "read",
+            "contents": "write",
+        }
+        assert "default_events" not in manifest
+
+        completed = await service.complete_manifest_registration(
+            actor_id=owner,
+            state=started["state"],
+            code="manifestcode123",
+        )
+        assert completed["install_url"].startswith(
+            "https://github.com/apps/projects-hub-abcd1234/installations/new"
+        )
+        assert service.configured is True
+        persisted = data_dir / ".github-app.json"
+        assert persisted.is_file()
+        assert persisted.stat().st_mode & 0o077 == 0
+
+        reloaded = GitHubConnections(store, dynamic, now=time.time)
+        assert reloaded.configured is True
+        assert reloaded.status(owner, workspace)["bootstrap_available"] is True
+
+        with pytest.raises(StoreError) as replay:
+            await service.complete_manifest_registration(
+                actor_id=owner,
+                state=started["state"],
+                code="manifestcode123",
+            )
+        assert replay.value.code == "GITHUB_APP_MANIFEST_STATE_INVALID"
+    finally:
+        store.close()

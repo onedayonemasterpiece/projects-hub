@@ -20,6 +20,7 @@ import {
   login,
   setTaskState,
   startGitHubInstall,
+  startGitHubManifest,
   type AuthConfig,
   type Bootstrap,
   type Conversation,
@@ -563,11 +564,42 @@ export default function App() {
     }
   }
 
+  function submitGitHubManifest(result: {
+    action_url: string;
+    manifest: string;
+    state: string;
+  }) {
+    const form = document.createElement("form");
+    form.method = "POST";
+    form.action = result.action_url;
+    form.style.display = "none";
+    for (const [name, value] of Object.entries({
+      manifest: result.manifest,
+      state: result.state,
+    })) {
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = name;
+      input.value = value;
+      form.appendChild(input);
+    }
+    document.body.appendChild(form);
+    form.submit();
+  }
+
   async function connectGitHub() {
     if (!boot || boot.role !== "owner" || githubBusy) return;
     setGitHubBusy(true);
     setNotice(null);
     try {
+      if (!githubStatus?.configured) {
+        const manifest = await startGitHubManifest(
+          boot.workspace.id,
+          conversationRef.current?.id ?? null,
+        );
+        submitGitHubManifest(manifest);
+        return;
+      }
       const result = await startGitHubInstall(
         boot.workspace.id,
         conversationRef.current?.id ?? null,
@@ -741,9 +773,9 @@ export default function App() {
                     <button className="quiet-button" onClick={manageGitHubAccess} disabled={githubBusy}>
                       Изменить доступ
                     </button>
-                  ) : githubStatus?.configured ? (
+                  ) : githubStatus?.configured || githubStatus?.bootstrap_available ? (
                     <button className="quiet-button" onClick={connectGitHub} disabled={githubBusy}>
-                      Подключить
+                      Подключить GitHub
                     </button>
                   ) : null}
                 </div>
@@ -752,7 +784,7 @@ export default function App() {
                   <p className="integration-copy">Проверяю подключение…</p>
                 ) : !githubStatus.configured ? (
                   <p className="integration-copy">
-                    GitHub App ещё не зарегистрирован на сервере. PAT в приложение не нужен.
+                    Подключение настраивается один раз владельцем. Остальным участникам проекта GitHub не потребуется.
                   </p>
                 ) : githubStatus.installations.length === 0 ? (
                   <p className="integration-copy">
