@@ -30,6 +30,9 @@ class DevCoveerClient:
     async def codex_status(self) -> dict[str, Any]:
         return await self._call("codex_status", {})
 
+    async def codex_models(self) -> dict[str, Any]:
+        return await self._call("list_models", {"provider": "codex", "verified_only": False})
+
     async def start_codex_task(
         self,
         *,
@@ -55,7 +58,6 @@ class DevCoveerClient:
             "read_task",
             {
                 "task": task_id,
-                "project": "projects-hub",
                 "detail": "summary",
             },
         )
