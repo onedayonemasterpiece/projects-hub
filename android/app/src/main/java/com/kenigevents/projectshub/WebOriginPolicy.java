@@ -41,6 +41,20 @@ final class WebOriginPolicy {
         return candidate != null && candidate.getUserInfo() == null && sameOrigin(candidate);
     }
 
+    boolean isTrustedMicrophoneSettingsAction(String currentPageUrl, String targetUrl) {
+        if (!isTrustedPageUrl(currentPageUrl)) return false;
+        URI target = parseOrNull(targetUrl);
+        if (target == null
+                || target.getUserInfo() != null
+                || target.getQuery() != null
+                || target.getFragment() != null) {
+            return false;
+        }
+        return "projectshub".equalsIgnoreCase(target.getScheme())
+                && "settings".equalsIgnoreCase(target.getHost())
+                && "/microphone".equals(target.getPath());
+    }
+
     private boolean sameOrigin(URI candidate) {
         return candidate.getScheme() != null
                 && candidate.getHost() != null
