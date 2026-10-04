@@ -86,6 +86,10 @@ class ReadinessService:
                 self.store.db.execute(
                     "ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'follow_up'"
                 )
+                self.store.db.execute(
+                    """UPDATE tasks SET kind='development'
+                       WHERE event_card_id IS NULL AND project_id IS NOT NULL"""
+                )
 
     def _authorize(
         self,
