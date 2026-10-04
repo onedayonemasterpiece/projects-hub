@@ -9,7 +9,7 @@
     "test:live-framework": "node --test tests/*.test.mjs"
   },
   "dependencies": {
-    "@onedayonemasterpiece/live-interaction": "git+https://github.com/onedayonemasterpiece/live-interaction.git#v0.3.11",
+    "@onedayonemasterpiece/live-interaction": "git+https://github.com/onedayonemasterpiece/live-interaction.git#v0.3.12",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
@@ -23,9 +23,9 @@
   "liveFramework": {
     "repository": "https://github.com/onedayonemasterpiece/live-interaction",
     "binding": "browser",
-    "version": "0.3.11",
-    "ref": "v0.3.11",
-    "release_commit": "129edcd38208e3d3daa4fb033c75288d83575dea",
+    "version": "0.3.12",
+    "ref": "v0.3.12",
+    "release_commit": "0996b926e29de41d13207ea15b5b311d04e86f34",
     "release_asset_sha256": "e713de774b5a7c513f4ec8f5281865a160ebf8ed3878987316eb4bc233a8c58c"
   }
 }
