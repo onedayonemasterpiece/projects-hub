@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import {
   createDurableMicrophoneCapture,
   createLiveClient,
@@ -183,7 +183,7 @@ export default function App() {
     setGitHubStatus(await getGitHubStatus(boot.workspace.id));
   }, [boot]);
 
-  const mergeChatMessage = useCallback((role: ChatRole, fragment: string, preferred: React.MutableRefObject<number>) => {
+  const mergeChatMessage = useCallback((role: ChatRole, fragment: string, preferred: MutableRefObject<number>) => {
     const clean = fragment.trim();
     if (!clean) return;
     setChatMessages(previous => {
@@ -816,13 +816,7 @@ export default function App() {
       <section className={"work-zone" + (showWork ? " visible" : "")} aria-live="polite">
         {showWork && (
           <article className="island work-island">
-            {wait ? (
-              <div className="wait-card">
-                <p className="eyebrow">{wait.stage === "action" ? "Выполняю действие" : "Live думает"}</p>
-                <strong>{formatWait(wait)}</strong>
-                <p>{wait.can_restart ? "Можно остановить и начать снова — источник останется сохранён." : "Можно остановить в любой момент."}</p>
-              </div>
-            ) : eventOpen ? (
+            {eventOpen ? (
               <div className="event-board">
                 <div className="sheet-heading">
                   <div>
