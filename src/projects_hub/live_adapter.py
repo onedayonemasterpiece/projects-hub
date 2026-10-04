@@ -736,6 +736,53 @@ class ProjectsHubLiveAdapter:
                 "conversation": self.store.get_conversation(actor_id, conversation_id),
             }
 
+        if name == "backlog_list":
+            self.store.require_platform_owner(actor_id)
+            self.store.require_workspace_owner(actor_id, workspace_id)
+            project_id = str(args.get("project_id") or "") or None
+            if project_id is None:
+                project_id = self.store.get_conversation(
+                    actor_id,
+                    conversation_id,
+                ).get("focus_project_id")
+            try:
+                limit = int(args.get("limit", 20))
+            except (TypeError, ValueError):
+                limit = 20
+            return {
+                "tasks": self.readiness.list_tasks(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    project_id=project_id,
+                    limit=limit,
+                )
+            }
+
+        if name == "development_codex_status":
+            return await self.development.codex_status(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+            )
+
+        if name == "development_execute_backlog":
+            raw_ids = args.get("task_ids")
+            if not isinstance(raw_ids, list):
+                raise StoreError("INVALID_ARGUMENT", "task_ids must be a list")
+            return await self.development.start(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                task_ids=[str(item) for item in raw_ids],
+            )
+
+        if name == "development_execution_status":
+            execution_id = str(args.get("execution_id") or "") or None
+            return await self.development.status(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                execution_id=execution_id,
+                sync=True,
+            )
+
         if name == "github_repositories_list":
             rows = self.store.list_repository_connections(actor_id, workspace_id)
             repositories = [
