@@ -99,3 +99,37 @@ def test_system_instruction_has_runtime_scoped_capability_tour(tmp_path: Path):
         assert "не подключённые capabilities" in instruction
     finally:
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_runtime_versions_tool_reports_exact_session_versions(tmp_path: Path):
+    store = DurableStore(tmp_path)
+    try:
+        boot = store.ensure_dev_workspace("Versions")
+        actor_id = boot["actor"]["id"]
+        workspace_id = boot["workspace"]["id"]
+        project_id = boot["projects"][0]["id"]
+        conversation = store.create_conversation(actor_id, workspace_id, project_id)
+        binding = ConversationScope(workspace_id, actor_id, conversation["id"]).resource_binding()
+        adapter = ProjectsHubLiveAdapter(store)
+        initialized = adapter.initialize(
+            resource_id=binding,
+            actor={"subject": actor_id, "tenant_id": workspace_id},
+            model="gemini-3.8-live",
+            conversation_id=conversation["id"],
+            client_version="0.1.18",
+            backend_release_sha="a" * 40,
+        )
+        names = {item["name"] for item in initialized["configuration"]["functions"]}
+        assert "runtime_versions_get" in names
+        result = await adapter.execute_tool(
+            SimpleNamespace(state=initialized["state"]),
+            {"name": "runtime_versions_get", "args": {}},
+        )
+        assert result == {
+            "client_kind": "android",
+            "android_version": "0.1.18",
+            "backend_release_sha": "a" * 40,
+        }
+    finally:
+        store.close()
