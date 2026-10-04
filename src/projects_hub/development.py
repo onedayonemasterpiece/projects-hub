@@ -497,47 +497,27 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
     @staticmethod
     def _phase_from_result(result: dict[str, Any], status: str) -> tuple[str, str]:
         if status == "completed":
-            return "completed", "Готово"
+            return "ready", "Готово"
         if status in {"failed", "cancelled"}:
-            return "failed", "Исполнение завершилось ошибкой"
+            return status, "Исполнение завершилось ошибкой" if status == "failed" else "Исполнение отменено"
 
-        snapshot = result.get("liveSessionSnapshot")
-        if not isinstance(snapshot, list):
-            return "analysis", "Codex анализирует задачу"
-
-        tool_seen = False
-        fragments: list[str] = []
-        for message in snapshot[-12:]:
-            if not isinstance(message, dict):
-                continue
-            parts = message.get("parts")
-            if not isinstance(parts, list):
-                continue
-            for part in parts:
-                if not isinstance(part, dict) or part.get("type") != "tool":
-                    continue
-                tool_seen = True
-                fragments.append(
-                    (
-                        str(part.get("tool") or "")
-                        + "\n"
-                        + str(part.get("output_tail") or "")
-                    ).lower()
-                )
-        recent = "\n".join(fragments[-8:])
-        if re.search(
-            r"release|deploy|published|merge|pull request|github actions|apk",
-            recent,
-        ):
-            return "delivery", "Сборка или доставка результата"
-        if re.search(
-            r"pytest|tests?\b|passed|build successful|gradle|npm test|pnpm test|checks",
-            recent,
-        ):
-            return "testing", "Идут тесты или сборка"
-        if tool_seen:
-            return "implementation", "Codex вносит изменения"
-        return "analysis", "Codex анализирует задачу"
+        phase = str(result.get("progressPhase") or "").strip().lower()
+        labels = {
+            "preparing": "Codex готовит запуск",
+            "planning": "Codex анализирует и планирует",
+            "implementing": "Codex вносит изменения",
+            "testing": "Идут тесты",
+            "ci": "Проверяется CI",
+            "publishing": "Изменения публикуются",
+            "releasing": "Собирается релиз",
+            "deploying": "Идёт развёртывание",
+            "ready": "Готово",
+            "failed": "Исполнение завершилось ошибкой",
+            "cancelled": "Исполнение отменено",
+        }
+        if phase in labels:
+            return phase, labels[phase]
+        return "planning", "Codex анализирует и планирует"
 
     @staticmethod
     def _map_task_status(value: Any) -> str:
@@ -585,7 +565,7 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
             result = await self.devcoveer.read_task(
                 str(item["devcoveer_task_id"]),
                 project=str(item["project_hint"]),
-                detail="full",
+                detail="summary",
             )
             next_status = self._map_task_status(
                 result.get("status")
