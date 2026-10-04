@@ -47,6 +47,7 @@ declare module "@onedayonemasterpiece/live-interaction/browser" {
     onTiming?: (event: string, metrics?: Record<string, unknown>) => void;
     onWait?: (wait: null | { elapsed_ms: number; stage: string; can_restart: boolean }) => void;
     persistAudio?: ((message: DurableAudioMessage) => Promise<void> | void) | null;
+    suppressCaptureDuringPlayback?: boolean | (() => boolean);
   }): LiveClient;
 
   export function createDurableMicrophoneCapture(options: {
