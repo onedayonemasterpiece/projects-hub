@@ -111,9 +111,6 @@ class DevelopmentService:
                 );
                 CREATE INDEX IF NOT EXISTS task_execution_stages_execution_idx
                     ON task_execution_stages(execution_id,created_at_ms);
-                CREATE UNIQUE INDEX IF NOT EXISTS task_execution_stages_dispatch_idx
-                    ON task_execution_stages(dispatch_key)
-                    WHERE dispatch_key IS NOT NULL;
                 """
             )
             columns = {
@@ -1721,4 +1718,12 @@ Before the verdict, list the concrete evidence checked and any missing/failed it
 
 
     async def close(self) -> None:
+        task = self._driver_task
+        self._driver_task = None
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         await self.devcoveer.close()
