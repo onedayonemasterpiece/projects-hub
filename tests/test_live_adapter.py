@@ -192,7 +192,28 @@ def test_recent_conversation_history_crosses_live_sources(tmp_path: Path):
         assert history == [
             {"role": "user", "text": "Первая просьба"},
             {"role": "model", "text": "Первый ответ"},
-            {"role": "user", "text": "Задача выше"},
+        ]
+    finally:
+        store.close()
+
+
+def test_recent_conversation_history_drops_interrupted_tail(tmp_path: Path):
+    store = DurableStore(tmp_path)
+    try:
+        boot = store.ensure_dev_workspace("History interrupted")
+        actor_id = boot["actor"]["id"]
+        workspace_id = boot["workspace"]["id"]
+        conversation = store.create_conversation(actor_id, workspace_id, boot["projects"][0]["id"])
+        first = store.create_source(actor_id, conversation["id"])
+        store.append_source_event(actor_id, first["id"], "input_transcript", "Готовая просьба")
+        store.append_source_event(actor_id, first["id"], "output_transcript", "Готовый ответ")
+        store.append_source_event(actor_id, first["id"], "turn_complete")
+        second = store.create_source(actor_id, conversation["id"])
+        store.append_source_event(actor_id, second["id"], "input_transcript", "Незавершённый хвост")
+        store.append_source_event(actor_id, second["id"], "interrupted")
+        assert store.recent_conversation_history(actor_id, conversation["id"]) == [
+            {"role": "user", "text": "Готовая просьба"},
+            {"role": "model", "text": "Готовый ответ"},
         ]
     finally:
         store.close()
