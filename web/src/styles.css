@@ -1103,3 +1103,27 @@ button:focus-visible {
 .backlog-task:first-child {
   border-top: 0;
 }
+
+.runtime-version-card {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 13px 14px;
+  border-radius: 17px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.runtime-version-card strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.runtime-current {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
