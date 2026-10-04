@@ -511,6 +511,7 @@ class ProjectsHubLiveAdapter:
         *,
         device_commands: DeviceCommandService | None = None,
         readiness: ReadinessService | None = None,
+        development: DevelopmentService | None = None,
         github_connections: GitHubConnections | None = None,
         expert_reviews_factory: (
             Callable[[str, str], ExpertReviewAdapter | None] | None
@@ -523,6 +524,7 @@ class ProjectsHubLiveAdapter:
         self.store = store
         self.device_commands = device_commands or DeviceCommandService(store)
         self.readiness = readiness or ReadinessService(store)
+        self.development = development or DevelopmentService(store, self.readiness)
         self.github_connections = github_connections
         self.expert_reviews_factory = expert_reviews_factory
         self.regional_knowledge_factory = regional_knowledge_factory
@@ -598,6 +600,14 @@ class ProjectsHubLiveAdapter:
             actor_id,
             conversation["workspace_id"],
         )
+        owner_development = False
+        try:
+            self.store.require_platform_owner(actor_id)
+            self.store.require_workspace_owner(actor_id, conversation["workspace_id"])
+            owner_development = True
+        except StoreError:
+            owner_development = False
+
         system_instruction = SYSTEM_INSTRUCTION
         if audio_mode == "buffered":
             system_instruction += """
@@ -633,6 +643,7 @@ class ProjectsHubLiveAdapter:
                 "functions": _functions(
                     expert_reviews=expert_reviews is not None,
                     regional_knowledge=regional_knowledge is not None,
+                    owner_development=owner_development,
                 ),
                 "voice": "Aoede",
                 "search_enabled": False,
@@ -650,6 +661,7 @@ class ProjectsHubLiveAdapter:
                 "source_reused": source_reused,
                 "expert_reviews_enabled": expert_reviews is not None,
                 "regional_knowledge_enabled": regional_knowledge is not None,
+                "owner_development_enabled": owner_development,
                 "source_terminal": source["status"] in {"archived", "ephemeral_processed"},
             },
         }
