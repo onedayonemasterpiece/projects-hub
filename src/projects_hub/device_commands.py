@@ -15,6 +15,7 @@ from .store import DurableStore, StoreError
 
 ALLOWED_DEVICE_CAPABILITIES = {
     "calendar.create_event",
+    "calendar.read_events",
 }
 
 TERMINAL_COMMAND_STATUSES = {
@@ -114,6 +115,20 @@ class DeviceCommandService:
             "capabilities": json.loads(row["capabilities_json"] or "[]"),
         }
 
+    def update_capabilities(
+        self,
+        *,
+        authorization: str | None,
+        capabilities: list[str],
+    ) -> dict[str, Any]:
+        device = self.authenticate(authorization)
+        clean = self._clean_capabilities(capabilities)
+        return self.store.update_device_capabilities(
+            device_id=device["device_id"],
+            session_id=device["session_id"],
+            capabilities=clean,
+        )
+
     def list_devices(
         self,
         *,
@@ -182,6 +197,29 @@ class DeviceCommandService:
             "requires_user_confirmation": True,
         }
 
+    @staticmethod
+    def _calendar_read_payload(args: dict[str, Any]) -> dict[str, Any]:
+        starts_at = DeviceCommandService._parse_aware_datetime(
+            str(args.get("starts_at") or ""),
+            "starts_at",
+        )
+        ends_at = DeviceCommandService._parse_aware_datetime(
+            str(args.get("ends_at") or ""),
+            "ends_at",
+        )
+        if ends_at <= starts_at:
+            raise StoreError("INVALID_ARGUMENT", "Calendar read end must be after start")
+        if (ends_at - starts_at).total_seconds() > 31 * 24 * 60 * 60:
+            raise StoreError("INVALID_ARGUMENT", "Calendar read range is limited to 31 days")
+        limit = int(args.get("limit") or 20)
+        if limit < 1 or limit > 20:
+            raise StoreError("INVALID_ARGUMENT", "Calendar read limit must be between 1 and 20")
+        return {
+            "starts_at": starts_at.isoformat(),
+            "ends_at": ends_at.isoformat(),
+            "limit": limit,
+        }
+
     def create_calendar_command(
         self,
         *,
@@ -237,6 +275,58 @@ class DeviceCommandService:
             payload_sha256=payload_sha,
             command_id=command_id,
             expires_at_ms=round((self.now() + 10 * 60) * 1000),
+        )
+
+    def create_calendar_read_command(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        project_id: str | None,
+        command_id: str,
+        args: dict[str, Any],
+    ) -> dict[str, Any]:
+        capability = "calendar.read_events"
+        requested_device = str(args.get("device_id") or "").strip() or None
+        devices = self.store.list_devices(
+            actor_id,
+            workspace_id,
+            capability=capability,
+        )
+        if requested_device:
+            devices = [item for item in devices if item["id"] == requested_device]
+            if not devices:
+                raise StoreError(
+                    "DEVICE_NOT_FOUND",
+                    "Requested Android device is unavailable for calendar read",
+                )
+        elif len(devices) > 1:
+            raise StoreError(
+                "DEVICE_SELECTION_REQUIRED",
+                "More than one Android device can read calendar events",
+            )
+        if not devices:
+            raise StoreError(
+                "DEVICE_CAPABILITY_NOT_AVAILABLE",
+                "No bound Android device can read calendar events",
+            )
+        payload = self._calendar_read_payload(args)
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return self.store.create_device_command(
+            actor_id=actor_id,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            device_id=str(devices[0]["id"]),
+            capability=capability,
+            payload=payload,
+            payload_sha256=hashlib.sha256(encoded).hexdigest(),
+            command_id=command_id,
+            expires_at_ms=round((self.now() + 5 * 60) * 1000),
         )
 
     async def wait_for_terminal(
@@ -326,19 +416,29 @@ class DeviceCommandService:
             raise StoreError("DEVICE_COMMAND_CLAIM_INVALID", "Device claim token is invalid")
         if not isinstance(result, dict):
             raise StoreError("INVALID_ARGUMENT", "Device command result must be an object")
+        command_before = self.store.get_device_command(
+            actor_id=device["actor_id"],
+            workspace_id=device["workspace_id"],
+            command_id=command_id,
+        )
+        if command_before["device_id"] != device["device_id"]:
+            raise StoreError("DEVICE_COMMAND_NOT_FOUND", "Device command is unavailable")
+
         encoded = json.dumps(
             result,
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
         )
-        if len(encoded.encode("utf-8")) > 4096:
+        if len(encoded.encode("utf-8")) > 24_000:
             raise StoreError("INVALID_ARGUMENT", "Device command result is too large")
         allowed_result_keys = {
             "readback_verified",
             "event_id",
             "provider_status",
             "error_code",
+            "events",
+            "count",
         }
         if any(key not in allowed_result_keys for key in result):
             raise StoreError("INVALID_ARGUMENT", "Device command result contains unknown fields")
@@ -346,14 +446,22 @@ class DeviceCommandService:
             if result.get("readback_verified") is not True:
                 raise StoreError(
                     "DEVICE_READBACK_REQUIRED",
-                    "Applied calendar event requires device readback",
+                    "Applied device result requires verified local readback",
                 )
-            event_id = str(result.get("event_id") or "").strip()
-            if not event_id or len(event_id) > 200:
-                raise StoreError(
-                    "DEVICE_READBACK_REQUIRED",
-                    "Applied calendar event requires event id readback",
-                )
+            if command_before["capability"] == "calendar.create_event":
+                event_id = str(result.get("event_id") or "").strip()
+                if not event_id or len(event_id) > 200:
+                    raise StoreError(
+                        "DEVICE_READBACK_REQUIRED",
+                        "Applied calendar event requires event id readback",
+                    )
+            elif command_before["capability"] == "calendar.read_events":
+                events = result.get("events")
+                if not isinstance(events, list) or len(events) > 20:
+                    raise StoreError(
+                        "DEVICE_READBACK_REQUIRED",
+                        "Calendar read result is invalid",
+                    )
         command = self.store.complete_device_command(
             device_id=device["device_id"],
             session_id=device["session_id"],
