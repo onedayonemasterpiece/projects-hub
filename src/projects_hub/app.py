@@ -90,6 +90,10 @@ class DeviceRegister(BaseModel):
     capabilities: list[str] = Field(min_length=1, max_length=16)
 
 
+class DeviceCapabilitiesUpdate(BaseModel):
+    capabilities: list[str] = Field(min_length=1, max_length=16)
+
+
 class TaskStateChange(BaseModel):
     workspace_id: str
     state: Literal["accepted", "done", "snoozed", "rejected"]
