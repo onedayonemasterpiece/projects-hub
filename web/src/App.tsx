@@ -39,6 +39,8 @@ import {
 } from "./offlineSources";
 
 type WaitState = null | { elapsed_ms: number; stage: string; can_restart: boolean };
+type ChatRole = "user" | "assistant";
+type ChatMessage = { role: ChatRole; text: string };
 
 const stateLabel: Record<string, string> = {
   off: "Готова слушать",
@@ -69,6 +71,17 @@ function formatWait(wait: NonNullable<WaitState>) {
   return `${String(minutes).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
+function mergeTranscript(current: string, fragment: string) {
+  const clean = fragment.trim();
+  if (!clean) return current;
+  if (!current) return clean;
+  if (clean.startsWith(current)) return clean;
+  if (current.endsWith(clean)) return current;
+  let overlap = Math.min(current.length, clean.length);
+  while (overlap >= 3 && current.slice(-overlap) !== clean.slice(0, overlap)) overlap -= 1;
+  return overlap >= 3 ? current + clean.slice(overlap) : current + " " + clean;
+}
+
 function friendlyStartError(error: unknown) {
   const name = error && typeof error === "object" && "name" in error
     ? String((error as { name?: unknown }).name ?? "")
@@ -94,7 +107,7 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [voiceState, setVoiceState] = useState("off");
-  const [answer, setAnswer] = useState("");
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [microphoneSettingsAvailable, setMicrophoneSettingsAvailable] = useState(false);
   const [wait, setWait] = useState<WaitState>(null);
@@ -110,6 +123,10 @@ export default function App() {
   const [githubStatus, setGitHubStatus] = useState<GitHubStatus | null>(null);
   const [githubBusy, setGitHubBusy] = useState(false);
   const clientRef = useRef<LiveClient | null>(null);
+  const userTranscriptIndex = useRef(-1);
+  const assistantTranscriptIndex = useRef(-1);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const chatFollowRef = useRef(true);
   const offlineCaptureRef = useRef<DurableMicrophoneCapture | null>(null);
   const offlineSourceRef = useRef<{
     source: LocalVoiceSource;
@@ -122,6 +139,12 @@ export default function App() {
   useEffect(() => {
     conversationRef.current = conversation;
   }, [conversation]);
+
+  useEffect(() => {
+    const element = chatScrollRef.current;
+    if (!element || !chatFollowRef.current) return;
+    element.scrollTop = element.scrollHeight;
+  }, [chatMessages]);
 
   const focusProject = useMemo(() => {
     if (!boot) return null;
@@ -160,16 +183,40 @@ export default function App() {
     setGitHubStatus(await getGitHubStatus(boot.workspace.id));
   }, [boot]);
 
-  const applyLiveEvent = useCallback((event: LiveEvent) => {
-    if (event.type === "input_transcript") {
-      if (!turnHasInput.current) {
-        turnHasInput.current = true;
-        setAnswer("");
+  const mergeChatMessage = useCallback((role: ChatRole, fragment: string, preferred: React.MutableRefObject<number>) => {
+    const clean = fragment.trim();
+    if (!clean) return;
+    setChatMessages(previous => {
+      const messages = [...previous];
+      const index = preferred.current >= 0
+        && preferred.current < messages.length
+        && messages[preferred.current]?.role === role
+        ? preferred.current
+        : -1;
+      if (index < 0) {
+        messages.push({ role, text: clean.slice(0, 4000) });
+        if (messages.length > 48) messages.splice(0, messages.length - 48);
+        preferred.current = messages.length - 1;
+        return messages;
       }
+      messages[index] = {
+        ...messages[index],
+        text: mergeTranscript(messages[index].text, clean).slice(0, 4000),
+      };
+      return messages;
+    });
+  }, []);
+
+  const applyLiveEvent = useCallback((event: LiveEvent) => {
+    if (event.type === "input_transcript" && typeof event.text === "string") {
+      if (!turnHasInput.current) turnHasInput.current = true;
+      mergeChatMessage("user", event.text, userTranscriptIndex);
     } else if (event.type === "output_transcript" && typeof event.text === "string") {
-      setAnswer(previous => (previous + event.text).slice(-5000));
+      mergeChatMessage("assistant", event.text, assistantTranscriptIndex);
     } else if (event.type === "turn_complete") {
       turnHasInput.current = false;
+      userTranscriptIndex.current = -1;
+      assistantTranscriptIndex.current = -1;
     } else if (event.type === "tool_result" && event.status === "ok") {
       if (event.name === "memory_commit_voice_source") {
         void loadMemories().then(() => setMemoryOpen(true));
@@ -192,7 +239,7 @@ export default function App() {
     } else if (event.type === "capability_unavailable" && event.code !== "NOT_CONFIGURED") {
       setNotice("Одна из дополнительных возможностей сейчас недоступна.");
     }
-  }, [loadEventCards, loadMemories]);
+  }, [loadEventCards, loadMemories, mergeChatMessage]);
 
   useEffect(() => {
     let cancelled = false;
@@ -450,7 +497,6 @@ export default function App() {
     setBusy(true);
     setNotice(null);
     setMicrophoneSettingsAvailable(false);
-    setAnswer("");
     try {
       if (!networkOnline) {
         await startOfflineCapture();
@@ -616,7 +662,7 @@ export default function App() {
   }
 
   const voiceActive = !["off", "start_error", "connection_error", "microphone_unavailable"].includes(voiceState);
-  const showWork = Boolean(answer || notice || wait || memoryOpen || eventOpen);
+  const showWork = Boolean(chatMessages.length || notice || wait || memoryOpen || eventOpen);
   const projectCount = Math.max(0, boot.projects.length - 1);
   const pendingCount = pendingSources.length;
   const voiceHeadline =
@@ -858,10 +904,42 @@ export default function App() {
                   <p className="empty-copy">Пока ничего не сохранено. Скажите, что нужно запомнить.</p>
                 )}
               </div>
-            ) : answer ? (
-              <div className="answer-card">
-                <p className="eyebrow">Live</p>
-                <p className="answer-text">{answer}</p>
+            ) : chatMessages.length ? (
+              <div
+                className="chat-thread"
+                ref={chatScrollRef}
+                onScroll={event => {
+                  const element = event.currentTarget;
+                  chatFollowRef.current =
+                    element.scrollHeight - element.scrollTop - element.clientHeight < 72;
+                }}
+              >
+                {chatMessages.map((message, index) => (
+                  <div className={"chat-row " + message.role} key={index}>
+                    <div
+                      className={"chat-bubble " + message.role}
+                      aria-label={(message.role === "user" ? "Вы" : "Мира") + ": " + message.text}
+                    >
+                      {message.text}
+                    </div>
+                  </div>
+                ))}
+                {(wait || notice) && (
+                  <div className="chat-status" role={notice ? "alert" : undefined}>
+                    {notice ?? (wait?.stage === "action" ? "Мира выполняет действие…" : "Мира думает…")}
+                    {microphoneSettingsAvailable && (
+                      <button className="mini-action microphone-settings-action" onClick={openAndroidMicrophoneSettings}>
+                        Открыть настройки микрофона
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : wait ? (
+              <div className="wait-card">
+                <p className="eyebrow">{wait.stage === "action" ? "Выполняю действие" : "Live думает"}</p>
+                <strong>{formatWait(wait)}</strong>
+                <p>{wait.can_restart ? "Можно остановить и начать снова — источник останется сохранён." : "Можно остановить в любой момент."}</p>
               </div>
             ) : (
               <div className="notice-card">
@@ -878,7 +956,7 @@ export default function App() {
         )}
       </section>
 
-      {(answer || memories.length > 0 || eventCards.length > 0 || (pendingCount > 0 && networkOnline)) && !voiceActive && (
+      {(chatMessages.length > 0 || memories.length > 0 || eventCards.length > 0 || (pendingCount > 0 && networkOnline)) && !voiceActive && (
         <nav className="action-islands" aria-label="Контекстные действия">
           {pendingCount > 0 && networkOnline && (
             <button className="island action-pill" onClick={deliverSavedSource} disabled={busy}>
@@ -887,7 +965,18 @@ export default function App() {
           )}
           {eventCards.length > 0 && <button className="island action-pill" onClick={openEvents}>Готовность</button>}
           {memories.length > 0 && <button className="island action-pill" onClick={openMemory}>Память</button>}
-          {answer && <button className="island action-pill" onClick={() => setAnswer("")}>Убрать результат</button>}
+          {chatMessages.length > 0 && (
+            <button
+              className="island action-pill"
+              onClick={() => {
+                setChatMessages([]);
+                userTranscriptIndex.current = -1;
+                assistantTranscriptIndex.current = -1;
+              }}
+            >
+              Очистить диалог
+            </button>
+          )}
         </nav>
       )}
 
