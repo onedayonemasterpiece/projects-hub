@@ -72,7 +72,7 @@ test("Projects Hub keeps the conversation on the canvas and mobile context scrol
   assert.match(source, /className="chat-stack"/);
   assert.match(source, /const showWork = Boolean\([\s\S]*chatMessages\.length === 0/);
   assert.match(styles, /\.chat-canvas\s*\{[\s\S]*position:\s*fixed/);
-  assert.match(styles, /\.chat-stack\s*\{[\s\S]*justify-content:\s*flex-end/);
+  assert.match(styles, /\.chat-stack::before\s*\{[\s\S]*margin-top:\s*auto/);
   assert.match(styles, /\.context-sheet\s*\{[\s\S]*max-height:[\s\S]*overflow-y:\s*auto/);
 });
 
