@@ -114,8 +114,12 @@ test("backlog stays primary while owner development is observable and triggers u
   assert.match(source, /window\.setInterval\(syncDevelopment, 15_000\)/);
   assert.match(source, /projectshub:\/\/update\/check/);
   assert.match(source, /Остаток/);
+  assert.match(source, /developmentPhaseLabel/);
+  assert.match(source, /Тестирование/);
+  assert.match(source, /Готово к проверке/);
   assert.match(api, /remaining_percent/);
   assert.match(api, /reasoning_efforts/);
+  assert.match(api, /phase_updated_at_ms/);
 });
 
 
@@ -153,5 +157,16 @@ test("runtime UX distinguishes semantic backend version from build provenance", 
   );
   assert.match(source, /backend_version/);
   assert.match(source, /backend_release_sha упоминай только/);
-  assert.match(version, /0\.1\.19/);
+  assert.match(version, /0\.1\.20/);
+});
+
+test("Android release uses the product semantic version as versionName", async () => {
+  const workflow = await readFile(
+    new URL("../../.github/workflows/android-release.yml", import.meta.url),
+    "utf8",
+  );
+  assert.match(workflow, /src\/projects_hub\/version\.py/);
+  assert.match(workflow, /-PversionNameOverride="\$\{VERSION_NAME\}"/);
+  assert.match(workflow, /"versionName": os\.environ\["PRODUCT_VERSION"\]/);
+  assert.doesNotMatch(workflow, /VERSION_NAME="0\.1\.\$\{VERSION_CODE\}"/);
 });
