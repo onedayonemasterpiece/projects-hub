@@ -1,0 +1,35 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Сравнение тестов E5</title><style>:root{color-scheme:light dark;font-family:system-ui}body{max-width:1100px;margin:auto;padding:20px;line-height:1.5}table{border-collapse:collapse;width:100%;font-size:.9rem}td,th{padding:10px;border-bottom:1px solid #899;text-align:left}pre{white-space:pre-wrap;overflow-wrap:anywhere}.scroll{overflow:auto}button,input{font:inherit;margin:8px 0;padding:8px}</style></head><body>
+<h1>Результаты тестов E5</h1><p>Откройте один или несколько JSON из диагностической страницы. Файлы читаются только в браузере, никуда не отправляются. Можно добавить JSON серверного evaluator: оценка извлечения привязывается к run_id и SHA-256 исходного отчёта.</p>
+<label>Файлы результатов <input id="files" type="file" accept=".json,application/json" multiple></label><button id="clear">Сбросить таблицу</button><p id="status" role="status">Выберите файлы</p><div class="scroll"><table><thead><tr><th>Устройство / запуск</th><th>Статус</th><th>p95, мс</th><th>Совместимость</th><th>Извлечение</th></tr></thead><tbody id="rows"></tbody></table></div><h2>Подробности</h2><pre id="detail"></pre><p>Косинусная близость векторов — не точность ответа. Recall относится к конкретному корпусу и разметке. Этот исторический snapshot имеет известные ограничения полноты книги. Неполные/прерванные запуски не являются PASS; причина закрытия вкладки может быть неизвестна. RAM приложения стандартный браузерный тест не измеряет.</p>
+<script>
+const reports=new Map(),evaluations=new Map(),errors=[];
+const $=id=>document.getElementById(id);
+function short(v){return typeof v==='number'?v.toFixed(3):'—'}
+async function sha(text){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text))),x=>x.toString(16).padStart(2,'0')).join('')}
+function render(){
+ $('rows').replaceChildren();const summaries=[];
+ for(const [id,{data:r,hash}] of reports){
+  const checks=r.compatibility?.checks||[],matched=checks.filter(c=>c.tokens_equal).length;
+  const ev=evaluations.get(id),verified=ev&&ev.device_report_sha256===hash;
+  const q=verified?ev.quality?.device_fused?.natural:null;
+  const summary={run_id:id,device_label:r.device_label||null,status:r.status,app_version:r.app_version,model:r.loaded?.model||null,runtime:r.loaded?.runtime||null,
+   token_matches:matched,total_compatibility_cases:checks.length,passed_checks:checks.filter(c=>c.pass).length,
+   cosine_min:checks.length?Math.min(...checks.map(c=>c.cosine)):null,max_component_error:checks.length?Math.max(...checks.map(c=>c.max_abs_error)):null,
+   warm_p95_ms:r.performance?.warm?.p95_ms??null,queued4_p95_ms:r.performance?.queued4?.p95_ms??null,query_vectors:r.queries?.length||0,
+   verified_model_assets:r.loaded?.verified_assets||{},cache_hits:r.loaded?.cache_hits??null,cache_misses:r.loaded?.cache_misses??null,
+   retrieval_evaluation_matched:!!verified,natural_evidence_recall_at_10:q?.evidence_recall_at_10??null,
+   total_process_memory_bytes:r.memory?.total_process_peak_bytes??null,error:r.error||null};
+  summaries.push(summary);const tr=document.createElement('tr');
+  const values=[(r.device_label||r.environment?.platform||'Без метки')+' · '+id.slice(0,8),r.status,short(summary.warm_p95_ms),summary.passed_checks+'/'+checks.length+'; tokens '+matched+'/'+checks.length,
+    verified?(q?'Recall@10 '+(100*q.evidence_recall_at_10).toFixed(2)+'%':'Нет метрики'):ev?'Не совпал hash отчёта':'Ожидает evaluator'];
+  for(const value of values){const td=document.createElement('td');td.textContent=value;tr.append(td)}$('rows').append(tr);
+ }
+ $('status').textContent='Запусков: '+reports.size+'; оценок извлечения: '+evaluations.size+'; ошибок файлов: '+errors.length;
+ $('detail').textContent=JSON.stringify({runs:summaries,errors},null,2);
+}
+$('files').onchange=async e=>{for(const f of Array.from(e.target.files).slice(0,30)){try{if(f.size>4000000)throw Error('Файл >4 МБ');const text=await f.text(),r=JSON.parse(text);if(typeof r.run_id!=='string'||r.run_id.length>150)throw Error('Нет корректного run_id');
+ if(r.schema==='rkb-device-embedding-run.v1')reports.set(r.run_id,{data:r,hash:await sha(text)});
+ else if(r.schema==='rkb-device-retrieval-evaluation.v1')evaluations.set(r.run_id,r);else throw Error('Неизвестная схема');
+ }catch(err){errors.push({file:f.name,error:String(err.message).slice(0,300)})}}render();e.target.value=''};
+$('clear').onclick=()=>{reports.clear();evaluations.clear();errors.length=0;render()};
+</script></body></html>
