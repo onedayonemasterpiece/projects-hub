@@ -477,7 +477,9 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
             with self.store._lock:
                 self.store.db.execute(
                     """UPDATE task_executions
-                       SET status='failed',error_code=?,finished_at_ms=?,updated_at_ms=?
+                       SET status='failed',phase='failed',
+                           phase_detail='Не удалось запустить Codex',
+                           error_code=?,finished_at_ms=?,updated_at_ms=?
                        WHERE id=?""",
                     (str(code)[:120], now, now, execution_id),
                 )
@@ -489,6 +491,51 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
             execution_id=execution_id,
             sync=False,
         )
+
+    @staticmethod
+    def _phase_from_result(result: dict[str, Any], status: str) -> tuple[str, str]:
+        if status == "completed":
+            return "completed", "Готово"
+        if status in {"failed", "cancelled"}:
+            return "failed", "Исполнение завершилось ошибкой"
+
+        snapshot = result.get("liveSessionSnapshot")
+        if not isinstance(snapshot, list):
+            return "analysis", "Codex анализирует задачу"
+
+        tool_seen = False
+        fragments: list[str] = []
+        for message in snapshot[-12:]:
+            if not isinstance(message, dict):
+                continue
+            parts = message.get("parts")
+            if not isinstance(parts, list):
+                continue
+            for part in parts:
+                if not isinstance(part, dict) or part.get("type") != "tool":
+                    continue
+                tool_seen = True
+                fragments.append(
+                    (
+                        str(part.get("tool") or "")
+                        + "\n"
+                        + str(part.get("output_tail") or "")
+                    ).lower()
+                )
+        recent = "\n".join(fragments[-8:])
+        if re.search(
+            r"release|deploy|published|merge|pull request|github actions|apk",
+            recent,
+        ):
+            return "delivery", "Сборка или доставка результата"
+        if re.search(
+            r"pytest|tests?\b|passed|build successful|gradle|npm test|pnpm test|checks",
+            recent,
+        ):
+            return "testing", "Идут тесты или сборка"
+        if tool_seen:
+            return "implementation", "Codex вносит изменения"
+        return "analysis", "Codex анализирует задачу"
 
     @staticmethod
     def _map_task_status(value: Any) -> str:
