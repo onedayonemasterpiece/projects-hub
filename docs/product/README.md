@@ -116,6 +116,7 @@ Stop, «Новый разговор» и delete — разные действи�
 | [GitHub connections](14-github-connections.md) | GitHub App installation, repository roles и отсутствие PAT у обычных участников |
 | [Экспертные review cases](15-expert-review-cases.md) | Межпроектные экспертные проверки: assignment, evidence ACL, typed resolution и readback |
 | [WSS и многопользовательская надёжность](16-wss-multi-user-reliability.md) | Целевой realtime transport, session isolation, concurrency, capability bundles, shared OAuth/Regional Knowledge/POI ownership, implementation evidence, acceptance и rollout |
+| [Owner development / backlog](17-owner-development-backlog.md) | Backlog-first owner-only orchestration: design → implementation → review/rework → delivery, Codex capacity, token usage и Android update |
 | [Live contract](live-contract.json) | Машиночитаемые архитектурные правила |
 
 Свежие требования 28 сентября не меняют central-Live архитектуру: V19 добавляет безопасный in-app путь обновления Android после первой установки; V20 добавляет class-specific checklist готовности к приближающимся событиям и создание конкретных follow-up задач по недостающим материалам. Оба пункта включаются последовательно после работающего device-command/calendar E2E, а не расширяют MVP до универсального workflow engine.
