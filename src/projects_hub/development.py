@@ -504,7 +504,7 @@ You are the same quality/design thread that produced the specification. Re-read 
 If the implementation is acceptable, end with the exact line:
 REVIEW_VERDICT: ACCEPTED
 
-If material fixes are required, update the specification with the concrete rework required and end with the exact line:
+If material fixes are required, report the concrete rework required without editing files and end with the exact line:
 REVIEW_VERDICT: REWORK_REQUIRED
 
 Before the verdict, give concise actionable findings."""
@@ -525,6 +525,21 @@ Read the updated specification and fix all material findings. Re-run the require
 {spec_path}
 
 Now finish delivery using the repository's normal path. Merge/publish only the accepted implementation, run required CI, deploy and verify production when applicable. If native Android changed, produce the normal signed Android release/update manifest and verify the release; if only backend/PWA changed, deploy and verify that path instead. Do not broaden scope. Report the actual delivered version/release, production verification and any genuine blocker."""
+
+    @staticmethod
+    def _acceptance_prompt(spec_path: str) -> str:
+        return f"""Final post-delivery acceptance for:
+{spec_path}
+
+The implementation thread reports that delivery is complete. Independently verify the delivered state using read-only authoritative evidence: current Git/GitHub state, required CI results, deployed runtime/health/readback, and signed Android release/update manifest when the specification requires Android changes. Re-run or inspect the browser/emulator acceptance required by the specification where available. Do not trust the delivery prose alone and do not modify source or production in this turn.
+
+If every required Definition of Done item is supported by actual evidence, end with exactly:
+ACCEPTANCE_VERDICT: ACCEPTED
+
+If any required evidence is missing, failed, stale, or contradicts delivery, end with exactly:
+ACCEPTANCE_VERDICT: REWORK_REQUIRED
+
+Before the verdict, list the concrete evidence checked and any missing/failed item."""
 
     @staticmethod
     def _terminal_verdict(summary: str, prefix: str) -> str | None:
