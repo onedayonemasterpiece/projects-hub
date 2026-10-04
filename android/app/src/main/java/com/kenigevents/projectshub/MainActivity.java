@@ -3,6 +3,7 @@ package com.kenigevents.projectshub;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
@@ -354,14 +355,18 @@ public final class MainActivity extends Activity {
     private void openExternalBrowser(Uri uri) {
         Intent chrome = new Intent(Intent.ACTION_VIEW, uri);
         chrome.setPackage("com.android.chrome");
-        if (chrome.resolveActivity(getPackageManager()) != null) {
+        try {
             startActivity(chrome);
             return;
+        } catch (ActivityNotFoundException chromeUnavailable) {
+            Log.i("ProjectsHubGitHub", "Chrome package unavailable; trying default browser");
         }
+
         Intent browser = new Intent(Intent.ACTION_VIEW, uri);
-        if (browser.resolveActivity(getPackageManager()) != null) {
+        try {
             startActivity(browser);
-        } else {
+        } catch (ActivityNotFoundException browserUnavailable) {
+            Log.w("ProjectsHubGitHub", "No HTTPS browser activity available", browserUnavailable);
             toast("Не найден браузер для открытия GitHub.");
         }
     }
