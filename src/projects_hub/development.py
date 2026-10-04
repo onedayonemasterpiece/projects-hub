@@ -12,8 +12,11 @@ from .readiness import ReadinessService
 from .store import DurableStore, StoreError
 
 ACTIVE_EXECUTION_STATES = {"starting", "running"}
-TERMINAL_EXECUTION_STATES = {"completed", "failed", "cancelled"}
+TERMINAL_EXECUTION_STATES = {"completed", "failed", "cancelled", "blocked"}
 DEFAULT_CODEX_PROFILE = "gpt-6.1-medium"
+QUALITY_MODEL = "gpt-6-astra"
+QUALITY_EFFORT = "high"
+MAX_REWORK_CYCLES = 2
 DEVCOVEER_PROJECT = "projects-hub"
 
 
@@ -64,6 +67,25 @@ class DevelopmentService:
                     ON task_executions(actor_id,workspace_id,status,updated_at_ms DESC);
                 CREATE INDEX IF NOT EXISTS task_executions_project_idx
                     ON task_executions(actor_id,workspace_id,project_id,updated_at_ms DESC);
+                CREATE TABLE IF NOT EXISTS task_execution_stages(
+                    id TEXT PRIMARY KEY,
+                    execution_id TEXT NOT NULL REFERENCES task_executions(id),
+                    stage TEXT NOT NULL,
+                    cycle INTEGER NOT NULL DEFAULT 0,
+                    model TEXT NOT NULL,
+                    reasoning_effort TEXT NOT NULL,
+                    devcoveer_task_id TEXT,
+                    status TEXT NOT NULL,
+                    summary TEXT NOT NULL DEFAULT '',
+                    review_verdict TEXT,
+                    token_usage_json TEXT,
+                    started_at_ms INTEGER,
+                    finished_at_ms INTEGER,
+                    created_at_ms INTEGER NOT NULL,
+                    updated_at_ms INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS task_execution_stages_execution_idx
+                    ON task_execution_stages(execution_id,created_at_ms);
                 """
             )
             columns = {
@@ -79,6 +101,22 @@ class DevelopmentService:
             if "phase_detail" not in columns:
                 self.store.db.execute(
                     "ALTER TABLE task_executions ADD COLUMN phase_detail TEXT NOT NULL DEFAULT ''"
+                )
+            if "quality_task_id" not in columns:
+                self.store.db.execute(
+                    "ALTER TABLE task_executions ADD COLUMN quality_task_id TEXT"
+                )
+            if "implementation_task_id" not in columns:
+                self.store.db.execute(
+                    "ALTER TABLE task_executions ADD COLUMN implementation_task_id TEXT"
+                )
+            if "review_cycle" not in columns:
+                self.store.db.execute(
+                    "ALTER TABLE task_executions ADD COLUMN review_cycle INTEGER NOT NULL DEFAULT 0"
+                )
+            if "spec_path" not in columns:
+                self.store.db.execute(
+                    "ALTER TABLE task_executions ADD COLUMN spec_path TEXT"
                 )
 
     def _authorize_owner(self, actor_id: str, workspace_id: str) -> None:
