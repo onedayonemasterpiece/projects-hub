@@ -420,7 +420,9 @@ async def test_manifest_flow_bootstraps_and_persists_github_app_without_manual_s
             actor_id=owner,
             workspace_id=workspace,
         )
-        assert started["action_url"] == "https://github.com/settings/apps/new"
+        assert started["action_url"].endswith(
+            "/api/github/app-manifest/legacy-launch?state=" + started["state"]
+        )
         assert started["launch_url"].endswith(
             "/api/github/app-manifest/launch?state=" + started["state"]
         )
