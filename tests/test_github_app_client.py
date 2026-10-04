@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import time
 
@@ -161,3 +162,51 @@ def test_install_url_carries_opaque_state_and_webhook_hmac_is_exact():
     assert client.verify_webhook(body, signature) is True
     assert client.verify_webhook(body + b"x", signature) is False
     assert client.verify_webhook(body, None) is False
+
+
+@pytest.mark.asyncio
+async def test_repository_contents_reads_directory_and_text_file():
+    private, _public = keypair()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers.get("authorization") == "Bearer installation-token"
+        if request.url.path == "/repos/onedayonemasterpiece/projects-hub/contents":
+            return httpx.Response(200, json=[
+                {"name": "README.md", "path": "README.md", "type": "file", "size": 12},
+                {"name": "docs", "path": "docs", "type": "dir", "size": 0},
+            ])
+        if request.url.path == "/repos/onedayonemasterpiece/projects-hub/contents/README.md":
+            assert request.url.params.get("ref") == "main"
+            payload = base64.b64encode("Привет из README".encode()).decode()
+            return httpx.Response(200, json={
+                "type": "file",
+                "path": "README.md",
+                "size": len("Привет из README".encode()),
+                "sha": "abc123",
+                "encoding": "base64",
+                "content": payload,
+            })
+        raise AssertionError(f"unexpected request {request.method} {request.url}")
+
+    client = GitHubAppClient(
+        app_id=9001,
+        slug="projects-hub",
+        private_key=private,
+        webhook_secret="webhook-secret-for-tests",
+        transport=httpx.MockTransport(handler),
+    )
+    root = await client.repository_contents(
+        token="installation-token",
+        full_name="onedayonemasterpiece/projects-hub",
+    )
+    assert root["kind"] == "directory"
+    assert [item["name"] for item in root["entries"]] == ["README.md", "docs"]
+
+    readme = await client.repository_contents(
+        token="installation-token",
+        full_name="onedayonemasterpiece/projects-hub",
+        path="README.md",
+        ref="main",
+    )
+    assert readme["kind"] == "file"
+    assert readme["text"] == "Привет из README"
