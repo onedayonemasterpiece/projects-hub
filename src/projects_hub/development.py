@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -7,12 +8,28 @@ import time
 import uuid
 from typing import Any
 
-from .devcoveer_client import DevCoveerClient, DevCoveerError
+from .devcoveer_client import (
+    DevCoveerClient,
+    DevCoveerError,
+    DevCoveerUnknownOutcome,
+)
 from .readiness import ReadinessService
 from .store import DurableStore, StoreError
 
-ACTIVE_EXECUTION_STATES = {"starting", "running"}
-TERMINAL_EXECUTION_STATES = {"completed", "failed", "cancelled", "blocked"}
+ACTIVE_EXECUTION_STATES = {
+    "starting",
+    "running",
+    "waiting_capacity",
+    "dispatch_unknown",
+}
+TERMINAL_EXECUTION_STATES = {"completed", "failed", "cancelled", "needs_owner"}
+ACTIVE_STAGE_STATES = {
+    "dispatching",
+    "dispatch_unknown",
+    "running",
+    "transitioning",
+    "waiting_capacity",
+}
 DEFAULT_CODEX_PROFILE = "gpt-6.1-medium"
 QUALITY_MODEL = "gpt-6-astra"
 QUALITY_EFFORT = "high"
@@ -36,6 +53,8 @@ class DevelopmentService:
         self.store = store
         self.readiness = readiness
         self.devcoveer = devcoveer or DevCoveerClient()
+        self._driver_task: asyncio.Task[None] | None = None
+        self._advance_lock = asyncio.Lock()
         with self.store._lock:
             self.store.db.executescript(
                 """
@@ -60,7 +79,9 @@ class DevelopmentService:
                     created_at_ms INTEGER NOT NULL,
                     updated_at_ms INTEGER NOT NULL,
                     started_at_ms INTEGER,
-                    finished_at_ms INTEGER
+                    finished_at_ms INTEGER,
+                    active_slot INTEGER,
+                    repository_full_name TEXT
                 );
                 CREATE INDEX IF NOT EXISTS task_executions_owner_idx
                     ON task_executions(actor_id,workspace_id,status,updated_at_ms DESC);
@@ -81,10 +102,16 @@ class DevelopmentService:
                     started_at_ms INTEGER,
                     finished_at_ms INTEGER,
                     created_at_ms INTEGER NOT NULL,
-                    updated_at_ms INTEGER NOT NULL
+                    updated_at_ms INTEGER NOT NULL,
+                    dispatch_key TEXT,
+                    dispatch_kind TEXT NOT NULL DEFAULT 'start',
+                    transition_claimed_at_ms INTEGER
                 );
                 CREATE INDEX IF NOT EXISTS task_execution_stages_execution_idx
                     ON task_execution_stages(execution_id,created_at_ms);
+                CREATE UNIQUE INDEX IF NOT EXISTS task_execution_stages_dispatch_idx
+                    ON task_execution_stages(dispatch_key)
+                    WHERE dispatch_key IS NOT NULL;
                 """
             )
             columns = {
@@ -117,6 +144,44 @@ class DevelopmentService:
                 self.store.db.execute(
                     "ALTER TABLE task_executions ADD COLUMN spec_path TEXT"
                 )
+
+            if "active_slot" not in columns:
+                self.store.db.execute(
+                    "ALTER TABLE task_executions ADD COLUMN active_slot INTEGER"
+                )
+            if "repository_full_name" not in columns:
+                self.store.db.execute(
+                    "ALTER TABLE task_executions ADD COLUMN repository_full_name TEXT"
+                )
+            stage_columns = {
+                str(row["name"])
+                for row in self.store.db.execute(
+                    "PRAGMA table_info(task_execution_stages)"
+                ).fetchall()
+            }
+            if "dispatch_key" not in stage_columns:
+                self.store.db.execute(
+                    "ALTER TABLE task_execution_stages ADD COLUMN dispatch_key TEXT"
+                )
+            if "dispatch_kind" not in stage_columns:
+                self.store.db.execute(
+                    "ALTER TABLE task_execution_stages ADD COLUMN dispatch_kind TEXT NOT NULL DEFAULT 'start'"
+                )
+            if "transition_claimed_at_ms" not in stage_columns:
+                self.store.db.execute(
+                    "ALTER TABLE task_execution_stages ADD COLUMN transition_claimed_at_ms INTEGER"
+                )
+            self.store.db.execute(
+                """CREATE UNIQUE INDEX IF NOT EXISTS task_execution_stages_dispatch_idx
+                   ON task_execution_stages(dispatch_key)
+                   WHERE dispatch_key IS NOT NULL"""
+            )
+            self._migrate_legacy_executions_locked()
+            self.store.db.execute(
+                """CREATE UNIQUE INDEX IF NOT EXISTS task_executions_owner_active_idx
+                   ON task_executions(actor_id,active_slot)
+                   WHERE active_slot=1"""
+            )
 
     def _authorize_owner(self, actor_id: str, workspace_id: str) -> None:
         self.store.require_platform_owner(actor_id)
