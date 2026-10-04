@@ -47,6 +47,10 @@ declare module "@onedayonemasterpiece/live-interaction/browser" {
     onTiming?: (event: string, metrics?: Record<string, unknown>) => void;
     onWait?: (wait: null | { elapsed_ms: number; stage: string; can_restart: boolean }) => void;
     persistAudio?: ((message: DurableAudioMessage) => Promise<void> | void) | null;
+    voiceControl?: null | {
+      isStop: (text: string) => boolean;
+      confirmation: (text: string) => "confirm" | "cancel" | null;
+    };
     suppressCaptureDuringPlayback?: boolean | (() => boolean);
   }): LiveClient;
 
