@@ -28,13 +28,14 @@ class FakeGitHubConnections:
     def start_manifest_registration(self, *, actor_id, workspace_id, conversation_id=None):
         self.calls.append(("manifest_start", actor_id, workspace_id, conversation_id))
         return {
+            "launch_url": "https://projects-hub.kenigevents.ru/api/github/app-manifest/launch?state=manifest-state",
             "action_url": "https://github.com/settings/apps/new",
             "manifest": "{\"name\":\"projects-hub-test\"}",
             "state": "manifest-state",
             "expires_at_ms": 9999999999999,
         }
 
-    async def complete_manifest_registration(self, *, actor_id, state, code):
+    async def complete_manifest_registration(self, *, state, code, actor_id=None):
         self.calls.append(("manifest_callback", actor_id, state, code))
         return {
             "workspace_id": "ws_fake",
@@ -49,7 +50,7 @@ class FakeGitHubConnections:
             "expires_at_ms": 9999999999999,
         }
 
-    async def complete_install(self, *, actor_id, state, installation_id):
+    async def complete_install(self, *, state, installation_id, actor_id=None):
         self.calls.append(("callback", actor_id, state, installation_id))
         return {
             "workspace_id": "ws_fake",
