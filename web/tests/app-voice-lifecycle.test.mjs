@@ -19,3 +19,13 @@ test("Android package grants Chromium full microphone audio capability", async (
   assert.match(manifest, /android\.permission\.RECORD_AUDIO/);
   assert.match(manifest, /android\.permission\.MODIFY_AUDIO_SETTINGS/);
 });
+
+test("Projects Hub renders both sides of the Live conversation as a bounded messenger thread", async () => {
+  const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  assert.match(source, /event\.type === "input_transcript"[\s\S]*mergeChatMessage\("user"/);
+  assert.match(source, /event\.type === "output_transcript"[\s\S]*mergeChatMessage\("assistant"/);
+  assert.match(source, /function mergeTranscript\(/);
+  assert.match(source, /messages\.length > 48/);
+  assert.match(source, /className=\{"chat-row " \+ message\.role\}/);
+  assert.match(source, /chatFollowRef/);
+});
