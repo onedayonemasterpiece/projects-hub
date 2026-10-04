@@ -84,6 +84,13 @@ export type CodexStatus = {
     reasoning_effort: string | null;
     catalog_available: boolean;
   };
+  models: Array<{
+    id: string;
+    display_name: string | null;
+    reasoning_efforts: string[];
+    default_reasoning_effort: string | null;
+    availability: string | null;
+  }>;
 };
 
 export type EventCard = {
