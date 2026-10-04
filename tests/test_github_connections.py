@@ -111,7 +111,6 @@ async def test_install_state_is_owner_bound_single_use_and_catalog_starts_unassi
         }
 
         result = await service.complete_install(
-            actor_id=owner,
             state=state,
             installation_id=77,
         )
@@ -124,7 +123,6 @@ async def test_install_state_is_owner_bound_single_use_and_catalog_starts_unassi
 
         with pytest.raises(StoreError) as replay:
             await service.complete_install(
-                actor_id=owner,
                 state=state,
                 installation_id=77,
             )
