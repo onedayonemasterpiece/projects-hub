@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from .device_commands import DeviceCommandService
 from .expert_reviews import ExpertReviewAdapter
+from .github_connections import GitHubConnections
 from .regional_knowledge import RegionalKnowledgeAdapter
 from .live_adapter import ProjectsHubLiveAdapter
 from .live_admission import ProjectsHubAdmissionMixin
@@ -49,6 +50,7 @@ def build_live_host(
     environment: dict[str, str] | None = None,
     device_commands: DeviceCommandService | None = None,
     readiness: ReadinessService | None = None,
+    github_connections: GitHubConnections | None = None,
     expert_reviews_factory: (
         Callable[[str, str], ExpertReviewAdapter | None] | None
     ) = None,
@@ -95,6 +97,7 @@ def build_live_host(
             store,
             device_commands=device_commands,
             readiness=readiness,
+            github_connections=github_connections,
             expert_reviews_factory=expert_reviews_factory,
             regional_knowledge_factory=regional_knowledge_factory,
             **shared,
