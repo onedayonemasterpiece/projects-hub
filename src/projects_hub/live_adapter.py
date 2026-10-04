@@ -79,7 +79,7 @@ def _functions(
         },
         {
             "name": "calendar_create_event_on_device",
-            "description": "Ask a bound Android device to create one event in the user's personal calendar. The backend creates a durable device command and waits briefly for a device receipt. Never claim the event exists unless the returned status is applied with verified readback.",
+            "description": "Ask a bound Android device to create one event in the user's personal calendar. For ordinary local times, use context.client_timezone and an RFC3339 offset matching that timezone. Set timezone_explicit=true only when the user explicitly named another timezone. Never claim the event exists unless verified readback confirms it.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -96,7 +96,11 @@ def _functions(
                     },
                     "timezone": {
                         "type": "string",
-                        "description": "IANA timezone, for example Europe/Kaliningrad."
+                        "description": "IANA timezone. For ordinary local times this must equal context.client_timezone."
+                    },
+                    "timezone_explicit": {
+                        "type": "boolean",
+                        "description": "True only when the user explicitly requested a timezone different from context.client_timezone."
                     },
                     "description": {"type": "string"},
                     "location": {"type": "string"},
@@ -111,7 +115,7 @@ def _functions(
         },
         {
             "name": "calendar_list_events_on_device",
-            "description": "Read a bounded time window from the user's personal Android calendar through a bound device. Use for questions like what is scheduled today/tomorrow/this week. This is read-only and never creates or edits events.",
+            "description": "Read a bounded local-time window from the user's personal Android calendar. For today/tomorrow/this week, use context.client_timezone and RFC3339 offsets matching it. Set timezone_explicit=true only when the user explicitly named another timezone.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -124,6 +128,14 @@ def _functions(
                     "ends_at": {
                         "type": "string",
                         "description": "RFC3339 range end with explicit UTC offset; maximum range is 31 days."
+                    },
+                    "timezone": {
+                        "type": "string",
+                        "description": "IANA timezone. For ordinary local ranges this must equal context.client_timezone."
+                    },
+                    "timezone_explicit": {
+                        "type": "boolean",
+                        "description": "True only when the user explicitly requested a timezone different from context.client_timezone."
                     },
                     "limit": {
                         "type": "integer",
@@ -767,6 +779,50 @@ class ProjectsHubLiveAdapter:
         ).encode("utf-8")
         return "cmd_" + hashlib.sha256(semantic).hexdigest()[:40], args_sha
 
+    @staticmethod
+    def _calendar_args_for_client(
+        state: dict[str, Any],
+        args: dict[str, Any],
+    ) -> dict[str, Any]:
+        result = dict(args)
+        client_timezone = str(state.get("client_timezone") or "").strip()
+        explicit = bool(result.pop("timezone_explicit", False))
+        requested_timezone = str(result.get("timezone") or client_timezone).strip()
+        if not requested_timezone:
+            raise StoreError(
+                "INVALID_ARGUMENT",
+                "Calendar timezone is unavailable; retry with an explicit IANA timezone.",
+            )
+        if client_timezone and requested_timezone != client_timezone and not explicit:
+            raise StoreError(
+                "INVALID_ARGUMENT",
+                f"Calendar local time must use client timezone {client_timezone}.",
+            )
+        try:
+            zone = ZoneInfo(requested_timezone)
+        except ZoneInfoNotFoundError as exc:
+            raise StoreError("INVALID_ARGUMENT", "Calendar timezone is invalid") from exc
+
+        for field in ("starts_at", "ends_at"):
+            raw = str(result.get(field) or "").strip()
+            if not raw:
+                continue
+            try:
+                value = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise StoreError("INVALID_ARGUMENT", f"{field} must be RFC3339") from exc
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise StoreError("INVALID_ARGUMENT", f"{field} requires an explicit UTC offset")
+            local_wall = value.replace(tzinfo=None, fold=0).replace(tzinfo=zone)
+            expected_offset = local_wall.utcoffset()
+            if expected_offset != value.utcoffset() and not explicit:
+                raise StoreError(
+                    "INVALID_ARGUMENT",
+                    f"{field} offset does not match client timezone {requested_timezone}.",
+                )
+        result["timezone"] = requested_timezone
+        return result
+
     async def execute_tool(self, session: Any, call: dict[str, Any]) -> dict[str, Any]:
         name = str(call.get("name") or "")
         args = self._args(call)
@@ -891,6 +947,7 @@ class ProjectsHubLiveAdapter:
             }
 
         if name == "calendar_list_events_on_device":
+            args = self._calendar_args_for_client(state, args)
             project_id = str(args.get("project_id") or "") or None
             if project_id is None:
                 project_id = self.store.get_conversation(
@@ -925,6 +982,7 @@ class ProjectsHubLiveAdapter:
             return result
 
         if name == "calendar_create_event_on_device":
+            args = self._calendar_args_for_client(state, args)
             project_id = str(args.get("project_id") or "") or None
             if project_id is None:
                 project_id = self.store.get_conversation(
