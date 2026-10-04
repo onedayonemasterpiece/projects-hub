@@ -96,7 +96,7 @@ def setup(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_install_state_is_owner_bound_single_use_and_catalog_starts_unassigned(tmp_path: Path):
+async def test_install_state_is_owner_bound_single_use_and_exact_matches_auto_bind(tmp_path: Path):
     store, boot, _client, service = setup(tmp_path)
     try:
         owner = boot["actor"]["id"]
@@ -118,8 +118,9 @@ async def test_install_state_is_owner_bound_single_use_and_catalog_starts_unassi
         status = service.status(owner, workspace)
         assert len(status["installations"]) == 1
         assert {item["repository_id"] for item in status["repositories"]} == {101, 202}
-        assert {item["role"] for item in status["repositories"]} == {"unassigned"}
-        assert {item["access_mode"] for item in status["repositories"]} == {"read_only"}
+        assert {item["role"] for item in status["repositories"]} == {"project_docs"}
+        assert {item["access_mode"] for item in status["repositories"]} == {"app_managed_write"}
+        assert set(status["auto_bound_repository_ids"]) == {101, 202}
 
         with pytest.raises(StoreError) as replay:
             await service.complete_install(
