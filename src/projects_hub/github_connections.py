@@ -151,6 +151,24 @@ class GitHubConnections:
             raise StoreError("GITHUB_INVALID_RESPONSE", "GitHub App registration response is invalid")
         return payload
 
+    def _manifest_payload(self, *, suffix: str) -> dict[str, Any]:
+        return {
+            "name": f"projects-hub-{suffix}",
+            "url": self.settings.public_origin,
+            "hook_attributes": {
+                "url": f"{self.settings.public_origin}/api/github/webhook",
+                "active": True,
+            },
+            "redirect_url": f"{self.settings.public_origin}/api/github/app-manifest/callback",
+            "setup_url": f"{self.settings.public_origin}/api/github/install/callback",
+            "setup_on_update": True,
+            "public": False,
+            "default_permissions": {
+                "metadata": "read",
+                "contents": "write",
+            },
+        }
+
     def start_manifest_registration(
         self,
         *,
@@ -178,28 +196,31 @@ class GitHubConnections:
             expires_at_ms=expires_at_ms,
             conversation_id=conversation_id,
         )
-        suffix = secrets.token_hex(4)
-        manifest = {
-            "name": f"projects-hub-{suffix}",
-            "url": self.settings.public_origin,
-            "hook_attributes": {
-                "url": f"{self.settings.public_origin}/api/github/webhook",
-                "active": True,
-            },
-            "redirect_url": f"{self.settings.public_origin}/api/github/app-manifest/callback",
-            "setup_url": f"{self.settings.public_origin}/api/github/install/callback",
-            "setup_on_update": True,
-            "public": False,
-            "default_permissions": {
-                "metadata": "read",
-                "contents": "write",
-            },
-        }
+        manifest = self._manifest_payload(suffix=secrets.token_hex(4))
         return {
+            "launch_url": f"{self.settings.public_origin}/api/github/app-manifest/launch?state={state}",
             "action_url": "https://github.com/settings/apps/new",
             "manifest": json.dumps(manifest, separators=(",", ":"), ensure_ascii=False),
             "state": state,
             "expires_at_ms": expires_at_ms,
+        }
+
+    def manifest_launch(self, state: str) -> dict[str, Any]:
+        if not state or len(state) > 500:
+            raise StoreError(
+                "GITHUB_APP_MANIFEST_STATE_INVALID",
+                "GitHub App manifest state is invalid",
+            )
+        pending = self.store.github_app_manifest_state(self._state_hash(state))
+        return {
+            "action_url": "https://github.com/settings/apps/new",
+            "manifest": json.dumps(
+                self._manifest_payload(suffix=self._state_hash(state)[:8]),
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ),
+            "state": state,
+            "workspace_id": str(pending["workspace_id"]),
         }
 
     async def complete_manifest_registration(
