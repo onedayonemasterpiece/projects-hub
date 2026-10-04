@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import html
 import importlib.util
 import logging
 import time
@@ -8,7 +9,7 @@ import uuid
 from typing import Any, Literal
 
 from fastapi import Body, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -427,15 +428,38 @@ def create_app(
             conversation_id=payload.conversation_id,
         )
 
+    @app.get("/api/github/app-manifest/launch")
+    async def github_app_manifest_launch(state: str):
+        payload = app.state.github_connections.manifest_launch(state)
+        action = html.escape(payload["action_url"], quote=True)
+        manifest = html.escape(payload["manifest"], quote=True)
+        opaque_state = html.escape(payload["state"], quote=True)
+        body = f"""<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Projects Hub → GitHub</title></head>
+<body>
+<form id="github" method="post" action="{action}">
+<input type="hidden" name="manifest" value="{manifest}">
+<input type="hidden" name="state" value="{opaque_state}">
+<noscript><button type="submit">Продолжить в GitHub</button></noscript>
+</form>
+<script>document.getElementById("github").submit()</script>
+</body></html>"""
+        response = HTMLResponse(body)
+        response.headers["cache-control"] = "no-store"
+        response.headers["referrer-policy"] = "no-referrer"
+        response.headers["content-security-policy"] = (
+            "default-src 'none'; script-src 'unsafe-inline'; "
+            "form-action https://github.com; base-uri 'none'"
+        )
+        return response
+
     @app.get("/api/github/app-manifest/callback")
     async def github_app_manifest_callback(
-        request: Request,
         code: str,
         state: str,
     ):
-        actor_id = actor_id_from_request(request)
         result = await app.state.github_connections.complete_manifest_registration(
-            actor_id=actor_id,
             state=state,
             code=code,
         )
@@ -463,14 +487,11 @@ def create_app(
 
     @app.get("/api/github/install/callback")
     async def github_install_callback(
-        request: Request,
         installation_id: int,
         state: str,
         setup_action: str | None = None,
     ):
-        actor_id = actor_id_from_request(request)
         result = await app.state.github_connections.complete_install(
-            actor_id=actor_id,
             state=state,
             installation_id=installation_id,
         )
@@ -483,7 +504,25 @@ def create_app(
                 "result": "connected",
             },
         )
-        return RedirectResponse(url="/?github=connected", status_code=303)
+        return RedirectResponse(url="/api/github/return", status_code=303)
+
+    @app.get("/api/github/return")
+    async def github_return():
+        body = """<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GitHub подключён</title>
+<style>body{margin:0;background:#0a0a0c;color:#f2f2f4;font:16px system-ui;display:grid;place-items:center;min-height:100vh}main{max-width:420px;padding:28px;text-align:center}a{display:inline-block;margin-top:18px;padding:12px 18px;border-radius:14px;background:#f2f2f4;color:#0a0a0c;text-decoration:none;font-weight:700}</style>
+</head><body><main><h1>GitHub подключён</h1><p>Возвращаю вас в Projects Hub.</p>
+<a href="projectshub://github/connected">Вернуться в Projects Hub</a></main>
+<script>location.href="projectshub://github/connected"</script></body></html>"""
+        response = HTMLResponse(body)
+        response.headers["cache-control"] = "no-store"
+        response.headers["referrer-policy"] = "no-referrer"
+        response.headers["content-security-policy"] = (
+            "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
+            "navigate-to projectshub:"
+        )
+        return response
 
     @app.post("/api/github/repositories/{repository_id}/bind")
     async def github_repository_bind(
