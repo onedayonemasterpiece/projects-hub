@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
-    "test:live-framework": "node --test tests/live-framework.test.mjs"
+    "test:live-framework": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@onedayonemasterpiece/live-interaction": "git+https://github.com/onedayonemasterpiece/live-interaction.git#v0.3.11",
