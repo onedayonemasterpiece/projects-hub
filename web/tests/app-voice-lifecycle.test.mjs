@@ -131,3 +131,27 @@ test("Android shows an explicit update dialog and sends native version to Live",
   assert.match(android, /setPositiveButton\("Обновить"/);
   assert.match(android, /setNegativeButton\("Позже"/);
 });
+
+
+test("Projects Hub sends timezone and auto-recovers one broken Live transport", async () => {
+  const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  assert.match(source, /Intl\.DateTimeFormat\(\)\.resolvedOptions\(\)\.timeZone/);
+  assert.match(source, /client_timezone:\s*clientTimezone/);
+  assert.match(source, /kind === "transport_error"[\s\S]*recoverLiveConversation/);
+  assert.match(source, /async function recoverLiveConversation\(\)/);
+  assert.match(source, /userStoppedVoiceRef/);
+});
+
+test("runtime UX distinguishes semantic backend version from build provenance", async () => {
+  const source = await readFile(
+    new URL("../../src/projects_hub/live_adapter.py", import.meta.url),
+    "utf8",
+  );
+  const version = await readFile(
+    new URL("../../src/projects_hub/version.py", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /backend_version/);
+  assert.match(source, /backend_release_sha упоминай только/);
+  assert.match(version, /0\.1\.19/);
+});
