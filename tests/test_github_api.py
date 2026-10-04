@@ -29,7 +29,7 @@ class FakeGitHubConnections:
         self.calls.append(("manifest_start", actor_id, workspace_id, conversation_id))
         return {
             "launch_url": "https://projects-hub.kenigevents.ru/api/github/app-manifest/launch?state=manifest-state",
-            "action_url": "https://github.com/settings/apps/new",
+            "action_url": "http://localhost/api/github/app-manifest/legacy-launch?state=manifest-state",
             "manifest": "{\"name\":\"projects-hub-test\"}",
             "state": "manifest-state",
             "expires_at_ms": 9999999999999,
@@ -184,6 +184,17 @@ def test_owner_http_flow_exposes_only_connection_metadata(tmp_path: Path):
         assert manifest.status_code == 200
         assert manifest.json()["action_url"] == "https://github.com/settings/apps/new"
         assert manifest.json()["state"] == "manifest-state"
+
+        legacy = client.post(
+            "/api/github/app-manifest/legacy-launch",
+            params={"state": "manifest-state"},
+            data={"manifest": "ignored", "state": "manifest-state"},
+            follow_redirects=False,
+        )
+        assert legacy.status_code == 303
+        assert legacy.headers["location"] == (
+            "projectshub://browser/github?state=manifest-state"
+        )
 
         external = TestClient(app, base_url="http://localhost")
         launch = external.get(
