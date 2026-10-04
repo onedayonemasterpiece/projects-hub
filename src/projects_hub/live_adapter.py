@@ -7,6 +7,7 @@ import logging
 from typing import Any, Callable
 
 from .device_commands import DeviceCommandService
+from .github_connections import GitHubConnections
 from .expert_reviews import (
     ExpertReviewAccessError,
     ExpertReviewAdapter,
@@ -42,6 +43,21 @@ def _functions(
             "name": "github_repositories_list",
             "description": "List repositories already connected and explicitly bound inside this workspace. This is read-only catalogue access and cannot grant or increase GitHub permissions.",
             "parameters": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "github_repository_read",
+            "description": "Read the root/directory listing or one UTF-8 text file from a GitHub repository already connected and bound to this workspace. This is read-only and cannot grant access or write to GitHub.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "repository_id": {"type": "integer", "minimum": 1},
+                    "path": {
+                        "type": "string",
+                        "description": "Repository-relative path. Empty string reads the repository root."
+                    }
+                },
+                "required": ["repository_id"]
+            },
         },
         {
             "name": "devices_list_capabilities",
@@ -393,6 +409,7 @@ SYSTEM_INSTRUCTION = """# ROLE
 # SECURITY
 - Доступ определяет backend. Аргументы function call не могут расширять права или подключать новый repository.
 - github_repositories_list показывает только уже подключённые и привязанные repositories. Если нужного repo нет, скажи, что его должен разрешить workspace owner через GitHub integration UI; не пытайся заменить это другим repo.
+- Для чтения текущего проекта используй github_repository_read: сначала корень/каталог, затем нужный текстовый файл. Не утверждай, что прочитала repository, пока tool result не вернул фактический content.
 - Device-local действие всё равно вызывается здесь, в backend-owned Live session. Android — только исполнитель typed command.
 - Для календаря сначала используй devices_list_capabilities, если подходящий телефон неоднозначен. Для вопросов о расписании используй calendar_list_events_on_device; для создания — calendar_create_event_on_device.
 - calendar_list_events_on_device только читает локальный CalendarContract выбранного Android и возвращает ограниченное окно до 31 дня. Не придумывай события, если device readback не вернулся.
@@ -428,6 +445,7 @@ class ProjectsHubLiveAdapter:
         *,
         device_commands: DeviceCommandService | None = None,
         readiness: ReadinessService | None = None,
+        github_connections: GitHubConnections | None = None,
         expert_reviews_factory: (
             Callable[[str, str], ExpertReviewAdapter | None] | None
         ) = None,
@@ -439,6 +457,7 @@ class ProjectsHubLiveAdapter:
         self.store = store
         self.device_commands = device_commands or DeviceCommandService(store)
         self.readiness = readiness or ReadinessService(store)
+        self.github_connections = github_connections
         self.expert_reviews_factory = expert_reviews_factory
         self.regional_knowledge_factory = regional_knowledge_factory
 
@@ -659,6 +678,19 @@ class ProjectsHubLiveAdapter:
                 "repositories": repositories,
                 "requires_connection": not repositories,
             }
+
+        if name == "github_repository_read":
+            if self.github_connections is None:
+                raise StoreError("GITHUB_APP_NOT_CONFIGURED", "GitHub integration is unavailable")
+            repository_id = int(args.get("repository_id") or 0)
+            if repository_id <= 0:
+                raise StoreError("INVALID_ARGUMENT", "repository_id is required")
+            return await self.github_connections.read_repository_path(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                repository_id=repository_id,
+                path=str(args.get("path") or ""),
+            )
 
         if name == "devices_list_capabilities":
             return {
