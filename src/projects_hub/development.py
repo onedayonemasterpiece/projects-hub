@@ -121,6 +121,102 @@ class DevelopmentService:
             "models": models,
         }
 
+    def create_backlog_task(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        project_id: str,
+        task_key: str,
+        title: str,
+        description: str = "",
+        acceptance_criteria: list[str] | None = None,
+    ) -> dict[str, Any]:
+        self._authorize_owner(actor_id, workspace_id)
+        if not self.store._project_row(workspace_id, project_id):
+            raise StoreError("PROJECT_NOT_FOUND", "Project is not available")
+        clean_title = title.strip()[:180]
+        if not clean_title:
+            raise StoreError("INVALID_ARGUMENT", "Backlog title is required")
+        criteria = [
+            str(item).strip()[:500]
+            for item in (acceptance_criteria or [])
+            if str(item).strip()
+        ][:10]
+        clean_description = description.strip()[:4000]
+        if criteria:
+            suffix = "\n\nAcceptance:\n" + "\n".join(
+                f"- {item}" for item in criteria
+            )
+            clean_description = (clean_description + suffix).strip()[:6000]
+        now = _now_ms()
+        with self.store._lock:
+            existing = self.store.db.execute(
+                "SELECT * FROM tasks WHERE task_key=?",
+                (task_key,),
+            ).fetchone()
+            if existing:
+                return dict(existing)
+            task_id = "tsk_" + uuid.uuid4().hex
+            self.store.db.execute(
+                """INSERT INTO tasks(
+                       id,task_key,actor_id,workspace_id,project_id,event_card_id,
+                       title,description,assignee_role,deadline,kind,state,
+                       created_at_ms,updated_at_ms
+                   ) VALUES(?,?,?,?,?,NULL,?,?,?,?,?,?,?,?)""",
+                (
+                    task_id,
+                    task_key,
+                    actor_id,
+                    workspace_id,
+                    project_id,
+                    clean_title,
+                    clean_description,
+                    "development",
+                    None,
+                    "development",
+                    "proposed",
+                    now,
+                    now,
+                ),
+            )
+            return dict(
+                self.store.db.execute(
+                    "SELECT * FROM tasks WHERE id=?",
+                    (task_id,),
+                ).fetchone()
+            )
+
+    def list_backlog(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        project_id: str | None = None,
+        limit: int = 30,
+    ) -> list[dict[str, Any]]:
+        self._authorize_owner(actor_id, workspace_id)
+        bounded = max(1, min(int(limit), 100))
+        with self.store._lock:
+            if project_id:
+                if not self.store._project_row(workspace_id, project_id):
+                    raise StoreError("PROJECT_NOT_FOUND", "Project is not available")
+                rows = self.store.db.execute(
+                    """SELECT * FROM tasks
+                       WHERE actor_id=? AND workspace_id=? AND project_id=?
+                         AND kind='development'
+                       ORDER BY updated_at_ms DESC LIMIT ?""",
+                    (actor_id, workspace_id, project_id, bounded),
+                ).fetchall()
+            else:
+                rows = self.store.db.execute(
+                    """SELECT * FROM tasks
+                       WHERE actor_id=? AND workspace_id=? AND kind='development'
+                       ORDER BY updated_at_ms DESC LIMIT ?""",
+                    (actor_id, workspace_id, bounded),
+                ).fetchall()
+        return [dict(row) for row in rows]
+
     def _selected_tasks(
         self,
         *,
@@ -136,7 +232,8 @@ class DevelopmentService:
             self.readiness._authorize(actor_id, workspace_id, None)
             rows = self.store.db.execute(
                 f"""SELECT * FROM tasks
-                    WHERE actor_id=? AND workspace_id=? AND id IN ({placeholders})""",
+                    WHERE actor_id=? AND workspace_id=? AND kind='development'
+                      AND id IN ({placeholders})""",
                 (actor_id, workspace_id, *clean_ids),
             ).fetchall()
         tasks = [dict(row) for row in rows]
