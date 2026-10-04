@@ -583,6 +583,18 @@ def create_app(
             event_name=request.headers.get("x-github-event"),
         )
 
+    @app.post("/api/device/capabilities")
+    async def update_device_capabilities(
+        payload: DeviceCapabilitiesUpdate,
+        request: Request,
+    ) -> dict[str, Any]:
+        return {
+            "device": app.state.device_commands.update_capabilities(
+                authorization=request.headers.get("authorization"),
+                capabilities=payload.capabilities,
+            )
+        }
+
     @app.post("/api/devices/register")
     async def register_device(
         payload: DeviceRegister,
