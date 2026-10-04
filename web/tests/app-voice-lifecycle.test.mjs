@@ -63,3 +63,36 @@ test("Android opens GitHub without resolveActivity package-visibility gating", a
   assert.match(manifest, /android\.intent\.action\.VIEW/);
   assert.match(manifest, /android:scheme="https"/);
 });
+
+
+test("Projects Hub keeps the conversation on the canvas and mobile context scrollable", async () => {
+  const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
+  assert.match(source, /className="chat-canvas"/);
+  assert.match(source, /className="chat-stack"/);
+  assert.match(source, /const showWork = Boolean\([\s\S]*chatMessages\.length === 0/);
+  assert.match(styles, /\.chat-canvas\s*\{[\s\S]*position:\s*fixed/);
+  assert.match(styles, /\.chat-stack\s*\{[\s\S]*justify-content:\s*flex-end/);
+  assert.match(styles, /\.context-sheet\s*\{[\s\S]*max-height:[\s\S]*overflow-y:\s*auto/);
+});
+
+test("Android onboards and advertises calendar read capability", async () => {
+  const android = await readFile(
+    new URL("../../android/app/src/main/java/com/kenigevents/projectshub/MainActivity.java", import.meta.url),
+    "utf8",
+  );
+  const api = await readFile(
+    new URL("../../android/app/src/main/java/com/kenigevents/projectshub/ApiClient.java", import.meta.url),
+    "utf8",
+  );
+  const calendar = await readFile(
+    new URL("../../android/app/src/main/java/com/kenigevents/projectshub/CalendarExecutor.java", import.meta.url),
+    "utf8",
+  );
+  assert.match(android, /requestCalendarAfterPairingOnce/);
+  assert.match(android, /calendar\.read_events/);
+  assert.match(api, /calendar\.read_events/);
+  assert.match(api, /api\/device\/capabilities/);
+  assert.match(calendar, /JSONObject readEvents/);
+  assert.match(calendar, /CalendarContract\.Instances/);
+});
