@@ -252,6 +252,7 @@ def create_app(
                 store,
                 device_commands=app.state.device_commands,
                 readiness=app.state.readiness,
+                github_connections=app.state.github_connections,
                 regional_knowledge_factory=regional_knowledge_factory,
             )
         return app.state.live_host
