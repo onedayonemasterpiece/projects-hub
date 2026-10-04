@@ -226,9 +226,9 @@ class GitHubConnections:
     async def complete_manifest_registration(
         self,
         *,
-        actor_id: str,
         state: str,
         code: str,
+        actor_id: str | None = None,
     ) -> dict[str, Any]:
         if (
             not state
@@ -241,9 +241,12 @@ class GitHubConnections:
                 "GITHUB_APP_MANIFEST_STATE_INVALID",
                 "GitHub App registration callback is invalid",
             )
+        raw_hash = self._state_hash(state)
+        if actor_id is None:
+            actor_id = str(self.store.github_app_manifest_state(raw_hash)["actor_id"])
         pending = self.store.consume_github_app_manifest_state(
             actor_id=actor_id,
-            state_hash=self._state_hash(state),
+            state_hash=raw_hash,
         )
         payload = await self._exchange_manifest_code(code)
         try:
@@ -301,9 +304,9 @@ class GitHubConnections:
     async def complete_install(
         self,
         *,
-        actor_id: str,
         state: str,
         installation_id: int,
+        actor_id: str | None = None,
     ) -> dict[str, Any]:
         client = self._require_client()
         if not state or len(state) > 500 or installation_id <= 0:
@@ -311,6 +314,8 @@ class GitHubConnections:
                 "GITHUB_INSTALL_STATE_INVALID",
                 "GitHub installation callback is invalid",
             )
+        if actor_id is None:
+            actor_id = str(self.store.github_install_state(self._state_hash(state))["actor_id"])
         installation = await client.get_installation(installation_id)
         if installation.get("suspended_at"):
             raise StoreError(
