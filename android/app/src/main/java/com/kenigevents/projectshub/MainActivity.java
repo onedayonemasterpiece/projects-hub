@@ -3,7 +3,10 @@ package com.kenigevents.projectshub;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.net.Uri;
+import android.provider.Settings;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
@@ -49,6 +52,7 @@ public final class MainActivity extends Activity {
     private DeviceCommandLoop deviceLoop;
     private Updater.AvailableUpdate availableUpdate;
     private PermissionRequest pendingWebPermission;
+    private boolean microphonePermissionInFlight;
     private ApiClient.ClaimedCommand pendingCalendarCommand;
     private DeviceCommandLoop.Completion pendingCalendarCompletion;
 
@@ -244,15 +248,64 @@ public final class MainActivity extends Activity {
                             == PackageManager.PERMISSION_GRANTED) {
                         request.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
                     } else {
+                        PermissionRequest previous = pendingWebPermission;
+                        if (previous != null && previous != request) previous.deny();
                         pendingWebPermission = request;
-                        requestPermissions(
-                                new String[]{Manifest.permission.RECORD_AUDIO},
-                                REQUEST_MICROPHONE
-                        );
+                        requestNativeMicrophonePermission();
+                    }
+                });
+            }
+
+            @Override
+            public void onPermissionRequestCanceled(PermissionRequest request) {
+                runOnUiThread(() -> {
+                    if (pendingWebPermission == request) {
+                        pendingWebPermission = null;
                     }
                 });
             }
         });
+    }
+
+    private void requestMicrophoneAfterPairingOnce() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+        android.content.SharedPreferences prefs = getSharedPreferences(
+                "projects_hub_ui",
+                MODE_PRIVATE
+        );
+        if (prefs.getBoolean("microphone_asked", false)) return;
+        prefs.edit().putBoolean("microphone_asked", true).apply();
+        requestNativeMicrophonePermission();
+    }
+
+    private void requestNativeMicrophonePermission() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED
+                || microphonePermissionInFlight) {
+            return;
+        }
+        microphonePermissionInFlight = true;
+        requestPermissions(
+                new String[]{Manifest.permission.RECORD_AUDIO},
+                REQUEST_MICROPHONE
+        );
+    }
+
+    private void showMicrophoneSettingsDialog() {
+        if (isFinishing() || isDestroyed()) return;
+        new AlertDialog.Builder(this)
+                .setTitle("Нужен доступ к микрофону")
+                .setMessage("Projects Hub использует микрофон только когда вы запускаете голосовой разговор.")
+                .setPositiveButton("Открыть настройки", (dialog, which) -> {
+                    Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                    intent.setData(Uri.parse("package:" + getPackageName()));
+                    startActivity(intent);
+                })
+                .setNegativeButton("Позже", null)
+                .show();
     }
 
     private Button buildUpdateButton() {
@@ -284,6 +337,7 @@ public final class MainActivity extends Activity {
         String existing = secureStore.getDeviceToken();
         if (existing != null && !existing.isBlank()) {
             startDeviceLoop(existing);
+            requestMicrophoneAfterPairingOnce();
             return;
         }
         if (!pairing.compareAndSet(false, true)) return;
@@ -305,6 +359,7 @@ public final class MainActivity extends Activity {
                 secureStore.putDeviceToken(token);
                 runOnUiThread(() -> {
                     startDeviceLoop(token);
+                    requestMicrophoneAfterPairingOnce();
                     requestNotificationsOnce();
                 });
             } catch (ApiClient.ApiException failure) {
@@ -446,20 +501,26 @@ public final class MainActivity extends Activity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
 
         if (requestCode == REQUEST_MICROPHONE) {
+            microphonePermissionInFlight = false;
+            boolean granted = grantResults.length > 0
+                    && grantResults[0] == PackageManager.PERMISSION_GRANTED;
             PermissionRequest request = pendingWebPermission;
             pendingWebPermission = null;
-            if (request == null) return;
-            String origin = request.getOrigin() == null
-                    ? ""
-                    : request.getOrigin().toString();
-            String currentUrl = webView == null ? "" : webView.getUrl();
-            if (grantResults.length > 0
-                    && grantResults[0] == PackageManager.PERMISSION_GRANTED
-                    && webOriginPolicy.isTrustedPermissionOrigin(origin)
-                    && webOriginPolicy.isTrustedPageUrl(currentUrl)) {
-                request.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
-            } else {
-                request.deny();
+            if (request != null) {
+                String origin = request.getOrigin() == null
+                        ? ""
+                        : request.getOrigin().toString();
+                String currentUrl = webView == null ? "" : webView.getUrl();
+                if (granted
+                        && webOriginPolicy.isTrustedPermissionOrigin(origin)
+                        && webOriginPolicy.isTrustedPageUrl(currentUrl)) {
+                    request.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
+                } else {
+                    request.deny();
+                }
+            }
+            if (!granted) {
+                showMicrophoneSettingsDialog();
             }
             return;
         }
