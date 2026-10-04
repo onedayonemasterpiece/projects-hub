@@ -301,15 +301,42 @@ public final class MainActivity extends Activity {
     private void requestMicrophoneAfterPairingOnce() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
                 == PackageManager.PERMISSION_GRANTED) {
+            requestCalendarAfterPairingOnce();
             return;
         }
         android.content.SharedPreferences prefs = getSharedPreferences(
                 "projects_hub_ui",
                 MODE_PRIVATE
         );
-        if (prefs.getBoolean("microphone_asked", false)) return;
+        if (prefs.getBoolean("microphone_asked", false)) {
+            requestCalendarAfterPairingOnce();
+            return;
+        }
         prefs.edit().putBoolean("microphone_asked", true).apply();
         requestNativeMicrophonePermission();
+    }
+
+    private void requestCalendarAfterPairingOnce() {
+        if (calendar.hasWritePermissions()) {
+            requestNotificationsOnce();
+            return;
+        }
+        android.content.SharedPreferences prefs = getSharedPreferences(
+                "projects_hub_ui",
+                MODE_PRIVATE
+        );
+        if (prefs.getBoolean("calendar_asked", false)) {
+            requestNotificationsOnce();
+            return;
+        }
+        prefs.edit().putBoolean("calendar_asked", true).apply();
+        requestPermissions(
+                new String[]{
+                        Manifest.permission.READ_CALENDAR,
+                        Manifest.permission.WRITE_CALENDAR
+                },
+                REQUEST_CALENDAR
+        );
     }
 
     private void requestNativeMicrophonePermission() {
@@ -439,7 +466,6 @@ public final class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     startDeviceLoop(token);
                     requestMicrophoneAfterPairingOnce();
-                    requestNotificationsOnce();
                 });
             } catch (ApiClient.ApiException failure) {
                 if (failure.statusCode != 401) {
@@ -470,24 +496,56 @@ public final class MainActivity extends Activity {
                     main.post(pairingProbe);
                 })
         );
-        deviceLoop.start();
+        io.execute(() -> {
+            try {
+                api.updateDeviceCapabilities(token);
+            } catch (Exception failure) {
+                Log.w("ProjectsHubDevice", "Could not refresh device capabilities", failure);
+            }
+            deviceLoop.start();
+        });
     }
 
     private void handleDeviceCommand(
             ApiClient.ClaimedCommand command,
             DeviceCommandLoop.Completion completion
     ) {
-        if (!"calendar.create_event".equals(command.capability)) {
-            completion.complete(
-                    "failed",
-                    errorResult("UNSUPPORTED_CAPABILITY")
-            );
+        if ("calendar.create_event".equals(command.capability)) {
+            if (!calendar.hasWritePermissions()) {
+                requestCalendarPermissionFor(command, completion);
+                return;
+            }
+            confirmCalendar(command, completion);
             return;
         }
 
-        if (!calendar.hasPermissions()) {
-            pendingCalendarCommand = command;
-            pendingCalendarCompletion = completion;
+        if ("calendar.read_events".equals(command.capability)) {
+            if (!calendar.hasReadPermission()) {
+                requestCalendarPermissionFor(command, completion);
+                return;
+            }
+            executeCalendarRead(command, completion);
+            return;
+        }
+
+        completion.complete(
+                "failed",
+                errorResult("UNSUPPORTED_CAPABILITY")
+        );
+    }
+
+    private void requestCalendarPermissionFor(
+            ApiClient.ClaimedCommand command,
+            DeviceCommandLoop.Completion completion
+    ) {
+        pendingCalendarCommand = command;
+        pendingCalendarCompletion = completion;
+        if ("calendar.read_events".equals(command.capability)) {
+            requestPermissions(
+                    new String[]{Manifest.permission.READ_CALENDAR},
+                    REQUEST_CALENDAR
+            );
+        } else {
             requestPermissions(
                     new String[]{
                             Manifest.permission.READ_CALENDAR,
@@ -495,9 +553,40 @@ public final class MainActivity extends Activity {
                     },
                     REQUEST_CALENDAR
             );
+        }
+    }
+
+    private void resumeCalendarCommand(
+            ApiClient.ClaimedCommand command,
+            DeviceCommandLoop.Completion completion
+    ) {
+        if ("calendar.read_events".equals(command.capability)) {
+            if (calendar.hasReadPermission()) {
+                executeCalendarRead(command, completion);
+            } else {
+                completion.complete("rejected", errorResult("CALENDAR_PERMISSION_DENIED"));
+            }
             return;
         }
-        confirmCalendar(command, completion);
+        if ("calendar.create_event".equals(command.capability) && calendar.hasWritePermissions()) {
+            confirmCalendar(command, completion);
+        } else {
+            completion.complete("rejected", errorResult("CALENDAR_PERMISSION_DENIED"));
+        }
+    }
+
+    private void executeCalendarRead(
+            ApiClient.ClaimedCommand command,
+            DeviceCommandLoop.Completion completion
+    ) {
+        try {
+            completion.complete("applied", calendar.readEvents(command.payload));
+        } catch (Exception failure) {
+            completion.complete(
+                    "failed",
+                    errorResult(failure.getClass().getSimpleName())
+            );
+        }
     }
 
     private void executeCalendar(
@@ -601,6 +690,7 @@ public final class MainActivity extends Activity {
             if (!granted) {
                 showMicrophoneSettingsDialog();
             }
+            requestCalendarAfterPairingOnce();
             return;
         }
 
@@ -609,20 +699,12 @@ public final class MainActivity extends Activity {
             DeviceCommandLoop.Completion completion = pendingCalendarCompletion;
             pendingCalendarCommand = null;
             pendingCalendarCompletion = null;
-            if (command == null || completion == null) return;
 
-            boolean granted = grantResults.length >= 2;
-            for (int result : grantResults) {
-                granted = granted && result == PackageManager.PERMISSION_GRANTED;
+            if (command != null && completion != null) {
+                resumeCalendarCommand(command, completion);
             }
-            if (granted) {
-                confirmCalendar(command, completion);
-            } else {
-                completion.complete(
-                        "rejected",
-                        errorResult("CALENDAR_PERMISSION_DENIED")
-                );
-            }
+            requestNotificationsOnce();
+            return;
         }
     }
 
@@ -630,7 +712,7 @@ public final class MainActivity extends Activity {
         JSONObject result = new JSONObject();
         try {
             result.put("readback_verified", false);
-            result.put("error", error);
+            result.put("error_code", error);
             return result;
         } catch (org.json.JSONException impossible) {
             throw new IllegalStateException(impossible);
