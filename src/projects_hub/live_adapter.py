@@ -4,6 +4,8 @@ import base64
 import hashlib
 import json
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any, Callable
 
 from .device_commands import DeviceCommandService
@@ -599,6 +601,8 @@ class ProjectsHubLiveAdapter:
         audio_mode: str = "realtime",
         client_source_id: str | None = None,
         client_version: str | None = None,
+        client_timezone: str | None = None,
+        backend_version: str | None = None,
         backend_release_sha: str | None = None,
         **_args: Any,
     ) -> dict[str, Any]:
@@ -657,6 +661,8 @@ class ProjectsHubLiveAdapter:
                 "audio_mode": audio_mode,
                 "client_source_id": client_source_id,
                 "client_version": client_version,
+                "client_timezone": client_timezone,
+                "backend_version": backend_version,
                 "backend_release_sha": backend_release_sha,
             },
             "context": {
@@ -669,6 +675,8 @@ class ProjectsHubLiveAdapter:
                 "allowed_projects": [{"id": p["id"], "name": p["name"]} for p in projects],
                 "current_source_id": source["id"],
                 "client_version": client_version,
+                "client_timezone": client_timezone,
+                "backend_version": backend_version,
                 "backend_release_sha": backend_release_sha,
             },
             "configuration": {
@@ -679,6 +687,10 @@ class ProjectsHubLiveAdapter:
                     owner_development=owner_development,
                 ),
                 "voice": "Aoede",
+                "input_audio_transcription": {
+                    "languageCodes": ["ru-RU"],
+                    "customVocabulary": ["Мира", "Projects Hub", "Codex", "DevCoveer"],
+                },
                 "search_enabled": False,
                 "manual_activity_detection": audio_mode == "buffered",
             },
@@ -771,11 +783,11 @@ class ProjectsHubLiveAdapter:
 
         if name == "runtime_versions_get":
             client_version = state.get("client_version")
-            backend_release_sha = state.get("backend_release_sha")
             return {
                 "client_kind": "android" if client_version else "web",
                 "android_version": client_version,
-                "backend_release_sha": backend_release_sha,
+                "backend_version": state.get("backend_version"),
+                "backend_release_sha": state.get("backend_release_sha"),
             }
 
         if name == "backlog_list":
