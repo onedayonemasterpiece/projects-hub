@@ -48,6 +48,7 @@ export type TaskItem = {
   description: string;
   assignee_role: string;
   deadline: string | null;
+  kind?: string;
   state: "proposed" | "accepted" | "done" | "snoozed" | "rejected";
   updated_at_ms: number;
 };
@@ -60,6 +61,8 @@ export type DevelopmentExecution = {
   provider: string;
   model_profile: string;
   status: "starting" | "running" | "completed" | "failed" | "cancelled";
+  phase: string;
+  phase_detail: string;
   devcoveer_task_id: string | null;
   quota_remaining_percent: number | null;
   result_summary: string;
@@ -210,6 +213,12 @@ export const getTasks = (workspaceId: string, projectId?: string | null) => {
   const params = new URLSearchParams({ workspace_id: workspaceId, limit: "50" });
   if (projectId) params.set("project_id", projectId);
   return api<{ items: TaskItem[] }>(`/api/tasks?${params}`);
+};
+
+export const getDevelopmentBacklog = (workspaceId: string, projectId?: string | null) => {
+  const params = new URLSearchParams({ workspace_id: workspaceId, limit: "50" });
+  if (projectId) params.set("project_id", projectId);
+  return api<{ items: TaskItem[] }>(`/api/development/backlog?${params}`);
 };
 
 export const getDevelopmentCodexStatus = (workspaceId: string) => {
