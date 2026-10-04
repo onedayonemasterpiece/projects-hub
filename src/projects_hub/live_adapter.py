@@ -729,6 +729,15 @@ class ProjectsHubLiveAdapter:
                 },
                 "search_enabled": False,
                 "manual_activity_detection": audio_mode == "buffered",
+                "automatic_activity_detection": (
+                    None
+                    if audio_mode == "buffered"
+                    else {
+                        "end_of_speech_sensitivity": "END_SENSITIVITY_LOW",
+                        "silence_duration_ms": 5000,
+                        "prefix_padding_ms": 250,
+                    }
+                ),
             },
             "response": {
                 "conversation_id": conversation_id,
