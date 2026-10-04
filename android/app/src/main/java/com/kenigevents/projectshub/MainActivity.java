@@ -215,6 +215,11 @@ public final class MainActivity extends Activity {
             public boolean shouldOverrideUrlLoading(WebView webView, WebResourceRequest request) {
                 String targetUrl = request.getUrl().toString();
                 String currentUrl = webView.getUrl() == null ? "" : webView.getUrl();
+                if (webOriginPolicy.isTrustedUpdateCheckAction(currentUrl, targetUrl)) {
+                    updater.checkForUpdate();
+                    toast("Проверяю обновление…");
+                    return true;
+                }
                 if (webOriginPolicy.isTrustedMicrophoneSettingsAction(currentUrl, targetUrl)) {
                     openMicrophoneSettings();
                     return true;

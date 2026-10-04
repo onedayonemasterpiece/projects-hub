@@ -1025,3 +1025,81 @@ button:focus-visible {
 .microphone-settings-action {
   margin-top: 14px;
 }
+
+.backlog-board,
+.backlog-list,
+.development-status {
+  display: grid;
+  gap: 12px;
+}
+
+.development-status {
+  padding: 14px;
+  border: 1px solid var(--stroke);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.development-heading,
+.backlog-task {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.development-heading > div,
+.backlog-task > div:first-child,
+.execution-card > div:first-child,
+.model-list {
+  display: grid;
+  gap: 5px;
+}
+
+.development-heading span,
+.backlog-task span,
+.execution-card span,
+.model-list span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.readiness-badge.is-ok {
+  color: var(--positive);
+  background: rgba(110, 231, 168, 0.08);
+}
+
+.model-list {
+  padding-top: 10px;
+  border-top: 1px solid var(--stroke);
+}
+
+.model-list code {
+  color: #d9d9dc;
+  font-size: 11px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.execution-card {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--stroke);
+}
+
+.execution-card p,
+.backlog-task p {
+  margin: 0;
+  color: #cfcfd3;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.backlog-task {
+  padding: 14px 0;
+  border-top: 1px solid var(--stroke);
+}
+
+.backlog-task:first-child {
+  border-top: 0;
+}

@@ -7,6 +7,7 @@ import logging
 from typing import Any, Callable
 
 from .device_commands import DeviceCommandService
+from .development import DevelopmentService
 from .github_connections import GitHubConnections
 from .expert_reviews import (
     ExpertReviewAccessError,
@@ -32,6 +33,7 @@ def _functions(
     *,
     expert_reviews: bool = False,
     regional_knowledge: bool = False,
+    owner_development: bool = False,
 ) -> list[dict[str, Any]]:
     functions = [
         {
@@ -377,6 +379,78 @@ def _functions(
                 },
             ]
         )
+    if owner_development:
+        functions.extend(
+            [
+                {
+                    "name": "backlog_list",
+                    "description": (
+                        "List durable backlog tasks for the current project/workspace. "
+                        "Backlog is the primary work queue regardless of who later implements it."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "project_id": {"type": "string"},
+                            "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                        },
+                    },
+                },
+                {
+                    "name": "development_codex_status",
+                    "description": (
+                        "Read native Codex quota/capacity, owner profile and the current "
+                        "native Codex model catalogue. Read-only; never launches inference."
+                    ),
+                    "parameters": {"type": "object", "properties": {}},
+                },
+                {
+                    "name": "development_execute_backlog",
+                    "description": (
+                        "Start implementation for 1-5 existing durable backlog tasks. "
+                        "CALL ONLY after the platform owner explicitly asks to implement/run "
+                        "those tasks now. Discussion, prioritization or backlog creation alone "
+                        "must never call this tool. The backend rechecks owner identity, Codex "
+                        "capacity >10%, model availability and one-active-run policy."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "task_ids": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 5,
+                                "uniqueItems": True,
+                                "items": {"type": "string"},
+                            },
+                            "model": {
+                                "type": "string",
+                                "description": "Exact native Codex model ID only after the owner explicitly selects it when the default owner profile is unavailable."
+                            },
+                            "reasoning_effort": {
+                                "type": "string",
+                                "enum": ["low", "medium", "high", "xhigh", "max", "ultra"]
+                            }
+                        },
+                        "required": ["task_ids"],
+                    },
+                },
+                {
+                    "name": "development_execution_status",
+                    "description": (
+                        "Read/synchronize the latest owner development run or a specific run. "
+                        "Use when the owner asks what Codex is doing, whether it finished, "
+                        "or what result was delivered."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "execution_id": {"type": "string"},
+                        },
+                    },
+                },
+            ]
+        )
     return functions
 
 
@@ -429,6 +503,17 @@ SYSTEM_INSTRUCTION = """# ROLE
 - "Нужны ещё источники" является нормальным экспертным исходом.
 - Объявляй решение сохранённым только после receipt/readback owning service.
 
+# BACKLOG AND OWNER DEVELOPMENT
+- Backlog — первичная сущность работы. task_create_follow_up создаёт durable task и может использоваться как обычная project backlog-задача даже без event_card.
+- backlog_list показывает существующие задачи проекта; не создавай параллельный «самодоработочный» список.
+- Обычное обсуждение, приоритизация, формулировка или добавление задачи в backlog НЕ разрешают запуск разработки.
+- development_execute_backlog вызывай только если текущий platform owner явно попросил реализовать/запустить конкретную существующую задачу или выбранный набор задач прямо сейчас.
+- Можно запускать 1–5 задач одного проекта одним execution. Задачи разных проектов запускай отдельными execution.
+- Перед стартом backend сам проверяет owner, native Codex quota >10%, live model catalog и отсутствие другого активного owner-run. Если owner profile недоступен, сначала вызови development_codex_status, назови доступные native модели и попроси владельца явно выбрать модель/effort. Не выбирай Astra/другую модель сама и не обходи отказ.
+- development_codex_status используй для вопросов об остатке лимита/доступности Codex; сообщай фактический remaining_percent и reset/status из tool result.
+- development_execution_status используй для «что сейчас делает Codex», «закончилось ли», «какой результат». Не объявляй разработку завершённой раньше terminal status.
+- ChatGPT/Codex, запущенные владельцем вне Projects Hub, остаются допустимыми способами выполнить ту же backlog-задачу; execution Миры — только один из путей исполнения backlog.
+
 # EVENT READINESS
 - После подтверждённого calendar event backend автоматически создаёт event card. Для записи подкаста передавай event_type=podcast, иначе generic.
 - Перед событием используй event_cards_list и называй только фактические незакрытые пункты checklist.
@@ -445,6 +530,7 @@ class ProjectsHubLiveAdapter:
         *,
         device_commands: DeviceCommandService | None = None,
         readiness: ReadinessService | None = None,
+        development: DevelopmentService | None = None,
         github_connections: GitHubConnections | None = None,
         expert_reviews_factory: (
             Callable[[str, str], ExpertReviewAdapter | None] | None
@@ -457,6 +543,7 @@ class ProjectsHubLiveAdapter:
         self.store = store
         self.device_commands = device_commands or DeviceCommandService(store)
         self.readiness = readiness or ReadinessService(store)
+        self.development = development or DevelopmentService(store, self.readiness)
         self.github_connections = github_connections
         self.expert_reviews_factory = expert_reviews_factory
         self.regional_knowledge_factory = regional_knowledge_factory
@@ -532,6 +619,14 @@ class ProjectsHubLiveAdapter:
             actor_id,
             conversation["workspace_id"],
         )
+        owner_development = False
+        try:
+            self.store.require_platform_owner(actor_id)
+            self.store.require_workspace_owner(actor_id, conversation["workspace_id"])
+            owner_development = True
+        except StoreError:
+            owner_development = False
+
         system_instruction = SYSTEM_INSTRUCTION
         if audio_mode == "buffered":
             system_instruction += """
@@ -567,6 +662,7 @@ class ProjectsHubLiveAdapter:
                 "functions": _functions(
                     expert_reviews=expert_reviews is not None,
                     regional_knowledge=regional_knowledge is not None,
+                    owner_development=owner_development,
                 ),
                 "voice": "Aoede",
                 "search_enabled": False,
@@ -584,6 +680,7 @@ class ProjectsHubLiveAdapter:
                 "source_reused": source_reused,
                 "expert_reviews_enabled": expert_reviews is not None,
                 "regional_knowledge_enabled": regional_knowledge is not None,
+                "owner_development_enabled": owner_development,
                 "source_terminal": source["status"] in {"archived", "ephemeral_processed"},
             },
         }
@@ -657,6 +754,55 @@ class ProjectsHubLiveAdapter:
                 "projects": self.store.list_projects(actor_id, workspace_id),
                 "conversation": self.store.get_conversation(actor_id, conversation_id),
             }
+
+        if name == "backlog_list":
+            self.store.require_platform_owner(actor_id)
+            self.store.require_workspace_owner(actor_id, workspace_id)
+            project_id = str(args.get("project_id") or "") or None
+            if project_id is None:
+                project_id = self.store.get_conversation(
+                    actor_id,
+                    conversation_id,
+                ).get("focus_project_id")
+            try:
+                limit = int(args.get("limit", 20))
+            except (TypeError, ValueError):
+                limit = 20
+            return {
+                "tasks": self.readiness.list_tasks(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    project_id=project_id,
+                    limit=limit,
+                )
+            }
+
+        if name == "development_codex_status":
+            return await self.development.codex_status(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+            )
+
+        if name == "development_execute_backlog":
+            raw_ids = args.get("task_ids")
+            if not isinstance(raw_ids, list):
+                raise StoreError("INVALID_ARGUMENT", "task_ids must be a list")
+            return await self.development.start(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                task_ids=[str(item) for item in raw_ids],
+                model=str(args.get("model") or "") or None,
+                reasoning_effort=str(args.get("reasoning_effort") or "") or None,
+            )
+
+        if name == "development_execution_status":
+            execution_id = str(args.get("execution_id") or "") or None
+            return await self.development.status(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                execution_id=execution_id,
+                sync=True,
+            )
 
         if name == "github_repositories_list":
             rows = self.store.list_repository_connections(actor_id, workspace_id)

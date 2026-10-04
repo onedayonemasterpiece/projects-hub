@@ -15,6 +15,9 @@ import {
   getGitHubStatus,
   getMemories,
   getEventCards,
+  getTasks,
+  getDevelopmentCodexStatus,
+  getLatestDevelopmentExecution,
   getAuthConfig,
   exchangeInvite,
   login,
@@ -27,6 +30,9 @@ import {
   type GitHubStatus,
   type MemoryItem,
   type EventCard,
+  type TaskItem,
+  type DevelopmentExecution,
+  type CodexStatus,
 } from "./api";
 import { replayLocalVoiceSource } from "./bufferedReplay";
 import {
@@ -114,9 +120,14 @@ export default function App() {
   const [wait, setWait] = useState<WaitState>(null);
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [eventCards, setEventCards] = useState<EventCard[]>([]);
+  const [backlogTasks, setBacklogTasks] = useState<TaskItem[]>([]);
+  const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null);
+  const [developmentExecution, setDevelopmentExecution] = useState<DevelopmentExecution | null>(null);
+  const [developmentAccess, setDevelopmentAccess] = useState<boolean | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [eventOpen, setEventOpen] = useState(false);
+  const [backlogOpen, setBacklogOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
   const [networkOnline, setNetworkOnline] = useState(() => navigator.onLine);
@@ -136,6 +147,9 @@ export default function App() {
   const replayingRef = useRef(false);
   const turnHasInput = useRef(false);
   const conversationRef = useRef<Conversation | null>(null);
+  const lastDevelopmentUpdateCheckRef = useRef(
+    localStorage.getItem("projects-hub-development-update-check") ?? "",
+  );
 
   useEffect(() => {
     conversationRef.current = conversation;
@@ -171,6 +185,38 @@ export default function App() {
     setEventCards(result.items);
   }, [boot]);
 
+  const loadBacklog = useCallback(async () => {
+    if (!boot) return;
+    const projectId = conversationRef.current?.focus_project_id ?? null;
+    const tasks = await getTasks(boot.workspace.id, projectId);
+    setBacklogTasks(tasks.items);
+
+    if (boot.role !== "owner") {
+      setDevelopmentAccess(false);
+      setCodexStatus(null);
+      setDevelopmentExecution(null);
+      return;
+    }
+
+    try {
+      const [capacity, latest] = await Promise.all([
+        getDevelopmentCodexStatus(boot.workspace.id),
+        getLatestDevelopmentExecution(boot.workspace.id, true),
+      ]);
+      setDevelopmentAccess(true);
+      setCodexStatus(capacity);
+      setDevelopmentExecution(latest.execution);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 403) {
+        setDevelopmentAccess(false);
+        setCodexStatus(null);
+        setDevelopmentExecution(null);
+        return;
+      }
+      throw error;
+    }
+  }, [boot]);
+
   const refreshPendingSources = useCallback(async () => {
     if (!boot) return;
     setPendingSources(await listPendingVoiceSources(boot.workspace.id));
@@ -183,6 +229,47 @@ export default function App() {
     }
     setGitHubStatus(await getGitHubStatus(boot.workspace.id));
   }, [boot]);
+
+  useEffect(() => {
+    if (!boot || boot.role !== "owner" || developmentAccess === false) return;
+    let cancelled = false;
+
+    const syncDevelopment = async () => {
+      try {
+        const latest = await getLatestDevelopmentExecution(boot.workspace.id, true);
+        if (cancelled) return;
+        setDevelopmentAccess(true);
+        setDevelopmentExecution(latest.execution);
+        const execution = latest.execution;
+        if (
+          execution
+          && execution.update_check_recommended
+          && ["completed", "failed", "cancelled"].includes(execution.status)
+          && isAndroidApp
+        ) {
+          const key = execution.id + ":" + execution.updated_at_ms;
+          if (lastDevelopmentUpdateCheckRef.current !== key) {
+            lastDevelopmentUpdateCheckRef.current = key;
+            localStorage.setItem("projects-hub-development-update-check", key);
+            window.location.href = "projectshub://update/check";
+          }
+        }
+      } catch (error) {
+        if (cancelled) return;
+        if (error instanceof ApiError && error.status === 403) {
+          setDevelopmentAccess(false);
+          setDevelopmentExecution(null);
+        }
+      }
+    };
+
+    void syncDevelopment();
+    const timer = window.setInterval(syncDevelopment, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [boot, developmentAccess, isAndroidApp]);
 
   const mergeChatMessage = useCallback((role: ChatRole, fragment: string, preferred: MutableRefObject<number>) => {
     const clean = fragment.trim();
@@ -231,6 +318,21 @@ export default function App() {
         void loadEventCards().then(() => {
           setEventOpen(true);
           setMemoryOpen(false);
+          setBacklogOpen(false);
+        });
+        if (["task_create_follow_up", "task_set_state"].includes(event.name ?? "")) {
+          void loadBacklog();
+        }
+      }
+      if ([
+        "development_execute_backlog",
+        "development_execution_status",
+        "development_codex_status",
+      ].includes(event.name ?? "")) {
+        void loadBacklog().then(() => {
+          setBacklogOpen(true);
+          setEventOpen(false);
+          setMemoryOpen(false);
         });
       }
       if (event.name === "conversation_set_focus" && conversationRef.current) {
@@ -240,7 +342,7 @@ export default function App() {
     } else if (event.type === "capability_unavailable" && event.code !== "NOT_CONFIGURED") {
       setNotice("Одна из дополнительных возможностей сейчас недоступна.");
     }
-  }, [loadEventCards, loadMemories, mergeChatMessage]);
+  }, [loadBacklog, loadEventCards, loadMemories, mergeChatMessage]);
 
   useEffect(() => {
     let cancelled = false;
@@ -552,6 +654,18 @@ export default function App() {
     }
   }
 
+  async function openBacklog() {
+    try {
+      await loadBacklog();
+      setBacklogOpen(true);
+      setEventOpen(false);
+      setMemoryOpen(false);
+      setContextOpen(false);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Не удалось прочитать backlog.");
+    }
+  }
+
   async function changeTaskState(
     taskId: string,
     state: "accepted" | "done" | "snoozed" | "rejected",
@@ -559,7 +673,7 @@ export default function App() {
     if (!boot) return;
     try {
       await setTaskState(taskId, boot.workspace.id, state);
-      await loadEventCards();
+      await Promise.all([loadEventCards(), loadBacklog()]);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Не удалось изменить задачу.");
     }
@@ -673,7 +787,7 @@ export default function App() {
 
   const voiceActive = !["off", "start_error", "connection_error", "microphone_unavailable"].includes(voiceState);
   const showWork = Boolean(
-    eventOpen || memoryOpen || ((notice || wait) && chatMessages.length === 0)
+    eventOpen || memoryOpen || backlogOpen || ((notice || wait) && chatMessages.length === 0)
   );
   const projectCount = Math.max(0, boot.projects.length - 1);
   const pendingCount = pendingSources.length;
@@ -705,6 +819,7 @@ export default function App() {
             });
             setMemoryOpen(false);
             setEventOpen(false);
+            setBacklogOpen(false);
           }}
           aria-expanded={contextOpen}
         >
@@ -725,6 +840,7 @@ export default function App() {
                 <h2>{boot.workspace.name}</h2>
               </div>
               <div className="sheet-actions">
+                <button className="quiet-button" onClick={openBacklog}>Бэклог</button>
                 <button className="quiet-button" onClick={openEvents}>Готовность</button>
                 <button className="quiet-button" onClick={openMemory}>Память</button>
               </div>
@@ -922,6 +1038,97 @@ export default function App() {
                   </div>
                 ) : (
                   <p className="empty-copy">Событий с checklist пока нет. Создайте событие голосом.</p>
+                )}
+              </div>
+            ) : backlogOpen ? (
+              <div className="backlog-board">
+                <div className="sheet-heading">
+                  <div>
+                    <p className="eyebrow">Бэклог</p>
+                    <h2>{focusProject?.name ?? "Проекты"}</h2>
+                  </div>
+                  <button className="quiet-button" onClick={() => setBacklogOpen(false)}>Закрыть</button>
+                </div>
+
+                {developmentAccess === true && codexStatus && (
+                  <section className="development-status">
+                    <div className="development-heading">
+                      <div>
+                        <span>Codex</span>
+                        <strong>
+                          {typeof codexStatus.remaining_percent === "number"
+                            ? `Остаток · ${Math.round(codexStatus.remaining_percent)}%`
+                            : "Лимит неизвестен"}
+                        </strong>
+                      </div>
+                      <span className={codexStatus.eligible ? "readiness-badge is-ok" : "readiness-badge"}>
+                        {codexStatus.eligible ? "можно запускать" : "резерв / недоступен"}
+                      </span>
+                    </div>
+                    {!codexStatus.profile.catalog_available && codexStatus.models.length > 0 && (
+                      <div className="model-list">
+                        <span>Owner profile сейчас недоступен. Доступны:</span>
+                        {codexStatus.models.slice(0, 6).map(model => (
+                          <code key={model.id}>
+                            {model.id} · {model.default_reasoning_effort ?? model.reasoning_efforts[0] ?? "default"}
+                          </code>
+                        ))}
+                      </div>
+                    )}
+                    {developmentExecution && (
+                      <div className="execution-card">
+                        <div>
+                          <strong>Последний запуск · {developmentExecution.status}</strong>
+                          <span>
+                            {developmentExecution.model_profile}
+                            {typeof developmentExecution.quota_remaining_percent === "number"
+                              ? ` · старт при ${Math.round(developmentExecution.quota_remaining_percent)}%`
+                              : ""}
+                          </span>
+                        </div>
+                        {developmentExecution.result_summary && (
+                          <p>{developmentExecution.result_summary}</p>
+                        )}
+                        {developmentExecution.error_code && (
+                          <p className="notice">Ошибка: {developmentExecution.error_code}</p>
+                        )}
+                      </div>
+                    )}
+                  </section>
+                )}
+
+                {backlogTasks.length ? (
+                  <div className="backlog-list">
+                    {backlogTasks.map(task => (
+                      <section className="backlog-task" key={task.id}>
+                        <div>
+                          <strong>{task.title}</strong>
+                          <span>
+                            {task.state}
+                            {task.deadline ? " · " + task.deadline : ""}
+                          </span>
+                          {task.description && <p>{task.description}</p>}
+                        </div>
+                        {task.state !== "done" && task.state !== "rejected" && (
+                          <div className="task-actions">
+                            {task.state === "proposed" && (
+                              <button className="mini-action" onClick={() => changeTaskState(task.id, "accepted")}>Принять</button>
+                            )}
+                            <button className="mini-action" onClick={() => changeTaskState(task.id, "done")}>Готово</button>
+                            <button className="mini-action" onClick={() => changeTaskState(task.id, "snoozed")}>Отложить</button>
+                          </div>
+                        )}
+                      </section>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="empty-copy">В бэклоге текущего проекта пока нет задач. Можно добавить задачу голосом.</p>
+                )}
+
+                {developmentAccess === true && (
+                  <p className="sheet-footnote">
+                    Чтобы выполнить задачу через Codex, скажите Мире, какую существующую задачу или набор задач запустить. Само добавление задачи в бэклог разработку не запускает.
+                  </p>
                 )}
               </div>
             ) : memoryOpen ? (

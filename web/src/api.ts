@@ -52,6 +52,47 @@ export type TaskItem = {
   updated_at_ms: number;
 };
 
+export type DevelopmentExecution = {
+  id: string;
+  project_id: string;
+  task_ids: string[];
+  project_hint: string;
+  provider: string;
+  model_profile: string;
+  status: "starting" | "running" | "completed" | "failed" | "cancelled";
+  devcoveer_task_id: string | null;
+  quota_remaining_percent: number | null;
+  result_summary: string;
+  error_code: string | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+  started_at_ms: number | null;
+  finished_at_ms: number | null;
+  update_check_recommended?: boolean;
+};
+
+export type CodexStatus = {
+  status: string | null;
+  observed_at: string | null;
+  remaining_percent: number | null;
+  eligible: boolean;
+  reserve_percent: number | null;
+  reason: string | null;
+  profile: {
+    requested: string | null;
+    model: string | null;
+    reasoning_effort: string | null;
+    catalog_available: boolean;
+  };
+  models: Array<{
+    id: string;
+    display_name: string | null;
+    reasoning_efforts: string[];
+    default_reasoning_effort: string | null;
+    availability: string | null;
+  }>;
+};
+
 export type EventCard = {
   id: string;
   project_id: string | null;
@@ -163,6 +204,27 @@ export const getEventCards = (workspaceId: string, projectId?: string | null) =>
   const params = new URLSearchParams({ workspace_id: workspaceId, limit: "8" });
   if (projectId) params.set("project_id", projectId);
   return api<{ items: EventCard[] }>(`/api/event-cards?${params}`);
+};
+
+export const getTasks = (workspaceId: string, projectId?: string | null) => {
+  const params = new URLSearchParams({ workspace_id: workspaceId, limit: "50" });
+  if (projectId) params.set("project_id", projectId);
+  return api<{ items: TaskItem[] }>(`/api/tasks?${params}`);
+};
+
+export const getDevelopmentCodexStatus = (workspaceId: string) => {
+  const params = new URLSearchParams({ workspace_id: workspaceId });
+  return api<CodexStatus>(`/api/development/codex-status?${params}`);
+};
+
+export const getLatestDevelopmentExecution = (workspaceId: string, sync = true) => {
+  const params = new URLSearchParams({
+    workspace_id: workspaceId,
+    sync: sync ? "true" : "false",
+  });
+  return api<{ execution: DevelopmentExecution | null }>(
+    `/api/development/executions/latest?${params}`,
+  );
 };
 
 export const setTaskState = (
