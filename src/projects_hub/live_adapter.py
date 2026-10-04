@@ -418,10 +418,8 @@ def _functions(
                         "properties": {
                             "task_ids": {
                                 "type": "array",
-                                "minItems": 1,
-                                "maxItems": 5,
-                                "uniqueItems": True,
                                 "items": {"type": "string"},
+                                "description": "One to five existing backlog task IDs. Backend validates count and uniqueness."
                             },
                             "model": {
                                 "type": "string",
