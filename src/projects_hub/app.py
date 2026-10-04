@@ -340,7 +340,7 @@ def create_app(
             "static_ready": settings.static_dir.is_dir(),
             "live_interaction_available": importlib.util.find_spec("live_interaction") is not None,
             "resource_control_available": importlib.util.find_spec("ai_resource_control") is not None,
-            "github_app_configured": settings.github_app_enabled,
+            "github_app_configured": app.state.github_connections.configured,
         }
 
     @app.get("/api/auth/config")
@@ -414,6 +414,40 @@ def create_app(
     async def github_status(request: Request, workspace_id: str) -> dict[str, Any]:
         actor_id = actor_id_from_request(request)
         return app.state.github_connections.status(actor_id, workspace_id)
+
+    @app.post("/api/github/app-manifest/start")
+    async def github_app_manifest_start(
+        payload: GitHubInstallStart,
+        request: Request,
+    ) -> dict[str, Any]:
+        actor_id = actor_id_from_request(request)
+        return app.state.github_connections.start_manifest_registration(
+            actor_id=actor_id,
+            workspace_id=payload.workspace_id,
+            conversation_id=payload.conversation_id,
+        )
+
+    @app.get("/api/github/app-manifest/callback")
+    async def github_app_manifest_callback(
+        request: Request,
+        code: str,
+        state: str,
+    ):
+        actor_id = actor_id_from_request(request)
+        result = await app.state.github_connections.complete_manifest_registration(
+            actor_id=actor_id,
+            state=state,
+            code=code,
+        )
+        log.info(
+            "github app registered",
+            extra={
+                "event": "github_app_manifest",
+                "workspace_id": result["workspace_id"],
+                "result": "registered",
+            },
+        )
+        return RedirectResponse(url=result["install_url"], status_code=303)
 
     @app.post("/api/github/install/start")
     async def github_install_start(
