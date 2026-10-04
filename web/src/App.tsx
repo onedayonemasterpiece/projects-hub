@@ -230,6 +230,47 @@ export default function App() {
     setGitHubStatus(await getGitHubStatus(boot.workspace.id));
   }, [boot]);
 
+  useEffect(() => {
+    if (!boot || boot.role !== "owner" || developmentAccess === false) return;
+    let cancelled = false;
+
+    const syncDevelopment = async () => {
+      try {
+        const latest = await getLatestDevelopmentExecution(boot.workspace.id, true);
+        if (cancelled) return;
+        setDevelopmentAccess(true);
+        setDevelopmentExecution(latest.execution);
+        const execution = latest.execution;
+        if (
+          execution
+          && execution.update_check_recommended
+          && ["completed", "failed", "cancelled"].includes(execution.status)
+          && isAndroidApp
+        ) {
+          const key = execution.id + ":" + execution.updated_at_ms;
+          if (lastDevelopmentUpdateCheckRef.current !== key) {
+            lastDevelopmentUpdateCheckRef.current = key;
+            localStorage.setItem("projects-hub-development-update-check", key);
+            window.location.href = "projectshub://update/check";
+          }
+        }
+      } catch (error) {
+        if (cancelled) return;
+        if (error instanceof ApiError && error.status === 403) {
+          setDevelopmentAccess(false);
+          setDevelopmentExecution(null);
+        }
+      }
+    };
+
+    void syncDevelopment();
+    const timer = window.setInterval(syncDevelopment, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [boot, developmentAccess, isAndroidApp]);
+
   const mergeChatMessage = useCallback((role: ChatRole, fragment: string, preferred: MutableRefObject<number>) => {
     const clean = fragment.trim();
     if (!clean) return;
@@ -277,6 +318,21 @@ export default function App() {
         void loadEventCards().then(() => {
           setEventOpen(true);
           setMemoryOpen(false);
+          setBacklogOpen(false);
+        });
+        if (["task_create_follow_up", "task_set_state"].includes(event.name ?? "")) {
+          void loadBacklog();
+        }
+      }
+      if ([
+        "development_execute_backlog",
+        "development_execution_status",
+        "development_codex_status",
+      ].includes(event.name ?? "")) {
+        void loadBacklog().then(() => {
+          setBacklogOpen(true);
+          setEventOpen(false);
+          setMemoryOpen(false);
         });
       }
       if (event.name === "conversation_set_focus" && conversationRef.current) {
@@ -286,7 +342,7 @@ export default function App() {
     } else if (event.type === "capability_unavailable" && event.code !== "NOT_CONFIGURED") {
       setNotice("Одна из дополнительных возможностей сейчас недоступна.");
     }
-  }, [loadEventCards, loadMemories, mergeChatMessage]);
+  }, [loadBacklog, loadEventCards, loadMemories, mergeChatMessage]);
 
   useEffect(() => {
     let cancelled = false;
