@@ -16,15 +16,19 @@ class FakeDevCoveer:
         *,
         remaining: float = 85.0,
         profile_available: bool = True,
-        progress_phase: str = "ready",
-        execution_status: str = "completed",
+        hold_implementation: bool = False,
+        rework_once: bool = False,
     ) -> None:
         self.remaining = remaining
         self.profile_available = profile_available
-        self.progress_phase = progress_phase
-        self.execution_status = execution_status
+        self.hold_implementation = hold_implementation
+        self.rework_once = rework_once
         self.calls: list[tuple[str, dict]] = []
         self.closed = False
+        self._quality_task = "dvt_" + "q" * 32
+        self._implementation_task = "dvt_" + "i" * 32
+        self._quality_reads = 0
+        self._implementation_reads = 0
 
     async def status(self):
         self.calls.append(("status", {}))
@@ -80,6 +84,7 @@ class FakeDevCoveer:
         model: str,
         reasoning_effort: str,
     ):
+        task_id = self._quality_task if model == "gpt-6-astra" else self._implementation_task
         self.calls.append(
             (
                 "start",
@@ -88,14 +93,53 @@ class FakeDevCoveer:
                     "prompt": prompt,
                     "model": model,
                     "reasoning_effort": reasoning_effort,
+                    "task": task_id,
                 },
             )
         )
+        return {"status": "running", "taskId": task_id, "provider": "codex", "model": model}
+
+    async def continue_codex_task(
+        self,
+        task_id: str,
+        *,
+        project: str,
+        prompt: str,
+        access: str = "write",
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+    ):
+        self.calls.append(
+            (
+                "continue",
+                {
+                    "task": task_id,
+                    "project": project,
+                    "prompt": prompt,
+                    "access": access,
+                    "model": model,
+                    "reasoning_effort": reasoning_effort,
+                },
+            )
+        )
+        return {"status": "running", "taskId": task_id}
+
+    @staticmethod
+    def _completed(text: str, total: int):
         return {
-            "status": "running",
-            "taskId": "dvt_" + "a" * 32,
-            "provider": "codex",
-            "model": model,
+            "status": "completed",
+            "executionStatus": "completed",
+            "progressPhase": "ready",
+            "finalResponse": text,
+            "latestTurn": {"finalResponse": text},
+            "tokenUsage": {
+                "inputTokens": total // 2,
+                "cachedInputTokens": 0,
+                "outputTokens": total // 2,
+                "reasoningOutputTokens": 0,
+                "totalTokens": total,
+            },
+            "task": {"status": "completed"},
         }
 
     async def read_task(
@@ -105,34 +149,40 @@ class FakeDevCoveer:
         project: str | None = None,
         detail: str = "summary",
     ):
-        self.calls.append(
-            (
-                "read",
-                {
-                    "task": task_id,
-                    "project": project,
-                    "detail": detail,
-                },
+        self.calls.append(("read", {"task": task_id, "project": project, "detail": detail}))
+        if task_id == self._quality_task:
+            self._quality_reads += 1
+            if self._quality_reads == 1:
+                return self._completed(
+                    "Design complete. Spec: docs/prompts/owner-development-test.md",
+                    100,
+                )
+            if self.rework_once and self._quality_reads == 2:
+                return self._completed(
+                    "Material edge case still fails.\nREVIEW_VERDICT: REWORK_REQUIRED",
+                    60,
+                )
+            return self._completed(
+                "Review passed.\nREVIEW_VERDICT: ACCEPTED",
+                50,
             )
-        )
-        if self.execution_status == "completed":
+
+        self._implementation_reads += 1
+        if self.hold_implementation and self._implementation_reads == 1:
             return {
-                "status": "completed",
-                "executionStatus": "completed",
-                "progressPhase": self.progress_phase,
-                "finalResponse": "Implemented, tested and released.",
-                "task": {"status": "completed"},
+                "status": "running",
+                "executionStatus": "running",
+                "progressPhase": "testing",
+                "task": {"status": "running"},
             }
-        return {
-            "status": "running",
-            "executionStatus": "running",
-            "progressPhase": self.progress_phase,
-            "task": {"status": "running"},
-        }
+        if self._implementation_reads == 1:
+            return self._completed("Implemented and tested; ready for review.", 200)
+        if self.rework_once and self._implementation_reads == 2:
+            return self._completed("Rework completed and retested.", 80)
+        return self._completed("Merged, deployed and released.", 30)
 
     async def close(self):
         self.closed = True
-
 
 def setup(tmp_path: Path):
     store = DurableStore(tmp_path / "data")
