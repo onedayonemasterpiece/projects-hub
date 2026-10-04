@@ -123,6 +123,7 @@ export default function App() {
   const [backlogTasks, setBacklogTasks] = useState<TaskItem[]>([]);
   const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null);
   const [developmentExecution, setDevelopmentExecution] = useState<DevelopmentExecution | null>(null);
+  const [developmentAccess, setDevelopmentAccess] = useState<boolean | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [eventOpen, setEventOpen] = useState(false);
@@ -182,6 +183,38 @@ export default function App() {
       conversationRef.current?.focus_project_id ?? null,
     );
     setEventCards(result.items);
+  }, [boot]);
+
+  const loadBacklog = useCallback(async () => {
+    if (!boot) return;
+    const projectId = conversationRef.current?.focus_project_id ?? null;
+    const tasks = await getTasks(boot.workspace.id, projectId);
+    setBacklogTasks(tasks.items);
+
+    if (boot.role !== "owner") {
+      setDevelopmentAccess(false);
+      setCodexStatus(null);
+      setDevelopmentExecution(null);
+      return;
+    }
+
+    try {
+      const [capacity, latest] = await Promise.all([
+        getDevelopmentCodexStatus(boot.workspace.id),
+        getLatestDevelopmentExecution(boot.workspace.id, true),
+      ]);
+      setDevelopmentAccess(true);
+      setCodexStatus(capacity);
+      setDevelopmentExecution(latest.execution);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 403) {
+        setDevelopmentAccess(false);
+        setCodexStatus(null);
+        setDevelopmentExecution(null);
+        return;
+      }
+      throw error;
+    }
   }, [boot]);
 
   const refreshPendingSources = useCallback(async () => {
