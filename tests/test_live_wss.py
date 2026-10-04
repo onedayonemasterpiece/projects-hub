@@ -235,7 +235,13 @@ def test_projects_hub_wss_origin_query_and_ticket_rotation(live_client):
     rotated = {**value, **renewed}
     with socket(client, rotated) as ws:
         hello(ws, value)
-        ws.send_json({"type": "stop"})
+        ws.close()
+
+    stopped = client.post(
+        f"/api/live/{conversation_id}/sessions/{value['session_id']}/stop",
+        json={"reason": "test_cleanup"},
+    )
+    assert stopped.status_code == 200
 
 
 def test_projects_hub_live_bootstrap_is_bounded_and_wss_only(live_client):
