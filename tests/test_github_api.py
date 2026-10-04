@@ -35,6 +35,15 @@ class FakeGitHubConnections:
             "expires_at_ms": 9999999999999,
         }
 
+    def manifest_launch(self, state):
+        self.calls.append(("manifest_launch", state))
+        return {
+            "action_url": "https://github.com/settings/apps/new",
+            "manifest": "{\"name\":\"projects-hub-test\"}",
+            "state": state,
+            "workspace_id": "ws_fake",
+        }
+
     async def complete_manifest_registration(self, *, state, code, actor_id=None):
         self.calls.append(("manifest_callback", actor_id, state, code))
         return {
