@@ -49,6 +49,8 @@ class DevelopmentService:
                     prompt TEXT NOT NULL,
                     prompt_sha256 TEXT NOT NULL,
                     status TEXT NOT NULL,
+                    phase TEXT NOT NULL DEFAULT 'queued',
+                    phase_detail TEXT NOT NULL DEFAULT '',
                     devcoveer_task_id TEXT,
                     quota_remaining_percent REAL,
                     result_summary TEXT NOT NULL DEFAULT '',
@@ -64,6 +66,20 @@ class DevelopmentService:
                     ON task_executions(actor_id,workspace_id,project_id,updated_at_ms DESC);
                 """
             )
+            columns = {
+                str(row["name"])
+                for row in self.store.db.execute(
+                    "PRAGMA table_info(task_executions)"
+                ).fetchall()
+            }
+            if "phase" not in columns:
+                self.store.db.execute(
+                    "ALTER TABLE task_executions ADD COLUMN phase TEXT NOT NULL DEFAULT 'queued'"
+                )
+            if "phase_detail" not in columns:
+                self.store.db.execute(
+                    "ALTER TABLE task_executions ADD COLUMN phase_detail TEXT NOT NULL DEFAULT ''"
+                )
 
     def _authorize_owner(self, actor_id: str, workspace_id: str) -> None:
         self.store.require_platform_owner(actor_id)
