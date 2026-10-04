@@ -182,7 +182,9 @@ def test_owner_http_flow_exposes_only_connection_metadata(tmp_path: Path):
             json={"workspace_id": workspace_id, "conversation_id": None},
         )
         assert manifest.status_code == 200
-        assert manifest.json()["action_url"] == "https://github.com/settings/apps/new"
+        assert manifest.json()["action_url"].endswith(
+            "/api/github/app-manifest/legacy-launch?state=manifest-state"
+        )
         assert manifest.json()["state"] == "manifest-state"
 
         legacy = client.post(
