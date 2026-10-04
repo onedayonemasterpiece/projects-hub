@@ -109,12 +109,16 @@ test("backlog stays primary while owner development is observable and triggers u
   const api = await readFile(new URL("../src/api.ts", import.meta.url), "utf8");
   assert.match(source, /Бэклог/);
   assert.match(source, /backlogTasks\.map/);
+  assert.match(source, /getDevelopmentBacklog/);
   assert.match(source, /getDevelopmentCodexStatus/);
   assert.match(source, /getLatestDevelopmentExecution/);
   assert.match(source, /window\.setInterval\(syncDevelopment, 15_000\)/);
   assert.match(source, /projectshub:\/\/update\/check/);
   assert.match(source, /Остаток/);
+  assert.match(source, /phase_detail/);
+  assert.match(source, /execution-stages/);
   assert.match(api, /remaining_percent/);
+  assert.match(api, /\/api\/development\/backlog/);
   assert.match(api, /reasoning_efforts/);
 });
 
