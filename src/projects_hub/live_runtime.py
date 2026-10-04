@@ -4,6 +4,7 @@ import os
 from typing import Any, Callable
 
 from .device_commands import DeviceCommandService
+from .development import DevelopmentService
 from .expert_reviews import ExpertReviewAdapter
 from .github_connections import GitHubConnections
 from .regional_knowledge import RegionalKnowledgeAdapter
@@ -50,6 +51,7 @@ def build_live_host(
     environment: dict[str, str] | None = None,
     device_commands: DeviceCommandService | None = None,
     readiness: ReadinessService | None = None,
+    development: DevelopmentService | None = None,
     github_connections: GitHubConnections | None = None,
     expert_reviews_factory: (
         Callable[[str, str], ExpertReviewAdapter | None] | None
@@ -71,6 +73,7 @@ def build_live_host(
     max_sessions_per_actor = _live_max_sessions_per_actor(env, max_sessions)
     device_commands = device_commands or DeviceCommandService(store)
     readiness = readiness or ReadinessService(store)
+    development = development or DevelopmentService(store, readiness)
 
     async def managed_runner(*, session: Any, reader: Any, on_event: Any) -> None:
         try:
@@ -97,6 +100,7 @@ def build_live_host(
             store,
             device_commands=device_commands,
             readiness=readiness,
+            development=development,
             github_connections=github_connections,
             expert_reviews_factory=expert_reviews_factory,
             regional_knowledge_factory=regional_knowledge_factory,
