@@ -454,7 +454,7 @@ def wait_healthy(sha: str, seconds: float = 30.0) -> dict[str, Any]:
                 and result.get("live_interaction_available") is True
                 and result.get("resource_control_available") is True
                 and result.get("release_sha") == sha
-                and result.get("auth_mode") == "public_yandex+loopback_dev"
+                and result.get("auth_mode") == "first_party_invite+loopback_dev"
             )
             if required:
                 return result
@@ -496,7 +496,7 @@ def deploy(sha: str) -> dict[str, Any]:
         "health": live_health,
         "log_file": str(BACKEND_LOG),
         "public_origin": PUBLIC_ORIGIN,
-        "public_auth": "configured",
+        "public_auth": "first_party_invite",
         "provider_environment_keys": sorted(select_provider_environment(_parse_env(HOST_ENV))),
         "provider_environment_values_exposed": False,
     }

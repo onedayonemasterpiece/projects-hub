@@ -32,3 +32,11 @@ def test_provider_environment_requires_shared_authority_pair():
 def test_render_env_rejects_multiline_values():
     with pytest.raises(DeployError):
         render_env({"AI_RESOURCE_CONTROL_URL": "one\ntwo"})
+
+
+def test_deploy_no_longer_depends_on_supabase_or_yandex_auth_mode():
+    source = __import__("pathlib").Path("deploy/devcoveer_install.py").read_text(encoding="utf-8")
+    assert '"first_party_invite+loopback_dev"' in source
+    assert '"public_yandex+loopback_dev"' not in source
+    assert "AUTH_SUPABASE_URL" not in source
+    assert "AUTH_PUBLISHABLE_ALIASES" not in source
