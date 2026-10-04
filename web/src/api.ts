@@ -53,6 +53,30 @@ export type TaskItem = {
   updated_at_ms: number;
 };
 
+export type DevelopmentStage = {
+  id: string;
+  execution_id: string;
+  stage: "design" | "implementation" | "review" | "rework" | "delivery";
+  cycle: number;
+  model: string;
+  reasoning_effort: string;
+  devcoveer_task_id: string | null;
+  status: string;
+  summary: string;
+  review_verdict: "accepted" | "rework_required" | null;
+  token_usage: {
+    inputTokens?: number;
+    cachedInputTokens?: number;
+    outputTokens?: number;
+    reasoningOutputTokens?: number;
+    totalTokens?: number;
+  } | null;
+  started_at_ms: number | null;
+  finished_at_ms: number | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+};
+
 export type DevelopmentExecution = {
   id: string;
   project_id: string;
@@ -60,13 +84,19 @@ export type DevelopmentExecution = {
   project_hint: string;
   provider: string;
   model_profile: string;
-  status: "starting" | "running" | "completed" | "failed" | "cancelled";
+  status: "starting" | "running" | "completed" | "failed" | "cancelled" | "blocked";
   phase: string;
   phase_detail: string;
   devcoveer_task_id: string | null;
+  quality_task_id?: string | null;
+  implementation_task_id?: string | null;
+  review_cycle?: number;
+  spec_path?: string | null;
   quota_remaining_percent: number | null;
   result_summary: string;
   error_code: string | null;
+  stages: DevelopmentStage[];
+  token_usage_by_model: Record<string, Record<string, number>>;
   created_at_ms: number;
   updated_at_ms: number;
   started_at_ms: number | null;
