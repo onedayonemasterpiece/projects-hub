@@ -17,7 +17,6 @@ DEFAULT_CODEX_PROFILE = "gpt-6.1-medium"
 QUALITY_MODEL = "gpt-6-astra"
 QUALITY_EFFORT = "high"
 MAX_REWORK_CYCLES = 2
-DEVCOVEER_PROJECT = "projects-hub"
 
 
 def _now_ms() -> int:
