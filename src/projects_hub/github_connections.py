@@ -348,10 +348,60 @@ class GitHubConnections:
             ),
         }
 
+    @staticmethod
+    def _project_match_key(value: str) -> str:
+        return "".join(ch.lower() for ch in str(value or "") if ch.isalnum())
+
+    def _auto_bind_exact_matches(self, actor_id: str, workspace_id: str) -> list[int]:
+        if self.store.workspace_role(actor_id, workspace_id) != "owner":
+            return []
+        projects = [
+            item
+            for item in self.store.list_projects(actor_id, workspace_id)
+            if item.get("status") == "active"
+        ]
+        projects_by_key: dict[str, list[str]] = {}
+        for project in projects:
+            key = self._project_match_key(str(project.get("name") or ""))
+            if key:
+                projects_by_key.setdefault(key, []).append(str(project["id"]))
+
+        bound: list[int] = []
+        for item in self.store.list_repository_connections(actor_id, workspace_id):
+            if (
+                item.get("state") != "available"
+                or item.get("installation_state") != "active"
+                or item.get("role") != "unassigned"
+            ):
+                continue
+            repo_name = str(item.get("full_name") or "").rsplit("/", 1)[-1]
+            matches = projects_by_key.get(self._project_match_key(repo_name), [])
+            if len(matches) != 1:
+                continue
+            permissions = item.get("permissions") if isinstance(item.get("permissions"), dict) else {}
+            access_mode = (
+                "app_managed_write"
+                if permissions.get("contents") == "write"
+                else "read_only"
+            )
+            self.store.bind_repository_connection(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                repository_id=int(item["repository_id"]),
+                project_id=matches[0],
+                role="project_docs",
+                access_mode=access_mode,
+                allowed_paths=[],
+            )
+            bound.append(int(item["repository_id"]))
+        return bound
+
     def status(self, actor_id: str, workspace_id: str) -> dict[str, Any]:
+        auto_bound = self._auto_bind_exact_matches(actor_id, workspace_id)
         return {
             "configured": self.configured,
             "bootstrap_available": self.bootstrap_available,
+            "auto_bound_repository_ids": auto_bound,
             "installations": self.store.list_github_installations(
                 actor_id,
                 workspace_id,
