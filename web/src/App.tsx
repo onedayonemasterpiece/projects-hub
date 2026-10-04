@@ -490,7 +490,6 @@ export default function App() {
   }, [applyLiveEvent, boot]);
 
   async function signIn() {
-    userStoppedVoiceRef.current = false;
     setBusy(true);
     setNotice(null);
     try {
@@ -658,6 +657,7 @@ export default function App() {
       setWait(null);
       return;
     }
+    userStoppedVoiceRef.current = false;
     setBusy(true);
     setNotice(null);
     setMicrophoneSettingsAvailable(false);
