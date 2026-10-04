@@ -24,6 +24,7 @@ from .logging_config import configure_logging
 from .readiness import ReadinessService
 from .settings import Settings
 from .store import DurableStore, StoreError
+from .version import __version__
 
 log = logging.getLogger("projects_hub.api")
 
@@ -60,6 +61,11 @@ class LiveStart(BaseModel):
         default=None,
         pattern=r"^[0-9A-Za-z._+-]{1,32}$",
         max_length=32,
+    )
+    client_timezone: str | None = Field(
+        default=None,
+        pattern=r"^[A-Za-z0-9._+/-]{1,100}$",
+        max_length=100,
     )
     attempt_id: str | None = Field(
         default=None,
@@ -246,7 +252,7 @@ def create_app(
             if owned_store:
                 store.close()
 
-    app = FastAPI(title="Projects Hub", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Projects Hub", version=__version__, lifespan=lifespan)
     app.state.settings = settings
     app.state.store = store
     app.state.live_host = live_host
@@ -351,6 +357,7 @@ def create_app(
                 if settings.dev_auth
                 else "session"
             ),
+            "version": __version__,
             "release_sha": settings.release_sha,
             "static_ready": settings.static_dir.is_dir(),
             "live_interaction_available": importlib.util.find_spec("live_interaction") is not None,
@@ -860,10 +867,13 @@ def create_app(
                 resource_id=resource_id,
                 actor=actor,
                 model=settings.model,
+                history=store.recent_conversation_history(actor_id, conversation_id),
                 conversation_id=conversation_id,
                 audio_mode=payload.audio_mode,
                 client_source_id=payload.client_source_id,
                 client_version=payload.client_version,
+                client_timezone=payload.client_timezone,
+                backend_version=__version__,
                 backend_release_sha=settings.release_sha,
                 attempt_id=payload.attempt_id,
             )
