@@ -211,7 +211,7 @@ def test_owner_http_flow_exposes_only_connection_metadata(tmp_path: Path):
         assert started.status_code == 200
         assert started.json()["install_url"].startswith("https://github.com/apps/")
 
-        callback = client.get(
+        callback = external.get(
             "/api/github/install/callback",
             params={
                 "installation_id": 77,
@@ -221,7 +221,10 @@ def test_owner_http_flow_exposes_only_connection_metadata(tmp_path: Path):
             follow_redirects=False,
         )
         assert callback.status_code == 303
-        assert callback.headers["location"] == "/?github=connected"
+        assert callback.headers["location"] == "/api/github/return"
+        return_page = external.get("/api/github/return")
+        assert return_page.status_code == 200
+        assert "projectshub://github/connected" in return_page.text
 
         bound = client.post(
             "/api/github/repositories/101/bind",
@@ -238,7 +241,8 @@ def test_owner_http_flow_exposes_only_connection_metadata(tmp_path: Path):
         assert bound.json()["role"] == "project_docs"
 
         assert ("status", actor_id, workspace_id) in github.calls
-        assert any(call[0] == "callback" and call[3] == 77 for call in github.calls)
+        assert any(call[0] == "callback" and call[1] is None and call[3] == 77 for call in github.calls)
+        assert any(call[0] == "manifest_callback" and call[1] is None for call in github.calls)
         assert any(call[0] == "bind" and call[3] == 101 for call in github.calls)
     store.close()
 
