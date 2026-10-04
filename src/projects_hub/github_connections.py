@@ -199,7 +199,7 @@ class GitHubConnections:
         manifest = self._manifest_payload(suffix=secrets.token_hex(4))
         return {
             "launch_url": f"{self.settings.public_origin}/api/github/app-manifest/launch?state={state}",
-            "action_url": "https://github.com/settings/apps/new",
+            "action_url": f"{self.settings.public_origin}/api/github/app-manifest/legacy-launch?state={state}",
             "manifest": json.dumps(manifest, separators=(",", ":"), ensure_ascii=False),
             "state": state,
             "expires_at_ms": expires_at_ms,

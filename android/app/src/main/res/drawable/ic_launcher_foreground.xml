@@ -2,22 +2,26 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
-    android:viewportWidth="512"
-    android:viewportHeight="512">
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Exact launcher rendition of the legacy Yandex-auth .brand-mark:
+         54x54, radius 18, centered in the 108dp adaptive-icon canvas. -->
     <path
         android:fillColor="#F2F2F4"
-        android:pathData="M200,88 H312 Q424,88 424,200 V312 Q424,424 312,424 H200 Q88,424 88,312 V200 Q88,88 200,88 Z" />
+        android:pathData="M45,27 H63 C72.941,27 81,35.059 81,45 V63 C81,72.941 72.941,81 63,81 H45 C35.059,81 27,72.941 27,63 V45 C27,35.059 35.059,27 45,27 Z" />
+    <!-- CSS span: 16x24 border-box, 4px black border, centered. -->
     <path
         android:fillColor="@android:color/transparent"
         android:strokeColor="#0A0A0B"
-        android:strokeWidth="25"
+        android:strokeWidth="4"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:pathData="M231,180 H281 Q306,180 306,205 V304 Q306,329 281,329 H231 Q206,329 206,304 V205 Q206,180 231,180 Z" />
+        android:pathData="M54,44 C57.314,44 60,46.686 60,50 V58 C60,61.314 57.314,64 54,64 C50.686,64 48,61.314 48,58 V50 C48,46.686 50.686,44 54,44 Z" />
+    <!-- CSS ::after: 18x9, border-bottom 3px, bottom radii 9px. -->
     <path
         android:fillColor="@android:color/transparent"
         android:strokeColor="#0A0A0B"
-        android:strokeWidth="19"
+        android:strokeWidth="3"
         android:strokeLineCap="round"
-        android:pathData="M200,350 Q256,390 312,350" />
+        android:pathData="M45,65 C45,69.971 49.029,74 54,74 C58.971,74 63,69.971 63,65" />
 </vector>

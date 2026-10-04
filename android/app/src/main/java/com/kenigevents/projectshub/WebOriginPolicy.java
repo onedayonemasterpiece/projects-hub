@@ -74,6 +74,27 @@ final class WebOriginPolicy {
                     || path.startsWith("/settings/installations/"));
     }
 
+    boolean isTrustedGitHubBrowserAction(String currentPageUrl, String targetUrl) {
+        if (!isTrustedPageUrl(currentPageUrl)) return false;
+        URI target = parseOrNull(targetUrl);
+        if (target == null
+                || target.getUserInfo() != null
+                || target.getFragment() != null
+                || !"projectshub".equalsIgnoreCase(target.getScheme())
+                || !"browser".equalsIgnoreCase(target.getHost())
+                || !"/github".equals(target.getPath())) {
+            return false;
+        }
+        String query = target.getRawQuery();
+        if (query == null || !query.startsWith("state=") || query.contains("&")) return false;
+        String state = query.substring("state=".length());
+        return state.length() >= 20
+                && state.length() <= 200
+                && state.chars().allMatch(ch ->
+                    Character.isLetterOrDigit(ch) || ch == '_' || ch == '-'
+                );
+    }
+
     boolean isTrustedMicrophoneSettingsAction(String currentPageUrl, String targetUrl) {
         if (!isTrustedPageUrl(currentPageUrl)) return false;
         URI target = parseOrNull(targetUrl);

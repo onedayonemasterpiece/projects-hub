@@ -428,6 +428,21 @@ def create_app(
             conversation_id=payload.conversation_id,
         )
 
+    @app.post("/api/github/app-manifest/legacy-launch")
+    async def github_app_manifest_legacy_launch(state: str):
+        app.state.github_connections.manifest_launch(state)
+        if not state or len(state) > 200 or not all(
+            ch.isalnum() or ch in {"_", "-"} for ch in state
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "GITHUB_APP_MANIFEST_STATE_INVALID"},
+            )
+        return RedirectResponse(
+            url=f"projectshub://browser/github?state={state}",
+            status_code=303,
+        )
+
     @app.get("/api/github/app-manifest/launch")
     async def github_app_manifest_launch(state: str):
         payload = app.state.github_connections.manifest_launch(state)

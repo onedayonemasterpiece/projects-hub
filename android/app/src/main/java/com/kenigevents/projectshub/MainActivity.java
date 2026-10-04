@@ -218,6 +218,10 @@ public final class MainActivity extends Activity {
                     openMicrophoneSettings();
                     return true;
                 }
+                if (webOriginPolicy.isTrustedGitHubBrowserAction(currentUrl, targetUrl)) {
+                    openGitHubManifestInBrowser(request.getUrl());
+                    return true;
+                }
                 if (webOriginPolicy.isTrustedExternalGitHubNavigation(currentUrl, targetUrl)) {
                     openExternalBrowser(request.getUrl());
                     return true;
@@ -334,6 +338,17 @@ public final class MainActivity extends Activity {
             webView.loadUrl(BuildConfig.HUB_URL + "?github=connected");
         }
         return true;
+    }
+
+    private void openGitHubManifestInBrowser(Uri actionUri) {
+        String state = actionUri.getQueryParameter("state");
+        if (state == null || state.isBlank()) return;
+        Uri launch = Uri.parse(BuildConfig.HUB_URL)
+                .buildUpon()
+                .appendEncodedPath("api/github/app-manifest/launch")
+                .appendQueryParameter("state", state)
+                .build();
+        openExternalBrowser(launch);
     }
 
     private void openExternalBrowser(Uri uri) {
