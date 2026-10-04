@@ -7,6 +7,7 @@ import logging
 from typing import Any, Callable
 
 from .device_commands import DeviceCommandService
+from .development import DevelopmentService
 from .github_connections import GitHubConnections
 from .expert_reviews import (
     ExpertReviewAccessError,
@@ -32,6 +33,7 @@ def _functions(
     *,
     expert_reviews: bool = False,
     regional_knowledge: bool = False,
+    owner_development: bool = False,
 ) -> list[dict[str, Any]]:
     functions = [
         {
@@ -373,6 +375,70 @@ def _functions(
                             "expected_revision",
                             "rationale",
                         ],
+                    },
+                },
+            ]
+        )
+    if owner_development:
+        functions.extend(
+            [
+                {
+                    "name": "backlog_list",
+                    "description": (
+                        "List durable backlog tasks for the current project/workspace. "
+                        "Backlog is the primary work queue regardless of who later implements it."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "project_id": {"type": "string"},
+                            "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                        },
+                    },
+                },
+                {
+                    "name": "development_codex_status",
+                    "description": (
+                        "Read native Codex quota/capacity and the owner gpt-6.1-medium "
+                        "profile. Read-only; never launches inference."
+                    ),
+                    "parameters": {"type": "object", "properties": {}},
+                },
+                {
+                    "name": "development_execute_backlog",
+                    "description": (
+                        "Start implementation for 1-5 existing durable backlog tasks. "
+                        "CALL ONLY after the platform owner explicitly asks to implement/run "
+                        "those tasks now. Discussion, prioritization or backlog creation alone "
+                        "must never call this tool. The backend rechecks owner identity, Codex "
+                        "capacity >10%, model availability and one-active-run policy."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "task_ids": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 5,
+                                "uniqueItems": True,
+                                "items": {"type": "string"},
+                            }
+                        },
+                        "required": ["task_ids"],
+                    },
+                },
+                {
+                    "name": "development_execution_status",
+                    "description": (
+                        "Read/synchronize the latest owner development run or a specific run. "
+                        "Use when the owner asks what Codex is doing, whether it finished, "
+                        "or what result was delivered."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "execution_id": {"type": "string"},
+                        },
                     },
                 },
             ]
