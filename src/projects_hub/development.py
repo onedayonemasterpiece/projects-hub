@@ -16,8 +16,14 @@ from .store import DurableStore, StoreError
 
 ACTIVE_EXECUTION_STATES = {"starting", "running"}
 TERMINAL_EXECUTION_STATES = {"completed", "failed", "cancelled"}
+PROGRESS_PHASES = {
+    "preparing", "planning", "implementing", "testing", "ci",
+    "publishing", "releasing", "deploying", "ready", "failed", "cancelled",
+}
 DEFAULT_CODEX_PROFILE = "gpt-6.1-medium"
-DEVCOVEER_PROJECT = "projects-hub"
+OWNER_WORKSPACE_HINTS = {
+    "projects-hub": "projects-hub-owner",
+}
 
 
 def _now_ms() -> int:
@@ -49,6 +55,10 @@ class DevelopmentService:
                     project_hint TEXT NOT NULL,
                     provider TEXT NOT NULL,
                     model_profile TEXT NOT NULL,
+                    work_branch TEXT,
+                    base_sha TEXT,
+                    phase TEXT NOT NULL DEFAULT 'preparing',
+                    phase_updated_at_ms INTEGER,
                     prompt TEXT NOT NULL,
                     prompt_sha256 TEXT NOT NULL,
                     status TEXT NOT NULL,
@@ -66,6 +76,38 @@ class DevelopmentService:
                 CREATE INDEX IF NOT EXISTS task_executions_project_idx
                     ON task_executions(actor_id,workspace_id,project_id,updated_at_ms DESC);
                 """
+            )
+            columns = {
+                str(row["name"])
+                for row in self.store.db.execute(
+                    "PRAGMA table_info(task_executions)"
+                ).fetchall()
+            }
+            for name, ddl in (
+                ("work_branch", "TEXT"),
+                ("base_sha", "TEXT"),
+                ("phase", "TEXT NOT NULL DEFAULT 'preparing'"),
+                ("phase_updated_at_ms", "INTEGER"),
+            ):
+                if name not in columns:
+                    self.store.db.execute(
+                        f"ALTER TABLE task_executions ADD COLUMN {name} {ddl}"
+                    )
+            self.store.db.execute(
+                """UPDATE task_executions
+                   SET phase=CASE
+                       WHEN status='completed' THEN 'ready'
+                       WHEN status='failed' THEN 'failed'
+                       WHEN status='cancelled' THEN 'cancelled'
+                       WHEN status='running' THEN 'implementing'
+                       ELSE 'preparing'
+                   END
+                   WHERE phase IS NULL OR phase=''"""
+            )
+            self.store.db.execute(
+                """UPDATE task_executions
+                   SET phase_updated_at_ms=updated_at_ms
+                   WHERE phase_updated_at_ms IS NULL"""
             )
 
     def _authorize_owner(self, actor_id: str, workspace_id: str) -> None:
@@ -208,7 +250,8 @@ class DevelopmentService:
             and item.get("access_mode") == "app_managed_write"
         ]
         if len(connections) == 1:
-            return str(connections[0]["full_name"]).rsplit("/", 1)[-1]
+            repository_hint = str(connections[0]["full_name"]).rsplit("/", 1)[-1]
+            return OWNER_WORKSPACE_HINTS.get(repository_hint, repository_hint)
         normalized = "".join(ch.lower() for ch in project_name if ch.isalnum())
         exact = [
             item for item in connections
@@ -219,8 +262,109 @@ class DevelopmentService:
             ) == normalized
         ]
         if len(exact) == 1:
-            return str(exact[0]["full_name"]).rsplit("/", 1)[-1]
-        return project_name
+            repository_hint = str(exact[0]["full_name"]).rsplit("/", 1)[-1]
+            return OWNER_WORKSPACE_HINTS.get(repository_hint, repository_hint)
+        normalized_name = project_name.strip().lower().replace(" ", "-")
+        return OWNER_WORKSPACE_HINTS.get(normalized_name, project_name)
+
+    @staticmethod
+    def _probe_result(payload: dict[str, Any], check_id: str) -> dict[str, Any]:
+        for item in payload.get("results", []):
+            if isinstance(item, dict) and item.get("id") == check_id:
+                if item.get("status") != "ok" or not isinstance(item.get("data"), dict):
+                    raise StoreError(
+                        "DEVELOPMENT_WORKSPACE_UNAVAILABLE",
+                        f"Owner development workspace check {check_id} failed",
+                    )
+                return item["data"]
+        raise StoreError(
+            "DEVELOPMENT_WORKSPACE_UNAVAILABLE",
+            f"Owner development workspace check {check_id} is missing",
+        )
+
+    async def _prepare_workspace(
+        self,
+        *,
+        project_hint: str,
+        execution_id: str,
+    ) -> dict[str, str]:
+        probe = await self._call(
+            "project_probe",
+            {
+                "project": project_hint,
+                "checks": [{"id": "state", "kind": "git_state"}],
+            },
+        )
+        state = self._probe_result(probe, "state")
+        if state.get("clean") is not True:
+            raise StoreError(
+                "DEVELOPMENT_WORKSPACE_DIRTY",
+                "Owner development workspace has uncommitted work and must be reconciled first",
+            )
+        head = str(state.get("head") or "")
+        digest = str(state.get("tracked_workspace_digest") or "")
+        if len(head) != 40 or len(digest) != 64:
+            raise StoreError(
+                "DEVELOPMENT_WORKSPACE_UNAVAILABLE",
+                "Owner development workspace identity is invalid",
+            )
+
+        fetched = await self._call(
+            "direct_ops_v2",
+            {
+                "project": project_hint,
+                "plane": "project_action",
+                "operation": "git_fetch",
+                "payload": {"remote": "origin", "branch": "main"},
+            },
+        )
+        base_sha = str(fetched.get("fetched_sha") or "")
+        if len(base_sha) != 40:
+            raise StoreError(
+                "DEVELOPMENT_WORKSPACE_UNAVAILABLE",
+                "Current origin/main could not be resolved",
+            )
+
+        branch = "chatgpt/selfdev-" + execution_id.removeprefix("devrun_")[:16]
+        created = await self._call(
+            "direct_ops_v2",
+            {
+                "project": project_hint,
+                "plane": "project_action",
+                "operation": "git_create_branch",
+                "payload": {
+                    "branch": branch,
+                    "start_ref": "origin/main",
+                    "expected_head": head,
+                    "expected_workspace_digest": digest,
+                    "request_key": "selfdev-branch-" + execution_id.removeprefix("devrun_")[:24],
+                },
+            },
+        )
+        if created.get("status") != "ok" or created.get("start_sha") != base_sha:
+            raise StoreError(
+                "DEVELOPMENT_WORKSPACE_STALE",
+                "Owner development branch does not match the fetched origin/main",
+            )
+
+        verified = await self._call(
+            "project_probe",
+            {
+                "project": project_hint,
+                "checks": [{"id": "state", "kind": "git_state"}],
+            },
+        )
+        ready = self._probe_result(verified, "state")
+        if (
+            ready.get("clean") is not True
+            or ready.get("branch") != branch
+            or ready.get("head") != base_sha
+        ):
+            raise StoreError(
+                "DEVELOPMENT_WORKSPACE_STALE",
+                "Owner development workspace failed exact branch readback",
+            )
+        return {"branch": branch, "base_sha": base_sha}
 
     @staticmethod
     def _prompt(project_name: str, tasks: list[dict[str, Any]]) -> str:
@@ -349,10 +493,11 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
             self.store.db.execute(
                 """INSERT INTO task_executions(
                        id,actor_id,workspace_id,project_id,task_ids_json,project_hint,
-                       provider,model_profile,prompt,prompt_sha256,status,
-                       quota_remaining_percent,result_summary,error_code,
-                       created_at_ms,updated_at_ms,started_at_ms,finished_at_ms
-                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?, ?,? ,?, ?,?,?,?)""",
+                       provider,model_profile,work_branch,base_sha,phase,phase_updated_at_ms,
+                       prompt,prompt_sha256,status,quota_remaining_percent,
+                       result_summary,error_code,created_at_ms,updated_at_ms,
+                       started_at_ms,finished_at_ms
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     execution_id,
                     actor_id,
@@ -362,6 +507,10 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
                     project_hint,
                     "codex",
                     selected_model + ":" + selected_effort,
+                    None,
+                    None,
+                    "preparing",
+                    now,
                     prompt,
                     hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
                     "starting",
@@ -376,6 +525,26 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
             )
 
         try:
+            workspace = await self._prepare_workspace(
+                project_hint=project_hint,
+                execution_id=execution_id,
+            )
+            now = _now_ms()
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE task_executions
+                       SET work_branch=?,base_sha=?,phase='planning',
+                           phase_updated_at_ms=?,updated_at_ms=?
+                       WHERE id=?""",
+                    (
+                        workspace["branch"],
+                        workspace["base_sha"],
+                        now,
+                        now,
+                        execution_id,
+                    ),
+                )
+
             result = await self._call(
                 "start_task",
                 {
@@ -398,9 +567,15 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
             with self.store._lock:
                 self.store.db.execute(
                     """UPDATE task_executions
-                       SET status='running',devcoveer_task_id=?,started_at_ms=?,updated_at_ms=?
+                       SET status='running',devcoveer_task_id=?,
+                           phase=CASE WHEN phase='preparing' THEN 'planning' ELSE phase END,
+                           phase_updated_at_ms=CASE
+                               WHEN phase='preparing' THEN ?
+                               ELSE phase_updated_at_ms
+                           END,
+                           started_at_ms=?,updated_at_ms=?
                        WHERE id=?""",
-                    (devcoveer_task_id, now, now, execution_id),
+                    (devcoveer_task_id, now, now, now, execution_id),
                 )
                 for task in tasks:
                     if task.get("state") not in {"accepted", "done"}:
@@ -414,9 +589,10 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
             with self.store._lock:
                 self.store.db.execute(
                     """UPDATE task_executions
-                       SET status='failed',error_code=?,finished_at_ms=?,updated_at_ms=?
+                       SET status='failed',phase='failed',phase_updated_at_ms=?,
+                           error_code=?,finished_at_ms=?,updated_at_ms=?
                        WHERE id=?""",
-                    (str(code)[:120], now, now, execution_id),
+                    (now, str(code)[:120], now, now, execution_id),
                 )
             raise
 
@@ -434,7 +610,7 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
             return "completed"
         if clean in {"failed", "error"}:
             return "failed"
-        if clean in {"cancelled", "canceled"}:
+        if clean in {"cancelled", "canceled", "interrupted"}:
             return "cancelled"
         return "running"
 
@@ -488,6 +664,25 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
                 or result.get("content")
                 or ""
             ).strip()[:8000]
+            latest_turn = result.get("latestTurn")
+            remote_phase = (
+                str(latest_turn.get("progressPhase") or "").strip()
+                if isinstance(latest_turn, dict)
+                else ""
+            )
+            if next_status == "completed":
+                next_phase = "ready"
+            elif next_status == "failed":
+                next_phase = "failed"
+            elif next_status == "cancelled":
+                next_phase = "cancelled"
+            elif remote_phase in PROGRESS_PHASES:
+                next_phase = remote_phase
+            else:
+                next_phase = str(item.get("phase") or "implementing")
+                if next_phase not in PROGRESS_PHASES:
+                    next_phase = "implementing"
+
             now = _now_ms()
             finished = now if next_status in TERMINAL_EXECUTION_STATES else None
             error_code = None
@@ -497,14 +692,23 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
                     or (result.get("task") or {}).get("errorCategory")
                     or "DEVCOVEER_TASK_FAILED"
                 )[:120]
+            current_phase = str(item.get("phase") or "")
+            phase_updated_at = (
+                now
+                if next_phase != current_phase
+                else int(item.get("phase_updated_at_ms") or now)
+            )
             with self.store._lock:
                 self.store.db.execute(
                     """UPDATE task_executions
-                       SET status=?,result_summary=?,error_code=?,
+                       SET status=?,phase=?,phase_updated_at_ms=?,
+                           result_summary=?,error_code=?,
                            finished_at_ms=COALESCE(?,finished_at_ms),updated_at_ms=?
                        WHERE id=?""",
                     (
                         next_status,
+                        next_phase,
+                        phase_updated_at,
                         summary,
                         error_code,
                         finished,
@@ -519,7 +723,10 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
             )
 
         public = self._execution_public(row)
-        public["update_check_recommended"] = public["status"] == "completed"
+        public["update_check_recommended"] = (
+            public["status"] == "completed"
+            and public.get("phase") == "ready"
+        )
         return {"execution": public}
 
     def list_executions(

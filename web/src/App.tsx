@@ -63,6 +63,20 @@ const stateLabel: Record<string, string> = {
   replaying: "Передаю сохранённую запись",
 };
 
+const developmentPhaseLabel: Record<DevelopmentExecution["phase"], string> = {
+  preparing: "Подготовка",
+  planning: "Планирование",
+  implementing: "Реализация",
+  testing: "Тестирование",
+  ci: "CI",
+  publishing: "Публикация",
+  releasing: "Релиз",
+  deploying: "Выкладка",
+  ready: "Готово к проверке",
+  failed: "Ошибка",
+  cancelled: "Отменено",
+};
+
 function MicIcon() {
   return (
     <svg viewBox="0 0 48 48" aria-hidden="true">
@@ -1138,13 +1152,20 @@ export default function App() {
                     {developmentExecution && (
                       <div className="execution-card">
                         <div>
-                          <strong>Последний запуск · {developmentExecution.status}</strong>
+                          <strong>
+                            {developmentPhaseLabel[developmentExecution.phase] ?? developmentExecution.phase}
+                          </strong>
                           <span>
+                            {developmentExecution.status}
+                            {" · "}
                             {developmentExecution.model_profile}
                             {typeof developmentExecution.quota_remaining_percent === "number"
                               ? ` · старт при ${Math.round(developmentExecution.quota_remaining_percent)}%`
                               : ""}
                           </span>
+                          {developmentExecution.work_branch && (
+                            <span>{developmentExecution.work_branch}</span>
+                          )}
                         </div>
                         {developmentExecution.result_summary && (
                           <p>{developmentExecution.result_summary}</p>

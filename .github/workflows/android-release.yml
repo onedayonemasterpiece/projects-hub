@@ -62,7 +62,16 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           VERSION_CODE="${GITHUB_RUN_NUMBER}"
-          VERSION_NAME="0.1.${VERSION_CODE}"
+          VERSION_NAME="$(python - <<'PY'
+          import re
+          from pathlib import Path
+          text = Path("src/projects_hub/version.py").read_text(encoding="utf-8")
+          match = re.fullmatch(r'__version__ = "([0-9]+\.[0-9]+\.[0-9]+)"\n?', text)
+          if not match:
+              raise SystemExit("invalid Projects Hub semantic version")
+          print(match.group(1))
+          PY
+          )"
           gradle -p android testDebugUnitTest :app:assembleRelease \
             -PversionCodeOverride="${VERSION_CODE}" \
             -PversionNameOverride="${VERSION_NAME}" \
@@ -74,13 +83,23 @@ jobs:
       - name: Build update manifest
         run: |
           export SHA256="$(sha256sum dist/projects-hub.apk | awk '{print $1}')"
+          export PRODUCT_VERSION="$(python - <<'PY'
+          import re
+          from pathlib import Path
+          text = Path("src/projects_hub/version.py").read_text(encoding="utf-8")
+          match = re.fullmatch(r'__version__ = "([0-9]+\.[0-9]+\.[0-9]+)"\n?', text)
+          if not match:
+              raise SystemExit("invalid Projects Hub semantic version")
+          print(match.group(1))
+          PY
+          )"
           python - <<'PY'
           import json, os
           version_code = int(os.environ["GITHUB_RUN_NUMBER"])
           tag = f"android-v{version_code}"
           payload = {
               "versionCode": version_code,
-              "versionName": f"0.1.{version_code}",
+              "versionName": os.environ["PRODUCT_VERSION"],
               "apkUrl": (
                   "https://github.com/onedayonemasterpiece/projects-hub/releases/download/"
                   f"{tag}/projects-hub.apk"
@@ -98,7 +117,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="android-v${GITHUB_RUN_NUMBER}"
-          TITLE="Projects Hub Android 0.1.${GITHUB_RUN_NUMBER}"
+          PRODUCT_VERSION="$(python - <<'PY'
+          import re
+          from pathlib import Path
+          text = Path("src/projects_hub/version.py").read_text(encoding="utf-8")
+          match = re.fullmatch(r'__version__ = "([0-9]+\.[0-9]+\.[0-9]+)"\n?', text)
+          if not match:
+              raise SystemExit("invalid Projects Hub semantic version")
+          print(match.group(1))
+          PY
+          )"
+          TITLE="Projects Hub Android ${PRODUCT_VERSION}"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/projects-hub.apk dist/update.json --clobber
           else

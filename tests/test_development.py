@@ -12,14 +12,58 @@ from projects_hub.store import DurableStore, StoreError
 
 
 class FakeDevelopmentService(DevelopmentService):
-    def __init__(self, store, readiness, *, remaining=85.0, profile_available=False):
+    def __init__(
+        self,
+        store,
+        readiness,
+        *,
+        remaining=85.0,
+        profile_available=False,
+        workspace_clean=True,
+        read_status="completed",
+        read_phase="ready",
+    ):
         self.remaining = remaining
         self.profile_available = profile_available
+        self.workspace_clean = workspace_clean
+        self.read_status = read_status
+        self.read_phase = read_phase
+        self.workspace_head = "a" * 40
+        self.remote_sha = "b" * 40
+        self.workspace_branch = "owner/projects-hub-self-development"
+        self.workspace_digest = "c" * 64
         self.calls = []
         super().__init__(store, readiness, command="/not-used")
 
     async def _call(self, name, arguments):
         self.calls.append((name, arguments))
+        if name == "project_probe":
+            return {
+                "results": [{
+                    "id": "state",
+                    "status": "ok",
+                    "data": {
+                        "clean": self.workspace_clean,
+                        "head": self.workspace_head,
+                        "branch": self.workspace_branch,
+                        "tracked_workspace_digest": self.workspace_digest,
+                    },
+                }]
+            }
+        if name == "direct_ops_v2":
+            operation = arguments["operation"]
+            if operation == "git_fetch":
+                return {"status": "ok", "fetched_sha": self.remote_sha}
+            if operation == "git_create_branch":
+                payload = arguments["payload"]
+                self.workspace_branch = payload["branch"]
+                self.workspace_head = self.remote_sha
+                return {
+                    "status": "ok",
+                    "branch": self.workspace_branch,
+                    "start_sha": self.remote_sha,
+                }
+            raise AssertionError(operation)
         if name == "codex_status":
             return {
                 "status": "available",
@@ -65,9 +109,14 @@ class FakeDevelopmentService(DevelopmentService):
             }
         if name == "read_task":
             return {
-                "status": "completed",
-                "content": "Implemented, tested and released.",
-                "task": {"status": "completed"},
+                "status": self.read_status,
+                "content": (
+                    "Implemented, tested and released."
+                    if self.read_status == "completed"
+                    else "Codex task is still running in the background."
+                ),
+                "latestTurn": {"progressPhase": self.read_phase},
+                "task": {"status": self.read_status},
             }
         raise AssertionError(name)
 
@@ -181,8 +230,13 @@ async def test_owner_can_run_multiple_existing_backlog_tasks_and_sync_status(tmp
             reasoning_effort="medium",
         )
         assert execution["execution"]["status"] == "running"
+        assert execution["execution"]["phase"] == "planning"
+        assert execution["execution"]["project_hint"] == "projects-hub-owner"
+        assert execution["execution"]["base_sha"] == "b" * 40
+        assert execution["execution"]["work_branch"].startswith("chatgpt/selfdev-")
         assert execution["execution"]["task_ids"] == [tasks[0]["id"], tasks[1]["id"]]
         start = next(arguments for name, arguments in service.calls if name == "start_task")
+        assert start["project"] == "projects-hub-owner"
         assert start["provider"] == "codex"
         assert start["model"] == "gpt-6-astra"
         assert start["reasoning_effort"] == "medium"
@@ -195,6 +249,7 @@ async def test_owner_can_run_multiple_existing_backlog_tasks_and_sync_status(tmp
             sync=True,
         )
         assert synced["execution"]["status"] == "completed"
+        assert synced["execution"]["phase"] == "ready"
         assert synced["execution"]["update_check_recommended"] is True
         assert "released" in synced["execution"]["result_summary"]
 
@@ -207,6 +262,65 @@ async def test_owner_can_run_multiple_existing_backlog_tasks_and_sync_status(tmp
     finally:
         store.close()
 
+
+
+@pytest.mark.asyncio
+async def test_running_execution_exposes_testing_phase(tmp_path: Path):
+    store, readiness, boot, tasks = setup(tmp_path)
+    try:
+        service = FakeDevelopmentService(
+            store,
+            readiness,
+            read_status="running",
+            read_phase="testing",
+        )
+        execution = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[tasks[0]["id"]],
+            model="gpt-6-astra",
+            reasoning_effort="medium",
+        )
+        synced = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution["execution"]["id"],
+            sync=True,
+        )
+        assert synced["execution"]["status"] == "running"
+        assert synced["execution"]["phase"] == "testing"
+        assert synced["execution"]["update_check_recommended"] is False
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_dirty_owner_workspace_fails_before_codex_start(tmp_path: Path):
+    store, readiness, boot, tasks = setup(tmp_path)
+    try:
+        service = FakeDevelopmentService(store, readiness, workspace_clean=False)
+        with pytest.raises(StoreError) as error:
+            await service.start(
+                actor_id=boot["actor"]["id"],
+                workspace_id=boot["workspace"]["id"],
+                task_ids=[tasks[0]["id"]],
+                model="gpt-6-astra",
+                reasoning_effort="medium",
+            )
+        assert error.value.code == "DEVELOPMENT_WORKSPACE_DIRTY"
+        assert not any(name == "start_task" for name, _ in service.calls)
+        latest = service.list_executions(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+        )[0]
+        assert latest["status"] == "failed"
+        assert latest["phase"] == "failed"
+    finally:
+        store.close()
+
+
+def test_interrupted_native_task_maps_to_cancelled():
+    assert DevelopmentService._map_task_status("interrupted") == "cancelled"
 
 @pytest.mark.asyncio
 async def test_codex_reserve_blocks_start(tmp_path: Path):

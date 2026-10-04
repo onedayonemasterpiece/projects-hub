@@ -59,6 +59,21 @@ export type DevelopmentExecution = {
   project_hint: string;
   provider: string;
   model_profile: string;
+  work_branch: string | null;
+  base_sha: string | null;
+  phase:
+    | "preparing"
+    | "planning"
+    | "implementing"
+    | "testing"
+    | "ci"
+    | "publishing"
+    | "releasing"
+    | "deploying"
+    | "ready"
+    | "failed"
+    | "cancelled";
+  phase_updated_at_ms: number | null;
   status: "starting" | "running" | "completed" | "failed" | "cancelled";
   devcoveer_task_id: string | null;
   quota_remaining_percent: number | null;
