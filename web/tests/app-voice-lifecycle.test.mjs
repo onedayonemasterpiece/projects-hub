@@ -157,7 +157,7 @@ test("runtime UX distinguishes semantic backend version from build provenance", 
   );
   assert.match(source, /backend_version/);
   assert.match(source, /backend_release_sha упоминай только/);
-  assert.match(version, /0\.1\.20/);
+  assert.match(version, /0\.1\.21/);
 });
 
 test("Projects Hub disables provider-transcript voice stop control", async () => {
