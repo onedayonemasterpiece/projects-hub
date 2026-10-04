@@ -101,4 +101,24 @@ public class WebOriginPolicyTest {
         ));
     }
 
+    @Test
+    public void legacyGithubBrowserActionIsExactAndStateBound() {
+        assertTrue(policy.isTrustedGitHubBrowserAction(
+                "https://projects-hub.kenigevents.ru/",
+                "projectshub://browser/github?state=abcdefghijklmnopqrstuvwxyz_123456"
+        ));
+        assertFalse(policy.isTrustedGitHubBrowserAction(
+                "https://evil.example/",
+                "projectshub://browser/github?state=abcdefghijklmnopqrstuvwxyz_123456"
+        ));
+        assertFalse(policy.isTrustedGitHubBrowserAction(
+                "https://projects-hub.kenigevents.ru/",
+                "projectshub://browser/github?state=short"
+        ));
+        assertFalse(policy.isTrustedGitHubBrowserAction(
+                "https://projects-hub.kenigevents.ru/",
+                "projectshub://browser/github?state=abcdefghijklmnopqrstuvwxyz_123456&next=evil"
+        ));
+    }
+
 }
