@@ -476,6 +476,37 @@ class GitHubConnections:
         )
         return token, connection
 
+    async def read_repository_path(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        repository_id: int,
+        path: str = "",
+    ) -> dict[str, Any]:
+        token, connection = await self.repository_token(
+            actor_id=actor_id,
+            workspace_id=workspace_id,
+            repository_id=repository_id,
+            write=False,
+        )
+        try:
+            content = await self._require_client().repository_contents(
+                token=token,
+                full_name=str(connection["full_name"]),
+                path=path,
+                ref=str(connection["default_branch"]),
+            )
+        except GitHubAppError as exc:
+            raise StoreError(exc.code, str(exc)) from exc
+        return {
+            "repository_id": int(connection["repository_id"]),
+            "full_name": connection["full_name"],
+            "project_id": connection["project_id"],
+            "default_branch": connection["default_branch"],
+            **content,
+        }
+
     async def webhook(
         self,
         *,
