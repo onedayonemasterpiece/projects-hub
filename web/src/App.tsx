@@ -88,6 +88,7 @@ function friendlyStartError(error: unknown) {
 }
 
 export default function App() {
+  const isAndroidApp = navigator.userAgent.includes("ProjectsHubAndroid/");
   const [boot, setBoot] = useState<Bootstrap | null>(null);
   const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -95,6 +96,7 @@ export default function App() {
   const [voiceState, setVoiceState] = useState("off");
   const [answer, setAnswer] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
+  const [microphoneSettingsAvailable, setMicrophoneSettingsAvailable] = useState(false);
   const [wait, setWait] = useState<WaitState>(null);
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [eventCards, setEventCards] = useState<EventCard[]>([]);
@@ -287,12 +289,16 @@ export default function App() {
       transport: "wss",
       onState: state => {
         setVoiceState(state);
-        if (state === "listening") setNotice(null);
+        if (state === "listening") {
+          setNotice(null);
+          setMicrophoneSettingsAvailable(false);
+        }
       },
       onNotice: (kind, error) => {
         if (kind === "microphone_error") {
           clientRef.current?.stop({ reason: "microphone_unavailable" });
-          setNotice("Нет доступа к микрофону. В Android откройте: Настройки → Приложения → Projects Hub → Разрешения → Микрофон → Разрешить.");
+          setMicrophoneSettingsAvailable(isAndroidApp);
+          setNotice("Android/WebView не получил микрофон. Откройте настройки приложения и разрешите микрофон; если он уже разрешён, проверьте системный переключатель доступа к микрофону.");
         } else if (kind === "transport_error") setNotice("Уже принятый сервером источник сохранён. Последние непереданные секунды не считаются сохранёнными — остановите и запустите Live снова.");
         else if (kind === "connection_error") setNotice("Связь с Live прервалась. Можно запустить разговор снова.");
         else if (kind === "event_gap") setNotice("Интерфейс пропустил часть служебных событий. Источник на сервере сохраняется отдельно.");
@@ -443,6 +449,7 @@ export default function App() {
     }
     setBusy(true);
     setNotice(null);
+    setMicrophoneSettingsAvailable(false);
     setAnswer("");
     try {
       if (!networkOnline) {
@@ -468,6 +475,11 @@ export default function App() {
       if (!offlineCaptureRef.current) setBusy(false);
       else setBusy(false);
     }
+  }
+
+  function openAndroidMicrophoneSettings() {
+    if (!isAndroidApp) return;
+    window.location.href = "projectshub://settings/microphone";
   }
 
   async function openMemory() {
@@ -855,6 +867,11 @@ export default function App() {
               <div className="notice-card">
                 <p className="eyebrow">Состояние</p>
                 <p>{notice}</p>
+                {microphoneSettingsAvailable && (
+                  <button className="mini-action microphone-settings-action" onClick={openAndroidMicrophoneSettings}>
+                    Открыть настройки микрофона
+                  </button>
+                )}
               </div>
             )}
           </article>
