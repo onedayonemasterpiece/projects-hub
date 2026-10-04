@@ -264,3 +264,16 @@ def test_owner_development_tools_are_not_exposed_to_ordinary_users():
         "development_execution_status",
         "backlog_list",
     } <= owner
+
+
+def test_owner_development_live_schema_uses_provider_supported_array_subset():
+    owner_tools = {
+        item["name"]: item for item in _functions(owner_development=True)
+    }
+    schema = owner_tools["development_execute_backlog"]["parameters"]
+    task_ids = schema["properties"]["task_ids"]
+    assert task_ids["type"] == "array"
+    assert task_ids["items"] == {"type": "string"}
+    assert "uniqueItems" not in task_ids
+    assert "minItems" not in task_ids
+    assert "maxItems" not in task_ids
