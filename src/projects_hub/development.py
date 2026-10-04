@@ -610,7 +610,7 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
             return "completed"
         if clean in {"failed", "error"}:
             return "failed"
-        if clean in {"cancelled", "canceled"}:
+        if clean in {"cancelled", "canceled", "interrupted"}:
             return "cancelled"
         return "running"
 
@@ -664,6 +664,25 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
                 or result.get("content")
                 or ""
             ).strip()[:8000]
+            latest_turn = result.get("latestTurn")
+            remote_phase = (
+                str(latest_turn.get("progressPhase") or "").strip()
+                if isinstance(latest_turn, dict)
+                else ""
+            )
+            if next_status == "completed":
+                next_phase = "ready"
+            elif next_status == "failed":
+                next_phase = "failed"
+            elif next_status == "cancelled":
+                next_phase = "cancelled"
+            elif remote_phase in PROGRESS_PHASES:
+                next_phase = remote_phase
+            else:
+                next_phase = str(item.get("phase") or "implementing")
+                if next_phase not in PROGRESS_PHASES:
+                    next_phase = "implementing"
+
             now = _now_ms()
             finished = now if next_status in TERMINAL_EXECUTION_STATES else None
             error_code = None
@@ -673,14 +692,23 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
                     or (result.get("task") or {}).get("errorCategory")
                     or "DEVCOVEER_TASK_FAILED"
                 )[:120]
+            current_phase = str(item.get("phase") or "")
+            phase_updated_at = (
+                now
+                if next_phase != current_phase
+                else int(item.get("phase_updated_at_ms") or now)
+            )
             with self.store._lock:
                 self.store.db.execute(
                     """UPDATE task_executions
-                       SET status=?,result_summary=?,error_code=?,
+                       SET status=?,phase=?,phase_updated_at_ms=?,
+                           result_summary=?,error_code=?,
                            finished_at_ms=COALESCE(?,finished_at_ms),updated_at_ms=?
                        WHERE id=?""",
                     (
                         next_status,
+                        next_phase,
+                        phase_updated_at,
                         summary,
                         error_code,
                         finished,
@@ -695,7 +723,10 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
             )
 
         public = self._execution_public(row)
-        public["update_check_recommended"] = public["status"] == "completed"
+        public["update_check_recommended"] = (
+            public["status"] == "completed"
+            and public.get("phase") == "ready"
+        )
         return {"execution": public}
 
     def list_executions(
