@@ -117,8 +117,23 @@ class DevelopmentService:
     async def codex_status(self, *, actor_id: str, workspace_id: str) -> dict[str, Any]:
         self._authorize_owner(actor_id, workspace_id)
         payload = await self._call("codex_status", {})
+        models_payload = await self._call(
+            "list_models",
+            {"provider": "codex", "verified_only": False},
+        )
         admission = payload.get("admission") if isinstance(payload.get("admission"), dict) else {}
         profile = payload.get("default_profile") if isinstance(payload.get("default_profile"), dict) else {}
+        models = []
+        for item in models_payload.get("models", []):
+            if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+                continue
+            models.append({
+                "id": item.get("id"),
+                "display_name": item.get("displayName"),
+                "reasoning_efforts": list(item.get("reasoningEfforts") or []),
+                "default_reasoning_effort": item.get("defaultReasoningEffort"),
+                "availability": item.get("availability"),
+            })
         return {
             "status": payload.get("status"),
             "observed_at": payload.get("observed_at"),
@@ -132,6 +147,7 @@ class DevelopmentService:
                 "reasoning_effort": profile.get("reasoning_effort"),
                 "catalog_available": profile.get("catalog_available") is True,
             },
+            "models": models,
         }
 
     def _selected_tasks(
@@ -189,6 +205,7 @@ class DevelopmentService:
             if item.get("project_id") == project_id
             and item.get("state") == "available"
             and item.get("installation_state") == "active"
+            and item.get("access_mode") == "app_managed_write"
         ]
         if len(connections) == 1:
             return str(connections[0]["full_name"]).rsplit("/", 1)[-1]
@@ -252,6 +269,8 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
         actor_id: str,
         workspace_id: str,
         task_ids: list[str],
+        model: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         self._authorize_owner(actor_id, workspace_id)
         tasks, project_id = self._selected_tasks(
@@ -284,14 +303,35 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
                 "CODEX_CAPACITY_RESERVED",
                 "Native Codex capacity is unavailable or at the 10% reserve",
             )
-        if (
-            profile.get("model") != "gpt-6.1-sol"
-            or profile.get("reasoning_effort") != "medium"
-            or profile.get("catalog_available") is not True
-        ):
+
+        available = {
+            str(item["id"]): item
+            for item in status.get("models", [])
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+            and item.get("availability") != "eol"
+        }
+        selected_model = str(model or "").strip()
+        selected_effort = str(reasoning_effort or "").strip()
+        if not selected_model and profile.get("catalog_available") is True:
+            selected_model = str(profile.get("model") or "").strip()
+            selected_effort = selected_effort or str(profile.get("reasoning_effort") or "").strip()
+        if not selected_model:
+            return {
+                "status": "model_selection_required",
+                "remaining_percent": float(remaining),
+                "models": list(available.values()),
+                "profile": profile,
+            }
+        record = available.get(selected_model)
+        if record is None:
+            raise StoreError("CODEX_MODEL_UNAVAILABLE", "Requested native Codex model is unavailable")
+        efforts = {str(value) for value in record.get("reasoning_efforts") or []}
+        if not selected_effort:
+            selected_effort = str(record.get("default_reasoning_effort") or "").strip()
+        if selected_effort not in efforts:
             raise StoreError(
-                "CODEX_PROFILE_UNAVAILABLE",
-                "The gpt-6.1-medium owner profile is unavailable",
+                "CODEX_REASONING_UNAVAILABLE",
+                "Requested reasoning effort is unavailable for this model",
             )
 
         project_name = self._project_name(actor_id, workspace_id, project_id)
@@ -321,7 +361,7 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
                     task_ids_json,
                     project_hint,
                     "codex",
-                    DEFAULT_CODEX_PROFILE,
+                    selected_model + ":" + selected_effort,
                     prompt,
                     hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
                     "starting",
@@ -343,8 +383,8 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
                     "prompt": prompt,
                     "access": "write",
                     "provider": "codex",
-                    "model": DEFAULT_CODEX_PROFILE,
-                    "reasoning_effort": "medium",
+                    "model": selected_model,
+                    "reasoning_effort": selected_effort,
                 },
             )
             devcoveer_task_id = str(
@@ -479,7 +519,7 @@ Work to a concrete, verifiable product result. Preserve the project's .devcoveer
             )
 
         public = self._execution_public(row)
-        public["update_check_recommended"] = public["status"] in TERMINAL_EXECUTION_STATES
+        public["update_check_recommended"] = public["status"] == "completed"
         return {"execution": public}
 
     def list_executions(
