@@ -671,7 +671,9 @@ export default function App() {
   }
 
   const voiceActive = !["off", "start_error", "connection_error", "microphone_unavailable"].includes(voiceState);
-  const showWork = Boolean(chatMessages.length || notice || wait || memoryOpen || eventOpen);
+  const showWork = Boolean(
+    eventOpen || memoryOpen || ((notice || wait) && chatMessages.length === 0)
+  );
   const projectCount = Math.max(0, boot.projects.length - 1);
   const pendingCount = pendingSources.length;
   const voiceHeadline =
@@ -822,6 +824,43 @@ export default function App() {
         )}
       </header>
 
+      {chatMessages.length > 0 && (
+        <section className="chat-canvas" aria-label="Диалог с Мирой">
+          <div
+            className="chat-thread"
+            ref={chatScrollRef}
+            onScroll={event => {
+              const element = event.currentTarget;
+              chatFollowRef.current =
+                element.scrollHeight - element.scrollTop - element.clientHeight < 72;
+            }}
+          >
+            <div className="chat-stack">
+              {chatMessages.map((message, index) => (
+                <div className={"chat-row " + message.role} key={index}>
+                  <div
+                    className={"chat-bubble " + message.role}
+                    aria-label={(message.role === "user" ? "Вы" : "Мира") + ": " + message.text}
+                  >
+                    {message.text}
+                  </div>
+                </div>
+              ))}
+              {(wait || notice) && (
+                <div className="chat-status" role={notice ? "alert" : undefined}>
+                  {notice ?? (wait?.stage === "action" ? "Мира выполняет действие…" : "Мира думает…")}
+                  {microphoneSettingsAvailable && (
+                    <button className="mini-action microphone-settings-action" onClick={openAndroidMicrophoneSettings}>
+                      Открыть настройки микрофона
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
+
       <section className={"work-zone" + (showWork ? " visible" : "")} aria-live="polite">
         {showWork && (
           <article className="island work-island">
@@ -905,37 +944,6 @@ export default function App() {
                   </div>
                 ) : (
                   <p className="empty-copy">Пока ничего не сохранено. Скажите, что нужно запомнить.</p>
-                )}
-              </div>
-            ) : chatMessages.length ? (
-              <div
-                className="chat-thread"
-                ref={chatScrollRef}
-                onScroll={event => {
-                  const element = event.currentTarget;
-                  chatFollowRef.current =
-                    element.scrollHeight - element.scrollTop - element.clientHeight < 72;
-                }}
-              >
-                {chatMessages.map((message, index) => (
-                  <div className={"chat-row " + message.role} key={index}>
-                    <div
-                      className={"chat-bubble " + message.role}
-                      aria-label={(message.role === "user" ? "Вы" : "Мира") + ": " + message.text}
-                    >
-                      {message.text}
-                    </div>
-                  </div>
-                ))}
-                {(wait || notice) && (
-                  <div className="chat-status" role={notice ? "alert" : undefined}>
-                    {notice ?? (wait?.stage === "action" ? "Мира выполняет действие…" : "Мира думает…")}
-                    {microphoneSettingsAvailable && (
-                      <button className="mini-action microphone-settings-action" onClick={openAndroidMicrophoneSettings}>
-                        Открыть настройки микрофона
-                      </button>
-                    )}
-                  </div>
                 )}
               </div>
             ) : wait ? (
