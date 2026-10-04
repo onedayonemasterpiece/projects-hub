@@ -2137,6 +2137,63 @@ class DurableStore:
             )
             return {"project_id": project_id, "project_name": project["name"], "revision": now}
 
+    def recent_conversation_history(
+        self,
+        actor_id: str,
+        conversation_id: str,
+        *,
+        max_turns: int = 8,
+        max_chars: int = 700,
+    ) -> list[dict[str, str]]:
+        bounded_turns = max(1, min(int(max_turns), 12))
+        bounded_chars = max(80, min(int(max_chars), 1000))
+        with self._lock:
+            self.get_conversation(actor_id, conversation_id)
+            rows = self.db.execute(
+                """SELECT e.kind,e.text
+                   FROM source_events e
+                   JOIN sources s ON s.id=e.source_id
+                   WHERE s.conversation_id=? AND s.actor_id=?
+                     AND e.kind IN ('input_transcript','output_transcript','turn_complete','interrupted')
+                   ORDER BY e.id DESC LIMIT 160""",
+                (conversation_id, actor_id),
+            ).fetchall()
+        rows = list(reversed(rows))
+        turns: list[dict[str, str]] = []
+        active_role: str | None = None
+        active_text = ""
+
+        def commit() -> None:
+            nonlocal active_role, active_text
+            text = active_text.strip()
+            if active_role and text:
+                if len(text) > bounded_chars:
+                    text = text[: bounded_chars // 2].rstrip() + " … " + text[-(bounded_chars // 2 - 3):].lstrip()
+                turns.append({"role": active_role, "text": text})
+            active_role = None
+            active_text = ""
+
+        for row in rows:
+            kind = str(row["kind"])
+            if kind in {"turn_complete", "interrupted"}:
+                commit()
+                continue
+            role = "user" if kind == "input_transcript" else "model"
+            fragment = str(row["text"] or "").strip()
+            if not fragment:
+                continue
+            if role != active_role:
+                commit()
+                active_role = role
+            if not active_text:
+                active_text = fragment
+            elif fragment.startswith(active_text):
+                active_text = fragment
+            elif not active_text.endswith(fragment):
+                active_text = (active_text + " " + fragment).strip()
+        commit()
+        return turns[-bounded_turns:]
+
     def create_source(
         self,
         actor_id: str,
