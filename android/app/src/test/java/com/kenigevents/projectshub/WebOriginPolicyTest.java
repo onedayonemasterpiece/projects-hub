@@ -121,4 +121,24 @@ public class WebOriginPolicyTest {
         ));
     }
 
+    @Test
+    public void updateCheckActionRequiresTrustedProjectsHubPage() {
+        assertTrue(policy.isTrustedUpdateCheckAction(
+                "https://projects-hub.kenigevents.ru/",
+                "projectshub://update/check"
+        ));
+        assertFalse(policy.isTrustedUpdateCheckAction(
+                "https://evil.example/",
+                "projectshub://update/check"
+        ));
+        assertFalse(policy.isTrustedUpdateCheckAction(
+                "https://projects-hub.kenigevents.ru/",
+                "projectshub://update/install"
+        ));
+        assertFalse(policy.isTrustedUpdateCheckAction(
+                "https://projects-hub.kenigevents.ru/",
+                "projectshub://update/check?force=true"
+        ));
+    }
+
 }
