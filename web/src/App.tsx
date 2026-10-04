@@ -16,6 +16,7 @@ import {
   getMemories,
   getEventCards,
   getTasks,
+  getDevelopmentBacklog,
   getDevelopmentCodexStatus,
   getLatestDevelopmentExecution,
   getAuthConfig,
@@ -48,6 +49,22 @@ import {
 type WaitState = null | { elapsed_ms: number; stage: string; can_restart: boolean };
 type ChatRole = "user" | "assistant";
 type ChatMessage = { role: ChatRole; text: string };
+
+const developmentStageLabel: Record<string, string> = {
+  design: "Проектирование",
+  implementation: "Разработка",
+  testing: "Тестирование",
+  ci: "CI",
+  review: "Ревью",
+  rework: "Доработка",
+  delivery: "Поставка",
+  deploying: "Развёртывание",
+  releasing: "Релиз",
+  ready: "Готово",
+  capacity_wait: "Ожидание лимита",
+  needs_owner: "Нужно решение владельца",
+  failed: "Ошибка",
+};
 
 const stateLabel: Record<string, string> = {
   off: "Готова слушать",
@@ -200,7 +217,9 @@ export default function App() {
   const loadBacklog = useCallback(async () => {
     if (!boot) return;
     const projectId = conversationRef.current?.focus_project_id ?? null;
-    const tasks = await getTasks(boot.workspace.id, projectId);
+    const tasks = boot.role === "owner"
+      ? await getDevelopmentBacklog(boot.workspace.id, projectId)
+      : await getTasks(boot.workspace.id, projectId);
     setBacklogTasks(tasks.items);
 
     if (boot.role !== "owner") {
@@ -1138,14 +1157,54 @@ export default function App() {
                     {developmentExecution && (
                       <div className="execution-card">
                         <div>
-                          <strong>Последний запуск · {developmentExecution.status}</strong>
+                          <strong>
+                            {developmentExecution.phase_detail
+                              || developmentStageLabel[developmentExecution.phase]
+                              || developmentExecution.phase
+                              || developmentExecution.status}
+                          </strong>
                           <span>
                             {developmentExecution.model_profile}
                             {typeof developmentExecution.quota_remaining_percent === "number"
-                              ? ` · старт при ${Math.round(developmentExecution.quota_remaining_percent)}%`
+                              ? ` · остаток ${Math.round(developmentExecution.quota_remaining_percent)}%`
                               : ""}
                           </span>
+                          <span>Технически: {developmentExecution.status}</span>
                         </div>
+                        {developmentExecution.stages?.length > 0 && (
+                          <div className="execution-stages">
+                            {developmentExecution.stages.map(stage => (
+                              <div className={"execution-stage " + stage.status} key={stage.id}>
+                                <div>
+                                  <strong>
+                                    {developmentStageLabel[stage.stage] ?? stage.stage}
+                                    {stage.cycle > 0 ? " · цикл " + stage.cycle : ""}
+                                  </strong>
+                                  <span>{stage.model} · {stage.reasoning_effort}</span>
+                                </div>
+                                <div className="execution-stage-meta">
+                                  <span>{stage.status}</span>
+                                  {stage.review_verdict && <span>{stage.review_verdict}</span>}
+                                  {typeof stage.token_usage?.totalTokens === "number" && (
+                                    <span>{stage.token_usage.totalTokens.toLocaleString()} ток.</span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {Object.keys(developmentExecution.token_usage_by_model ?? {}).length > 0 && (
+                          <div className="execution-usage">
+                            <span>Расход по моделям</span>
+                            {Object.entries(developmentExecution.token_usage_by_model).map(([model, usage]) => (
+                              <code key={model}>
+                                {model}: {typeof usage.totalTokens === "number"
+                                  ? usage.totalTokens.toLocaleString() + " ток."
+                                  : "usage неизвестен"}
+                              </code>
+                            ))}
+                          </div>
+                        )}
                         {developmentExecution.result_summary && (
                           <p>{developmentExecution.result_summary}</p>
                         )}
