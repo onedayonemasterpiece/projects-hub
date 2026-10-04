@@ -81,6 +81,31 @@ def _functions(
             },
         },
         {
+            "name": "calendar_list_events_on_device",
+            "description": "Read a bounded time window from the user's personal Android calendar through a bound device. Use for questions like what is scheduled today/tomorrow/this week. This is read-only and never creates or edits events.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "device_id": {"type": "string"},
+                    "project_id": {"type": "string"},
+                    "starts_at": {
+                        "type": "string",
+                        "description": "RFC3339 range start with explicit UTC offset."
+                    },
+                    "ends_at": {
+                        "type": "string",
+                        "description": "RFC3339 range end with explicit UTC offset; maximum range is 31 days."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 20
+                    }
+                },
+                "required": ["starts_at", "ends_at"]
+            },
+        },
+        {
             "name": "event_cards_list",
             "description": "List upcoming event-readiness cards and their checklist/task state. Use before discussing whether the user is ready for an event.",
             "parameters": {
@@ -369,7 +394,8 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Доступ определяет backend. Аргументы function call не могут расширять права или подключать новый repository.
 - github_repositories_list показывает только уже подключённые и привязанные repositories. Если нужного repo нет, скажи, что его должен разрешить workspace owner через GitHub integration UI; не пытайся заменить это другим repo.
 - Device-local действие всё равно вызывается здесь, в backend-owned Live session. Android — только исполнитель typed command.
-- Для календаря сначала используй devices_list_capabilities, если подходящий телефон неоднозначен. calendar_create_event_on_device может потребовать подтверждение на телефоне.
+- Для календаря сначала используй devices_list_capabilities, если подходящий телефон неоднозначен. Для вопросов о расписании используй calendar_list_events_on_device; для создания — calendar_create_event_on_device.
+- calendar_list_events_on_device только читает локальный CalendarContract выбранного Android и возвращает ограниченное окно до 31 дня. Не придумывай события, если device readback не вернулся.
 - Говори «событие создано» только если calendar_create_event_on_device вернул status=applied и device readback. pending/claimed означает, что подтверждение на телефоне ещё ожидается; outcome_unknown означает, что итог надо сверить.
 - Если tool отказал, объясни результат и продолжи разговор, не выдумывая успешное действие.
 
@@ -650,6 +676,40 @@ class ProjectsHubLiveAdapter:
                     )
                 ]
             }
+
+        if name == "calendar_list_events_on_device":
+            project_id = str(args.get("project_id") or "") or None
+            if project_id is None:
+                project_id = self.store.get_conversation(
+                    actor_id,
+                    conversation_id,
+                ).get("focus_project_id")
+            command_id, _args_sha = self._command_id(session, name, args)
+            command = self.device_commands.create_calendar_read_command(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                command_id=command_id,
+                args=args,
+            )
+            result = await self.device_commands.wait_for_terminal(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                command_id=command["id"],
+                timeout_seconds=20.0,
+            )
+            log.info(
+                "device command result",
+                extra={
+                    "event": "tool_result",
+                    "tool": name,
+                    "conversation_id": conversation_id,
+                    "command_id": command["id"],
+                    "device_id": result.get("device_id"),
+                    "result": result.get("status"),
+                },
+            )
+            return result
 
         if name == "calendar_create_event_on_device":
             project_id = str(args.get("project_id") or "") or None
