@@ -81,7 +81,8 @@ class DevelopmentService:
                     started_at_ms INTEGER,
                     finished_at_ms INTEGER,
                     active_slot INTEGER,
-                    repository_full_name TEXT
+                    repository_full_name TEXT,
+                    request_key TEXT
                 );
                 CREATE INDEX IF NOT EXISTS task_executions_owner_idx
                     ON task_executions(actor_id,workspace_id,status,updated_at_ms DESC);
@@ -153,6 +154,15 @@ class DevelopmentService:
                 self.store.db.execute(
                     "ALTER TABLE task_executions ADD COLUMN repository_full_name TEXT"
                 )
+            if "request_key" not in columns:
+                self.store.db.execute(
+                    "ALTER TABLE task_executions ADD COLUMN request_key TEXT"
+                )
+            self.store.db.execute(
+                """CREATE UNIQUE INDEX IF NOT EXISTS task_executions_request_key_idx
+                   ON task_executions(actor_id,request_key)
+                   WHERE request_key IS NOT NULL"""
+            )
             stage_columns = {
                 str(row["name"])
                 for row in self.store.db.execute(
