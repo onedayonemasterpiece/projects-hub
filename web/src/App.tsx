@@ -819,6 +819,7 @@ export default function App() {
             });
             setMemoryOpen(false);
             setEventOpen(false);
+            setBacklogOpen(false);
           }}
           aria-expanded={contextOpen}
         >
@@ -839,6 +840,7 @@ export default function App() {
                 <h2>{boot.workspace.name}</h2>
               </div>
               <div className="sheet-actions">
+                <button className="quiet-button" onClick={openBacklog}>Бэклог</button>
                 <button className="quiet-button" onClick={openEvents}>Готовность</button>
                 <button className="quiet-button" onClick={openMemory}>Память</button>
               </div>
