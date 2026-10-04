@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import re
+import sqlite3
 import time
 import uuid
 from typing import Any
@@ -592,6 +593,14 @@ Before the verdict, list the concrete evidence checked and any missing/failed it
                 clean[key] = raw
         return clean or None
 
+    @staticmethod
+    def _stage_dispatch_key(execution_id: str, stage: str, cycle: int) -> str:
+        return f"ph:{execution_id}:{stage}:{int(cycle)}"
+
+    @staticmethod
+    def _dispatch_prompt(dispatch_key: str, prompt: str) -> str:
+        return f"PROJECTS_HUB_DISPATCH_KEY: {dispatch_key}\n\n{prompt}"
+
     def _record_stage(
         self,
         *,
@@ -600,17 +609,21 @@ Before the verdict, list the concrete evidence checked and any missing/failed it
         cycle: int,
         model: str,
         reasoning_effort: str,
-        devcoveer_task_id: str,
-    ) -> None:
+        dispatch_kind: str,
+        devcoveer_task_id: str | None = None,
+        status: str = "dispatching",
+    ) -> dict[str, Any]:
         now = _now_ms()
+        dispatch_key = self._stage_dispatch_key(execution_id, stage, cycle)
         with self.store._lock:
             self.store.db.execute(
-                """INSERT INTO task_execution_stages(
+                """INSERT OR IGNORE INTO task_execution_stages(
                        id,execution_id,stage,cycle,model,reasoning_effort,
                        devcoveer_task_id,status,summary,review_verdict,
                        token_usage_json,started_at_ms,finished_at_ms,
-                       created_at_ms,updated_at_ms
-                   ) VALUES(?,?,?,?,?,?,?,'running','',NULL,NULL,?,NULL,?,?)""",
+                       created_at_ms,updated_at_ms,dispatch_key,dispatch_kind,
+                       transition_claimed_at_ms
+                   ) VALUES(?,?,?,?,?,?,?,?, '',NULL,NULL,?,NULL,?,?,?,?,NULL)""",
                 (
                     "devstage_" + uuid.uuid4().hex,
                     execution_id,
@@ -619,42 +632,100 @@ Before the verdict, list the concrete evidence checked and any missing/failed it
                     model,
                     reasoning_effort,
                     devcoveer_task_id,
+                    status,
                     now,
                     now,
                     now,
+                    dispatch_key,
+                    dispatch_kind,
                 ),
             )
+            row = self.store.db.execute(
+                "SELECT * FROM task_execution_stages WHERE dispatch_key=?",
+                (dispatch_key,),
+            ).fetchone()
+        if not row:
+            raise StoreError("DEVELOPMENT_STAGE_WRITE_FAILED", "Development stage was not persisted")
+        return dict(row)
+
+    def _stage_row(self, stage_id: str) -> dict[str, Any]:
+        with self.store._lock:
+            row = self.store.db.execute(
+                "SELECT * FROM task_execution_stages WHERE id=?",
+                (stage_id,),
+            ).fetchone()
+        if not row:
+            raise StoreError("DEVELOPMENT_STAGE_MISSING", "Development stage is unavailable")
+        return dict(row)
 
     def _active_stage(self, execution_id: str) -> dict[str, Any] | None:
         with self.store._lock:
             row = self.store.db.execute(
                 """SELECT * FROM task_execution_stages
-                   WHERE execution_id=? AND status='running'
+                   WHERE execution_id=?
+                     AND status IN ('dispatching','dispatch_unknown','running',
+                                    'transitioning','waiting_capacity')
                    ORDER BY created_at_ms DESC LIMIT 1""",
                 (execution_id,),
             ).fetchone()
         return dict(row) if row else None
 
-    def _finish_stage(
+    def _claim_stage_completion(
+        self,
+        *,
+        stage_id: str,
+        summary: str,
+        review_verdict: str | None,
+        token_usage: dict[str, Any] | None,
+    ) -> bool:
+        now = _now_ms()
+        with self.store._lock:
+            self.store.db.execute(
+                """UPDATE task_execution_stages
+                   SET status='transitioning',summary=?,review_verdict=?,
+                       token_usage_json=?,transition_claimed_at_ms=?,updated_at_ms=?
+                   WHERE id=? AND status='running'""",
+                (
+                    summary[:12000],
+                    review_verdict,
+                    json.dumps(token_usage, separators=(",", ":")) if token_usage else None,
+                    now,
+                    now,
+                    stage_id,
+                ),
+            )
+            changed = int(self.store.db.execute("SELECT changes()").fetchone()[0])
+        return changed == 1
+
+    def _complete_stage(self, stage_id: str) -> None:
+        now = _now_ms()
+        with self.store._lock:
+            self.store.db.execute(
+                """UPDATE task_execution_stages
+                   SET status='completed',finished_at_ms=COALESCE(finished_at_ms,?),
+                       transition_claimed_at_ms=NULL,updated_at_ms=?
+                   WHERE id=?""",
+                (now, now, stage_id),
+            )
+
+    def _finish_stage_terminal(
         self,
         *,
         stage_id: str,
         status: str,
         summary: str,
-        review_verdict: str | None = None,
-        token_usage: dict[str, Any] | None = None,
+        token_usage: dict[str, Any] | None,
     ) -> None:
         now = _now_ms()
         with self.store._lock:
             self.store.db.execute(
                 """UPDATE task_execution_stages
-                   SET status=?,summary=?,review_verdict=?,token_usage_json=?,
+                   SET status=?,summary=?,token_usage_json=?,
                        finished_at_ms=?,updated_at_ms=?
                    WHERE id=?""",
                 (
                     status,
                     summary[:12000],
-                    review_verdict,
                     json.dumps(token_usage, separators=(",", ":")) if token_usage else None,
                     now,
                     now,
@@ -704,6 +775,8 @@ Before the verdict, list the concrete evidence checked and any missing/failed it
         item["task_ids"] = json.loads(item.pop("task_ids_json"))
         item.pop("prompt", None)
         item.pop("prompt_sha256", None)
+        item.pop("active_slot", None)
+        item.pop("request_key", None)
         with self.store._lock:
             stage_rows = self.store.db.execute(
                 """SELECT * FROM task_execution_stages
@@ -715,6 +788,7 @@ Before the verdict, list the concrete evidence checked and any missing/failed it
         for stage_row in stage_rows:
             stage = dict(stage_row)
             raw_usage = stage.pop("token_usage_json", None)
+            stage.pop("transition_claimed_at_ms", None)
             usage = None
             if isinstance(raw_usage, str) and raw_usage:
                 try:
@@ -751,198 +825,12 @@ Before the verdict, list the concrete evidence checked and any missing/failed it
             raise StoreError("DEVELOPMENT_EXECUTION_NOT_FOUND", "Development execution is unavailable")
         return row
 
-    async def start(
-        self,
-        *,
-        actor_id: str,
-        workspace_id: str,
-        task_ids: list[str],
-        model: str | None = None,
-        reasoning_effort: str | None = None,
-    ) -> dict[str, Any]:
-        self._authorize_owner(actor_id, workspace_id)
-        tasks, project_id = self._selected_tasks(
-            actor_id=actor_id,
-            workspace_id=workspace_id,
-            task_ids=task_ids,
-        )
-        with self.store._lock:
-            active = self.store.db.execute(
-                """SELECT id FROM task_executions
-                   WHERE actor_id=? AND status IN ('starting','running')
-                   ORDER BY created_at_ms DESC LIMIT 1""",
-                (actor_id,),
-            ).fetchone()
-        if active:
-            raise StoreError(
-                "DEVELOPMENT_EXECUTION_ACTIVE",
-                "Another owner development execution is already active",
-            )
-
-        status = await self.codex_status(actor_id=actor_id, workspace_id=workspace_id)
-        remaining = status.get("remaining_percent")
-        profile = status.get("profile") or {}
-        if (
-            status.get("eligible") is not True
-            or not isinstance(remaining, (int, float))
-            or float(remaining) <= 10.0
-        ):
-            raise StoreError(
-                "CODEX_CAPACITY_RESERVED",
-                "Native Codex capacity is unavailable or at the 10% reserve",
-            )
-
-        available = {
-            str(item["id"]): item
-            for item in status.get("models", [])
-            if isinstance(item, dict) and isinstance(item.get("id"), str)
-            and item.get("availability") != "eol"
-        }
-        selected_model = str(model or "").strip()
-        selected_effort = str(reasoning_effort or "").strip()
-        if not selected_model and profile.get("catalog_available") is True:
-            selected_model = str(profile.get("model") or "").strip()
-            selected_effort = selected_effort or str(profile.get("reasoning_effort") or "").strip()
-        if not selected_model:
-            return {
-                "status": "model_selection_required",
-                "remaining_percent": float(remaining),
-                "models": list(available.values()),
-                "profile": profile,
-            }
-        record = available.get(selected_model)
-        if record is None:
-            raise StoreError("CODEX_MODEL_UNAVAILABLE", "Requested native Codex model is unavailable")
-        efforts = {str(value) for value in record.get("reasoning_efforts") or []}
-        if not selected_effort:
-            selected_effort = str(record.get("default_reasoning_effort") or "").strip()
-        if selected_effort not in efforts:
-            raise StoreError(
-                "CODEX_REASONING_UNAVAILABLE",
-                "Requested reasoning effort is unavailable for this model",
-            )
-
-        quality_record = available.get(QUALITY_MODEL)
-        quality_efforts = {
-            str(value) for value in (quality_record or {}).get("reasoning_efforts") or []
-        }
-        if quality_record is None or QUALITY_EFFORT not in quality_efforts:
-            raise StoreError(
-                "QUALITY_MODEL_UNAVAILABLE",
-                f"{QUALITY_MODEL}:{QUALITY_EFFORT} is required for design/review",
-            )
-
-        project_name = self._project_name(actor_id, workspace_id, project_id)
-        project_hint = self._project_hint(
-            actor_id,
-            workspace_id,
-            project_id,
-            project_name,
-        )
-        now = _now_ms()
-        execution_id = "devrun_" + uuid.uuid4().hex
-        spec_path = f"docs/prompts/owner-development-{execution_id}.md"
-        prompt = self._design_prompt(project_name, tasks, spec_path)
-        task_ids_json = json.dumps([item["id"] for item in tasks], separators=(",", ":"))
-        with self.store._lock:
-            self.store.db.execute(
-                """INSERT INTO task_executions(
-                       id,actor_id,workspace_id,project_id,task_ids_json,project_hint,
-                       provider,model_profile,prompt,prompt_sha256,status,phase,phase_detail,
-                       quota_remaining_percent,result_summary,error_code,
-                       created_at_ms,updated_at_ms,started_at_ms,finished_at_ms,
-                       review_cycle,spec_path
-                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,'queued','Ожидает quality design',
-                            ?,?,?, ?,?,?,NULL,0,?)""",
-                (
-                    execution_id,
-                    actor_id,
-                    workspace_id,
-                    project_id,
-                    task_ids_json,
-                    project_hint,
-                    "codex",
-                    selected_model + ":" + selected_effort,
-                    prompt,
-                    hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-                    "starting",
-                    float(remaining),
-                    "",
-                    None,
-                    now,
-                    now,
-                    now,
-                    spec_path,
-                ),
-            )
-
-        try:
-            result = await self.devcoveer.start_codex_task(
-                project=project_hint,
-                prompt=prompt,
-                model=QUALITY_MODEL,
-                reasoning_effort=QUALITY_EFFORT,
-            )
-            quality_task_id = str(
-                result.get("taskId")
-                or result.get("taskReference")
-                or ""
-            ).strip()
-            if not quality_task_id:
-                raise StoreError("DEVCOVEER_INVALID_RESPONSE", "DevCoveer did not return a quality task id")
-            now = _now_ms()
-            with self.store._lock:
-                self.store.db.execute(
-                    """UPDATE task_executions
-                       SET status='running',phase='designing',
-                           phase_detail='Сильная модель проектирует задачу',
-                           quality_task_id=?,devcoveer_task_id=?,
-                           started_at_ms=?,updated_at_ms=?
-                       WHERE id=?""",
-                    (quality_task_id, quality_task_id, now, now, execution_id),
-                )
-                for task in tasks:
-                    if task.get("state") not in {"accepted", "done"}:
-                        self.store.db.execute(
-                            "UPDATE tasks SET state='accepted',updated_at_ms=? WHERE id=?",
-                            (now, task["id"]),
-                        )
-            self._record_stage(
-                execution_id=execution_id,
-                stage="design",
-                cycle=0,
-                model=QUALITY_MODEL,
-                reasoning_effort=QUALITY_EFFORT,
-                devcoveer_task_id=quality_task_id,
-            )
-        except Exception as exc:
-            now = _now_ms()
-            code = exc.code if isinstance(exc, StoreError) else type(exc).__name__
-            with self.store._lock:
-                self.store.db.execute(
-                    """UPDATE task_executions
-                       SET status='failed',phase='failed',
-                           phase_detail='Не удалось запустить quality design',
-                           error_code=?,finished_at_ms=?,updated_at_ms=?
-                       WHERE id=?""",
-                    (str(code)[:120], now, now, execution_id),
-                )
-            raise
-
-        return await self.status(
-            actor_id=actor_id,
-            workspace_id=workspace_id,
-            execution_id=execution_id,
-            sync=False,
-        )
-
     @staticmethod
     def _phase_from_result(result: dict[str, Any], status: str) -> tuple[str, str]:
         if status == "completed":
             return "ready", "Готово"
         if status in {"failed", "cancelled"}:
             return status, "Исполнение завершилось ошибкой" if status == "failed" else "Исполнение отменено"
-
         latest = result.get("latestTurn") if isinstance(result.get("latestTurn"), dict) else {}
         phase = str(latest.get("progressPhase") or result.get("progressPhase") or "").strip().lower()
         labels = {
@@ -973,6 +861,761 @@ Before the verdict, list the concrete evidence checked and any missing/failed it
             return "cancelled"
         return "running"
 
+    @staticmethod
+    def _phase_for_stage(stage: str, cycle: int, result: dict[str, Any] | None = None) -> tuple[str, str]:
+        runtime_phase, runtime_detail = DevelopmentService._phase_from_result(result or {}, "running")
+        if stage == "design":
+            return "designing", "Сильная модель проектирует задачу, edge cases, тесты и DoD"
+        if stage == "implementation":
+            if runtime_phase in {"testing", "ci"}:
+                return runtime_phase, runtime_detail
+            return "implementing", "Разработчик реализует принятую постановку"
+        if stage == "review":
+            return "reviewing", f"Сильная модель проводит ревью, цикл {cycle}"
+        if stage == "rework":
+            if runtime_phase in {"testing", "ci"}:
+                return runtime_phase, runtime_detail
+            return "reworking", f"Разработчик исправляет замечания, цикл {cycle}"
+        if stage == "delivery":
+            if runtime_phase in {"ci", "publishing", "releasing", "deploying"}:
+                return runtime_phase, runtime_detail
+            return "delivering", "Принятая реализация поставляется и проверяется"
+        if stage == "acceptance":
+            if runtime_phase in {"testing", "ci"}:
+                return runtime_phase, runtime_detail
+            return "accepting", "Сильная модель проверяет фактически поставленный результат"
+        return runtime_phase, runtime_detail
+
+    def _mark_execution_terminal(
+        self,
+        *,
+        execution_id: str,
+        status: str,
+        phase: str,
+        detail: str,
+        summary: str,
+        error_code: str | None,
+    ) -> None:
+        now = _now_ms()
+        with self.store._lock:
+            self.store.db.execute(
+                """UPDATE task_executions
+                   SET status=?,phase=?,phase_detail=?,result_summary=?,
+                       error_code=?,active_slot=NULL,finished_at_ms=?,updated_at_ms=?
+                   WHERE id=?""",
+                (status, phase, detail, summary[:12000], error_code, now, now, execution_id),
+            )
+
+    def _mark_needs_owner(
+        self,
+        *,
+        execution_id: str,
+        detail: str,
+        error_code: str,
+        summary: str = "",
+    ) -> None:
+        self._mark_execution_terminal(
+            execution_id=execution_id,
+            status="needs_owner",
+            phase="needs_owner",
+            detail=detail,
+            summary=summary,
+            error_code=error_code,
+        )
+
+    async def _dispatch_stage(
+        self,
+        *,
+        execution: dict[str, Any],
+        stage: dict[str, Any],
+        prompt: str,
+        access: str,
+        thread_id: str | None = None,
+    ) -> None:
+        dispatch_key = str(stage["dispatch_key"])
+        model = str(stage["model"])
+        effort = str(stage["reasoning_effort"])
+        keyed_prompt = self._dispatch_prompt(dispatch_key, prompt)
+        task_id = thread_id or str(stage.get("devcoveer_task_id") or "") or None
+        try:
+            if stage["dispatch_kind"] == "start":
+                result = await self.devcoveer.start_codex_task(
+                    project=str(execution["project_hint"]),
+                    prompt=keyed_prompt,
+                    model=model,
+                    reasoning_effort=effort,
+                )
+                task_id = str(
+                    result.get("taskId")
+                    or result.get("taskReference")
+                    or result.get("threadId")
+                    or ""
+                ).strip()
+                if not task_id:
+                    raise DevCoveerError("DevCoveer did not return a task reference")
+            else:
+                if not task_id:
+                    raise DevCoveerError("Continuation thread is unavailable")
+                await self.devcoveer.continue_codex_task(
+                    task_id,
+                    project=str(execution["project_hint"]),
+                    prompt=keyed_prompt,
+                    access=access,
+                    model=model,
+                    reasoning_effort=effort,
+                )
+        except DevCoveerUnknownOutcome:
+            now = _now_ms()
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE task_execution_stages
+                       SET status='dispatch_unknown',updated_at_ms=? WHERE id=?""",
+                    (now, stage["id"]),
+                )
+                self.store.db.execute(
+                    """UPDATE task_executions
+                       SET status='dispatch_unknown',phase='reconciling',
+                           phase_detail='Сверяю неизвестный результат запуска',
+                           updated_at_ms=? WHERE id=?""",
+                    (now, execution["id"]),
+                )
+            return
+        except DevCoveerError as exc:
+            self._finish_stage_terminal(
+                stage_id=str(stage["id"]),
+                status="failed",
+                summary=str(exc),
+                token_usage=None,
+            )
+            self._mark_execution_terminal(
+                execution_id=str(execution["id"]),
+                status="failed",
+                phase="failed",
+                detail="DevCoveer не подтвердил запуск стадии",
+                summary=str(exc),
+                error_code="DEVCOVEER_DISPATCH_FAILED",
+            )
+            return
+
+        now = _now_ms()
+        phase, detail = self._phase_for_stage(str(stage["stage"]), int(stage["cycle"]))
+        with self.store._lock:
+            self.store.db.execute(
+                """UPDATE task_execution_stages
+                   SET status='running',devcoveer_task_id=?,started_at_ms=COALESCE(started_at_ms,?),
+                       updated_at_ms=? WHERE id=?""",
+                (task_id, now, now, stage["id"]),
+            )
+            quality_task = task_id if stage["stage"] == "design" else execution.get("quality_task_id")
+            implementation_task = (
+                task_id if stage["stage"] == "implementation" else execution.get("implementation_task_id")
+            )
+            self.store.db.execute(
+                """UPDATE task_executions
+                   SET status='running',phase=?,phase_detail=?,
+                       devcoveer_task_id=?,quality_task_id=COALESCE(?,quality_task_id),
+                       implementation_task_id=COALESCE(?,implementation_task_id),
+                       started_at_ms=COALESCE(started_at_ms,?),updated_at_ms=?
+                   WHERE id=?""",
+                (
+                    phase,
+                    detail,
+                    task_id,
+                    quality_task,
+                    implementation_task,
+                    now,
+                    now,
+                    execution["id"],
+                ),
+            )
+
+    async def _reconcile_dispatch(
+        self,
+        execution: dict[str, Any],
+        stage: dict[str, Any],
+    ) -> None:
+        now = _now_ms()
+        age_ms = max(0, now - int(stage.get("updated_at_ms") or stage.get("created_at_ms") or now))
+        if stage["status"] == "dispatching" and age_ms < 60_000:
+            return
+        if stage["status"] == "dispatching":
+            with self.store._lock:
+                self.store.db.execute(
+                    "UPDATE task_execution_stages SET status='dispatch_unknown',updated_at_ms=? WHERE id=?",
+                    (now, stage["id"]),
+                )
+            stage["status"] = "dispatch_unknown"
+
+        if stage["dispatch_kind"] == "start":
+            try:
+                found = await self.devcoveer.list_tasks(
+                    project=str(execution["project_hint"]),
+                    search=str(stage["dispatch_key"]),
+                    limit=10,
+                )
+            except DevCoveerError:
+                return
+            matches = [
+                item for item in found.get("tasks", [])
+                if isinstance(item, dict)
+                and str(stage["dispatch_key"]) in (
+                    str(item.get("name") or "") + "\n" + str(item.get("preview") or "")
+                )
+            ]
+            if len(matches) == 1:
+                task_id = str(
+                    matches[0].get("taskId")
+                    or matches[0].get("taskReference")
+                    or matches[0].get("threadId")
+                    or ""
+                ).strip()
+                if task_id:
+                    now = _now_ms()
+                    phase, detail = self._phase_for_stage(str(stage["stage"]), int(stage["cycle"]))
+                    with self.store._lock:
+                        self.store.db.execute(
+                            """UPDATE task_execution_stages
+                               SET status='running',devcoveer_task_id=?,updated_at_ms=? WHERE id=?""",
+                            (task_id, now, stage["id"]),
+                        )
+                        fields = []
+                        params: list[Any] = []
+                        if stage["stage"] == "design":
+                            fields.append("quality_task_id=?")
+                            params.append(task_id)
+                        if stage["stage"] == "implementation":
+                            fields.append("implementation_task_id=?")
+                            params.append(task_id)
+                        extra = ("," + ",".join(fields)) if fields else ""
+                        self.store.db.execute(
+                            f"""UPDATE task_executions
+                                SET status='running',phase=?,phase_detail=?,
+                                    devcoveer_task_id=?{extra},updated_at_ms=?
+                                WHERE id=?""",
+                            (phase, detail, task_id, *params, now, execution["id"]),
+                        )
+                    return
+            if len(matches) > 1:
+                self._mark_needs_owner(
+                    execution_id=str(execution["id"]),
+                    detail="DevCoveer вернул несколько запусков для одного dispatch key",
+                    error_code="DEVCOVEER_DUPLICATE_DISPATCH",
+                )
+                return
+        else:
+            task_id = str(stage.get("devcoveer_task_id") or "")
+            if task_id:
+                try:
+                    result = await self.devcoveer.read_task(
+                        task_id,
+                        project=str(execution["project_hint"]),
+                        detail="summary",
+                    )
+                except DevCoveerError:
+                    return
+                latest = result.get("latestTurn") if isinstance(result.get("latestTurn"), dict) else {}
+                started = latest.get("startedAt")
+                started_ms = int(started * 1000) if isinstance(started, (int, float)) else 0
+                baseline = int(stage.get("started_at_ms") or stage.get("created_at_ms") or 0)
+                if started_ms >= baseline - 5_000:
+                    with self.store._lock:
+                        self.store.db.execute(
+                            "UPDATE task_execution_stages SET status='running',updated_at_ms=? WHERE id=?",
+                            (now, stage["id"]),
+                        )
+                        self.store.db.execute(
+                            "UPDATE task_executions SET status='running',updated_at_ms=? WHERE id=?",
+                            (now, execution["id"]),
+                        )
+                    return
+
+        if age_ms >= 180_000:
+            self._mark_needs_owner(
+                execution_id=str(execution["id"]),
+                detail="Не удалось однозначно сверить неизвестный результат dispatch",
+                error_code="DEVCOVEER_DISPATCH_UNKNOWN",
+            )
+
+    async def _advance_transition(
+        self,
+        execution: dict[str, Any],
+        stage: dict[str, Any],
+    ) -> None:
+        stage_name = str(stage["stage"])
+        cycle = int(stage.get("cycle") or 0)
+        summary = str(stage.get("summary") or "")
+        verdict = str(stage.get("review_verdict") or "") or None
+        implementation_model, implementation_effort = str(execution["model_profile"]).rsplit(":", 1)
+        spec_path = str(execution.get("spec_path") or "")
+
+        if stage_name == "acceptance":
+            acceptance = self._acceptance_verdict(summary)
+            if acceptance == "accepted":
+                self._complete_stage(str(stage["id"]))
+                now = _now_ms()
+                with self.store._lock:
+                    self.store.db.execute(
+                        """UPDATE task_executions
+                           SET status='completed',phase='ready',
+                               phase_detail='Готово, поставлено и независимо принято',
+                               result_summary=?,error_code=NULL,active_slot=NULL,
+                               finished_at_ms=?,updated_at_ms=? WHERE id=?""",
+                        (summary[:12000], now, now, execution["id"]),
+                    )
+                    for task_id in json.loads(execution["task_ids_json"]):
+                        self.store.db.execute(
+                            "UPDATE tasks SET state='done',updated_at_ms=? WHERE id=?",
+                            (now, task_id),
+                        )
+                return
+            self._complete_stage(str(stage["id"]))
+            self._mark_needs_owner(
+                execution_id=str(execution["id"]),
+                detail="Финальная приёмка поставки не прошла",
+                error_code="DELIVERY_ACCEPTANCE_FAILED",
+                summary=summary,
+            )
+            return
+
+        next_stage = ""
+        next_cycle = cycle
+        next_model = ""
+        next_effort = ""
+        next_prompt = ""
+        dispatch_kind = "continue"
+        access = "read"
+        thread_id: str | None = None
+
+        if stage_name == "design":
+            next_stage = "implementation"
+            next_cycle = 0
+            next_model, next_effort = implementation_model, implementation_effort
+            next_prompt = self._implementation_prompt(
+                self._project_name(
+                    str(execution["actor_id"]),
+                    str(execution["workspace_id"]),
+                    str(execution["project_id"]),
+                ),
+                spec_path,
+            )
+            dispatch_kind = "start"
+            access = "write"
+        elif stage_name in {"implementation", "rework"}:
+            next_stage = "review"
+            next_cycle = 1 if stage_name == "implementation" else cycle
+            next_model, next_effort = QUALITY_MODEL, QUALITY_EFFORT
+            next_prompt = self._review_prompt(spec_path, next_cycle)
+            thread_id = str(execution.get("quality_task_id") or "") or None
+            access = "read"
+        elif stage_name == "review":
+            if verdict == "accepted":
+                next_stage = "delivery"
+                next_model, next_effort = implementation_model, implementation_effort
+                next_prompt = self._delivery_prompt(spec_path)
+                thread_id = str(execution.get("implementation_task_id") or "") or None
+                access = "write"
+            elif verdict == "rework_required":
+                if cycle >= MAX_REWORK_CYCLES:
+                    self._complete_stage(str(stage["id"]))
+                    self._mark_needs_owner(
+                        execution_id=str(execution["id"]),
+                        detail="После допустимых циклов ревью остались существенные замечания",
+                        error_code="REVIEW_REWORK_LIMIT",
+                        summary=summary,
+                    )
+                    return
+                next_stage = "rework"
+                next_cycle = cycle + 1
+                next_model, next_effort = implementation_model, implementation_effort
+                next_prompt = self._rework_prompt(spec_path, summary, next_cycle)
+                thread_id = str(execution.get("implementation_task_id") or "") or None
+                access = "write"
+            else:
+                self._complete_stage(str(stage["id"]))
+                self._mark_needs_owner(
+                    execution_id=str(execution["id"]),
+                    detail="Ревью завершилось без однозначного финального verdict",
+                    error_code="REVIEW_VERDICT_MISSING",
+                    summary=summary,
+                )
+                return
+        elif stage_name == "delivery":
+            next_stage = "acceptance"
+            next_model, next_effort = QUALITY_MODEL, QUALITY_EFFORT
+            next_prompt = self._acceptance_prompt(spec_path)
+            thread_id = str(execution.get("quality_task_id") or "") or None
+            access = "read"
+        else:
+            self._mark_needs_owner(
+                execution_id=str(execution["id"]),
+                detail="Неизвестная стадия execution",
+                error_code="DEVELOPMENT_STAGE_INVALID",
+                summary=summary,
+            )
+            return
+
+        try:
+            remaining = await self._require_stage_capacity(
+                actor_id=str(execution["actor_id"]),
+                workspace_id=str(execution["workspace_id"]),
+                model=next_model,
+                reasoning_effort=next_effort,
+            )
+        except StoreError as exc:
+            if exc.code == "CODEX_CAPACITY_RESERVED":
+                now = _now_ms()
+                with self.store._lock:
+                    self.store.db.execute(
+                        """UPDATE task_execution_stages
+                           SET status='waiting_capacity',transition_claimed_at_ms=NULL,
+                               updated_at_ms=? WHERE id=?""",
+                        (now, stage["id"]),
+                    )
+                    self.store.db.execute(
+                        """UPDATE task_executions
+                           SET status='waiting_capacity',phase='capacity_wait',
+                               phase_detail='Жду доступную Codex capacity выше резерва 10%',
+                               error_code=NULL,updated_at_ms=? WHERE id=?""",
+                        (now, execution["id"]),
+                    )
+                return
+            self._complete_stage(str(stage["id"]))
+            self._mark_needs_owner(
+                execution_id=str(execution["id"]),
+                detail="Следующая стадия требует недоступную модель/режим",
+                error_code=exc.code,
+                summary=summary,
+            )
+            return
+
+        next_row = self._record_stage(
+            execution_id=str(execution["id"]),
+            stage=next_stage,
+            cycle=next_cycle,
+            model=next_model,
+            reasoning_effort=next_effort,
+            dispatch_kind=dispatch_kind,
+            devcoveer_task_id=thread_id,
+            status="dispatching",
+        )
+        self._complete_stage(str(stage["id"]))
+        now = _now_ms()
+        with self.store._lock:
+            self.store.db.execute(
+                """UPDATE task_executions
+                   SET status='running',phase='dispatching',
+                       phase_detail=?,quota_remaining_percent=?,
+                       result_summary=?,error_code=NULL,updated_at_ms=?
+                   WHERE id=?""",
+                (
+                    f"Запускается стадия {next_stage}",
+                    remaining,
+                    summary[:12000],
+                    now,
+                    execution["id"],
+                ),
+            )
+        execution = dict(
+            self._execution_row(
+                actor_id=str(execution["actor_id"]),
+                workspace_id=str(execution["workspace_id"]),
+                execution_id=str(execution["id"]),
+            )
+        )
+        await self._dispatch_stage(
+            execution=execution,
+            stage=next_row,
+            prompt=next_prompt,
+            access=access,
+            thread_id=thread_id,
+        )
+
+    async def _sync_execution(self, execution: dict[str, Any]) -> None:
+        if str(execution.get("status")) not in ACTIVE_EXECUTION_STATES:
+            return
+        stage = self._active_stage(str(execution["id"]))
+        if stage is None:
+            self._mark_needs_owner(
+                execution_id=str(execution["id"]),
+                detail="Не найден активный stage; execution сохранён для ручной сверки",
+                error_code="DEVELOPMENT_STAGE_MISSING",
+            )
+            return
+
+        if stage["status"] in {"dispatching", "dispatch_unknown"}:
+            await self._reconcile_dispatch(execution, stage)
+            return
+        if stage["status"] in {"transitioning", "waiting_capacity"}:
+            await self._advance_transition(execution, stage)
+            return
+
+        task_id = str(stage.get("devcoveer_task_id") or "")
+        if not task_id:
+            self._mark_needs_owner(
+                execution_id=str(execution["id"]),
+                detail="Stage не содержит DevCoveer task reference",
+                error_code="DEVELOPMENT_STAGE_MISSING",
+            )
+            return
+        try:
+            result = await self.devcoveer.read_task(
+                task_id,
+                project=str(execution["project_hint"]),
+                detail="summary",
+            )
+        except DevCoveerError:
+            now = _now_ms()
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE task_executions
+                       SET phase_detail='Статус DevCoveer временно недоступен; повторю сверку',
+                           updated_at_ms=? WHERE id=?""",
+                    (now, execution["id"]),
+                )
+            return
+
+        turn_status = self._map_task_status(
+            result.get("status")
+            or result.get("executionStatus")
+            or (result.get("task") or {}).get("status")
+        )
+        latest = result.get("latestTurn") if isinstance(result.get("latestTurn"), dict) else {}
+        summary = str(
+            result.get("finalResponse")
+            or latest.get("finalResponse")
+            or result.get("content")
+            or ""
+        ).strip()[:12000]
+        token_usage = self._token_usage(result)
+
+        if turn_status == "running":
+            phase, detail = self._phase_for_stage(
+                str(stage["stage"]),
+                int(stage.get("cycle") or 0),
+                result,
+            )
+            now = _now_ms()
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE task_executions
+                       SET status='running',phase=?,phase_detail=?,updated_at_ms=?
+                       WHERE id=?""",
+                    (phase, detail, now, execution["id"]),
+                )
+            return
+
+        if turn_status in {"failed", "cancelled"}:
+            self._finish_stage_terminal(
+                stage_id=str(stage["id"]),
+                status=turn_status,
+                summary=summary,
+                token_usage=token_usage,
+            )
+            self._mark_execution_terminal(
+                execution_id=str(execution["id"]),
+                status=turn_status,
+                phase=turn_status,
+                detail="Стадия разработки завершилась ошибкой"
+                if turn_status == "failed" else "Стадия разработки отменена",
+                summary=summary,
+                error_code="DEVCOVEER_TASK_FAILED"
+                if turn_status == "failed" else "DEVCOVEER_TASK_CANCELLED",
+            )
+            return
+
+        verdict = None
+        if stage["stage"] == "review":
+            verdict = self._review_verdict(summary)
+        elif stage["stage"] == "acceptance":
+            verdict = self._acceptance_verdict(summary)
+        if not self._claim_stage_completion(
+            stage_id=str(stage["id"]),
+            summary=summary,
+            review_verdict=verdict,
+            token_usage=token_usage,
+        ):
+            return
+        fresh_execution = dict(
+            self._execution_row(
+                actor_id=str(execution["actor_id"]),
+                workspace_id=str(execution["workspace_id"]),
+                execution_id=str(execution["id"]),
+            )
+        )
+        fresh_stage = self._stage_row(str(stage["id"]))
+        await self._advance_transition(fresh_execution, fresh_stage)
+
+    async def start(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        task_ids: list[str],
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+        request_key: str | None = None,
+    ) -> dict[str, Any]:
+        self._authorize_owner(actor_id, workspace_id)
+        clean_request_key = str(request_key or "").strip()[:160] or None
+        if clean_request_key:
+            with self.store._lock:
+                existing = self.store.db.execute(
+                    """SELECT id FROM task_executions
+                       WHERE actor_id=? AND request_key=?""",
+                    (actor_id, clean_request_key),
+                ).fetchone()
+            if existing:
+                return await self.status(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    execution_id=str(existing["id"]),
+                    sync=False,
+                )
+
+        tasks, project_id = self._selected_tasks(
+            actor_id=actor_id,
+            workspace_id=workspace_id,
+            task_ids=task_ids,
+        )
+        status = await self.codex_status(actor_id=actor_id, workspace_id=workspace_id)
+        remaining = status.get("remaining_percent")
+        profile = status.get("profile") or {}
+        if (
+            status.get("eligible") is not True
+            or not isinstance(remaining, (int, float))
+            or float(remaining) <= 10.0
+        ):
+            raise StoreError(
+                "CODEX_CAPACITY_RESERVED",
+                "Native Codex capacity is unavailable or at the 10% reserve",
+            )
+
+        available = {
+            str(item["id"]): item
+            for item in status.get("models", [])
+            if isinstance(item, dict)
+            and isinstance(item.get("id"), str)
+            and item.get("availability") != "eol"
+        }
+        selected_model = str(model or "").strip()
+        selected_effort = str(reasoning_effort or "").strip()
+        if not selected_model and profile.get("catalog_available") is True:
+            selected_model = str(profile.get("model") or "").strip()
+            selected_effort = selected_effort or str(profile.get("reasoning_effort") or "").strip()
+        if not selected_model:
+            return {
+                "status": "model_selection_required",
+                "remaining_percent": float(remaining),
+                "models": list(available.values()),
+                "profile": profile,
+            }
+        record = available.get(selected_model)
+        if record is None:
+            raise StoreError("CODEX_MODEL_UNAVAILABLE", "Requested native Codex model is unavailable")
+        efforts = {str(value) for value in record.get("reasoning_efforts") or []}
+        if not selected_effort:
+            selected_effort = str(record.get("default_reasoning_effort") or "").strip()
+        if selected_effort not in efforts:
+            raise StoreError(
+                "CODEX_REASONING_UNAVAILABLE",
+                "Requested reasoning effort is unavailable for this model",
+            )
+        quality_record = available.get(QUALITY_MODEL)
+        quality_efforts = {
+            str(value) for value in (quality_record or {}).get("reasoning_efforts") or []
+        }
+        if quality_record is None or QUALITY_EFFORT not in quality_efforts:
+            raise StoreError(
+                "QUALITY_MODEL_UNAVAILABLE",
+                f"{QUALITY_MODEL}:{QUALITY_EFFORT} is required for design/review",
+            )
+
+        project_name = self._project_name(actor_id, workspace_id, project_id)
+        project_hint, repository_full_name = self._project_binding(
+            actor_id,
+            workspace_id,
+            project_id,
+        )
+        now = _now_ms()
+        execution_id = "devrun_" + uuid.uuid4().hex
+        spec_path = f"docs/prompts/owner-development-{execution_id}.md"
+        prompt = self._design_prompt(project_name, tasks, spec_path)
+        task_ids_json = json.dumps([item["id"] for item in tasks], separators=(",", ":"))
+        try:
+            with self.store._lock:
+                self.store.db.execute(
+                    """INSERT INTO task_executions(
+                           id,actor_id,workspace_id,project_id,task_ids_json,project_hint,
+                           provider,model_profile,prompt,prompt_sha256,status,phase,phase_detail,
+                           quota_remaining_percent,result_summary,error_code,
+                           created_at_ms,updated_at_ms,started_at_ms,finished_at_ms,
+                           review_cycle,spec_path,active_slot,repository_full_name,request_key
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,'queued','Ожидает quality design',
+                                ?,?,?, ?,?,?,NULL,0,?,1,?,?)""",
+                    (
+                        execution_id,
+                        actor_id,
+                        workspace_id,
+                        project_id,
+                        task_ids_json,
+                        project_hint,
+                        "codex",
+                        selected_model + ":" + selected_effort,
+                        prompt,
+                        hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+                        "starting",
+                        float(remaining),
+                        "",
+                        None,
+                        now,
+                        now,
+                        now,
+                        spec_path,
+                        repository_full_name,
+                        clean_request_key,
+                    ),
+                )
+                for task in tasks:
+                    if task.get("state") not in {"accepted", "done"}:
+                        self.store.db.execute(
+                            "UPDATE tasks SET state='accepted',updated_at_ms=? WHERE id=?",
+                            (now, task["id"]),
+                        )
+        except sqlite3.IntegrityError as exc:
+            raise StoreError(
+                "DEVELOPMENT_EXECUTION_ACTIVE",
+                "Another owner development execution is already active",
+            ) from exc
+
+        stage = self._record_stage(
+            execution_id=execution_id,
+            stage="design",
+            cycle=0,
+            model=QUALITY_MODEL,
+            reasoning_effort=QUALITY_EFFORT,
+            dispatch_kind="start",
+            status="dispatching",
+        )
+        execution = dict(
+            self._execution_row(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                execution_id=execution_id,
+            )
+        )
+        await self._dispatch_stage(
+            execution=execution,
+            stage=stage,
+            prompt=prompt,
+            access="write",
+        )
+        return await self.status(
+            actor_id=actor_id,
+            workspace_id=workspace_id,
+            execution_id=execution_id,
+            sync=False,
+        )
+
     async def status(
         self,
         *,
@@ -998,391 +1641,56 @@ Before the verdict, list the concrete evidence checked and any missing/failed it
                 workspace_id=workspace_id,
                 execution_id=execution_id,
             )
-
         item = dict(row)
-        if not sync or item.get("status") not in ACTIVE_EXECUTION_STATES:
-            public = self._execution_public(row)
-            public["update_check_recommended"] = public["status"] == "completed"
-            return {"execution": public}
-
-        stage = self._active_stage(str(item["id"]))
-        if stage is None:
-            now = _now_ms()
-            with self.store._lock:
-                self.store.db.execute(
-                    """UPDATE task_executions
-                       SET status='blocked',phase='blocked',
-                           phase_detail='Нет активной стадии исполнения',
-                           error_code='DEVELOPMENT_STAGE_MISSING',
-                           finished_at_ms=?,updated_at_ms=?
-                       WHERE id=?""",
-                    (now, now, item["id"]),
-                )
-            row = self._execution_row(
-                actor_id=actor_id,
-                workspace_id=workspace_id,
-                execution_id=item["id"],
-            )
-            public = self._execution_public(row)
-            public["update_check_recommended"] = False
-            return {"execution": public}
-
-        result = await self.devcoveer.read_task(
-            str(stage["devcoveer_task_id"]),
-            project=str(item["project_hint"]),
-            detail="summary",
-        )
-        turn_status = self._map_task_status(
-            result.get("status")
-            or result.get("executionStatus")
-            or (result.get("task") or {}).get("status")
-        )
-        latest = result.get("latestTurn") if isinstance(result.get("latestTurn"), dict) else {}
-        summary = str(
-            result.get("finalResponse")
-            or latest.get("finalResponse")
-            or result.get("content")
-            or ""
-        ).strip()[:12000]
-        token_usage = self._token_usage(result)
-
-        if turn_status == "running":
-            runtime_phase, runtime_detail = self._phase_from_result(result, "running")
-            logical = str(stage["stage"])
-            if logical == "design":
-                phase, detail = "designing", "Сильная модель проектирует задачу и DoD"
-            elif logical == "review":
-                phase, detail = "reviewing", f"Сильная модель проводит ревью, цикл {stage['cycle']}"
-            elif logical == "rework":
-                if runtime_phase in {"testing", "ci"}:
-                    phase, detail = runtime_phase, runtime_detail
-                else:
-                    phase, detail = "reworking", f"Разработчик исправляет замечания ревью, цикл {stage['cycle']}"
-            elif logical == "delivery":
-                if runtime_phase in {"ci", "publishing", "releasing", "deploying"}:
-                    phase, detail = runtime_phase, runtime_detail
-                else:
-                    phase, detail = "delivering", "Принятая реализация публикуется и проверяется"
-            else:
-                phase, detail = runtime_phase, runtime_detail
-                if phase in {"planning", "preparing"}:
-                    phase, detail = "implementing", "Разработчик готовит реализацию"
-            now = _now_ms()
-            with self.store._lock:
-                self.store.db.execute(
-                    """UPDATE task_executions
-                       SET status='running',phase=?,phase_detail=?,
-                           updated_at_ms=? WHERE id=?""",
-                    (phase, detail, now, item["id"]),
-                )
-            row = self._execution_row(
-                actor_id=actor_id,
-                workspace_id=workspace_id,
-                execution_id=item["id"],
-            )
-            public = self._execution_public(row)
-            public["update_check_recommended"] = False
-            return {"execution": public}
-
-        verdict = self._review_verdict(summary) if stage["stage"] == "review" else None
-        self._finish_stage(
-            stage_id=str(stage["id"]),
-            status=turn_status,
-            summary=summary,
-            review_verdict=verdict,
-            token_usage=token_usage,
-        )
-
-        now = _now_ms()
-        if turn_status in {"failed", "cancelled"}:
-            with self.store._lock:
-                self.store.db.execute(
-                    """UPDATE task_executions
-                       SET status=?,phase=?,phase_detail=?,result_summary=?,
-                           error_code=?,finished_at_ms=?,updated_at_ms=?
-                       WHERE id=?""",
-                    (
-                        turn_status,
-                        turn_status,
-                        "Стадия разработки завершилась ошибкой"
-                        if turn_status == "failed"
-                        else "Стадия разработки отменена",
-                        summary,
-                        "DEVCOVEER_TASK_FAILED" if turn_status == "failed" else "DEVCOVEER_TASK_CANCELLED",
-                        now,
-                        now,
-                        item["id"],
-                    ),
-                )
-            row = self._execution_row(
-                actor_id=actor_id,
-                workspace_id=workspace_id,
-                execution_id=item["id"],
-            )
-            public = self._execution_public(row)
-            public["update_check_recommended"] = False
-            return {"execution": public}
-
-        implementation_model, implementation_effort = str(item["model_profile"]).rsplit(":", 1)
-        spec_path = str(item.get("spec_path") or "")
-        cycle = int(stage.get("cycle") or 0)
-
-        try:
-            if stage["stage"] == "design":
-                remaining = await self._require_stage_capacity(
-                    actor_id=actor_id,
-                    workspace_id=workspace_id,
-                    model=implementation_model,
-                    reasoning_effort=implementation_effort,
-                )
-                started = await self.devcoveer.start_codex_task(
-                    project=str(item["project_hint"]),
-                    prompt=self._implementation_prompt(
-                        self._project_name(actor_id, workspace_id, str(item["project_id"])),
-                        spec_path,
-                    ),
-                    model=implementation_model,
-                    reasoning_effort=implementation_effort,
-                )
-                implementation_task_id = str(
-                    started.get("taskId") or started.get("taskReference") or ""
-                ).strip()
-                if not implementation_task_id:
-                    raise StoreError(
-                        "DEVCOVEER_INVALID_RESPONSE",
-                        "DevCoveer did not return an implementation task id",
-                    )
-                self._record_stage(
-                    execution_id=str(item["id"]),
-                    stage="implementation",
-                    cycle=0,
-                    model=implementation_model,
-                    reasoning_effort=implementation_effort,
-                    devcoveer_task_id=implementation_task_id,
-                )
-                with self.store._lock:
-                    self.store.db.execute(
-                        """UPDATE task_executions
-                           SET status='running',phase='implementing',
-                               phase_detail='Разработчик реализует принятую постановку',
-                               implementation_task_id=?,devcoveer_task_id=?,
-                               quota_remaining_percent=?,result_summary=?,
-                               updated_at_ms=? WHERE id=?""",
-                        (
-                            implementation_task_id,
-                            implementation_task_id,
-                            remaining,
-                            summary,
-                            now,
-                            item["id"],
-                        ),
-                    )
-
-            elif stage["stage"] in {"implementation", "rework"}:
-                remaining = await self._require_stage_capacity(
-                    actor_id=actor_id,
-                    workspace_id=workspace_id,
-                    model=QUALITY_MODEL,
-                    reasoning_effort=QUALITY_EFFORT,
-                )
-                quality_task_id = str(item.get("quality_task_id") or "").strip()
-                if not quality_task_id:
-                    raise StoreError("DEVELOPMENT_STAGE_MISSING", "Quality thread is unavailable")
-                await self.devcoveer.continue_codex_task(
-                    quality_task_id,
-                    project=str(item["project_hint"]),
-                    prompt=self._review_prompt(spec_path, cycle),
-                    access="read",
-                    model=QUALITY_MODEL,
-                    reasoning_effort=QUALITY_EFFORT,
-                )
-                self._record_stage(
-                    execution_id=str(item["id"]),
-                    stage="review",
-                    cycle=cycle,
-                    model=QUALITY_MODEL,
-                    reasoning_effort=QUALITY_EFFORT,
-                    devcoveer_task_id=quality_task_id,
-                )
-                with self.store._lock:
-                    self.store.db.execute(
-                        """UPDATE task_executions
-                           SET status='running',phase='reviewing',
-                               phase_detail=?,devcoveer_task_id=?,
-                               quota_remaining_percent=?,result_summary=?,
-                               updated_at_ms=? WHERE id=?""",
-                        (
-                            f"Сильная модель принимает реализацию, цикл {cycle}",
-                            quality_task_id,
-                            remaining,
-                            summary,
-                            now,
-                            item["id"],
-                        ),
-                    )
-
-            elif stage["stage"] == "review":
-                if verdict == "accepted":
-                    remaining = await self._require_stage_capacity(
+        if sync and item.get("status") in ACTIVE_EXECUTION_STATES:
+            async with self._advance_lock:
+                fresh = dict(
+                    self._execution_row(
                         actor_id=actor_id,
                         workspace_id=workspace_id,
-                        model=implementation_model,
-                        reasoning_effort=implementation_effort,
-                    )
-                    implementation_task_id = str(item.get("implementation_task_id") or "").strip()
-                    if not implementation_task_id:
-                        raise StoreError("DEVELOPMENT_STAGE_MISSING", "Implementation thread is unavailable")
-                    await self.devcoveer.continue_codex_task(
-                        implementation_task_id,
-                        project=str(item["project_hint"]),
-                        prompt=self._delivery_prompt(spec_path),
-                        access="write",
-                        model=implementation_model,
-                        reasoning_effort=implementation_effort,
-                    )
-                    self._record_stage(
                         execution_id=str(item["id"]),
-                        stage="delivery",
-                        cycle=cycle,
-                        model=implementation_model,
-                        reasoning_effort=implementation_effort,
-                        devcoveer_task_id=implementation_task_id,
                     )
-                    with self.store._lock:
-                        self.store.db.execute(
-                            """UPDATE task_executions
-                               SET status='running',phase='delivering',
-                                   phase_detail='Ревью принято; идёт поставка',
-                                   devcoveer_task_id=?,quota_remaining_percent=?,
-                                   result_summary=?,updated_at_ms=? WHERE id=?""",
-                            (
-                                implementation_task_id,
-                                remaining,
-                                summary,
-                                now,
-                                item["id"],
-                            ),
-                        )
-                elif verdict == "rework_required":
-                    if cycle >= MAX_REWORK_CYCLES:
-                        with self.store._lock:
-                            self.store.db.execute(
-                                """UPDATE task_executions
-                                   SET status='blocked',phase='needs_owner',
-                                       phase_detail='После двух циклов ревью остались существенные замечания',
-                                       result_summary=?,error_code='REVIEW_REWORK_LIMIT',
-                                       finished_at_ms=?,updated_at_ms=? WHERE id=?""",
-                                (summary, now, now, item["id"]),
-                            )
-                    else:
-                        next_cycle = cycle + 1
-                        remaining = await self._require_stage_capacity(
-                            actor_id=actor_id,
-                            workspace_id=workspace_id,
-                            model=implementation_model,
-                            reasoning_effort=implementation_effort,
-                        )
-                        implementation_task_id = str(item.get("implementation_task_id") or "").strip()
-                        if not implementation_task_id:
-                            raise StoreError("DEVELOPMENT_STAGE_MISSING", "Implementation thread is unavailable")
-                        await self.devcoveer.continue_codex_task(
-                            implementation_task_id,
-                            project=str(item["project_hint"]),
-                            prompt=self._rework_prompt(spec_path, summary, next_cycle),
-                            access="write",
-                            model=implementation_model,
-                            reasoning_effort=implementation_effort,
-                        )
-                        self._record_stage(
-                            execution_id=str(item["id"]),
-                            stage="rework",
-                            cycle=next_cycle,
-                            model=implementation_model,
-                            reasoning_effort=implementation_effort,
-                            devcoveer_task_id=implementation_task_id,
-                        )
-                        with self.store._lock:
-                            self.store.db.execute(
-                                """UPDATE task_executions
-                                   SET status='running',phase='reworking',
-                                       phase_detail=?,devcoveer_task_id=?,
-                                       quota_remaining_percent=?,review_cycle=?,
-                                       result_summary=?,updated_at_ms=? WHERE id=?""",
-                                (
-                                    f"Исправление замечаний, цикл {next_cycle}",
-                                    implementation_task_id,
-                                    remaining,
-                                    next_cycle,
-                                    summary,
-                                    now,
-                                    item["id"],
-                                ),
-                            )
-                else:
-                    with self.store._lock:
-                        self.store.db.execute(
-                            """UPDATE task_executions
-                               SET status='blocked',phase='needs_owner',
-                                   phase_detail='Ревью завершилось без однозначного verdict',
-                                   result_summary=?,error_code='REVIEW_VERDICT_MISSING',
-                                   finished_at_ms=?,updated_at_ms=? WHERE id=?""",
-                            (summary, now, now, item["id"]),
-                        )
-
-            elif stage["stage"] == "delivery":
-                with self.store._lock:
-                    self.store.db.execute(
-                        """UPDATE task_executions
-                           SET status='completed',phase='ready',
-                               phase_detail='Готово и поставлено',
-                               result_summary=?,error_code=NULL,
-                               finished_at_ms=?,updated_at_ms=? WHERE id=?""",
-                        (summary, now, now, item["id"]),
-                    )
-                    for task_id in json.loads(item["task_ids_json"]):
-                        self.store.db.execute(
-                            "UPDATE tasks SET state='done',updated_at_ms=? WHERE id=?",
-                            (now, task_id),
-                        )
-            else:
-                raise StoreError("DEVELOPMENT_STAGE_INVALID", "Unknown development stage")
-
-        except Exception as exc:
-            now = _now_ms()
-            code = exc.code if isinstance(exc, StoreError) else type(exc).__name__
-            blocked = code in {
-                "CODEX_CAPACITY_RESERVED",
-                "CODEX_MODEL_UNAVAILABLE",
-                "CODEX_REASONING_UNAVAILABLE",
-            }
-            with self.store._lock:
-                self.store.db.execute(
-                    """UPDATE task_executions
-                       SET status=?,phase=?,phase_detail=?,error_code=?,
-                           result_summary=?,finished_at_ms=?,updated_at_ms=?
-                       WHERE id=?""",
-                    (
-                        "blocked" if blocked else "failed",
-                        "capacity_wait" if blocked else "failed",
-                        "Следующая стадия ожидает доступной Codex capacity"
-                        if blocked
-                        else "Не удалось перейти к следующей стадии",
-                        str(code)[:120],
-                        summary,
-                        now,
-                        now,
-                        item["id"],
-                    ),
                 )
-
-        row = self._execution_row(
-            actor_id=actor_id,
-            workspace_id=workspace_id,
-            execution_id=item["id"],
-        )
+                await self._sync_execution(fresh)
+            row = self._execution_row(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                execution_id=str(item["id"]),
+            )
         public = self._execution_public(row)
         public["update_check_recommended"] = public["status"] == "completed"
         return {"execution": public}
+
+    async def start_background(self) -> None:
+        if self._driver_task is not None and not self._driver_task.done():
+            return
+        self._driver_task = asyncio.create_task(
+            self._driver_loop(),
+            name="projects-hub-development-driver",
+        )
+
+    async def _driver_loop(self) -> None:
+        try:
+            while True:
+                with self.store._lock:
+                    rows = self.store.db.execute(
+                        """SELECT * FROM task_executions
+                           WHERE active_slot=1
+                             AND status IN ('starting','running','waiting_capacity','dispatch_unknown')
+                           ORDER BY updated_at_ms"""
+                    ).fetchall()
+                for row in rows:
+                    try:
+                        async with self._advance_lock:
+                            await self._sync_execution(dict(row))
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        # Preserve the durable state and try again on the next pass.
+                        continue
+                await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            return
 
     def list_executions(
         self,
