@@ -55,6 +55,11 @@ def test_dev_login_bootstrap_and_live_routes_are_actor_bound(tmp_path: Path):
         boot = login.json()
         assert len(boot["projects"]) >= 1
 
+        runtime = client.get("/api/runtime")
+        assert runtime.status_code == 200
+        assert runtime.json()["backend_version"] == "0.1.20"
+        assert "release_sha" in runtime.json()["build"]
+
         bootstrap = client.get("/api/bootstrap")
         assert bootstrap.status_code == 200
         workspace_id = bootstrap.json()["workspace"]["id"]
