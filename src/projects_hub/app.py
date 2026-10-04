@@ -861,6 +861,17 @@ def create_app(
                 attempt_id=payload.attempt_id,
             )
         except Exception as exc:
+            code = str(getattr(exc, "code", type(exc).__name__))
+            log.warning(
+                "live start failed",
+                extra={
+                    "event": "live_session",
+                    "conversation_id": conversation_id,
+                    "result": "start_failed",
+                    "code": code,
+                    "exception_type": type(exc).__name__,
+                },
+            )
             raise _error(exc) from exc
         log.info(
             "live started",
