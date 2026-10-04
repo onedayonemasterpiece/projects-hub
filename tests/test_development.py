@@ -290,7 +290,7 @@ async def test_start_fails_closed_when_owner_profile_is_unavailable(tmp_path: Pa
 
 
 @pytest.mark.asyncio
-async def test_owner_runs_multiple_backlog_tasks_with_default_gpt61_and_completes(tmp_path: Path):
+async def test_owner_runs_two_thread_quality_pipeline_to_delivery(tmp_path: Path):
     store, readiness, boot, project = setup(tmp_path)
     fake = FakeDevCoveer()
     try:
@@ -301,27 +301,68 @@ async def test_owner_runs_multiple_backlog_tasks_with_default_gpt61_and_complete
             workspace_id=boot["workspace"]["id"],
             task_ids=[tasks[0]["id"], tasks[1]["id"]],
         )
-        assert execution["execution"]["status"] == "running"
-        assert execution["execution"]["phase"] == "analysis"
-        assert execution["execution"]["task_ids"] == [tasks[0]["id"], tasks[1]["id"]]
+        run_id = execution["execution"]["id"]
+        assert execution["execution"]["phase"] == "designing"
+        assert execution["execution"]["stages"][0]["stage"] == "design"
 
-        started = next(arguments for name, arguments in fake.calls if name == "start")
-        assert started["project"] == "projects-hub"
-        assert started["model"] == "gpt-6.1-sol"
-        assert started["reasoning_effort"] == "medium"
-        assert "backlog" in started["prompt"].lower()
+        starts = [arguments for name, arguments in fake.calls if name == "start"]
+        assert len(starts) == 1
+        assert starts[0]["model"] == "gpt-6-astra"
+        assert starts[0]["reasoning_effort"] == "high"
 
-        synced = await service.status(
+        implementation = await service.status(
             actor_id=boot["actor"]["id"],
             workspace_id=boot["workspace"]["id"],
-            execution_id=execution["execution"]["id"],
+            execution_id=run_id,
             sync=True,
         )
-        assert synced["execution"]["status"] == "completed"
-        assert synced["execution"]["phase"] == "ready"
-        assert synced["execution"]["phase_detail"] == "Готово"
-        assert synced["execution"]["update_check_recommended"] is True
-        assert "released" in synced["execution"]["result_summary"]
+        assert implementation["execution"]["phase"] == "implementing"
+        starts = [arguments for name, arguments in fake.calls if name == "start"]
+        assert len(starts) == 2
+        assert starts[1]["model"] == "gpt-6.1-sol"
+        assert starts[1]["reasoning_effort"] == "medium"
+
+        review = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=run_id,
+            sync=True,
+        )
+        assert review["execution"]["phase"] == "reviewing"
+        quality_continuations = [
+            arguments for name, arguments in fake.calls
+            if name == "continue" and arguments["task"] == fake._quality_task
+        ]
+        assert len(quality_continuations) == 1
+        assert quality_continuations[0]["access"] == "read"
+
+        delivery = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=run_id,
+            sync=True,
+        )
+        assert delivery["execution"]["phase"] == "delivering"
+        implementation_continuations = [
+            arguments for name, arguments in fake.calls
+            if name == "continue" and arguments["task"] == fake._implementation_task
+        ]
+        assert len(implementation_continuations) == 1
+
+        done = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=run_id,
+            sync=True,
+        )
+        assert done["execution"]["status"] == "completed"
+        assert done["execution"]["phase"] == "ready"
+        assert done["execution"]["update_check_recommended"] is True
+        assert [stage["stage"] for stage in done["execution"]["stages"]] == [
+            "design", "implementation", "review", "delivery"
+        ]
+        assert done["execution"]["token_usage_by_model"]["gpt-6-astra"]["totalTokens"] == 150
+        assert done["execution"]["token_usage_by_model"]["gpt-6.1-sol"]["totalTokens"] == 230
 
         current = service.list_backlog(
             actor_id=boot["actor"]["id"],
@@ -334,9 +375,9 @@ async def test_owner_runs_multiple_backlog_tasks_with_default_gpt61_and_complete
 
 
 @pytest.mark.asyncio
-async def test_running_execution_exposes_sanitized_testing_phase(tmp_path: Path):
+async def test_running_implementation_exposes_testing_phase(tmp_path: Path):
     store, readiness, boot, project = setup(tmp_path)
-    fake = FakeDevCoveer(progress_phase="testing", execution_status="running")
+    fake = FakeDevCoveer(hold_implementation=True)
     try:
         service = DevelopmentService(store, readiness, devcoveer=fake)
         task = create_backlog(service, boot, project)[0]
@@ -345,17 +386,71 @@ async def test_running_execution_exposes_sanitized_testing_phase(tmp_path: Path)
             workspace_id=boot["workspace"]["id"],
             task_ids=[task["id"]],
         )
-        synced = await service.status(
+        run_id = execution["execution"]["id"]
+
+        await service.status(
             actor_id=boot["actor"]["id"],
             workspace_id=boot["workspace"]["id"],
-            execution_id=execution["execution"]["id"],
+            execution_id=run_id,
             sync=True,
         )
-        assert synced["execution"]["status"] == "running"
-        assert synced["execution"]["phase"] == "testing"
-        assert synced["execution"]["phase_detail"] == "Идут тесты"
-        read = next(arguments for name, arguments in fake.calls if name == "read")
-        assert read["detail"] == "summary"
+        testing = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=run_id,
+            sync=True,
+        )
+        assert testing["execution"]["status"] == "running"
+        assert testing["execution"]["phase"] == "testing"
+        assert testing["execution"]["phase_detail"] == "Идут тесты"
+        assert testing["execution"]["stages"][-1]["stage"] == "implementation"
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_review_reuses_two_threads_and_reworks_before_delivery(tmp_path: Path):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = FakeDevCoveer(rework_once=True)
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        execution = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        run_id = execution["execution"]["id"]
+
+        phases = []
+        for _ in range(6):
+            current = await service.status(
+                actor_id=boot["actor"]["id"],
+                workspace_id=boot["workspace"]["id"],
+                execution_id=run_id,
+                sync=True,
+            )
+            phases.append(current["execution"]["phase"])
+
+        assert phases == [
+            "implementing",
+            "reviewing",
+            "reworking",
+            "reviewing",
+            "delivering",
+            "ready",
+        ]
+        final = current["execution"]
+        assert final["status"] == "completed"
+        assert [stage["stage"] for stage in final["stages"]] == [
+            "design", "implementation", "review", "rework", "review", "delivery"
+        ]
+        starts = [args for name, args in fake.calls if name == "start"]
+        assert len(starts) == 2
+        assert {item["task"] for name, item in fake.calls if name == "continue"} == {
+            fake._quality_task,
+            fake._implementation_task,
+        }
     finally:
         store.close()
 
