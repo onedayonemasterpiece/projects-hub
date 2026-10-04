@@ -2160,30 +2160,45 @@ class DurableStore:
             ).fetchall()
         rows = list(reversed(rows))
         turns: list[dict[str, str]] = []
+        current_turn: list[dict[str, str]] = []
         active_role: str | None = None
         active_text = ""
 
-        def commit() -> None:
+        def flush_message() -> None:
             nonlocal active_role, active_text
             text = active_text.strip()
             if active_role and text:
                 if len(text) > bounded_chars:
                     text = text[: bounded_chars // 2].rstrip() + " … " + text[-(bounded_chars // 2 - 3):].lstrip()
-                turns.append({"role": active_role, "text": text})
+                current_turn.append({"role": active_role, "text": text})
             active_role = None
             active_text = ""
 
+        def complete_turn() -> None:
+            flush_message()
+            turns.extend(current_turn)
+            current_turn.clear()
+
+        def discard_turn() -> None:
+            nonlocal active_role, active_text
+            active_role = None
+            active_text = ""
+            current_turn.clear()
+
         for row in rows:
             kind = str(row["kind"])
-            if kind in {"turn_complete", "interrupted"}:
-                commit()
+            if kind == "turn_complete":
+                complete_turn()
+                continue
+            if kind == "interrupted":
+                discard_turn()
                 continue
             role = "user" if kind == "input_transcript" else "model"
             fragment = str(row["text"] or "").strip()
             if not fragment:
                 continue
             if role != active_role:
-                commit()
+                flush_message()
                 active_role = role
             if not active_text:
                 active_text = fragment
@@ -2191,7 +2206,9 @@ class DurableStore:
                 active_text = fragment
             elif not active_text.endswith(fragment):
                 active_text = (active_text + " " + fragment).strip()
-        commit()
+        # Do not flush current_turn here. A source/session can stop after user
+        # speech but before provider turn_complete; replaying that unfinished tail
+        # into the next provider session caused fresh greetings to answer stale work.
         return turns[-bounded_turns:]
 
     def create_source(

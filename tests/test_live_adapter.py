@@ -27,6 +27,11 @@ async def test_live_adapter_persists_audio_transcript_and_verified_memory(tmp_pa
             conversation_id=conversation["id"],
         )
         assert initialized["configuration"]["functions"]
+        assert initialized["configuration"]["automatic_activity_detection"] == {
+            "end_of_speech_sensitivity": "END_SENSITIVITY_LOW",
+            "silence_duration_ms": 5000,
+            "prefix_padding_ms": 250,
+        }
         assert initialized["response"]["focus_project_id"] == project_id
 
         session = SimpleNamespace(state=initialized["state"])
@@ -192,7 +197,28 @@ def test_recent_conversation_history_crosses_live_sources(tmp_path: Path):
         assert history == [
             {"role": "user", "text": "Первая просьба"},
             {"role": "model", "text": "Первый ответ"},
-            {"role": "user", "text": "Задача выше"},
+        ]
+    finally:
+        store.close()
+
+
+def test_recent_conversation_history_drops_interrupted_tail(tmp_path: Path):
+    store = DurableStore(tmp_path)
+    try:
+        boot = store.ensure_dev_workspace("History interrupted")
+        actor_id = boot["actor"]["id"]
+        workspace_id = boot["workspace"]["id"]
+        conversation = store.create_conversation(actor_id, workspace_id, boot["projects"][0]["id"])
+        first = store.create_source(actor_id, conversation["id"])
+        store.append_source_event(actor_id, first["id"], "input_transcript", "Готовая просьба")
+        store.append_source_event(actor_id, first["id"], "output_transcript", "Готовый ответ")
+        store.append_source_event(actor_id, first["id"], "turn_complete")
+        second = store.create_source(actor_id, conversation["id"])
+        store.append_source_event(actor_id, second["id"], "input_transcript", "Незавершённый хвост")
+        store.append_source_event(actor_id, second["id"], "interrupted")
+        assert store.recent_conversation_history(actor_id, conversation["id"]) == [
+            {"role": "user", "text": "Готовая просьба"},
+            {"role": "model", "text": "Готовый ответ"},
         ]
     finally:
         store.close()

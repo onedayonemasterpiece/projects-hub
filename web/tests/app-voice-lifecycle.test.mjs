@@ -165,3 +165,9 @@ test("Projects Hub disables provider-transcript voice stop control", async () =>
   assert.match(source, /voiceControl:\s*null/);
   assert.match(source, /suppressCaptureDuringPlayback:\s*true/);
 });
+
+test("Projects Hub uses a long-form speech silence window", async () => {
+  const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  assert.match(source, /speechEndSilenceMs:\s*4000/);
+  assert.match(source, /suppressCaptureDuringPlayback:\s*true/);
+});

@@ -470,6 +470,7 @@ export default function App() {
       transport: "wss",
       voiceControl: null,
       suppressCaptureDuringPlayback: true,
+      speechEndSilenceMs: 4000,
       onState: state => {
         setVoiceState(state);
         if (state === "listening") {
