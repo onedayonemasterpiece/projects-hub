@@ -52,5 +52,25 @@ public class WebOriginPolicyTest {
         assertFalse(policy.isTrustedPageUrl(
                 "https://oauth.yandex.ru/authorize"
         ));
+    }    @Test
+    public void nativeMicrophoneSettingsRequireTrustedCurrentPageAndExactAction() {
+        assertTrue(policy.isTrustedMicrophoneSettingsAction(
+                "https://projects-hub.kenigevents.ru/work",
+                "projectshub://settings/microphone"
+        ));
+        assertFalse(policy.isTrustedMicrophoneSettingsAction(
+                "https://evil.example/",
+                "projectshub://settings/microphone"
+        ));
+        assertFalse(policy.isTrustedMicrophoneSettingsAction(
+                "https://projects-hub.kenigevents.ru/work",
+                "projectshub://settings/calendar"
+        ));
+        assertFalse(policy.isTrustedMicrophoneSettingsAction(
+                "https://projects-hub.kenigevents.ru/work",
+                "projectshub://settings/microphone?next=https://evil.example"
+        ));
     }
+
+
 }
