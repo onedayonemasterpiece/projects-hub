@@ -190,6 +190,7 @@ export const startGitHubManifest = (
   conversationId?: string | null,
 ) =>
   api<{
+    launch_url: string;
     action_url: string;
     manifest: string;
     state: string;
