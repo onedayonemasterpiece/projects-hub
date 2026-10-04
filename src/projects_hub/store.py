@@ -865,6 +865,26 @@ class DurableStore:
             "expires_at_ms": int(expires_at_ms),
         }
 
+    def github_install_state(self, state_hash: str) -> dict[str, Any]:
+        if len(state_hash) != 64:
+            raise StoreError("GITHUB_INSTALL_STATE_INVALID", "GitHub installation state is invalid")
+        now = _now_ms()
+        with self._lock:
+            row = self.db.execute(
+                "SELECT * FROM github_install_states WHERE state_hash=?",
+                (state_hash,),
+            ).fetchone()
+            if (
+                not row
+                or row["consumed_at_ms"] is not None
+                or int(row["expires_at_ms"]) < now
+            ):
+                raise StoreError(
+                    "GITHUB_INSTALL_STATE_INVALID",
+                    "GitHub installation state is invalid or expired",
+                )
+            return dict(row)
+
     def consume_github_install_state(
         self,
         *,
