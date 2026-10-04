@@ -52,6 +52,7 @@ public final class MainActivity extends Activity {
     private Updater updater;
     private DeviceCommandLoop deviceLoop;
     private Updater.AvailableUpdate availableUpdate;
+    private int updateDialogVersionCode = -1;
     private PermissionRequest pendingWebPermission;
     private boolean microphonePermissionInFlight;
     private ApiClient.ClaimedCommand pendingCalendarCommand;
@@ -97,6 +98,7 @@ public final class MainActivity extends Activity {
                 notifier.updateAvailable(
                         UpdatePolicy.displayVersion(update.versionName, update.versionCode)
                 );
+                showUpdateAvailableDialog(update);
             }
 
             @Override
@@ -392,6 +394,24 @@ public final class MainActivity extends Activity {
                 .setTitle("Нужен доступ к микрофону")
                 .setMessage("Projects Hub использует микрофон только когда вы запускаете голосовой разговор.")
                 .setPositiveButton("Открыть настройки", (dialog, which) -> openMicrophoneSettings())
+                .setNegativeButton("Позже", null)
+                .show();
+    }
+
+    private void showUpdateAvailableDialog(Updater.AvailableUpdate update) {
+        if (update == null
+                || update.versionCode <= BuildConfig.VERSION_CODE
+                || updateDialogVersionCode == update.versionCode
+                || isFinishing()
+                || isDestroyed()) {
+            return;
+        }
+        updateDialogVersionCode = update.versionCode;
+        String version = UpdatePolicy.displayVersion(update.versionName, update.versionCode);
+        new AlertDialog.Builder(this)
+                .setTitle("Доступно обновление")
+                .setMessage("Projects Hub " + version + " готов к установке.")
+                .setPositiveButton("Обновить", (dialog, which) -> updater.downloadAndInstall(update))
                 .setNegativeButton("Позже", null)
                 .show();
     }
