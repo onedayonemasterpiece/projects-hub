@@ -501,7 +501,7 @@ export default function App() {
             && now - autoRecoveryAtRef.current > 20_000
           ) {
             autoRecoveryAtRef.current = now;
-            window.setTimeout(() => void recoverLiveConversation(), 1200);
+            window.setTimeout(() => void recoverLiveConversation(), 1800);
           }
         } else if (kind === "connection_error") {
           setNotice("Связь с Live нестабильна. Пытаюсь переподключиться…");
@@ -659,18 +659,37 @@ export default function App() {
     ) {
       return;
     }
-    try {
-      await client.start({
-        url: `/api/live/${current.id}/sessions`,
-        body: liveStartBody(),
-        microphone: true,
-        captureDuringStart: true,
-        authorize: async () => {},
-      });
-      if (client.sessionId) setNotice("Разговор восстановлен.");
-    } catch {
-      setNotice("Не удалось автоматически восстановить Live. Нажмите микрофон, чтобы продолжить.");
+
+    const delays = [1800, 4500, 9000];
+    for (let attempt = 0; attempt < delays.length; attempt += 1) {
+      if (
+        userStoppedVoiceRef.current
+        || !navigator.onLine
+        || client.sessionId
+        || client.starting
+      ) {
+        return;
+      }
+      if (attempt > 0) {
+        await new Promise(resolve => window.setTimeout(resolve, delays[attempt]));
+      }
+      try {
+        await client.start({
+          url: `/api/live/${current.id}/sessions`,
+          body: liveStartBody(),
+          microphone: true,
+          captureDuringStart: true,
+          authorize: async () => {},
+        });
+        if (client.sessionId) {
+          setNotice("Разговор восстановлен.");
+          return;
+        }
+      } catch {
+        // The previous server/provider lease may still be releasing. Retry boundedly.
+      }
     }
+    setNotice("Live не восстановился автоматически. Нажмите микрофон, чтобы продолжить.");
   }
 
   async function toggleVoice() {
