@@ -2173,10 +2173,29 @@ class DurableStore:
             active_role = None
             active_text = ""
 
+        pending_turn: list[dict[str, str]] = []
+
+        def commit_turn() -> None:
+            nonlocal pending_turn
+            commit()
+            if turns:
+                pending_turn.append(turns.pop())
+            turns.extend(pending_turn)
+            pending_turn = []
+
+        def discard_turn() -> None:
+            nonlocal active_role, active_text, pending_turn
+            active_role = None
+            active_text = ""
+            pending_turn = []
+
         for row in rows:
             kind = str(row["kind"])
-            if kind in {"turn_complete", "interrupted"}:
-                commit()
+            if kind == "turn_complete":
+                commit_turn()
+                continue
+            if kind == "interrupted":
+                discard_turn()
                 continue
             role = "user" if kind == "input_transcript" else "model"
             fragment = str(row["text"] or "").strip()
@@ -2184,6 +2203,8 @@ class DurableStore:
                 continue
             if role != active_role:
                 commit()
+                if turns:
+                    pending_turn.append(turns.pop())
                 active_role = role
             if not active_text:
                 active_text = fragment
@@ -2191,7 +2212,10 @@ class DurableStore:
                 active_text = fragment
             elif not active_text.endswith(fragment):
                 active_text = (active_text + " " + fragment).strip()
-        commit()
+        # Deliberately do not commit an unterminated tail. A source/session can
+        # stop after user speech but before the provider acknowledges turn_complete;
+        # replaying that tail into the next provider session makes a fresh greeting
+        # look like permission to answer the stale request.
         return turns[-bounded_turns:]
 
     def create_source(
