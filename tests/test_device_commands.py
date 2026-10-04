@@ -12,6 +12,13 @@ from projects_hub.live_resources import ConversationScope
 from projects_hub.store import DurableStore, StoreError
 
 
+CALENDAR_READ_ARGS = {
+    "starts_at": "2026-10-02T00:00:00+02:00",
+    "ends_at": "2026-10-03T00:00:00+02:00",
+    "limit": 20,
+}
+
+
 CALENDAR_ARGS = {
     "title": "Встреча по проекту",
     "starts_at": "2026-10-02T14:00:00+02:00",
@@ -146,6 +153,7 @@ async def test_live_function_waits_for_same_android_receipt(tmp_path: Path):
         names = {item["name"] for item in initialized["configuration"]["functions"]}
         assert "devices_list_capabilities" in names
         assert "calendar_create_event_on_device" in names
+        assert "calendar_list_events_on_device" in names
 
         session = SimpleNamespace(state=initialized["state"])
         call = {
@@ -259,5 +267,66 @@ async def test_claimed_command_becomes_outcome_unknown_not_retried(tmp_path: Pat
             wait_ms=0,
         )
         assert next_value == {"command": None}
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_calendar_read_command_returns_bounded_device_events(tmp_path: Path):
+    store, _boot, actor, workspace, project, service, registration = setup(tmp_path)
+    try:
+        auth = "Device " + registration["device_token"]
+        updated = service.update_capabilities(
+            authorization=auth,
+            capabilities=["calendar.create_event", "calendar.read_events"],
+        )
+        assert "calendar.read_events" in updated["capabilities"]
+
+        command = service.create_calendar_read_command(
+            actor_id=actor,
+            workspace_id=workspace,
+            project_id=project,
+            command_id="cmd_" + ("b" * 40),
+            args=CALENDAR_READ_ARGS,
+        )
+        claimed = await service.next_command(authorization=auth, wait_ms=0)
+        assert claimed["command"]["capability"] == "calendar.read_events"
+        assert claimed["command"]["payload"]["limit"] == 20
+
+        receipt = service.receipt(
+            authorization=auth,
+            command_id=command["id"],
+            claim_token=claimed["claim_token"],
+            payload_sha256=claimed["command"]["payload_sha256"],
+            status="applied",
+            result={
+                "readback_verified": True,
+                "provider_status": "present",
+                "count": 1,
+                "events": [{
+                    "event_id": "42",
+                    "title": "Встреча",
+                    "starts_at": "2026-10-02T14:00:00+02:00",
+                    "ends_at": "2026-10-02T15:00:00+02:00",
+                    "all_day": False,
+                    "location": "",
+                }],
+            },
+        )
+        assert receipt["status"] == "applied"
+        assert receipt["result"]["events"][0]["title"] == "Встреча"
+
+        with pytest.raises(StoreError) as too_wide:
+            service.create_calendar_read_command(
+                actor_id=actor,
+                workspace_id=workspace,
+                project_id=project,
+                command_id="cmd_" + ("c" * 40),
+                args={
+                    "starts_at": "2026-10-01T00:00:00+02:00",
+                    "ends_at": "2026-11-15T00:00:00+02:00",
+                },
+            )
+        assert too_wide.value.code == "INVALID_ARGUMENT"
     finally:
         store.close()
