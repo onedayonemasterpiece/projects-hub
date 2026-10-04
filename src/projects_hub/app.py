@@ -90,6 +90,10 @@ class DeviceRegister(BaseModel):
     capabilities: list[str] = Field(min_length=1, max_length=16)
 
 
+class DeviceCapabilitiesUpdate(BaseModel):
+    capabilities: list[str] = Field(min_length=1, max_length=16)
+
+
 class TaskStateChange(BaseModel):
     workspace_id: str
     state: Literal["accepted", "done", "snoozed", "rejected"]
@@ -248,6 +252,7 @@ def create_app(
                 store,
                 device_commands=app.state.device_commands,
                 readiness=app.state.readiness,
+                github_connections=app.state.github_connections,
                 regional_knowledge_factory=regional_knowledge_factory,
             )
         return app.state.live_host
@@ -578,6 +583,18 @@ def create_app(
             delivery_id=request.headers.get("x-github-delivery"),
             event_name=request.headers.get("x-github-event"),
         )
+
+    @app.post("/api/device/capabilities")
+    async def update_device_capabilities(
+        payload: DeviceCapabilitiesUpdate,
+        request: Request,
+    ) -> dict[str, Any]:
+        return {
+            "device": app.state.device_commands.update_capabilities(
+                authorization=request.headers.get("authorization"),
+                capabilities=payload.capabilities,
+            )
+        }
 
     @app.post("/api/devices/register")
     async def register_device(

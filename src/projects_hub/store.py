@@ -1712,6 +1712,38 @@ class DurableStore:
                 (now, now, device_id, session_id),
             )
 
+    def update_device_capabilities(
+        self,
+        *,
+        device_id: str,
+        session_id: str,
+        capabilities: list[str],
+    ) -> dict[str, Any]:
+        clean = sorted(set(str(value).strip() for value in capabilities if str(value).strip()))
+        if not clean or len(clean) > 32:
+            raise StoreError("INVALID_ARGUMENT", "Device capabilities are invalid")
+        now = _now_ms()
+        with self._lock:
+            self.db.execute(
+                """UPDATE devices
+                   SET capabilities_json=?,updated_at_ms=?,last_seen_at_ms=?
+                   WHERE id=? AND session_id=? AND state='active'""",
+                (
+                    json.dumps(clean, ensure_ascii=False, separators=(",", ":")),
+                    now,
+                    now,
+                    device_id,
+                    session_id,
+                ),
+            )
+            if self.db.execute("SELECT changes()").fetchone()[0] != 1:
+                raise StoreError("DEVICE_NOT_FOUND", "Device is unavailable")
+            row = self.db.execute(
+                "SELECT * FROM devices WHERE id=?",
+                (device_id,),
+            ).fetchone()
+            return self._device_public(row)
+
     def disable_device(
         self,
         *,

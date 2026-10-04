@@ -115,6 +115,19 @@ def test_android_pairing_then_device_channel_needs_no_browser_cookie(tmp_path: P
             )
 
             client.cookies.clear()
+            refreshed = client.post(
+                "/api/device/capabilities",
+                json={
+                    "capabilities": [
+                        "calendar.create_event",
+                        "calendar.read_events",
+                    ]
+                },
+                headers={"authorization": "Device " + device_token},
+            )
+            assert refreshed.status_code == 200
+            assert "calendar.read_events" in refreshed.json()["device"]["capabilities"]
+
             unauthenticated = client.get(
                 "/api/device/commands/next",
                 params={"wait_ms": 0},

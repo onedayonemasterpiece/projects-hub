@@ -174,6 +174,10 @@ button:focus-visible {
 
 .context-sheet {
   width: min(620px, 100%);
+  max-height: calc(100dvh - 104px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 20px;
   border-radius: 26px;
   background: rgba(20, 20, 23, 0.94);
@@ -373,15 +377,38 @@ button:focus-visible {
   white-space: pre-wrap;
 }
 
+.chat-canvas {
+  position: fixed;
+  z-index: 10;
+  top: 0;
+  right: 0;
+  bottom: calc(148px + env(safe-area-inset-bottom));
+  left: 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
 .chat-thread {
+  pointer-events: auto;
+  width: min(720px, calc(100vw - 24px));
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: max(76px, calc(env(safe-area-inset-top) + 62px)) 2px 8px;
+  scrollbar-width: thin;
+}
+
+.chat-stack {
+  min-height: 100%;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: min(56vh, 560px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 2px 2px 6px;
-  scrollbar-width: thin;
+}
+
+.chat-stack::before {
+  content: "";
+  margin-top: auto;
 }
 
 .chat-row {
@@ -905,6 +932,7 @@ button:focus-visible {
   }
 
   .context-sheet {
+    max-height: calc(100dvh - 76px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
     border-radius: 22px;
     padding: 17px;
   }
@@ -916,6 +944,16 @@ button:focus-visible {
 
   .work-zone {
     inset: 82px 12px 164px;
+  }
+
+  .chat-canvas {
+    top: 0;
+    bottom: calc(128px + env(safe-area-inset-bottom));
+  }
+
+  .chat-thread {
+    width: calc(100vw - 20px);
+    padding-top: max(68px, calc(env(safe-area-inset-top) + 58px));
   }
 
   .work-island {

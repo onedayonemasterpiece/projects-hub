@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import time
@@ -128,6 +129,78 @@ class GitHubAppClient:
                 "GitHub returned invalid JSON",
                 status=response.status_code,
             ) from exc
+
+    async def repository_contents(
+        self,
+        *,
+        token: str,
+        full_name: str,
+        path: str = "",
+        ref: str = "",
+    ) -> dict[str, Any]:
+        owner, separator, repo = str(full_name or "").partition("/")
+        if (
+            not separator
+            or not owner
+            or not repo
+            or "/" in repo
+            or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._" for ch in owner + repo)
+        ):
+            raise GitHubAppError("INVALID_ARGUMENT", "Repository name is invalid")
+        clean_path = str(path or "").strip().strip("/")
+        if clean_path:
+            parts = clean_path.split("/")
+            if any(part in {"", ".", ".."} for part in parts) or "\\" in clean_path:
+                raise GitHubAppError("INVALID_ARGUMENT", "Repository path is invalid")
+            if len(clean_path) > 500:
+                raise GitHubAppError("INVALID_ARGUMENT", "Repository path is too long")
+        endpoint = f"/repos/{quote(owner, safe='-._')}/{quote(repo, safe='-._')}/contents"
+        if clean_path:
+            endpoint += "/" + "/".join(quote(part, safe="-._") for part in clean_path.split("/"))
+        if ref:
+            endpoint += "?" + urlencode({"ref": str(ref)})
+
+        payload = await self._json_request("GET", endpoint, token=token)
+        if isinstance(payload, list):
+            entries = []
+            for item in payload[:100]:
+                if not isinstance(item, dict):
+                    continue
+                entries.append({
+                    "name": str(item.get("name") or "")[:240],
+                    "path": str(item.get("path") or "")[:500],
+                    "type": str(item.get("type") or "")[:40],
+                    "size": int(item.get("size") or 0),
+                })
+            return {
+                "kind": "directory",
+                "path": clean_path,
+                "entries": entries,
+                "truncated": len(payload) > len(entries),
+            }
+
+        if not isinstance(payload, dict) or payload.get("type") != "file":
+            raise GitHubAppError("GITHUB_INVALID_RESPONSE", "GitHub content response is invalid")
+        size = int(payload.get("size") or 0)
+        if size > 120_000:
+            raise GitHubAppError("GITHUB_ERROR", "Repository file is too large for Live context")
+        encoded = str(payload.get("content") or "").replace("\n", "")
+        if str(payload.get("encoding") or "") != "base64" or not encoded:
+            raise GitHubAppError("GITHUB_INVALID_RESPONSE", "GitHub file content is unavailable")
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+            text = raw.decode("utf-8")
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise GitHubAppError("GITHUB_ERROR", "Repository file is not readable text") from exc
+        if len(text) > 80_000:
+            raise GitHubAppError("GITHUB_ERROR", "Repository file is too large for Live context")
+        return {
+            "kind": "file",
+            "path": clean_path,
+            "size": size,
+            "sha": str(payload.get("sha") or "")[:80],
+            "text": text,
+        }
 
     async def get_installation(self, installation_id: int) -> dict[str, Any]:
         payload = await self._json_request(

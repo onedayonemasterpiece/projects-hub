@@ -52,6 +52,31 @@ class FakeGitHubClient:
         assert installation_id == 77
         return list(self.repositories)
 
+    async def repository_contents(self, *, token, full_name, path="", ref=""):
+        assert token.startswith("ghs_APPID_JWT_")
+        assert full_name in {
+            "onedayonemasterpiece/projects-hub",
+            "onedayonemasterpiece/wonderful-lections",
+        }
+        assert ref == "main"
+        if not path:
+            return {
+                "kind": "directory",
+                "path": "",
+                "entries": [
+                    {"name": "README.md", "path": "README.md", "type": "file", "size": 42}
+                ],
+                "truncated": False,
+            }
+        assert path == "README.md"
+        return {
+            "kind": "file",
+            "path": "README.md",
+            "size": 42,
+            "sha": "abc123",
+            "text": "# Projects Hub\n",
+        }
+
     async def installation_token(
         self,
         installation_id: int,
@@ -96,7 +121,7 @@ def setup(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_install_state_is_owner_bound_single_use_and_catalog_starts_unassigned(tmp_path: Path):
+async def test_install_state_is_owner_bound_single_use_and_exact_matches_auto_bind(tmp_path: Path):
     store, boot, _client, service = setup(tmp_path)
     try:
         owner = boot["actor"]["id"]
@@ -118,8 +143,27 @@ async def test_install_state_is_owner_bound_single_use_and_catalog_starts_unassi
         status = service.status(owner, workspace)
         assert len(status["installations"]) == 1
         assert {item["repository_id"] for item in status["repositories"]} == {101, 202}
-        assert {item["role"] for item in status["repositories"]} == {"unassigned"}
-        assert {item["access_mode"] for item in status["repositories"]} == {"read_only"}
+        assert {item["role"] for item in status["repositories"]} == {"project_docs"}
+        assert {item["access_mode"] for item in status["repositories"]} == {"app_managed_write"}
+        assert set(status["auto_bound_repository_ids"]) == {101, 202}
+
+        root = await service.read_repository_path(
+            actor_id=owner,
+            workspace_id=workspace,
+            repository_id=101,
+            path="",
+        )
+        assert root["kind"] == "directory"
+        assert root["entries"][0]["path"] == "README.md"
+
+        readme = await service.read_repository_path(
+            actor_id=owner,
+            workspace_id=workspace,
+            repository_id=101,
+            path="README.md",
+        )
+        assert readme["kind"] == "file"
+        assert readme["text"] == "# Projects Hub\n"
 
         with pytest.raises(StoreError) as replay:
             await service.complete_install(
