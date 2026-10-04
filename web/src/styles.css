@@ -403,8 +403,12 @@ button:focus-visible {
   min-height: 100%;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
   gap: 8px;
+}
+
+.chat-stack::before {
+  content: "";
+  margin-top: auto;
 }
 
 .chat-row {
