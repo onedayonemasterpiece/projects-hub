@@ -290,8 +290,10 @@ export default function App() {
         if (state === "listening") setNotice(null);
       },
       onNotice: (kind, error) => {
-        if (kind === "microphone_error") setNotice("Браузер не дал доступ к микрофону.");
-        else if (kind === "transport_error") setNotice("Уже принятый сервером источник сохранён. Последние непереданные секунды не считаются сохранёнными — остановите и запустите Live снова.");
+        if (kind === "microphone_error") {
+          clientRef.current?.stop({ reason: "microphone_unavailable" });
+          setNotice("Нет доступа к микрофону. В Android откройте: Настройки → Приложения → Projects Hub → Разрешения → Микрофон → Разрешить.");
+        } else if (kind === "transport_error") setNotice("Уже принятый сервером источник сохранён. Последние непереданные секунды не считаются сохранёнными — остановите и запустите Live снова.");
         else if (kind === "connection_error") setNotice("Связь с Live прервалась. Можно запустить разговор снова.");
         else if (kind === "event_gap") setNotice("Интерфейс пропустил часть служебных событий. Источник на сервере сохраняется отдельно.");
         else if (error) setNotice(friendlyStartError(error));
@@ -452,13 +454,14 @@ export default function App() {
         url: `/api/live/${current.id}/sessions`,
         body: {},
         microphone: true,
-        captureDuringStart: false,
+        captureDuringStart: true,
         authorize: async () => {},
       });
       if (!client.sessionId && !navigator.onLine) {
         await startOfflineCapture();
       }
     } catch (error) {
+      client.stop({ reason: "start_error" });
       setNotice(friendlyStartError(error));
       setVoiceState("off");
     } finally {
