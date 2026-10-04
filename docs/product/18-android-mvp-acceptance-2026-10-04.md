@@ -25,3 +25,10 @@
 ## Практический статус
 
 Текущий Android shell уже установлен и загружает актуальную PWA с backend, поэтому исправление first-party login не требует переустановки APK. Supabase Auth и обязательный Яндекс OAuth удалены из user-login path; текущий owner bootstrap — одноразовый first-party invite. Следующий необходимый acceptance — один физический прогон: invite login → microphone → Live → calendar → readback.
+
+
+## Physical microphone failure found on 4 October 2026
+
+The first owner run authenticated successfully, created a Live session and connected public WSS, but Android WebView did not deliver microphone audio. The browser client then left that server session alive, so repeated start attempts on the same conversation returned HTTP 429 until the old lease released.
+
+The correction preflights microphone capture before creating the server Live session (`captureDuringStart=true`) and explicitly stops local/server Live state on `microphone_error` or startup failure. A microphone denial therefore must not strand a session or turn subsequent taps into repeated 429s. Physical Android permission acceptance remains pending; the UI now directs the owner to the exact Android microphone permission when access is denied.
