@@ -133,8 +133,15 @@ public final class MainActivity extends Activity {
         root.addView(updateButton, updateParams);
 
         setContentView(root);
+        webView.clearCache(true);
         if (!handleGitHubReturn(getIntent())) {
-            webView.loadUrl(BuildConfig.HUB_URL);
+            String separator = BuildConfig.HUB_URL.contains("?") ? "&" : "?";
+            webView.loadUrl(
+                    BuildConfig.HUB_URL
+                            + separator
+                            + "native_version="
+                            + Uri.encode(BuildConfig.VERSION_NAME)
+            );
         }
         updater.checkForUpdate();
     }
