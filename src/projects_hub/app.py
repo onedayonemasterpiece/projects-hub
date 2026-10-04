@@ -238,10 +238,13 @@ def create_app(
             host = getattr(app.state, "live_host", None)
             if host is not None and hasattr(host, "stop_all"):
                 await host.stop_all()
+            development_service = getattr(app.state, "development", None)
+            if development_service is not None and hasattr(development_service, "close"):
+                await development_service.close()
             if owned_store:
                 store.close()
 
-    app = FastAPI(title="Projects Hub", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Projects Hub", version="0.1.16", lifespan=lifespan)
     app.state.settings = settings
     app.state.store = store
     app.state.live_host = live_host
@@ -346,6 +349,7 @@ def create_app(
                 if settings.dev_auth
                 else "session"
             ),
+            "product_version": "0.1.16",
             "release_sha": settings.release_sha,
             "static_ready": settings.static_dir.is_dir(),
             "live_interaction_available": importlib.util.find_spec("live_interaction") is not None,
@@ -742,6 +746,22 @@ def create_app(
             task_id=task_id,
             state=payload.state,
         )
+
+    @app.get("/api/development/backlog")
+    async def development_backlog(
+        request: Request,
+        workspace_id: str,
+        project_id: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        return {
+            "items": app.state.development.list_backlog(
+                actor_id=actor_id_from_request(request),
+                workspace_id=workspace_id,
+                project_id=project_id,
+                limit=limit,
+            )
+        }
 
     @app.get("/api/development/codex-status")
     async def development_codex_status(
