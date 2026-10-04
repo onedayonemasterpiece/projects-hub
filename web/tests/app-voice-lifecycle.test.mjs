@@ -109,11 +109,32 @@ test("backlog stays primary while owner development is observable and triggers u
   const api = await readFile(new URL("../src/api.ts", import.meta.url), "utf8");
   assert.match(source, /Бэклог/);
   assert.match(source, /backlogTasks\.map/);
+  assert.match(source, /getDevelopmentBacklog/);
   assert.match(source, /getDevelopmentCodexStatus/);
   assert.match(source, /getLatestDevelopmentExecution/);
   assert.match(source, /window\.setInterval\(syncDevelopment, 15_000\)/);
   assert.match(source, /projectshub:\/\/update\/check/);
   assert.match(source, /Остаток/);
+  assert.match(source, /phase_detail/);
   assert.match(api, /remaining_percent/);
   assert.match(api, /reasoning_efforts/);
+  assert.match(api, /\/api\/development\/backlog/);
+});
+
+test("Android presents a visible update dialog for a newly available signed release", async () => {
+  const android = await readFile(
+    new URL("../../android/app/src/main/java/com/kenigevents/projectshub/MainActivity.java", import.meta.url),
+    "utf8",
+  );
+  const policy = await readFile(
+    new URL("../../android/app/src/main/java/com/kenigevents/projectshub/WebOriginPolicy.java", import.meta.url),
+    "utf8",
+  );
+  assert.match(android, /showUpdateAvailableDialog\(update\)/);
+  assert.match(android, /setTitle\("Доступно обновление"\)/);
+  assert.match(android, /setPositiveButton\("Обновить"/);
+  assert.match(android, /updater\.checkForUpdate\(\)/);
+  assert.match(policy, /projectshub/);
+  assert.match(policy, /"update"/);
+  assert.match(policy, /"\/check"/);
 });
