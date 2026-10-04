@@ -62,7 +62,12 @@ final class ApiClient {
                 .put("workspace_id", workspaceId)
                 .put("display_name", displayName)
                 .put("platform", "android")
-                .put("capabilities", new JSONArray().put("calendar.create_event"));
+                .put(
+                        "capabilities",
+                        new JSONArray()
+                                .put("calendar.create_event")
+                                .put("calendar.read_events")
+                );
         JSONObject payload = request(
                 "POST",
                 "api/devices/register",
@@ -73,6 +78,24 @@ final class ApiClient {
                 15000
         );
         return payload.getString("device_token");
+    }
+
+    JSONObject updateDeviceCapabilities(String deviceToken) throws Exception {
+        JSONObject body = new JSONObject().put(
+                "capabilities",
+                new JSONArray()
+                        .put("calendar.create_event")
+                        .put("calendar.read_events")
+        );
+        return request(
+                "POST",
+                "api/device/capabilities",
+                body,
+                "Device " + deviceToken,
+                null,
+                true,
+                15000
+        );
     }
 
     ClaimedCommand nextCommand(String deviceToken, int waitMs) throws Exception {
