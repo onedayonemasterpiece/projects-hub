@@ -15,6 +15,7 @@ from .live_adapter import ProjectsHubLiveAdapter
 from .live_admission import ProjectsHubAdmissionMixin
 from .live_resources import live_resource_environment
 from .readiness import ReadinessService
+from .sharing import SharingService
 from .store import DurableStore
 
 log = logging.getLogger("projects_hub.live")
@@ -57,6 +58,7 @@ def build_live_host(
     board: BoardService | None = None,
     board_hub: Any | None = None,
     analytics: AnalyticsService | None = None,
+    sharing: SharingService | None = None,
     device_commands: DeviceCommandService | None = None,
     readiness: ReadinessService | None = None,
     development: DevelopmentService | None = None,
@@ -81,6 +83,7 @@ def build_live_host(
     max_sessions_per_actor = _live_max_sessions_per_actor(env, max_sessions)
     board = board or BoardService(store)
     analytics = analytics or AnalyticsService(store, board)
+    sharing = sharing or SharingService(store, board)
     device_commands = device_commands or DeviceCommandService(store)
     readiness = readiness or ReadinessService(store)
     development = development or DevelopmentService(store, readiness)
@@ -132,6 +135,7 @@ def build_live_host(
             board=board,
             board_hub=board_hub,
             analytics=analytics,
+            sharing=sharing,
             device_commands=device_commands,
             readiness=readiness,
             development=development,
