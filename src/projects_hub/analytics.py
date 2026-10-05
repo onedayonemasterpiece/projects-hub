@@ -68,6 +68,7 @@ class AnalyticsService:
                     model_alias TEXT NOT NULL,
                     question TEXT NOT NULL,
                     source_snapshot_json TEXT NOT NULL,
+                    evidence_bundle TEXT NOT NULL DEFAULT '',
                     input_sha256 TEXT NOT NULL,
                     status TEXT NOT NULL,
                     provider_task_id TEXT,
@@ -86,6 +87,16 @@ class AnalyticsService:
                     ON analysis_runs(provider_task_id);
                 """
             )
+            columns = {
+                str(row["name"])
+                for row in self.store.db.execute(
+                    "PRAGMA table_info(analysis_runs)"
+                ).fetchall()
+            }
+            if "evidence_bundle" not in columns:
+                self.store.db.execute(
+                    "ALTER TABLE analysis_runs ADD COLUMN evidence_bundle TEXT NOT NULL DEFAULT ''"
+                )
 
     def _freeze_sources(
         self,
@@ -278,12 +289,12 @@ class AnalyticsService:
             self.store.db.execute(
                 """INSERT INTO analysis_runs(
                        id,initiating_actor_id,workspace_id,project_id,board_id,command_id,
-                       request_sha256,purpose,model_alias,question,source_snapshot_json,input_sha256,
-                       status,created_at_ms,updated_at_ms)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       request_sha256,purpose,model_alias,question,source_snapshot_json,evidence_bundle,
+                       input_sha256,status,created_at_ms,updated_at_ms)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     run_id, actor_id, workspace_id, project_id, board_id, command_id,
-                    request_sha, purpose, model, clean_question, _canonical(sources),
+                    request_sha, purpose, model, clean_question, _canonical(sources), evidence,
                     hashlib.sha256(evidence.encode("utf-8")).hexdigest(),
                     "dispatching", now, now,
                 ),
@@ -359,15 +370,15 @@ class AnalyticsService:
         return ""
 
     async def _reconcile_without_task(self, row: Any) -> dict[str, Any]:
-        sources = json.loads(row["source_snapshot_json"])
-        evidence = _canonical(
-            {
-                "schema": "projects-hub-analysis-evidence-v1",
-                "project_id": row["project_id"],
-                "board_id": row["board_id"],
-                "sources": sources,
-            }
-        )
+        evidence = str(row["evidence_bundle"] or "")
+        if not evidence:
+            raise AnalyticsBridgeError(
+                "Frozen evidence is unavailable; refusing to reconstruct a different request"
+            )
+        if hashlib.sha256(evidence.encode("utf-8")).hexdigest() != row["input_sha256"]:
+            raise AnalyticsBridgeError(
+                "Frozen evidence integrity check failed; refusing provider redispatch"
+            )
         return await self.bridge.consult(
             model=row["model_alias"],
             purpose=row["purpose"],
