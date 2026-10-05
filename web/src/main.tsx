@@ -1,9 +1,12 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import GuestBoard from "./GuestBoard";
 import "./styles.css";
 
-if ("serviceWorker" in navigator && import.meta.env.PROD) {
+const guestMode = window.location.pathname === "/guest/board";
+
+if (!guestMode && "serviceWorker" in navigator && import.meta.env.PROD) {
   let reloadingForWorker = false;
   navigator.serviceWorker.addEventListener("controllerchange", () => {
     if (reloadingForWorker) return;
@@ -19,6 +22,6 @@ if ("serviceWorker" in navigator && import.meta.env.PROD) {
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <App />
+    {guestMode ? <GuestBoard /> : <App />}
   </StrictMode>,
 );
