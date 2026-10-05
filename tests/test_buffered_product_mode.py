@@ -47,6 +47,7 @@ def test_buffered_mode_uses_shared_manual_activity_contract(tmp_path: Path):
             model="gemini-3.8-live",
             conversation_id=conversation["id"],
         )
-        assert realtime["configuration"]["manual_activity_detection"] is False
+        assert realtime["configuration"]["manual_activity_detection"] is True
+        assert realtime["configuration"]["automatic_activity_detection"] is None
     finally:
         store.close()
