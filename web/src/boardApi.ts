@@ -169,6 +169,7 @@ export async function ackBoardUi(
 const BOARD_PROTOCOL = "projects-hub-board-v1";
 const TICKET_PREFIX = "projects-hub-board-ticket.";
 const CLIENT_PREFIX = "projects-hub-board-client.";
+const BOARD_CLIENT_INSTANCE_ID = crypto.randomUUID();
 
 function wsUrl(relative: string) {
   const url = new URL(relative, window.location.href);
@@ -193,11 +194,7 @@ export class BoardSocket {
     private readonly onMessage: (message: BoardSocketMessage) => void,
     clientInstanceId?: string,
   ) {
-    this.clientInstanceId =
-      clientInstanceId ||
-      localStorage.getItem("projects-hub-board-client") ||
-      crypto.randomUUID();
-    localStorage.setItem("projects-hub-board-client", this.clientInstanceId);
+    this.clientInstanceId = clientInstanceId || BOARD_CLIENT_INSTANCE_ID;
   }
 
   async connect() {
