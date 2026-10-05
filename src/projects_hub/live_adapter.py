@@ -1389,21 +1389,17 @@ explicit buffered replay is required instead of pretending the provisional text 
                 create_if_allowed=False,
             )
             command_id, _args_sha = self._command_id(session, name, args)
-            model = str(args.get("model") or "kimi_k3")
-            common = {
-                "actor_id": actor_id,
-                "workspace_id": workspace_id,
-                "project_id": project_id,
-                "board_id": board["id"],
-                "object_ids": [str(item) for item in raw_object_ids],
-                "command_id": command_id,
-                "purpose": str(args.get("purpose") or "edge_cases"),
-                "question": str(args.get("question") or ""),
-            }
-            if model == "council_free":
-                run = await self.analytics.start_council(**common)
-            else:
-                run = await self.analytics.start_single(model=model, **common)
+            run = await self.analytics.start_single(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                board_id=board["id"],
+                object_ids=[str(item) for item in raw_object_ids],
+                command_id=command_id,
+                model=str(args.get("model") or "kimi_k3"),
+                purpose=str(args.get("purpose") or "edge_cases"),
+                question=str(args.get("question") or ""),
+            )
             return {
                 **run,
                 "ui_command": {
