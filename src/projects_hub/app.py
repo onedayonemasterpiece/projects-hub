@@ -27,6 +27,8 @@ from .live_runtime import build_live_host
 from .logging_config import configure_logging
 from .readiness import ReadinessService
 from .settings import Settings
+from .sharing import SharingService
+from .sharing_api import attach_sharing_routes
 from .store import DurableStore, StoreError
 from .version import __version__
 
@@ -270,6 +272,11 @@ def create_app(
     app.state.store = store
     app.state.board = BoardService(store)
     app.state.analytics = analytics or AnalyticsService(store, app.state.board)
+    app.state.sharing = SharingService(
+        store,
+        app.state.board,
+        public_origin=settings.public_origin,
+    )
     app.state.live_host = live_host
     app.state.github_connections = github_connections or GitHubConnections(store, settings)
     app.state.device_commands = device_commands or DeviceCommandService(store)
@@ -367,6 +374,12 @@ def create_app(
         service=app.state.analytics,
         actor_id_from_request=actor_id_from_request,
         board_hub=app.state.board_hub,
+    )
+    attach_sharing_routes(
+        app,
+        service=app.state.sharing,
+        actor_id_from_request=actor_id_from_request,
+        cookie_secure=settings.cookie_secure,
     )
 
     @app.exception_handler(GitHubAppError)
@@ -1128,6 +1141,25 @@ def create_app(
         assets = settings.static_dir / "assets"
         if assets.is_dir():
             app.mount("/assets", StaticFiles(directory=assets), name="assets")
+
+        @app.get("/guest/board")
+        async def guest_board_page():
+            index = settings.static_dir / "index.html"
+            if index.is_file():
+                return FileResponse(
+                    index,
+                    headers={
+                        "cache-control": "no-store",
+                        "x-robots-tag": "noindex, nofollow, noarchive",
+                        "referrer-policy": "no-referrer",
+                        "x-content-type-options": "nosniff",
+                    },
+                )
+            return JSONResponse(
+                status_code=404,
+                content={"error": {"code": "UI_NOT_BUILT"}},
+                headers={"cache-control": "no-store"},
+            )
 
         @app.get("/{path:path}")
         async def spa(path: str):
