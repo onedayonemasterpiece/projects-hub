@@ -60,6 +60,17 @@ export type BoardSearchHit = {
   match_terms: string[];
 };
 
+export type BoardShareGrant = {
+  id: string;
+  project_id: string;
+  board_id: string;
+  created_at_ms: number;
+  expires_at_ms: number;
+  revoked_at_ms?: number | null;
+  url?: string;
+  warning?: string;
+};
+
 export type AnalysisRun = {
   id: string;
   project_id: string;
@@ -181,6 +192,47 @@ export async function ackBoardUi(
       }),
     },
   );
+}
+
+export async function createBoardShare(
+  workspaceId: string,
+  projectId: string,
+) {
+  return request<BoardShareGrant>(
+    "/api/projects/" + encodeURIComponent(projectId) + "/shares",
+    {
+      method: "POST",
+      body: JSON.stringify({ workspace_id: workspaceId }),
+    },
+  );
+}
+
+export async function listBoardShares(
+  workspaceId: string,
+  projectId: string,
+) {
+  const query = new URLSearchParams({ workspace_id: workspaceId });
+  return request<{ items: BoardShareGrant[] }>(
+    "/api/projects/" +
+      encodeURIComponent(projectId) +
+      "/shares?" +
+      query.toString(),
+  );
+}
+
+export async function revokeBoardShare(
+  workspaceId: string,
+  shareId: string,
+) {
+  return request<{
+    id: string;
+    board_id: string;
+    project_id: string;
+    revoked_at_ms: number;
+  }>("/api/shares/" + encodeURIComponent(shareId) + "/revoke", {
+    method: "POST",
+    body: JSON.stringify({ workspace_id: workspaceId }),
+  });
 }
 
 export async function startAnalysis(
