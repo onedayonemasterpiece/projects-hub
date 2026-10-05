@@ -11,6 +11,7 @@ test("board analysis UI uses isolated run API and renders markdown as text", () 
   assert.match(boardApi, /analysis_publish_ui_/);
   assert.match(shell, /Kimi K3/);
   assert.match(shell, /DeepSeek/);
+  assert.match(shell, /Консилиум · free/);
   assert.match(shell, /board-analysis-report/);
   assert.match(shell, /<pre className="board-analysis-report">\{analysisRun\.result_markdown\}<\/pre>/);
   assert.doesNotMatch(shell, /dangerouslySetInnerHTML/);
