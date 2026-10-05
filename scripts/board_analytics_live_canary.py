@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import tempfile
@@ -11,6 +12,18 @@ from projects_hub.analytics import AnalyticsService
 from projects_hub.analytics_client import AnalyticsBridgeClient
 from projects_hub.board import BoardService
 from projects_hub.store import DurableStore
+
+
+async def read_existing_task(task_id: str) -> dict:
+    bridge = AnalyticsBridgeClient()
+    try:
+        payload = await bridge.read_task(task_id)
+        return {
+            "task_id": task_id,
+            "payload": payload,
+        }
+    finally:
+        await bridge.close()
 
 
 async def run() -> dict:
@@ -106,4 +119,12 @@ async def run() -> dict:
 
 
 if __name__ == "__main__":
-    print(json.dumps(asyncio.run(run()), ensure_ascii=False, sort_keys=True))
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--read-task")
+    args = parser.parse_args()
+    result = (
+        asyncio.run(read_existing_task(args.read_task))
+        if args.read_task
+        else asyncio.run(run())
+    )
+    print(json.dumps(result, ensure_ascii=False, sort_keys=True))
