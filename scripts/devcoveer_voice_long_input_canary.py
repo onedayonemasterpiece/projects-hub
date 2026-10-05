@@ -8,6 +8,7 @@ acceptance (V11).
 """
 from __future__ import annotations
 
+from array import array
 import argparse
 import asyncio
 import json
@@ -15,6 +16,7 @@ from pathlib import Path
 import struct
 import tempfile
 import time
+import sys
 from typing import Any
 
 from websockets.exceptions import ConnectionClosed
@@ -45,6 +47,8 @@ RUSSIAN_TEXT = (
     "Продолжай только слушать эту длинную реплику. "
     "Контроль конец: янтарный мост девятнадцать. "
 )
+OUTPUT_MAGIC = 0x574C4F31
+
 ENGLISH_TEXT = (
     "This is a technical long speech test for Projects Hub. "
     "Control start: purple beacon seventy three. "
@@ -55,7 +59,7 @@ ENGLISH_TEXT = (
 )
 
 
-def synthesize() -> tuple[bytes, str, tuple[str, str, str]]:
+def synthesize_local() -> tuple[bytes, str, tuple[str, str, str]] | None:
     with tempfile.TemporaryDirectory(prefix="projects-hub-long-voice-") as tmp:
         root = Path(tmp)
         for executable in ESPEAK_CANDIDATES:
@@ -100,7 +104,152 @@ def synthesize() -> tuple[bytes, str, tuple[str, str, str]]:
                 raw = pcm.read_bytes()
                 if raw and len(raw) % 2 == 0:
                     return raw, executable.name, ("purple", "green", "amber")
-    raise RuntimeError("no local speech synthesizer available")
+    return None
+
+
+async def start_live_with_budget_retry(
+    http: HttpSession,
+    conversation_id: str,
+    attempt_base: str,
+    *,
+    timeout: float = 120.0,
+) -> tuple[dict[str, Any], int]:
+    deadline = time.monotonic() + timeout
+    retries = 0
+    while True:
+        attempt_id = attempt_base if retries == 0 else f"{attempt_base}_r{retries}"
+        try:
+            return start_live(http, conversation_id, attempt_id), retries
+        except RuntimeError as exc:
+            if "RESOURCE_TOKEN_BUDGET" not in str(exc) or time.monotonic() >= deadline:
+                raise
+            retries += 1
+            await asyncio.sleep(min(5.0, max(0.2, deadline - time.monotonic())))
+
+
+def _resample_pcm16(pcm: bytes, source_rate: int, target_rate: int = 16000) -> bytes:
+    if not pcm or len(pcm) % 2 or source_rate <= 0 or target_rate <= 0:
+        raise RuntimeError("invalid provider PCM fixture")
+    if source_rate == target_rate:
+        return pcm
+    samples = array("h")
+    samples.frombytes(pcm)
+    if sys.byteorder != "little":
+        samples.byteswap()
+    output_count = max(1, int(len(samples) * target_rate / source_rate))
+    converted = array("h")
+    scale = source_rate / target_rate
+    last = len(samples) - 1
+    for out_index in range(output_count):
+        position = min(last, out_index * scale)
+        left = int(position)
+        right = min(last, left + 1)
+        fraction = position - left
+        value = int(samples[left] + (samples[right] - samples[left]) * fraction)
+        converted.append(max(-32768, min(32767, value)))
+    if sys.byteorder != "little":
+        converted.byteswap()
+    return converted.tobytes()
+
+
+async def synthesize_from_provider(args) -> tuple[bytes, str, tuple[str, str, str]]:
+    http = HttpSession(args.http_base)
+    _, conversation_id = login_and_conversation(http, args.display_name + " Fixture")
+    started, _ = await start_live_with_budget_retry(
+        http,
+        conversation_id,
+        f"ph_voice_fixture_{int(time.time())}",
+    )
+    session_id = str(started["session_id"])
+    chunks: list[bytes] = []
+    transcript: list[str] = []
+    rate: int | None = None
+    markers = ("purple", "green", "amber")
+    try:
+        async with await open_socket(
+            started=started,
+            cookie_header=http.cookie_header(),
+            ws_base=args.ws_base,
+            origin=args.origin,
+        ) as ws:
+            await hello(ws, started)
+            await ws.send(json.dumps({
+                "type": "input",
+                "message": {"audio_stream_end": True},
+            }))
+            prompt = (
+                "Technical audio fixture. Do not call tools or save anything. "
+                "Speak exactly the sentence after the colon, with no preface or explanation: "
+                + ENGLISH_TEXT
+            )
+            await ws.send(json.dumps(
+                {"type": "input", "message": {"text": prompt}},
+                ensure_ascii=False,
+            ))
+            deadline = time.monotonic() + 60.0
+            complete = False
+            while time.monotonic() < deadline and not complete:
+                try:
+                    raw = await asyncio.wait_for(
+                        ws.recv(),
+                        min(10.0, max(0.1, deadline - time.monotonic())),
+                    )
+                except asyncio.TimeoutError:
+                    continue
+                if isinstance(raw, bytes):
+                    if len(raw) < 14:
+                        continue
+                    magic, _seq, chunk_rate = struct.unpack("!III", raw[:12])
+                    body = raw[12:]
+                    if magic != OUTPUT_MAGIC or not body or len(body) % 2:
+                        continue
+                    if rate is None:
+                        rate = chunk_rate
+                    elif rate != chunk_rate:
+                        raise RuntimeError("provider fixture sample rate changed mid-response")
+                    chunks.append(body)
+                    continue
+                payload = json.loads(raw)
+                if payload.get("type") != "event":
+                    continue
+                event = payload.get("event") or {}
+                kind = str(event.get("type") or "")
+                if kind == "output_transcript" and isinstance(event.get("text"), str):
+                    transcript.append(event["text"])
+                elif kind == "tool_call":
+                    raise RuntimeError("provider fixture unexpectedly called a tool")
+                elif kind == "error":
+                    raise RuntimeError(
+                        "provider fixture failed: " + str(event.get("code") or "LIVE_ERROR")
+                    )
+                elif kind == "turn_complete":
+                    complete = True
+            if not complete:
+                raise RuntimeError("provider fixture did not complete")
+            try:
+                await ws.send(json.dumps({"type": "stop", "reason": "ph_voice_fixture"}))
+            except Exception:
+                pass
+        spoken = " ".join(transcript).lower()
+        if not chunks or rate is None:
+            raise RuntimeError("provider fixture returned no PCM")
+        if not all(marker in spoken for marker in markers):
+            raise RuntimeError("provider fixture transcript missed control markers")
+        return (
+            _resample_pcm16(b"".join(chunks), rate),
+            f"gemini-live-output-{rate}hz",
+            markers,
+        )
+    finally:
+        try:
+            http.request(
+                "POST",
+                f"/api/live/{conversation_id}/sessions/{session_id}/stop",
+                {},
+                timeout=10.0,
+            )
+        except Exception:
+            pass
 
 
 def repeated_pcm(seed: bytes, seconds: float) -> bytes:
@@ -114,7 +263,11 @@ async def run_once(args, run_number: int, seed: bytes, markers: tuple[str, str, 
     http = HttpSession(args.http_base)
     _, conversation_id = login_and_conversation(http, args.display_name)
     attempt = f"ph_voice_long_{run_number}_{int(time.time())}"
-    started = start_live(http, conversation_id, attempt)
+    started, start_retries = await start_live_with_budget_retry(
+        http,
+        conversation_id,
+        attempt,
+    )
     session_id = str(started["session_id"])
     source_id = str(started.get("source_id") or "")
     pcm = repeated_pcm(seed, args.seconds)
@@ -128,7 +281,8 @@ async def run_once(args, run_number: int, seed: bytes, markers: tuple[str, str, 
     max_ack = 0
     tool_calls = 0
     turn_complete_at: float | None = None
-    first_partial_at: float | None = None
+    first_interim_at: float | None = None
+    first_any_transcript_at: float | None = None
     stream_started_at: float | None = None
     checkpoints: list[dict[str, Any]] = []
     receiver_finished = asyncio.Event()
@@ -145,7 +299,7 @@ async def run_once(args, run_number: int, seed: bytes, markers: tuple[str, str, 
 
             async def receive_loop() -> None:
                 nonlocal ack_count, max_ack, terminal, tool_calls
-                nonlocal first_partial_at, turn_complete_at
+                nonlocal first_interim_at, first_any_transcript_at, turn_complete_at
                 try:
                     while True:
                         try:
@@ -176,14 +330,16 @@ async def run_once(args, run_number: int, seed: bytes, markers: tuple[str, str, 
                             text = str(event.get("text") or "")
                             if text:
                                 interims.append(text)
-                                if first_partial_at is None:
-                                    first_partial_at = now
+                                if first_interim_at is None:
+                                    first_interim_at = now
+                                if first_any_transcript_at is None:
+                                    first_any_transcript_at = now
                         elif event_kind == "input_transcript":
                             text = str(event.get("text") or "")
                             if text:
                                 finals.append(text)
-                                if first_partial_at is None:
-                                    first_partial_at = now
+                                if first_any_transcript_at is None:
+                                    first_any_transcript_at = now
                         elif event_kind == "resource_budget":
                             budget_events.append({
                                 key: event.get(key)
@@ -283,9 +439,14 @@ async def run_once(args, run_number: int, seed: bytes, markers: tuple[str, str, 
         )[1].get("source") or {}
         combined = " ".join(finals).lower()
         marker_hits = [marker in combined for marker in markers]
-        first_partial_ms = (
-            round((first_partial_at - stream_started_at) * 1000)
-            if first_partial_at is not None and stream_started_at is not None
+        first_interim_ms = (
+            round((first_interim_at - stream_started_at) * 1000)
+            if first_interim_at is not None and stream_started_at is not None
+            else None
+        )
+        first_any_transcript_ms = (
+            round((first_any_transcript_at - stream_started_at) * 1000)
+            if first_any_transcript_at is not None and stream_started_at is not None
             else None
         )
         requested = sum(
@@ -302,20 +463,32 @@ async def run_once(args, run_number: int, seed: bytes, markers: tuple[str, str, 
             if str(item.get("code") or "").startswith("RESOURCE_")
             and item.get("status") not in {"right_sizing"}
         ]
-        passed = bool(
+        transport_ok = bool(
             terminal is None
             and streamed_seconds >= args.seconds - 1.0
             and ack_count >= max(1, seq - 2)
             and len(checkpoints) == len(checkpoints_seconds)
-            and first_partial_ms is not None
-            and first_partial_ms <= args.partial_latency_ms
-            and finals
+            and int(source.get("audio_bytes") or 0) >= len(pcm)
+        )
+        interim_ok = bool(
+            interims
+            and first_interim_ms is not None
+            and first_interim_ms <= args.partial_latency_ms
+        )
+        final_transcript_ok = bool(
+            finals
             and all(marker_hits)
             and sum(len(item) for item in finals) >= args.min_final_chars
-            and int(source.get("audio_bytes") or 0) >= len(pcm)
             and int(source.get("transcript_revision") or 0) > 0
-            and tool_calls == 0
-            and not resource_denials
+        )
+        resource_ok = not resource_denials
+        safety_ok = tool_calls == 0
+        passed = bool(
+            transport_ok
+            and interim_ok
+            and final_transcript_ok
+            and resource_ok
+            and safety_ok
         )
         return {
             "ok": passed,
@@ -323,12 +496,19 @@ async def run_once(args, run_number: int, seed: bytes, markers: tuple[str, str, 
             "session_id": session_id,
             "source_id": source_id,
             "duration_target_s": args.seconds,
+            "start_budget_retries": start_retries,
+            "v02_transport_ok": transport_ok,
+            "v03_interim_ok": interim_ok,
+            "v04_final_transcript_ok": final_transcript_ok,
+            "resource_ok": resource_ok,
+            "safety_ok": safety_ok,
             "streamed_s": round(streamed_seconds, 3),
             "frames_sent": seq,
             "audio_ack_count": ack_count,
             "max_audio_ack_seq": max_ack,
             "checkpoints": checkpoints,
-            "first_partial_ms": first_partial_ms,
+            "first_interim_ms": first_interim_ms,
+            "first_any_transcript_ms": first_any_transcript_ms,
             "interim_events": len(interims),
             "final_events": len(finals),
             "final_chars_total": sum(len(item) for item in finals),
@@ -363,7 +543,11 @@ async def run_once(args, run_number: int, seed: bytes, markers: tuple[str, str, 
 
 
 async def async_main(args) -> int:
-    seed, fixture, markers = synthesize()
+    local = synthesize_local()
+    if local is None:
+        seed, fixture, markers = await synthesize_from_provider(args)
+    else:
+        seed, fixture, markers = local
     runs = []
     for run_number in range(1, args.runs + 1):
         result = await run_once(args, run_number, seed, markers)

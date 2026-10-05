@@ -161,7 +161,7 @@ async def test_calendar_rejects_offset_that_contradicts_client_timezone(tmp_path
             client_timezone="Europe/Kaliningrad",
         )
         assert initialized["context"]["client_timezone"] == "Europe/Kaliningrad"
-        assert initialized["configuration"]["input_audio_transcription"]["languageCodes"] == ["ru-RU"]
+        assert initialized["configuration"]["input_audio_transcription"] == {}
         session = SimpleNamespace(state=initialized["state"])
         with pytest.raises(Exception, match="offset does not match client timezone"):
             await ProjectsHubLiveAdapter(store).execute_tool(

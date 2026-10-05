@@ -788,10 +788,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                     )
                 ),
                 "voice": "Aoede",
-                "input_audio_transcription": {
-                    "languageCodes": ["ru-RU"],
-                    "customVocabulary": ["Мира", "Projects Hub", "Codex", "DevCoveer"],
-                },
+                "input_audio_transcription": {},
                 "search_enabled": False,
                 "manual_activity_detection": audio_mode == "buffered",
                 "automatic_activity_detection": (
