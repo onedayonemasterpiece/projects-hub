@@ -75,7 +75,7 @@ function applyEvent(current: Map<string, BoardObject>, event: BoardEvent) {
   return next;
 }
 
-function worldToScreen(geometry: BoardGeometry, camera: Camera) {
+function worldToScreen(geometry: BoardGeometry, camera: BoardCamera) {
   return {
     left: camera.x + geometry.x * camera.zoom,
     top: camera.y + geometry.y * camera.zoom,
