@@ -171,9 +171,16 @@ test("runtime UX distinguishes semantic backend version from build provenance", 
     new URL("../../src/projects_hub/version.py", import.meta.url),
     "utf8",
   );
+  const pyproject = await readFile(
+    new URL("../../pyproject.toml", import.meta.url),
+    "utf8",
+  );
+  const match = version.match(/__version__\s*=\s*"([^"]+)"/);
+  assert.ok(match);
+  assert.match(match[1], /^\d+\.\d+\.\d+$/);
+  assert.match(pyproject, new RegExp('version = "' + match[1].replace(/\./g, "\\.") + '"'));
   assert.match(source, /backend_version/);
   assert.match(source, /backend_release_sha упоминай только/);
-  assert.match(version, /0\.1\.24/);
 });
 
 test("Projects Hub disables provider-transcript voice stop control", async () => {
