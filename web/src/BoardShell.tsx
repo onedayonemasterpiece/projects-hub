@@ -1139,6 +1139,7 @@ export function BoardShell({
                   >
                     <option value="kimi_k3">Kimi K3</option>
                     <option value="deepseek">DeepSeek</option>
+                    <option value="council_free">Консилиум · free</option>
                   </select>
                 </label>
                 <label>
