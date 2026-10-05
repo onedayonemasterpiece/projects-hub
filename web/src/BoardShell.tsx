@@ -15,15 +15,18 @@ import {
   cancelAnalysisRun,
   confirmAnalysisRun,
   createBoardShare,
+  getAnalysisMaterialization,
   getAnalysisRun,
   getBoardSnapshot,
   listBoardShares,
+  materializeAnalysisRun,
   openBoard,
   publishAnalysisRun,
   revokeBoardShare,
   refreshAnalysisRun,
   searchBoard,
   startAnalysis,
+  type AnalysisMaterialization,
   type AnalysisRun,
   type BoardEvent,
   type BoardGeometry,
@@ -297,6 +300,9 @@ export function BoardShell({
     "Найди риски, пограничные случаи и конкретные рекомендации по выбранному материалу.",
   );
   const [analysisBusy, setAnalysisBusy] = useState(false);
+  const [materialization, setMaterialization] =
+    useState<AnalysisMaterialization | null>(null);
+  const [materializationBusy, setMaterializationBusy] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [shareActive, setShareActive] = useState<BoardShareGrant | null>(null);
   const [shareItems, setShareItems] = useState<BoardShareGrant[]>([]);
@@ -396,6 +402,31 @@ export function BoardShell({
       cancelled = true;
     };
   }, [analysisRunId, visible, workspaceId]);
+
+  useEffect(() => {
+    if (!visible || !analysisRun || analysisRun.status !== "completed") {
+      setMaterialization(null);
+      return;
+    }
+    let cancelled = false;
+    void getAnalysisMaterialization(workspaceId, analysisRun.id)
+      .then((value) => {
+        if (!cancelled) setMaterialization(value);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setMaterialization({
+            run_id: analysisRun.id,
+            path: "docs/analysis/" + analysisRun.id + ".md",
+            status: "failed",
+            error_code: error instanceof Error ? error.message : "MATERIALIZATION_STATUS_FAILED",
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [analysisRun?.id, analysisRun?.status, visible, workspaceId]);
 
   useEffect(() => {
     if (!visible || !analysisRun) return;
@@ -878,6 +909,34 @@ export function BoardShell({
     }
   };
 
+  const materializeCurrentAnalysis = async (
+    repositoryId?: number,
+    allowPublic = false,
+  ) => {
+    if (!analysisRun || analysisRun.status !== "completed" || materializationBusy) return;
+    setMaterializationBusy(true);
+    try {
+      const value = await materializeAnalysisRun(
+        workspaceId,
+        analysisRun.id,
+        repositoryId,
+        allowPublic,
+      );
+      setMaterialization(value);
+      if (value.status === "synced") {
+        setStatus(value.reused ? "GitHub уже содержит этот отчёт." : "Отчёт синхронизирован в GitHub.");
+      } else if (value.status === "confirmation_required") {
+        setStatus("Для публичного репозитория требуется отдельное подтверждение публикации.");
+      } else if (value.status === "not_configured") {
+        setStatus("GitHub document binding для отчётов не настроен.");
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Не удалось синхронизировать отчёт");
+    } finally {
+      setMaterializationBusy(false);
+    }
+  };
+
   const publishCurrentAnalysis = async () => {
     if (!analysisRun || analysisRun.status !== "completed" || analysisBusy) return;
     setAnalysisBusy(true);
@@ -1254,6 +1313,97 @@ export function BoardShell({
                   </button>
                 </div>
               )}
+              {analysisRun.status === "completed" && (
+                <div className="board-analysis-materialization">
+                  <strong>GitHub-копия отчёта</strong>
+                  {!materialization && <span>Проверяю document binding…</span>}
+                  {materialization?.status === "not_configured" && (
+                    <span>
+                      GitHub document binding не настроен. Внутренний Markdown уже сохранён и остаётся доступен.
+                    </span>
+                  )}
+                  {materialization?.status === "ready" && (
+                    <>
+                      <span>
+                        Отчёт ещё не синхронизирован. Canonical-версия остаётся в Projects Hub.
+                      </span>
+                      {(materialization.eligible_repository_ids?.length ?? 0) <= 1 ? (
+                        <button
+                          onClick={() =>
+                            void materializeCurrentAnalysis(
+                              materialization.eligible_repository_ids?.[0],
+                            )
+                          }
+                          disabled={materializationBusy}
+                        >
+                          Синхронизировать в GitHub
+                        </button>
+                      ) : (
+                        <div className="board-materialization-targets">
+                          <span>Выберите разрешённый generated-artifacts репозиторий:</span>
+                          {materialization.eligible_repository_ids?.map((repositoryId) => (
+                            <button
+                              key={repositoryId}
+                              onClick={() => void materializeCurrentAnalysis(repositoryId)}
+                              disabled={materializationBusy}
+                            >
+                              Репозиторий #{repositoryId}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {materialization?.status === "confirmation_required" && (
+                    <>
+                      <span>
+                        Целевой репозиторий публичный. Следующее действие опубликует полный текст отчёта в публичном GitHub.
+                      </span>
+                      <button
+                        onClick={() =>
+                          void materializeCurrentAnalysis(
+                            materialization.repository_id,
+                            true,
+                          )
+                        }
+                        disabled={materializationBusy}
+                      >
+                        Опубликовать отчёт в публичный GitHub
+                      </button>
+                    </>
+                  )}
+                  {materialization?.status === "pending" && (
+                    <span>GitHub-синхронизация выполняется…</span>
+                  )}
+                  {materialization?.status === "failed" && (
+                    <>
+                      <span>
+                        GitHub-синхронизация не удалась ({materialization.error_code || "unknown"}).
+                        Внутренний Markdown не потерян.
+                      </span>
+                      <button
+                        onClick={() =>
+                          void materializeCurrentAnalysis(materialization.repository_id)
+                        }
+                        disabled={materializationBusy}
+                      >
+                        Повторить синхронизацию
+                      </button>
+                    </>
+                  )}
+                  {materialization?.status === "synced" && (
+                    <>
+                      <span>
+                        {materialization.full_name} · {materialization.path}
+                        {materialization.reused ? " · без нового commit" : ""}
+                      </span>
+                      {materialization.commit_sha && (
+                        <code>{materialization.commit_sha.slice(0, 12)}</code>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
               <div className="board-analysis-actions">
                 {!["completed", "failed", "cancelled", "blocked", "confirmation_required"].includes(analysisRun.status) && (
                   <button onClick={() => void cancelCurrentAnalysis()} disabled={analysisBusy}>
@@ -1274,7 +1424,14 @@ export function BoardShell({
                     </a>
                   </>
                 )}
-                <button onClick={() => setAnalysisRun(null)}>Новый анализ</button>
+                <button
+                  onClick={() => {
+                    setAnalysisRun(null);
+                    setMaterialization(null);
+                  }}
+                >
+                  Новый анализ
+                </button>
               </div>
             </>
           )}
