@@ -24,7 +24,8 @@ test("Projects Hub renders both sides of the Live conversation as a bounded mess
   const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(source, /event\.type === "input_transcript"[\s\S]*mergeChatMessage\("user"/);
   assert.match(source, /event\.type === "output_transcript"[\s\S]*mergeChatMessage\("assistant"/);
-  assert.match(source, /function mergeTranscript\(/);
+  assert.match(source, /import \{ mergeTranscript, resolveTerminalVoiceState \} from "\.\/voiceUiContract\.js"/);
+  assert.match(source, /mergeTranscript\(messages\[index\]\.text, clean\)/);
   assert.match(source, /messages\.length > 48/);
   assert.match(source, /className=\{"chat-row " \+ message\.role\}/);
   assert.match(source, /chatFollowRef/);

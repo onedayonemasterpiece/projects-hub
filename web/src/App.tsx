@@ -37,6 +37,7 @@ import {
 } from "./api";
 import { replayLocalVoiceSource } from "./bufferedReplay";
 import { recoverServerVoiceSource } from "./serverRecovery";
+import { mergeTranscript, resolveTerminalVoiceState } from "./voiceUiContract.js";
 import {
   acknowledgeDeliveredSource,
   createLocalPersistSink,
@@ -109,17 +110,6 @@ function formatWait(wait: NonNullable<WaitState>) {
   const seconds = Math.floor(wait.elapsed_ms / 1000);
   const minutes = Math.floor(seconds / 60);
   return `${String(minutes).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
-}
-
-function mergeTranscript(current: string, fragment: string) {
-  const clean = fragment.trim();
-  if (!clean) return current;
-  if (!current) return clean;
-  if (clean.startsWith(current)) return clean;
-  if (current.endsWith(clean)) return current;
-  let overlap = Math.min(current.length, clean.length);
-  while (overlap >= 3 && current.slice(-overlap) !== clean.slice(0, overlap)) overlap -= 1;
-  return overlap >= 3 ? current + clean.slice(overlap) : current + " " + clean;
 }
 
 function friendlyStartError(error: unknown) {
@@ -510,13 +500,7 @@ export default function App() {
       longSpeechEndSilenceMs: 8000,
       longSpeechAfterMs: 12000,
       onState: (state, detail) => {
-        const reason = typeof detail?.reason === "string" ? detail.reason : "";
-        const terminalReason = state === "off" && [
-          "resource_denial",
-          "provider_failure",
-          "connection_failure",
-          "capture_error",
-        ].includes(reason) ? reason : "";
+        const terminalReason = resolveTerminalVoiceState(state, detail);
         setVoiceState(terminalReason || state);
         if (terminalReason && currentSourceIdRef.current) {
           setRecoverableSourceId(currentSourceIdRef.current);
