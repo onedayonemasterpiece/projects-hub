@@ -53,6 +53,7 @@ declare module "@onedayonemasterpiece/live-interaction/browser" {
     };
     suppressCaptureDuringPlayback?: boolean | (() => boolean);
     speechEndSilenceMs?: number;
+    continuousCapture?: boolean;
   }): LiveClient;
 
   export function createDurableMicrophoneCapture(options: {
