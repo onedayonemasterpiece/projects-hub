@@ -298,8 +298,8 @@ def test_completed_report_publishes_as_reference_card_not_copied_body(tmp_path: 
             command_id="cmd_publish_analysis_01",
             object_id="obj_analysis_report",
         )
-        assert receipt["object"]["type"] == "document_card"
-        assert receipt["object"]["reference"] == {"kind": "analysis_run", "id": run["id"]}
-        assert "Run the smallest test" not in receipt["object"]["text"]
+        assert receipt["event"]["after"]["type"] == "document_card"
+        assert receipt["event"]["after"]["reference"] == {"kind": "analysis_run", "id": run["id"]}
+        assert "Run the smallest test" not in receipt["event"]["after"]["text"]
     finally:
         store.close()
