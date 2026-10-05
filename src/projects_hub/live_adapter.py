@@ -556,7 +556,7 @@ def _functions(
                         "run_id": {"type": "string"},
                         "model": {
                             "type": "string",
-                            "enum": ["kimi_k3", "deepseek"],
+                            "enum": ["kimi_k3", "deepseek", "council_free"],
                         },
                         "purpose": {
                             "type": "string",
