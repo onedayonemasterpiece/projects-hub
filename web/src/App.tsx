@@ -602,10 +602,10 @@ export default function App() {
       voiceControl: null,
       // Adaptive duplex rejects Mira playback echo while preserving sustained real barge-in.
       suppressCaptureDuringPlayback: "adaptive",
-      // Google hybrid VAD: provider auto-VAD owns speech start/prefix buffering;
-      // local VAD only closes the turn early with audio_stream_end. The provider
-      // remains a fallback when the client misses an endpoint.
-      manualActivityDetection: false,
+      // Provider speech-start proved unreliable in real Gemini 3.8 Live canaries,
+      // so keep the proven explicit client activity boundary. Only endpoint latency
+      // is tightened; the same Live model remains the sole speech/semantic authority.
+      manualActivityDetection: true,
       continuousCapture: false,
       // Google's guidance is at least 500 ms for client-side end detection. Use
       // 650 ms for short commands, but give sustained monologues more room to

@@ -51,6 +51,11 @@ class JsonFormatter(logging.Formatter):
             "turn_output_audio_events",
             "turn_output_audio_bytes",
             "turn_first_output_audio_provider_at",
+            "audio_chunks",
+            "max_stdin_delay_ms",
+            "max_ws_send_ms",
+            "audio_stream_end_sent_at",
+            "activity_end_sent_at",
             "audio_turn_open",
             "exception_type",
         ):
