@@ -359,16 +359,19 @@ def main() -> None:
     run("adb", "shell", "am", "start", "-W", "-n", ACTIVITY, timeout=30, retries=3)
 
     wait_log(rf"update_available versionCode={new_code}\b", timeout_seconds=150)
-    wait_log(rf"update_dialog_shown versionCode={new_code}\b", timeout_seconds=60)
 
+    # The update prompt is rendered by the *currently installed previous APK*.
+    # It cannot emit observability added only in the just-published new APK,
+    # so acceptance must inspect and use the real Android dialog itself.
     run("adb", "shell", "input", "keyevent", "KEYCODE_WAKEUP", timeout=15, retries=3)
     run("adb", "shell", "wm", "dismiss-keyguard", check=False, timeout=15, retries=1)
+    wait_text_bounds("Доступно обновление Projects Hub", timeout_seconds=60)
     left, top, right, bottom = wait_text_bounds("Обновить", timeout_seconds=60)
     x = (left + right) // 2
     y = (top + bottom) // 2
     print(f"automatic update dialog confirm: ui bounds={left},{top},{right},{bottom}")
     run("adb", "shell", "input", "tap", str(x), str(y), timeout=15, retries=3)
-    wait_log(rf"update_dialog_confirmed versionCode={new_code}\b", timeout_seconds=30)
+    wait_log(rf"update_download_start versionCode={new_code}\b", timeout_seconds=60)
 
     permission_required = re.search(
         rf"install_permission_required versionCode={new_code}\b",
