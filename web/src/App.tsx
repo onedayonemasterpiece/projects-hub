@@ -38,8 +38,6 @@ import {
 import { replayLocalVoiceSource } from "./bufferedReplay";
 import { recoverServerVoiceSource } from "./serverRecovery";
 import { mergeTranscript, resolveTerminalVoiceState, speechStartsNewUserBubble } from "./voiceUiContract.js";
-import { BoardShell, type BoardFocusRequest, type BoardShareRequest } from "./BoardShell";
-import { ackBoardUi, openBoard, type BoardGeometry } from "./boardApi";
 import {
   acknowledgeDeliveredSource,
   createLocalPersistSink,
@@ -152,6 +150,9 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [interimInputTranscript, setInterimInputTranscript] = useState("");
   const [inputTranscriptSeen, setInputTranscriptSeen] = useState(false);
+  const [speechActive, setSpeechActive] = useState(false);
+  const [speechPending, setSpeechPending] = useState(false);
+  const [playbackProblem, setPlaybackProblem] = useState<string | null>(null);
   const [recoverableSourceId, setRecoverableSourceId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [microphoneSettingsAvailable, setMicrophoneSettingsAvailable] = useState(false);
@@ -166,10 +167,6 @@ export default function App() {
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [eventOpen, setEventOpen] = useState(false);
   const [backlogOpen, setBacklogOpen] = useState(false);
-  const [boardOpen, setBoardOpen] = useState(false);
-  const [boardFocusRequest, setBoardFocusRequest] = useState<BoardFocusRequest>(null);
-  const [analysisRunId, setAnalysisRunId] = useState<string | null>(null);
-  const [boardShareRequest, setBoardShareRequest] = useState<BoardShareRequest>(null);
   const [busy, setBusy] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
   const [networkOnline, setNetworkOnline] = useState(() => navigator.onLine);
@@ -191,7 +188,6 @@ export default function App() {
   const turnHasInput = useRef(false);
   const userTurnBoundaryPendingRef = useRef(false);
   const conversationRef = useRef<Conversation | null>(null);
-  const boardProjectRef = useRef<string | null>(null);
   const lastDevelopmentUpdateCheckRef = useRef(
     localStorage.getItem("projects-hub-development-update-check") ?? "",
   );
@@ -213,20 +209,6 @@ export default function App() {
     const id = conversation?.focus_project_id;
     return id ? boot.projects.find(project => project.id === id) ?? null : null;
   }, [boot, conversation]);
-
-  useEffect(() => {
-    const nextProjectId = focusProject?.id ?? null;
-    if (
-      boardProjectRef.current !== null
-      && boardProjectRef.current !== nextProjectId
-    ) {
-      setBoardOpen(false);
-      setBoardFocusRequest(null);
-      setAnalysisRunId(null);
-      setBoardShareRequest(null);
-    }
-    boardProjectRef.current = nextProjectId;
-  }, [focusProject?.id]);
 
   const loadMemories = useCallback(async () => {
     if (!boot) return;
@@ -382,89 +364,6 @@ export default function App() {
       turnHasInput.current = false;
       assistantTranscriptIndex.current = -1;
     } else if (event.type === "tool_result" && event.status === "ok") {
-      if (["board_navigate", "board_edit", "board_analysis", "board_share"].includes(event.name ?? "")) {
-        let rawResult: unknown = event.result ?? event.output ?? event.response;
-        if (typeof rawResult === "string") {
-          try {
-            rawResult = JSON.parse(rawResult);
-          } catch {
-            rawResult = null;
-          }
-        }
-        if (rawResult && typeof rawResult === "object") {
-          const ui = (rawResult as Record<string, unknown>).ui_command;
-          if (ui && typeof ui === "object") {
-            const command = ui as Record<string, unknown>;
-            const projectId = String(command.project_id ?? "");
-            const currentProjectId = conversationRef.current?.focus_project_id ?? "";
-            if (!projectId || projectId !== currentProjectId) {
-              setNotice("Команда доски относится уже не к текущему проекту.");
-            } else {
-              const kind = String(command.kind ?? "board");
-              const action = String(command.action ?? "");
-              if (kind === "analysis" && action === "show") {
-                const runId = String(command.run_id ?? "");
-                if (runId) {
-                  setBoardOpen(true);
-                  setContextOpen(false);
-                  setAnalysisRunId(runId);
-                }
-              } else if (kind === "share" && action === "ready") {
-                const shareId = String(command.share_id ?? "");
-                const url = String(command.url ?? "");
-                const expiresAtMs = Number(command.expires_at_ms ?? 0);
-                if (shareId && url && Number.isFinite(expiresAtMs) && expiresAtMs > 0) {
-                  setBoardOpen(true);
-                  setContextOpen(false);
-                  setBoardShareRequest({
-                    id: shareId,
-                    url,
-                    expiresAtMs,
-                    warning: String(command.warning ?? "") || undefined,
-                  });
-                }
-              } else if (action === "close") {
-                setBoardOpen(false);
-                setBoardFocusRequest(null);
-              } else if (action === "open") {
-                setBoardOpen(true);
-                setContextOpen(false);
-              } else if (action === "view_all") {
-                const token = String(command.token ?? "");
-                if (token) {
-                  setBoardOpen(true);
-                  setContextOpen(false);
-                  setBoardFocusRequest({ kind: "view_all", token });
-                }
-              } else if (action === "focus") {
-                const objectId = String(command.object_id ?? "");
-                const token = String(command.token ?? "");
-                const rawBox = command.bbox;
-                if (
-                  objectId
-                  && token
-                  && rawBox
-                  && typeof rawBox === "object"
-                  && ["x", "y", "width", "height", "z"].every(
-                    key => Number.isFinite(Number((rawBox as Record<string, unknown>)[key])),
-                  )
-                ) {
-                  setBoardOpen(true);
-                  setContextOpen(false);
-                  setBoardFocusRequest({
-                    kind: "object",
-                    objectId,
-                    token,
-                    bbox: rawBox as BoardGeometry,
-                  });
-                } else {
-                  setNotice("Мира не получила актуальную позицию объекта на доске.");
-                }
-              }
-            }
-          }
-        }
-      }
       if (event.name === "memory_commit_voice_source") {
         void loadMemories().then(() => setMemoryOpen(true));
       }
@@ -599,17 +498,35 @@ export default function App() {
       voiceControl: null,
       // Adaptive duplex rejects Mira playback echo while preserving sustained real barge-in.
       suppressCaptureDuringPlayback: "adaptive",
-      manualActivityDetection: true,
+      // Google hybrid VAD: provider auto-VAD owns speech start/prefix buffering;
+      // local VAD only closes the turn early with audio_stream_end. The provider
+      // remains a fallback when the client misses an endpoint.
+      manualActivityDetection: false,
       continuousCapture: false,
-      // Keep the mature manual-boundary path, but finalize a speech segment after
-      // the shared framework's proven 2 s tail. A natural pause now yields the
-      // provider-derived transcript while the Live session itself stays active.
-      speechEndSilenceMs: 2000,
+      // Google's guidance is at least 500 ms for client-side end detection. Use
+      // 650 ms for short commands, but give sustained monologues more room to
+      // contain a thinking pause before finalization.
+      speechEndSilenceMs: 650,
       // Require sustained speech onset before opening provider activity so taps,
       // keyboard clicks and finger snaps do not become semantic user turns.
       speechStartMs: 180,
+      longSpeechEndSilenceMs: 1400,
+      longSpeechAfterMs: 8000,
       onTiming: event => {
+        if (event === "speech_end") {
+          setSpeechActive(false);
+          setSpeechPending(true);
+          return;
+        }
+        if (event === "first_output_audio") setSpeechPending(false);
+        if (event === "audio_scheduled") setPlaybackProblem(null);
         if (!speechStartsNewUserBubble(event)) return;
+        setSpeechActive(true);
+        setSpeechPending(false);
+        // A real microphone/VAD speech start is the user-turn boundary. Gemini
+        // conversational Live may emit only a final input_transcript, so waiting
+        // for provider interim text can incorrectly append a later utterance to
+        // the previous user bubble.
         userTurnBoundaryPendingRef.current = false;
         userTranscriptIndex.current = -1;
         turnHasInput.current = false;
@@ -619,6 +536,11 @@ export default function App() {
       onState: (state, detail) => {
         const terminalReason = resolveTerminalVoiceState(state, detail);
         setVoiceState(terminalReason || state);
+        if (terminalReason || inactiveVoiceStates.has(state) || state === "reconnecting" || state === "budget_wait") {
+          setSpeechActive(false);
+          setSpeechPending(false);
+        }
+        if (state === "starting") setPlaybackProblem(null);
         if (terminalReason && currentSourceIdRef.current) {
           setRecoverableSourceId(currentSourceIdRef.current);
         }
@@ -630,12 +552,15 @@ export default function App() {
         }
         if (state === "starting") setInputTranscriptSeen(false);
         if (state === "listening") {
+          setSpeechPending(false);
           setNotice(null);
           setMicrophoneSettingsAvailable(false);
         }
       },
       onNotice: (kind, error) => {
-        if (kind === "microphone_error") {
+        if (kind === "playback_error") {
+          setPlaybackProblem("Не удалось включить звук. Ответ Миры можно прочитать в переписке. Остановите и снова начните разговор, чтобы повторно включить звук.");
+        } else if (kind === "microphone_error") {
           clientRef.current?.stop({ reason: "microphone_unavailable" });
           setMicrophoneSettingsAvailable(isAndroidApp);
           setNotice("Android/WebView не получил микрофон. Откройте настройки приложения и разрешите микрофон; если он уже разрешён, проверьте системный переключатель доступа к микрофону.");
@@ -1116,17 +1041,6 @@ export default function App() {
                 <h2>{boot.workspace.name}</h2>
               </div>
               <div className="sheet-actions">
-                {focusProject && (
-                  <button
-                    className="quiet-button"
-                    onClick={() => {
-                      setBoardOpen(true);
-                      setContextOpen(false);
-                    }}
-                  >
-                    Доска
-                  </button>
-                )}
                 <button className="quiet-button" onClick={openBacklog}>Бэклог</button>
                 <button className="quiet-button" onClick={openEvents}>Готовность</button>
                 <button className="quiet-button" onClick={openMemory}>Память</button>
@@ -1228,7 +1142,7 @@ export default function App() {
         )}
       </header>
 
-      {(chatMessages.length > 0 || interimInputTranscript) && (
+      {(voiceActive || chatMessages.length > 0 || interimInputTranscript || playbackProblem) && (
         <section className="chat-canvas" aria-label="Диалог с Мирой">
           <div
             className="chat-thread"
@@ -1261,10 +1175,19 @@ export default function App() {
                   </div>
                 </div>
               )}
-              {voiceState === "listening" && !inputTranscriptSeen && !interimInputTranscript && !notice && (
+              {voiceActive && !interimInputTranscript && !notice && (
+                speechActive || speechPending || (voiceState === "listening" && !inputTranscriptSeen)
+              ) && (
                 <div className="chat-status" aria-live="polite">
-                  Микрофон работает; текст ещё не получен.
+                  {speechActive
+                    ? "Слышу речь. Распознанный текст появится после завершения реплики."
+                    : speechPending
+                      ? "Реплика завершена. Жду текст и ответ Миры…"
+                      : "Микрофон работает; текст ещё не получен."}
                 </div>
+              )}
+              {playbackProblem && (
+                <div className="chat-status" role="alert">{playbackProblem}</div>
               )}
               {(wait || notice) && (
                 <div className="chat-status" role={notice ? "alert" : undefined}>
@@ -1548,49 +1471,6 @@ export default function App() {
         </nav>
       )}
 
-      {focusProject && (
-        <BoardShell
-          visible={boardOpen}
-          workspaceId={boot.workspace.id}
-          projectId={focusProject.id}
-          canEdit={(focusProject.role ?? "viewer") !== "viewer"}
-          canAnalyze={Boolean(focusProject.can_analyze)}
-          canManageShare={Boolean(focusProject.can_manage_share)}
-          focusRequest={boardFocusRequest}
-          analysisRunId={analysisRunId}
-          shareRequest={boardShareRequest}
-          onClose={() => {
-            setBoardOpen(false);
-            setBoardFocusRequest(null);
-            setAnalysisRunId(null);
-            setBoardShareRequest(null);
-          }}
-          onFocusFulfilled={(token, ok) => {
-            const action =
-              boardFocusRequest?.token === token && boardFocusRequest.kind === "view_all"
-                ? "view_all"
-                : "focus";
-            setBoardFocusRequest(current =>
-              current?.token === token ? null : current
-            );
-            void openBoard(boot.workspace.id, focusProject.id)
-              .then(board =>
-                ackBoardUi(
-                  boot.workspace.id,
-                  board.id,
-                  token,
-                  action,
-                  ok,
-                ),
-              )
-              .catch(() => {
-                setNotice("Не удалось подтвердить положение доски серверу.");
-              });
-            if (!ok) setNotice("Объект на доске больше недоступен.");
-          }}
-        />
-      )}
-
       <section className="voice-dock">
         <div className={"island voice-island state-" + voiceState}>
           <button
@@ -1606,6 +1486,20 @@ export default function App() {
           <div className="voice-copy">
             <strong>{voiceHeadline}</strong>
             <span>{voiceHint}</span>
+            {speechActive && networkOnline && (
+              <button
+                className="mini-action finish-turn-action"
+                onClick={() => {
+                  if (clientRef.current?.finishTurn()) {
+                    setSpeechActive(false);
+                    setSpeechPending(true);
+                  }
+                }}
+                disabled={busy}
+              >
+                Готово, отвечай
+              </button>
+            )}
           </div>
           <span className={"state-dot " + (voiceActive ? "live" : "")} />
         </div>

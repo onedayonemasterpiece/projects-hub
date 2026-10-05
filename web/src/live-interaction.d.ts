@@ -30,6 +30,7 @@ declare module "@onedayonemasterpiece/live-interaction/browser" {
     input(message: Record<string, unknown>): Promise<unknown>;
     enableMicrophone(args?: Record<string, unknown>): Promise<boolean>;
     disableMicrophone(): void;
+    finishTurn(): boolean;
   };
 
   export type DurableMicrophoneCapture = {

@@ -165,7 +165,6 @@ def test_projects_hub_wss_binary_push_and_no_http_fallback(live_client):
 
     with socket(client, value) as ws:
         hello(ws, value)
-        ws.send_json({"type": "input", "message": {"activity_start": True}})
         ws.send_bytes(struct.pack("!III", 0x574C4131, 1, 0) + b"\x01\x00\x02\x00")
 
         ack = None
@@ -185,7 +184,7 @@ def test_projects_hub_wss_binary_push_and_no_http_fallback(live_client):
         assert rejected.status_code == 409
         assert rejected.json()["detail"]["code"] == "LIVE_TRANSPORT_MISMATCH"
 
-        ws.send_json({"type": "input", "message": {"activity_end": True}})
+        ws.send_json({"type": "input", "message": {"audio_stream_end": True}})
         ws.send_json({"type": "input", "message": {"text": "reply"}})
 
         transcript = False
@@ -202,14 +201,40 @@ def test_projects_hub_wss_binary_push_and_no_http_fallback(live_client):
         assert binary[12:] == b"\x01\x00\x02\x00"
         ws.send_json({"type": "stop"})
 
-    assert [item["type"] for item in provider.inputs][:5] == [
+    assert [item["type"] for item in provider.inputs][:4] == [
         "start",
-        "activity_start",
         "audio",
-        "activity_end",
+        "audio_stream_end",
         "text",
     ]
 
+
+
+def test_app_restart_replaces_a_previously_attached_then_detached_wss_session(live_client):
+    client, conversation_id, _, host = live_client
+    first = start(live_client)
+
+    with socket(client, first) as ws:
+        hello(ws, first)
+        ws.close()
+
+    state = host._socket_states[first["session_id"]]
+    assert state.used_wss is True
+    assert state.claim is None
+
+    replacement = client.post(
+        f"/api/live/{conversation_id}/sessions",
+        json={"transport": "wss", "attempt_id": "attempt_after_app_restart"},
+    )
+    assert replacement.status_code == 200, replacement.text
+    second = replacement.json()
+    assert second["session_id"] != first["session_id"]
+    assert first["session_id"] not in host.sessions
+
+    assert client.post(
+        f"/api/live/{conversation_id}/sessions/{second['session_id']}/stop",
+        json={"reason": "test_cleanup"},
+    ).status_code == 200
 
 def test_projects_hub_wss_origin_query_and_ticket_rotation(live_client):
     client, conversation_id, _, _ = live_client
@@ -339,6 +364,144 @@ def test_two_actors_are_isolated_and_global_capacity_is_bounded(tmp_path: Path):
     finally:
         store.close()
 
+
+
+def test_new_start_replaces_detached_same_resource_without_waiting_for_liveness_timeout(tmp_path: Path):
+    store = DurableStore(tmp_path / "data")
+    provider = Provider()
+    host = make_host(store, provider, max_sessions=2, max_sessions_per_actor=2)
+    try:
+        actor_record = _actor(store, "restart-user", "Restart")
+        actor_id = actor_record["actor"]["id"]
+        workspace_id = actor_record["workspace"]["id"]
+        conversation = store.create_conversation(
+            actor_id,
+            workspace_id,
+            actor_record["projects"][0]["id"],
+        )
+        resource_id = ConversationScope(
+            workspace_id=workspace_id,
+            subject_id=actor_id,
+            conversation_id=conversation["id"],
+        ).resource_binding()
+        actor = {"subject": actor_id, "tenant_id": workspace_id}
+
+        async def scenario():
+            first = await host.start(
+                resource_id=resource_id,
+                actor=actor,
+                conversation_id=conversation["id"],
+                audio_mode="realtime",
+                client_source_id=None,
+                attempt_id="restart_first",
+            )
+            state = host._socket_states[first["session_id"]]
+            assert state.claim is None
+            state.used_wss = True  # Simulate a WSS session after app/socket disconnect.
+
+            replacement = await host.start(
+                resource_id=resource_id,
+                actor=actor,
+                conversation_id=conversation["id"],
+                audio_mode="realtime",
+                client_source_id=None,
+                attempt_id="restart_replacement",
+            )
+            assert replacement["session_id"] != first["session_id"]
+            assert first["session_id"] not in host.sessions
+            assert replacement["session_id"] in host.sessions
+            await host.stop(
+                session_id=replacement["session_id"],
+                resource_id=resource_id,
+                actor=actor,
+            )
+
+        asyncio.run(scenario())
+    finally:
+        store.close()
+
+
+def test_stale_detached_session_frees_actor_capacity_but_attached_session_is_preserved(tmp_path: Path):
+    store = DurableStore(tmp_path / "data")
+    provider = Provider()
+    host = make_host(store, provider, max_sessions=2, max_sessions_per_actor=2)
+    host.detached_session_reclaim_ms = 15_000
+    try:
+        actor_record = _actor(store, "capacity-restart-user", "Capacity Restart")
+        actor_id = actor_record["actor"]["id"]
+        workspace_id = actor_record["workspace"]["id"]
+        actor = {"subject": actor_id, "tenant_id": workspace_id}
+        conversations = [
+            store.create_conversation(
+                actor_id,
+                workspace_id,
+                actor_record["projects"][0]["id"],
+            )
+            for _ in range(3)
+        ]
+        resources = [
+            ConversationScope(
+                workspace_id=workspace_id,
+                subject_id=actor_id,
+                conversation_id=conversation["id"],
+            ).resource_binding()
+            for conversation in conversations
+        ]
+
+        async def scenario():
+            first = await host.start(
+                resource_id=resources[0],
+                actor=actor,
+                conversation_id=conversations[0]["id"],
+                audio_mode="realtime",
+                client_source_id=None,
+                attempt_id="capacity_first",
+            )
+            second = await host.start(
+                resource_id=resources[1],
+                actor=actor,
+                conversation_id=conversations[1]["id"],
+                audio_mode="realtime",
+                client_source_id=None,
+                attempt_id="capacity_second",
+            )
+
+            # The first session represents an abandoned app/socket and is old
+            # enough to be outside the browser's 10s reconnect window.
+            host.sessions[first["session_id"]].last_client_at_ms -= 20_000
+
+            # The second session represents a still-attached socket. Even with
+            # an old timestamp it must never be reaped by admission cleanup.
+            host.sessions[second["session_id"]].last_client_at_ms -= 20_000
+            host._socket_states[second["session_id"]].claim = "attached-test-claim"
+
+            third = await host.start(
+                resource_id=resources[2],
+                actor=actor,
+                conversation_id=conversations[2]["id"],
+                audio_mode="realtime",
+                client_source_id=None,
+                attempt_id="capacity_third",
+            )
+            assert first["session_id"] not in host.sessions
+            assert second["session_id"] in host.sessions
+            assert third["session_id"] in host.sessions
+
+            host._socket_states[second["session_id"]].claim = None
+            await host.stop(
+                session_id=second["session_id"],
+                resource_id=resources[1],
+                actor=actor,
+            )
+            await host.stop(
+                session_id=third["session_id"],
+                resource_id=resources[2],
+                actor=actor,
+            )
+
+        asyncio.run(scenario())
+    finally:
+        store.close()
 
 def test_actor_fairness_and_duplicate_buffered_source_admission(tmp_path: Path):
     store = DurableStore(tmp_path / "data")
