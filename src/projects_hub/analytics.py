@@ -13,7 +13,7 @@ from .store import DurableStore, StoreError
 
 
 ANALYSIS_COMMAND_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
-ANALYSIS_MODELS = {"kimi_k3", "deepseek"}
+ANALYSIS_MODELS = {"kimi_k3", "deepseek", "council_free"}
 ANALYSIS_PURPOSES = {"requirements", "edge_cases", "architecture", "code_review", "ideas"}
 MAX_ANALYSIS_OBJECTS = 12
 MAX_ANALYSIS_QUESTION = 4000
@@ -301,13 +301,20 @@ class AnalyticsService:
             )
 
         try:
-            response = await self.bridge.consult(
-                model=model,
-                purpose=purpose,
-                question=clean_question,
-                evidence_bundle=evidence,
-                request_key=f"analysis:{run_id}",
-            )
+            if model == "council_free":
+                response = await self.bridge.council(
+                    prompt=f"Purpose: {purpose}\n\n{clean_question}",
+                    evidence_bundle=evidence,
+                    request_key=f"analysis:{run_id}",
+                )
+            else:
+                response = await self.bridge.consult(
+                    model=model,
+                    purpose=purpose,
+                    question=clean_question,
+                    evidence_bundle=evidence,
+                    request_key=f"analysis:{run_id}",
+                )
         except AnalyticsBridgeError as exc:
             with self.store._lock:
                 self.store.db.execute(
@@ -369,6 +376,80 @@ class AnalyticsService:
             return value.strip()
         return ""
 
+    @staticmethod
+    def _council_markdown(payload: dict[str, Any], question: str) -> str:
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            return ""
+        lines = [
+            "# Multi-model council",
+            "",
+            "## Question",
+            "",
+            question.strip(),
+            "",
+        ]
+        outputs = result.get("model_outputs")
+        if isinstance(outputs, dict) and outputs:
+            lines.extend(["## Participant outputs", ""])
+            for model_name, raw in outputs.items():
+                if not isinstance(raw, dict):
+                    continue
+                lines.extend([f"### {model_name}", ""])
+                status = raw.get("status")
+                if status:
+                    lines.append(f"- Status: {status}")
+                mode = raw.get("participationMode")
+                if mode:
+                    lines.append(f"- Participation: {mode}")
+                calls = raw.get("inferenceCallsUsed")
+                if isinstance(calls, int):
+                    lines.append(f"- Inference calls: {calls}")
+                for label, key in (
+                    ("Initial position", "initial_position"),
+                    ("Cross-critique", "cross_critique"),
+                ):
+                    value = raw.get(key)
+                    if isinstance(value, str) and value.strip():
+                        lines.extend(["", f"#### {label}", "", value.strip()])
+                revision = raw.get("revision")
+                if isinstance(revision, dict):
+                    position = revision.get("revised_position")
+                    if isinstance(position, str) and position.strip():
+                        lines.extend(["", "#### Revised position", "", position.strip()])
+                    for label, key in (
+                        ("Agreements", "agreements"),
+                        ("Disagreements", "disagreements"),
+                        ("Novel findings", "novel_findings"),
+                        ("Unresolved questions", "unresolved_questions"),
+                        ("Key contributions", "key_contributions"),
+                    ):
+                        values = revision.get(key)
+                        if isinstance(values, list) and values:
+                            lines.extend(["", f"#### {label}", ""])
+                            lines.extend(f"- {str(item)}" for item in values)
+                expert = raw.get("expert_review")
+                if isinstance(expert, dict):
+                    assessment = expert.get("expert_assessment")
+                    if isinstance(assessment, str) and assessment.strip():
+                        lines.extend(["", "#### Expert assessment", "", assessment.strip()])
+                lines.append("")
+
+        for label, key in (
+            ("Novel findings", "novel_findings"),
+            ("Unresolved questions", "unresolved_questions"),
+        ):
+            values = result.get(key)
+            if isinstance(values, list) and values:
+                lines.extend([f"## {label}", ""])
+                lines.extend(f"- {str(item)}" for item in values)
+                lines.append("")
+
+        usage = result.get("usage")
+        if isinstance(usage, dict):
+            lines.extend(["## Usage", "", _canonical(usage), ""])
+        return "\n".join(lines).strip()
+
     async def _reconcile_without_task(self, row: Any) -> dict[str, Any]:
         evidence = str(row["evidence_bundle"] or "")
         if not evidence:
@@ -378,6 +459,12 @@ class AnalyticsService:
         if hashlib.sha256(evidence.encode("utf-8")).hexdigest() != row["input_sha256"]:
             raise AnalyticsBridgeError(
                 "Frozen evidence integrity check failed; refusing provider redispatch"
+            )
+        if row["model_alias"] == "council_free":
+            return await self.bridge.council(
+                prompt=f"Purpose: {row['purpose']}\n\n{row['question']}",
+                evidence_bundle=evidence,
+                request_key=f"analysis:{row['id']}",
             )
         return await self.bridge.consult(
             model=row["model_alias"],
@@ -440,7 +527,12 @@ class AnalyticsService:
             if bool(current["cancel_requested"]) or current["status"] == "cancelled":
                 return self._public(actor_id, workspace_id, current)
             if provider_status == "completed":
-                markdown = self._extract_markdown(payload)
+                council_result = payload.get("result") if current["model_alias"] == "council_free" else None
+                markdown = (
+                    self._council_markdown(payload, str(current["question"]))
+                    if current["model_alias"] == "council_free"
+                    else self._extract_markdown(payload)
+                )
                 if not markdown:
                     self.store.db.execute(
                         """UPDATE analysis_runs
@@ -449,19 +541,22 @@ class AnalyticsService:
                         (now, now, run_id),
                     )
                 else:
+                    result_value = (
+                        council_result
+                        if isinstance(council_result, dict)
+                        else {
+                            "summary": markdown.splitlines()[0][:500],
+                            "participant": current["model_alias"],
+                            "purpose": current["purpose"],
+                        }
+                    )
                     self.store.db.execute(
                         """UPDATE analysis_runs
                            SET status='completed',result_markdown=?,result_json=?,
                                error_code=NULL,updated_at_ms=?,finished_at_ms=? WHERE id=?""",
                         (
                             markdown,
-                            _canonical(
-                                {
-                                    "summary": markdown.splitlines()[0][:500],
-                                    "participant": current["model_alias"],
-                                    "purpose": current["purpose"],
-                                }
-                            ),
+                            _canonical(result_value),
                             now, now, run_id,
                         ),
                     )
