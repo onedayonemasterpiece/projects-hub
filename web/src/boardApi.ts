@@ -71,6 +71,30 @@ export type BoardShareGrant = {
   warning?: string;
 };
 
+export type AnalysisMaterialization = {
+  run_id: string;
+  project_id?: string;
+  repository_id?: number;
+  full_name?: string;
+  branch?: string;
+  path: string;
+  private?: boolean;
+  status:
+    | "not_configured"
+    | "ready"
+    | "confirmation_required"
+    | "pending"
+    | "failed"
+    | "synced";
+  content_sha?: string | null;
+  commit_sha?: string | null;
+  error_code?: string | null;
+  reused?: boolean;
+  created_at_ms?: number;
+  updated_at_ms?: number;
+  eligible_repository_ids?: number[];
+};
+
 export type AnalysisRun = {
   id: string;
   project_id: string;
@@ -328,6 +352,38 @@ export async function publishAnalysisRun(
         workspace_id: workspaceId,
         command_id: "analysis_publish_ui_" + crypto.randomUUID(),
         object_id: objectId,
+      }),
+    },
+  );
+}
+
+export async function getAnalysisMaterialization(
+  workspaceId: string,
+  runId: string,
+) {
+  const query = new URLSearchParams({ workspace_id: workspaceId });
+  return request<AnalysisMaterialization>(
+    "/api/analysis/runs/" +
+      encodeURIComponent(runId) +
+      "/materialization?" +
+      query.toString(),
+  );
+}
+
+export async function materializeAnalysisRun(
+  workspaceId: string,
+  runId: string,
+  repositoryId?: number,
+  allowPublic = false,
+) {
+  return request<AnalysisMaterialization>(
+    "/api/analysis/runs/" + encodeURIComponent(runId) + "/materialize",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        workspace_id: workspaceId,
+        repository_id: repositoryId ?? null,
+        allow_public: allowPublic,
       }),
     },
   );
