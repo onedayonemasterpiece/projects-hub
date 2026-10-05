@@ -27,6 +27,11 @@ self.addEventListener("fetch", event => {
   const url = new URL(request.url);
   if (request.method !== "GET" || url.pathname.startsWith("/api/")) return;
 
+  if (url.pathname.startsWith("/guest/")) {
+    event.respondWith(fetch(new Request(request, { cache: "no-store" })));
+    return;
+  }
+
   const freshRequest = new Request(request, { cache: "no-store" });
   event.respondWith(
     fetch(freshRequest)
