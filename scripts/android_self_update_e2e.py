@@ -247,7 +247,8 @@ def wait_text_bounds(target_text: str, timeout_seconds: int = 45) -> tuple[int, 
         except ET.ParseError:
             time.sleep(1)
             continue
-        for node in root.iter("node"):
+        nodes = list(root.iter("node"))
+        for node in nodes:
             if str(node.attrib.get("text") or "") != target_text:
                 continue
             match = re.fullmatch(
@@ -259,6 +260,38 @@ def wait_text_bounds(target_text: str, timeout_seconds: int = 45) -> tuple[int, 
             left, top, right, bottom = map(int, match.groups())
             if right > left and bottom > top:
                 return left, top, right, bottom
+
+        # Hosted emulator occasionally raises a Pixel Launcher ANR over the
+        # app even though Projects Hub is healthy. This is outside the product
+        # boundary; dismiss it with the non-destructive Wait action and keep
+        # validating the actual Projects Hub update UI.
+        if any(
+            str(node.attrib.get("text") or "") == "Pixel Launcher isn't responding"
+            for node in nodes
+        ):
+            for node in nodes:
+                if str(node.attrib.get("text") or "") != "Wait":
+                    continue
+                match = re.fullmatch(
+                    r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]",
+                    str(node.attrib.get("bounds") or ""),
+                )
+                if not match:
+                    continue
+                left, top, right, bottom = map(int, match.groups())
+                if right > left and bottom > top:
+                    run(
+                        "adb",
+                        "shell",
+                        "input",
+                        "tap",
+                        str((left + right) // 2),
+                        str((top + bottom) // 2),
+                        timeout=15,
+                        retries=2,
+                    )
+                    time.sleep(2)
+                    break
         time.sleep(1)
     raise RuntimeError(
         f"Android UI text {target_text!r} was not found; "
