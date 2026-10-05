@@ -446,6 +446,25 @@ button:focus-visible {
   color: #f1f3f4;
 }
 
+.chat-row.interim {
+  opacity: 0.78;
+}
+
+.chat-bubble.interim {
+  display: grid;
+  gap: 4px;
+  border: 1px dashed rgba(247, 249, 251, 0.32);
+  box-shadow: none;
+}
+
+.interim-label {
+  color: rgba(247, 249, 251, 0.68);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .chat-status {
   align-self: center;
   max-width: 84%;
