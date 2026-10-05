@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "projects-hub"
-version = "0.1.29"
+version = "0.1.30"
 description = "Voice-first iterative work on project ideas and documentation"
 requires-python = ">=3.11"
 dependencies = [
@@ -13,7 +13,7 @@ dependencies = [
   "httpx>=0.28,<1",
   "PyJWT[crypto]>=2.10,<3",
   "mcp>=2,<3",
-  "live-interaction @ git+https://github.com/onedayonemasterpiece/live-interaction.git@330cbc2564c5561ccf36b1bf1de29666fbf637b9",
+  "live-interaction @ git+https://github.com/onedayonemasterpiece/live-interaction.git@bc4a25e8188df2c4ff293f0e14578330fd0c2c9c",
 ]
 
 [project.optional-dependencies]

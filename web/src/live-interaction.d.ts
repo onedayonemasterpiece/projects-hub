@@ -53,6 +53,7 @@ declare module "@onedayonemasterpiece/live-interaction/browser" {
     };
     suppressCaptureDuringPlayback?: boolean | "adaptive" | (() => boolean | "adaptive");
     speechEndSilenceMs?: number;
+    speechStartMs?: number;
     longSpeechEndSilenceMs?: number | null;
     longSpeechAfterMs?: number | null;
     manualActivityDetection?: boolean;

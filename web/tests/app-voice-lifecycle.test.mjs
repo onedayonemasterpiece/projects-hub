@@ -195,6 +195,7 @@ test("Projects Hub finalizes speech chunks after the proven two-second pause wit
   assert.match(source, /manualActivityDetection:\s*true/);
   assert.match(source, /continuousCapture:\s*false/);
   assert.match(source, /speechEndSilenceMs:\s*2000/);
+  assert.match(source, /speechStartMs:\s*180/);
   assert.doesNotMatch(source, /longSpeechEndSilenceMs:/);
   assert.doesNotMatch(source, /longSpeechAfterMs:/);
   assert.match(source, /suppressCaptureDuringPlayback:\s*"adaptive"/);
@@ -226,4 +227,5 @@ test("Projects Hub opts into shared adaptive duplex echo rejection", async () =>
   assert.match(source, /suppressCaptureDuringPlayback:\s*"adaptive"/);
   assert.doesNotMatch(source, /suppressCaptureDuringPlayback:\s*false/);
   assert.match(source, /speechEndSilenceMs:\s*2000/);
+  assert.match(source, /speechStartMs:\s*180/);
 });
