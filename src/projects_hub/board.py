@@ -14,6 +14,7 @@ from .store import DurableStore, StoreError
 
 OBJECT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$")
 COMMAND_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
+UI_TOKEN_RE = re.compile(r"^uif_[0-9a-f]{24}$")
 ALLOWED_TYPES = {"sticky", "document_card"}
 ALLOWED_OPERATIONS = {"create", "update", "move", "delete", "restore"}
 ALLOWED_COLORS = {"yellow", "pink", "blue", "green", "orange", "violet"}
@@ -148,6 +149,16 @@ class BoardService:
         );
         CREATE INDEX IF NOT EXISTS board_socket_tickets_expiry_idx
             ON board_socket_tickets(expires_at_ms, consumed_at_ms);
+        CREATE TABLE IF NOT EXISTS board_ui_acks(
+            token TEXT PRIMARY KEY,
+            board_id TEXT NOT NULL REFERENCES boards(id),
+            actor_id TEXT NOT NULL REFERENCES actors(id),
+            action TEXT NOT NULL,
+            ok INTEGER NOT NULL CHECK(ok IN (0,1)),
+            ack_at_ms INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS board_ui_acks_board_idx
+            ON board_ui_acks(board_id, ack_at_ms DESC);
         """
         with self.store._lock:
             self.store.db.executescript(schema)
@@ -650,6 +661,55 @@ class BoardService:
                 expected_object_revision=receipt["object_revision"], payload={}, execution_origin="undo",
             )
         return receipt
+
+    def record_ui_ack(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        board_id: str,
+        token: str,
+        action: str,
+        ok: bool,
+    ) -> dict[str, Any]:
+        if not UI_TOKEN_RE.fullmatch(str(token or "")):
+            raise StoreError("INVALID_ARGUMENT", "Board UI token is invalid")
+        if action not in {"focus", "view_all"}:
+            raise StoreError("INVALID_ARGUMENT", "Board UI acknowledgement action is invalid")
+        now = _now_ms()
+        with self.store._lock:
+            board = self._board_row(board_id)
+            self.store.project_access(actor_id, workspace_id, board["project_id"])
+            existing = self.store.db.execute(
+                "SELECT * FROM board_ui_acks WHERE token=?",
+                (token,),
+            ).fetchone()
+            if existing:
+                if (
+                    existing["board_id"] != board_id
+                    or existing["actor_id"] != actor_id
+                    or existing["action"] != action
+                    or bool(existing["ok"]) != bool(ok)
+                ):
+                    raise StoreError(
+                        "UI_ACK_CONFLICT",
+                        "Board UI acknowledgement token was already used differently",
+                    )
+                return dict(existing)
+            self.store.db.execute(
+                """INSERT INTO board_ui_acks
+                   (token,board_id,actor_id,action,ok,ack_at_ms)
+                   VALUES(?,?,?,?,?,?)""",
+                (token, board_id, actor_id, action, int(bool(ok)), now),
+            )
+            return {
+                "token": token,
+                "board_id": board_id,
+                "actor_id": actor_id,
+                "action": action,
+                "ok": int(bool(ok)),
+                "ack_at_ms": now,
+            }
 
     def issue_socket_ticket(
         self,

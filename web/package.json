@@ -11,7 +11,8 @@
   "dependencies": {
     "@onedayonemasterpiece/live-interaction": "git+https://github.com/onedayonemasterpiece/live-interaction.git#v0.3.20",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "pixi.js": "8.22.0"
   },
   "devDependencies": {
     "@types/react": "^19.1.16",

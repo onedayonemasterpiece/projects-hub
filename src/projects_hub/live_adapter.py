@@ -8,6 +8,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any, Callable
 
+from .board import BoardService
 from .device_commands import DeviceCommandService
 from .development import DevelopmentService
 from .github_connections import GitHubConnections
@@ -42,6 +43,84 @@ def _functions(
             "name": "projects_list_accessible",
             "description": "List projects the current actor may use in this workspace. Use when project context is unclear.",
             "parameters": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "board_navigate",
+            "description": (
+                "Control the visual board for the current conversation: open it, close it, "
+                "show all objects, or focus one known object. This does not start another "
+                "voice/model session. Use focus only with an object returned by board_query "
+                "or otherwise known from the current board."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["open", "close", "view_all", "focus"],
+                    },
+                    "project_id": {"type": "string"},
+                    "object_id": {"type": "string"},
+                },
+                "required": ["action"],
+            },
+        },
+        {
+            "name": "board_query",
+            "description": (
+                "Search the current project's board by sticky text, normalized color name, "
+                "author display name or object id. For Russian color wording translate the "
+                "semantic color to one of yellow/pink/blue/green/orange/violet before search. "
+                "Returns current bounding boxes for reliable focus."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                },
+                "required": ["query"],
+            },
+        },
+        {
+            "name": "board_edit",
+            "description": (
+                "Create, update, move or delete one board object as the current actor. "
+                "Mutations are server-authoritative and revision-checked. For update/move/delete "
+                "pass expected_object_revision from a fresh board result. Never claim success "
+                "until the returned receipt says saved."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "operation": {
+                        "type": "string",
+                        "enum": ["create", "update", "move", "delete"],
+                    },
+                    "object_id": {"type": "string"},
+                    "expected_object_revision": {"type": "integer", "minimum": 1},
+                    "payload": {"type": "object"},
+                },
+                "required": ["operation"],
+            },
+        },
+        {
+            "name": "board_history",
+            "description": (
+                "Read bounded durable history for one current-board object, including "
+                "initiating actor, server time, operation and before/after state."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "object_id": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                },
+                "required": ["object_id"],
+            },
         },
         {
             "name": "runtime_versions_get",
@@ -533,6 +612,15 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Не зачитывай названия function tools и не делай длинный технический список. Объясняй человеческими сценариями: поговорить и переключаться между проектами, помнить важное, работать с подключёнными репозиториями, календарём/подготовкой к событиям и только теми дополнительными источниками/экспертными функциями, которые реально доступны в этой сессии.
 - Если capability недоступна, можно кратко сказать, что её можно подключить, но не обещай, что она уже работает.
 
+# BOARD
+- Это та же самая Live-сессия Миры: доска не создаёт второй ASR/LLM, не управляет микрофоном и не сбрасывает разговор.
+- На «открой доску проекта» используй board_navigate action=open для текущего project; на «закрой доску» — action=close.
+- Для поиска сначала используй board_query. Если пользователь просит «покажи/наведи на этот стикер», затем board_navigate action=focus с фактическим object_id из свежего результата.
+- board_navigate action=focus возвращает только запрос клиенту на фокус. Не говори «уже показала», пока не уверена в клиентском результате; безопасная формулировка — «Навожу на него».
+- Изменения делай только через board_edit и объявляй сохранение только после receipt status=saved. Конфликт revision не перезаписывай вслепую: прочитай свежий объект/поиск и уточни действие.
+- Цвета sticky хранятся как yellow/pink/blue/green/orange/violet; русские формулировки пользователя семантически нормализуй к этим значениям при поиске/создании.
+- Историю конкретного объекта читай через board_history; не выдумывай автора или время.
+
 # MEMORY
 - Для явного «запомни/сохрани» и явно долговечной информации используй memory_commit_voice_source.
 - Один voice source может относиться к нескольким проектам: сделай отдельный memory_commit_voice_source для каждого действительно нужного project/result.
@@ -593,6 +681,8 @@ class ProjectsHubLiveAdapter:
         self,
         store: DurableStore,
         *,
+        board: BoardService | None = None,
+        board_hub: Any | None = None,
         device_commands: DeviceCommandService | None = None,
         readiness: ReadinessService | None = None,
         development: DevelopmentService | None = None,
@@ -606,6 +696,8 @@ class ProjectsHubLiveAdapter:
         **_shared: Any,
     ):
         self.store = store
+        self.board = board or BoardService(store)
+        self.board_hub = board_hub
         self.device_commands = device_commands or DeviceCommandService(store)
         self.readiness = readiness or ReadinessService(store)
         self.development = development or DevelopmentService(store, self.readiness)
@@ -1008,6 +1100,166 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "backend_version": state.get("backend_version"),
                 "backend_release_sha": state.get("backend_release_sha"),
             }
+
+        if name.startswith("board_"):
+            conversation = self.store.get_conversation(actor_id, conversation_id)
+            project_id = str(args.get("project_id") or "") or conversation.get("focus_project_id")
+            if not project_id:
+                raise StoreError(
+                    "BOARD_PROJECT_REQUIRED",
+                    "Choose a project before using its board",
+                )
+            project_id = str(project_id)
+            access = self.store.project_access(actor_id, workspace_id, project_id)
+
+            if name == "board_navigate":
+                action = str(args.get("action") or "")
+                if action not in {"open", "close", "view_all", "focus"}:
+                    raise StoreError("INVALID_ARGUMENT", "Unknown board navigation action")
+                command_id, _args_sha = self._command_id(session, name, args)
+                token = "uif_" + command_id[-24:]
+                if action == "close":
+                    return {
+                        "project_id": project_id,
+                        "ui_command": {
+                            "kind": "board",
+                            "action": "close",
+                            "project_id": project_id,
+                            "token": token,
+                        },
+                    }
+                board = self.board.open_board(
+                    actor_id,
+                    workspace_id,
+                    project_id,
+                    create_if_allowed=(action == "open" and access["role"] != "viewer"),
+                )
+                ui_command: dict[str, Any] = {
+                    "kind": "board",
+                    "action": action,
+                    "project_id": project_id,
+                    "board_id": board["id"],
+                    "token": token,
+                }
+                if action == "focus":
+                    object_id = str(args.get("object_id") or "")
+                    if not object_id:
+                        raise StoreError("INVALID_ARGUMENT", "object_id is required for focus")
+                    snapshot = self.board.snapshot(actor_id, workspace_id, board["id"])
+                    item = next(
+                        (value for value in snapshot["objects"] if value["id"] == object_id),
+                        None,
+                    )
+                    if item is None:
+                        raise StoreError("OBJECT_NOT_FOUND", "Board object is not available")
+                    ui_command["object_id"] = object_id
+                    ui_command["bbox"] = item["geometry"]
+                    ui_command["board_seq"] = snapshot["board"]["seq"]
+                return {
+                    "project_id": project_id,
+                    "board_id": board["id"],
+                    "ui_command": ui_command,
+                    "ui_ack_required": action in {"focus", "view_all"},
+                }
+
+            board = self.board.open_board(
+                actor_id,
+                workspace_id,
+                project_id,
+                create_if_allowed=False,
+            )
+
+            if name == "board_query":
+                try:
+                    limit = int(args.get("limit", 12))
+                except (TypeError, ValueError):
+                    limit = 12
+                return {
+                    "project_id": project_id,
+                    "board_id": board["id"],
+                    "items": self.board.search(
+                        actor_id,
+                        workspace_id,
+                        board["id"],
+                        str(args.get("query") or ""),
+                        limit=limit,
+                    ),
+                }
+
+            if name == "board_history":
+                object_id = str(args.get("object_id") or "")
+                if not object_id:
+                    raise StoreError("INVALID_ARGUMENT", "object_id is required")
+                try:
+                    limit = int(args.get("limit", 20))
+                except (TypeError, ValueError):
+                    limit = 20
+                return {
+                    "project_id": project_id,
+                    "board_id": board["id"],
+                    "items": self.board.history(
+                        actor_id,
+                        workspace_id,
+                        board["id"],
+                        object_id,
+                        limit=limit,
+                    ),
+                }
+
+            if name == "board_edit":
+                operation = str(args.get("operation") or "")
+                if operation not in {"create", "update", "move", "delete"}:
+                    raise StoreError("INVALID_ARGUMENT", "Unknown board edit operation")
+                command_id, _args_sha = self._command_id(session, name, args)
+                object_id = str(args.get("object_id") or "")
+                if not object_id:
+                    if operation != "create":
+                        raise StoreError("INVALID_ARGUMENT", "object_id is required")
+                    object_id = "obj_mira_" + hashlib.sha256(
+                        command_id.encode("utf-8")
+                    ).hexdigest()[:24]
+                expected_raw = args.get("expected_object_revision")
+                expected_revision = None
+                if expected_raw is not None:
+                    try:
+                        expected_revision = int(expected_raw)
+                    except (TypeError, ValueError) as exc:
+                        raise StoreError(
+                            "INVALID_ARGUMENT",
+                            "expected_object_revision must be an integer",
+                        ) from exc
+                payload = args.get("payload")
+                if payload is None:
+                    payload = {}
+                if not isinstance(payload, dict):
+                    raise StoreError("INVALID_ARGUMENT", "payload must be an object")
+                receipt = self.board.apply_command(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    board_id=board["id"],
+                    command_id=command_id,
+                    operation=operation,
+                    object_id=object_id,
+                    expected_object_revision=expected_revision,
+                    payload=payload,
+                    execution_origin="mira",
+                )
+                if self.board_hub is not None:
+                    await self.board_hub.publish(
+                        board["id"],
+                        {"type": "event", "event": receipt["event"]},
+                    )
+                return {
+                    **receipt,
+                    "project_id": project_id,
+                    "ui_command": {
+                        "kind": "board",
+                        "action": "open",
+                        "project_id": project_id,
+                        "board_id": board["id"],
+                        "token": "uif_" + command_id[-24:],
+                    },
+                }
 
         if name == "backlog_list":
             self.store.require_platform_owner(actor_id)
