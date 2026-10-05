@@ -10,10 +10,17 @@ import {
 import { Application, Container, Graphics, Text } from "pixi.js";
 import {
   BoardSocket,
+  analysisReportUrl,
   boardHistory,
+  cancelAnalysisRun,
+  getAnalysisRun,
   getBoardSnapshot,
   openBoard,
+  publishAnalysisRun,
+  refreshAnalysisRun,
   searchBoard,
+  startAnalysis,
+  type AnalysisRun,
   type BoardEvent,
   type BoardGeometry,
   type BoardObject,
@@ -232,7 +239,9 @@ export function BoardShell({
   workspaceId,
   projectId,
   canEdit,
+  canAnalyze,
   focusRequest,
+  analysisRunId,
   onClose,
   onFocusFulfilled,
 }: {
@@ -240,7 +249,9 @@ export function BoardShell({
   workspaceId: string;
   projectId: string;
   canEdit: boolean;
+  canAnalyze: boolean;
   focusRequest?: BoardFocusRequest;
+  analysisRunId?: string | null;
   onClose: () => void;
   onFocusFulfilled?: (token: string, ok: boolean) => void;
 }) {
@@ -259,6 +270,15 @@ export function BoardShell({
     "ready" | "lost" | "unavailable"
   >("ready");
   const [history, setHistory] = useState<BoardEvent[]>([]);
+  const [analysisOpen, setAnalysisOpen] = useState(false);
+  const [analysisRun, setAnalysisRun] = useState<AnalysisRun | null>(null);
+  const [analysisModel, setAnalysisModel] = useState<AnalysisRun["model"]>("kimi_k3");
+  const [analysisPurpose, setAnalysisPurpose] =
+    useState<AnalysisRun["purpose"]>("edge_cases");
+  const [analysisQuestion, setAnalysisQuestion] = useState(
+    "Найди риски, пограничные случаи и конкретные рекомендации по выбранному материалу.",
+  );
+  const [analysisBusy, setAnalysisBusy] = useState(false);
   const socketRef = useRef<BoardSocket | null>(null);
   const fulfilledFocusRef = useRef<string | null>(null);
   const dragRef = useRef<{
@@ -334,6 +354,49 @@ export function BoardShell({
       setBoardId(null);
     };
   }, [handleSocket, projectId, visible, workspaceId]);
+
+  useEffect(() => {
+    if (!visible || !analysisRunId) return;
+    let cancelled = false;
+    void getAnalysisRun(workspaceId, analysisRunId)
+      .then((run) => {
+        if (cancelled) return;
+        setAnalysisRun(run);
+        setAnalysisOpen(true);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setStatus(error instanceof Error ? error.message : "Отчёт недоступен");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [analysisRunId, visible, workspaceId]);
+
+  useEffect(() => {
+    if (!visible || !analysisRun) return;
+    if (["completed", "failed", "cancelled", "blocked"].includes(analysisRun.status)) {
+      return;
+    }
+    let cancelled = false;
+    const poll = () => {
+      void refreshAnalysisRun(workspaceId, analysisRun.id)
+        .then((run) => {
+          if (!cancelled) setAnalysisRun(run);
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            setStatus(error instanceof Error ? error.message : "Не удалось обновить анализ");
+          }
+        });
+    };
+    const timer = window.setInterval(poll, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [analysisRun?.id, analysisRun?.status, visible, workspaceId]);
 
   const focusGeometry = useCallback(
     (geometry: BoardGeometry, token?: string) => {
@@ -633,6 +696,63 @@ export function BoardShell({
 
   const selected = selectedId ? objects.get(selectedId) ?? null : null;
   const objectList = useMemo(() => [...objects.values()], [objects]);
+  const startSelectedAnalysis = async () => {
+    if (!boardId || !selected || !canAnalyze || analysisBusy) return;
+    const question = analysisQuestion.trim();
+    if (!question) {
+      setStatus("Опишите, что нужно проверить.");
+      return;
+    }
+    setAnalysisBusy(true);
+    try {
+      const run = await startAnalysis(
+        workspaceId,
+        projectId,
+        boardId,
+        [selected.id],
+        analysisModel,
+        analysisPurpose,
+        question,
+      );
+      setAnalysisRun(run);
+      setAnalysisOpen(true);
+      setStatus("Анализ запущен");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Не удалось запустить анализ");
+    } finally {
+      setAnalysisBusy(false);
+    }
+  };
+
+  const cancelCurrentAnalysis = async () => {
+    if (!analysisRun || analysisBusy) return;
+    setAnalysisBusy(true);
+    try {
+      setAnalysisRun(await cancelAnalysisRun(workspaceId, analysisRun.id));
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Не удалось отменить анализ");
+    } finally {
+      setAnalysisBusy(false);
+    }
+  };
+
+  const publishCurrentAnalysis = async () => {
+    if (!analysisRun || analysisRun.status !== "completed" || analysisBusy) return;
+    setAnalysisBusy(true);
+    try {
+      await publishAnalysisRun(
+        workspaceId,
+        analysisRun.id,
+        "obj_analysis_" + crypto.randomUUID(),
+      );
+      setStatus("Отчёт добавлен на доску");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Не удалось добавить отчёт");
+    } finally {
+      setAnalysisBusy(false);
+    }
+  };
+
 
   return (
     <section
@@ -794,6 +914,115 @@ export function BoardShell({
         })()}
       </div>
 
+      {analysisOpen && canAnalyze && (
+        <aside className="board-analysis-panel" aria-label="Сильный анализ">
+          <div className="board-analysis-heading">
+            <div>
+              <strong>Сильный анализ</strong>
+              <span>
+                {analysisRun ? analysisRun.status : selected ? "выбран 1 объект" : "выберите объект"}
+              </span>
+            </div>
+            <button onClick={() => setAnalysisOpen(false)}>Закрыть</button>
+          </div>
+
+          {!analysisRun && (
+            <>
+              <div className="board-analysis-fields">
+                <label>
+                  Модель
+                  <select
+                    value={analysisModel}
+                    onChange={(event) =>
+                      setAnalysisModel(event.target.value as AnalysisRun["model"])
+                    }
+                  >
+                    <option value="kimi_k3">Kimi K3</option>
+                    <option value="deepseek">DeepSeek</option>
+                  </select>
+                </label>
+                <label>
+                  Режим
+                  <select
+                    value={analysisPurpose}
+                    onChange={(event) =>
+                      setAnalysisPurpose(event.target.value as AnalysisRun["purpose"])
+                    }
+                  >
+                    <option value="edge_cases">Риски и edge cases</option>
+                    <option value="requirements">Требования</option>
+                    <option value="architecture">Архитектура</option>
+                    <option value="ideas">Идеи</option>
+                    <option value="code_review">Ревью</option>
+                  </select>
+                </label>
+              </div>
+              <textarea
+                value={analysisQuestion}
+                onChange={(event) => setAnalysisQuestion(event.target.value)}
+                placeholder="Что проверить в выбранном объекте?"
+              />
+              <button
+                onClick={() => void startSelectedAnalysis()}
+                disabled={!selected || analysisBusy}
+              >
+                {analysisBusy ? "Запускаю…" : "Запустить анализ"}
+              </button>
+              <span className="board-analysis-note">
+                Модель получает только замороженную версию выбранного объекта, без доступа к проектным файлам.
+              </span>
+            </>
+          )}
+
+          {analysisRun && (
+            <>
+              <div className="board-analysis-meta">
+                <span>{analysisRun.model} · {analysisRun.purpose}</span>
+                {analysisRun.source_changed && (
+                  <strong>Источник на доске изменился после запуска</strong>
+                )}
+                {analysisRun.error_code && <strong>{analysisRun.error_code}</strong>}
+              </div>
+              {analysisRun.status === "completed" && analysisRun.result_markdown ? (
+                <pre className="board-analysis-report">{analysisRun.result_markdown}</pre>
+              ) : (
+                <p className="board-analysis-wait">
+                  {analysisRun.status === "dispatch_unknown"
+                    ? "Уточняю исход запуска без повторной отправки…"
+                    : analysisRun.status === "failed"
+                      ? "Анализ завершился ошибкой."
+                      : analysisRun.status === "cancelled"
+                        ? "Анализ отменён."
+                        : "Анализ выполняется…"}
+                </p>
+              )}
+              <div className="board-analysis-actions">
+                {!["completed", "failed", "cancelled", "blocked"].includes(analysisRun.status) && (
+                  <button onClick={() => void cancelCurrentAnalysis()} disabled={analysisBusy}>
+                    Отменить
+                  </button>
+                )}
+                {analysisRun.status === "completed" && (
+                  <>
+                    <button onClick={() => void publishCurrentAnalysis()} disabled={analysisBusy}>
+                      Добавить на доску
+                    </button>
+                    <a
+                      href={analysisReportUrl(workspaceId, analysisRun.id)}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Markdown
+                    </a>
+                  </>
+                )}
+                <button onClick={() => setAnalysisRun(null)}>Новый анализ</button>
+              </div>
+            </>
+          )}
+        </aside>
+      )}
+
       {selected && (
         <aside className="board-inspector">
           <div>
@@ -802,6 +1031,32 @@ export function BoardShell({
               r{selected.object_revision} · {selected.style.color}
             </span>
           </div>
+          {canAnalyze && selected.type !== "document_card" && (
+            <button
+              onClick={() => {
+                setAnalysisOpen(true);
+                setAnalysisRun(null);
+              }}
+            >
+              Анализировать
+            </button>
+          )}
+          {canAnalyze && selected.reference?.kind === "analysis_run" && (
+            <button
+              onClick={() =>
+                void getAnalysisRun(workspaceId, selected.reference!.id)
+                  .then((run) => {
+                    setAnalysisRun(run);
+                    setAnalysisOpen(true);
+                  })
+                  .catch((error) =>
+                    setStatus(error instanceof Error ? error.message : "Отчёт недоступен"),
+                  )
+              }
+            >
+              Открыть отчёт
+            </button>
+          )}
           {canEdit && (
             <button
               onClick={() =>
