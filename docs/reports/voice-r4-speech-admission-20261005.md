@@ -72,3 +72,21 @@ Physical checks after deploy:
 3. deliberate real speech over Mira still works as barge-in;
 4. if Mira appears silent after a turn, correlate turn_output_audio_events/bytes in backend logs;
 5. progressive text during uninterrupted speech remains explicitly NOT accepted until real interim events are demonstrated.
+
+## Post-deploy same-model canary
+
+Production 0.1.30 was exercised with one uninterrupted 60.001 s real-provider PCM turn after enabling ru-RU/en-US + VERBATIM transcription hints.
+
+Observed:
+
+- 600/600 PCM acknowledgements;
+- 1,920,000 durable audio bytes;
+- no terminal failure, resource denial or tool call;
+- interim_input_transcript events: 0 at both the 30 s and 60 s checkpoints;
+- first transcript of any kind: 60.669 s;
+- one final input_transcript: 901 characters;
+- begin/middle/end semantic markers all survived.
+
+Therefore language/mode hints do not make the current gemini-3.8-live conversational session emit streaming partial input transcripts. V03 remains open.
+
+The initial R4 audio-turn counters were present on the LogRecord but omitted by the JSON formatter whitelist. 0.1.31 adds those field names to structured logging; this is observability-only and does not change voice behavior.
