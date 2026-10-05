@@ -24,7 +24,7 @@ test("Projects Hub renders both sides of the Live conversation as a bounded mess
   const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(source, /event\.type === "input_transcript"[\s\S]*mergeChatMessage\("user"/);
   assert.match(source, /event\.type === "output_transcript"[\s\S]*mergeChatMessage\("assistant"/);
-  assert.match(source, /import \{ mergeTranscript, resolveTerminalVoiceState \} from "\.\/voiceUiContract\.js"/);
+  assert.match(source, /import \{ mergeTranscript, resolveTerminalVoiceState, speechStartsNewUserBubble \} from "\.\/voiceUiContract\.js"/);
   assert.match(source, /mergeTranscript\(messages\[index\]\.text, clean\)/);
   assert.match(source, /messages\.length > 48/);
   assert.match(source, /className=\{"chat-row " \+ message\.role\}/);
@@ -211,4 +211,12 @@ test("Projects Hub keeps long provider transcript intact and exposes terminal vo
   assert.match(source, /provider_failure/);
   assert.match(source, /Микрофон работает; текст ещё не получен/);
   assert.match(source, /suppressCaptureDuringPlayback:\s*false/);
+});
+
+
+test("a new microphone speech start cannot append to the prior final-only user bubble", async () => {
+  const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  assert.match(source, /onTiming:\s*event\s*=>\s*\{[\s\S]*speechStartsNewUserBubble\(event\)/);
+  assert.match(source, /speechStartsNewUserBubble\(event\)[\s\S]*userTranscriptIndex\.current\s*=\s*-1/);
+  assert.match(source, /speechStartsNewUserBubble\(event\)[\s\S]*turnHasInput\.current\s*=\s*false/);
 });

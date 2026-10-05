@@ -37,7 +37,7 @@ import {
 } from "./api";
 import { replayLocalVoiceSource } from "./bufferedReplay";
 import { recoverServerVoiceSource } from "./serverRecovery";
-import { mergeTranscript, resolveTerminalVoiceState } from "./voiceUiContract.js";
+import { mergeTranscript, resolveTerminalVoiceState, speechStartsNewUserBubble } from "./voiceUiContract.js";
 import { BoardShell, type BoardFocusRequest } from "./BoardShell";
 import { ackBoardUi, openBoard, type BoardGeometry } from "./boardApi";
 import {
@@ -577,6 +577,14 @@ export default function App() {
       speechEndSilenceMs: 4000,
       longSpeechEndSilenceMs: 8000,
       longSpeechAfterMs: 12000,
+      onTiming: event => {
+        if (!speechStartsNewUserBubble(event)) return;
+        userTurnBoundaryPendingRef.current = false;
+        userTranscriptIndex.current = -1;
+        turnHasInput.current = false;
+        setInterimInputTranscript("");
+        setInputTranscriptSeen(false);
+      },
       onState: (state, detail) => {
         const terminalReason = resolveTerminalVoiceState(state, detail);
         setVoiceState(terminalReason || state);

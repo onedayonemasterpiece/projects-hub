@@ -1447,7 +1447,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                 actor_id=actor_id,
                 workspace_id=workspace_id,
                 command_id=command["id"],
-                timeout_seconds=40.0,
+                timeout_seconds=8.0,
             )
             if (                result.get("status") == "applied"
                 and isinstance(result.get("result"), dict)

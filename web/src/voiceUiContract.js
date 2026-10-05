@@ -38,3 +38,14 @@ export function resolveTerminalVoiceState(state, detail) {
     : "";
   return state === "off" && TERMINAL_VOICE_REASONS.includes(reason) ? reason : "";
 }
+
+
+/**
+ * A local VAD speech start is the authoritative UI boundary between user
+ * utterances even when the provider emits only final input transcription.
+ * @param {string} event
+ * @returns {boolean}
+ */
+export function speechStartsNewUserBubble(event) {
+  return event === "speech_start";
+}
