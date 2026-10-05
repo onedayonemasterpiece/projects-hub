@@ -331,6 +331,42 @@ class SharingService:
             }
             return {"type": "event", "event": projected}
 
+    def guest_tail_for_connection(
+        self,
+        *,
+        grant_id: str,
+        session_sha: str,
+        after_seq: int,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        after_seq = max(0, int(after_seq))
+        limit = max(1, min(int(limit), 100))
+        with self.store._lock:
+            scope = self._guest_scope_by_hash(session_sha)
+            if scope["grant_id"] != grant_id:
+                raise StoreError("GUEST_SESSION_INVALID", "Guest session scope changed")
+            rows = self.store.db.execute(
+                """SELECT * FROM board_events
+                   WHERE board_id=? AND board_seq>?
+                   ORDER BY board_seq LIMIT ?""",
+                (scope["board_id"], after_seq, limit),
+            ).fetchall()
+            projected: list[dict[str, Any]] = []
+            for row in rows:
+                payload = {
+                    "type": "event",
+                    "event": self.board._event_public(row),
+                }
+                event = self.project_event(
+                    grant_id=grant_id,
+                    session_sha=session_sha,
+                    payload=payload,
+                )
+                if event is not None:
+                    projected.append(event)
+            latest = int(scope["seq"])
+            return {"events": projected, "current_seq": latest}
+
     def issue_socket_ticket(
         self, *, raw_session: str | None, client_instance_id: str
     ) -> dict[str, Any]:
