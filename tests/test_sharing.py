@@ -11,9 +11,11 @@ from starlette.websockets import WebSocketDisconnect
 from projects_hub.app import create_app
 from projects_hub.auth import COOKIE_NAME, issue_session
 from projects_hub.board import BoardService
+from projects_hub.device_commands import DeviceCommandService
 from projects_hub.live_adapter import ProjectsHubLiveAdapter
 from projects_hub.live_resources import ConversationScope
 from projects_hub.settings import Settings
+from projects_hub.sharing import SharingService
 from projects_hub.sharing_api import (
     GUEST_CLIENT_PREFIX,
     GUEST_PROTOCOL,
@@ -314,5 +316,75 @@ def test_share_tool_is_not_exposed_without_project_capability(tmp_path: Path):
         functions = {item["name"] for item in initialized["configuration"]["functions"]}
         assert "board_share" not in functions
         assert initialized["response"]["sharing_enabled"] is False
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_android_mira_share_opens_native_chooser_without_delivery_claim(tmp_path: Path):
+    store, _app, _settings, actor, workspace, project, board, _board_id = setup(tmp_path)
+    device_commands = DeviceCommandService(store)
+    registration = device_commands.register_device(
+        actor_id=actor,
+        workspace_id=workspace,
+        display_name="Pixel share",
+        platform="android",
+        capabilities=["share.open_chooser"],
+    )
+    sharing = SharingService(
+        store,
+        board,
+        public_origin="https://projects-hub.example",
+    )
+    try:
+        conversation = store.create_conversation(actor, workspace, project)
+        binding = ConversationScope(workspace, actor, conversation["id"]).resource_binding()
+        adapter = ProjectsHubLiveAdapter(
+            store,
+            board=board,
+            sharing=sharing,
+            device_commands=device_commands,
+        )
+        initialized = adapter.initialize(
+            resource_id=binding,
+            actor={"subject": actor, "tenant_id": workspace},
+            model="gemini-3.8-live",
+            conversation_id=conversation["id"],
+            client_version="0.1.28",
+        )
+        seen = {}
+
+        async def chooser_applied(**kwargs):
+            seen["timeout_seconds"] = kwargs["timeout_seconds"]
+            command = store.get_device_command(
+                actor_id=actor,
+                workspace_id=workspace,
+                command_id=kwargs["command_id"],
+            )
+            seen["command"] = command
+            return {
+                "command_id": kwargs["command_id"],
+                "device_id": registration["device"]["id"],
+                "capability": "share.open_chooser",
+                "status": "applied",
+                "result": {
+                    "readback_verified": True,
+                    "chooser_opened": True,
+                    "delivery_confirmed": False,
+                },
+            }
+
+        device_commands.wait_for_terminal = chooser_applied
+        result = await adapter.execute_tool(
+            SimpleNamespace(state=initialized["state"]),
+            {"name": "board_share", "args": {"action": "create"}},
+        )
+        assert result["url"].startswith("https://projects-hub.example/guest/board#token=")
+        assert seen["timeout_seconds"] == 8.0
+        assert seen["command"]["capability"] == "share.open_chooser"
+        assert seen["command"]["payload"]["url"] == result["url"]
+        assert result["native_share"]["status"] == "applied"
+        assert result["native_share"]["result"]["chooser_opened"] is True
+        assert result["native_share"]["result"]["delivery_confirmed"] is False
     finally:
         store.close()
