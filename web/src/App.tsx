@@ -50,7 +50,9 @@ import {
 
 type WaitState = null | { elapsed_ms: number; stage: string; can_restart: boolean };
 type ChatRole = "user" | "assistant";
-type ChatMessage = { role: ChatRole; text: string };
+type ChatMessage = { role: ChatRole; text: string; awaitingTranscript?: boolean };
+
+const VOICE_TURN_PLACEHOLDER = "Голосовая реплика";
 
 const developmentStageLabel: Record<string, string> = {
   design: "Проектирование",
@@ -332,10 +334,24 @@ export default function App() {
         preferred.current = messages.length - 1;
         return messages;
       }
+      if (role === "user" && messages[index].awaitingTranscript) {
+        messages[index] = { role, text: clean, awaitingTranscript: false };
+        return messages;
+      }
       messages[index] = {
         ...messages[index],
         text: mergeTranscript(messages[index].text, clean),
       };
+      return messages;
+    });
+  }, []);
+
+  const reserveUserVoiceBubble = useCallback(() => {
+    setChatMessages(previous => {
+      const messages = [...previous];
+      messages.push({ role: "user", text: VOICE_TURN_PLACEHOLDER, awaitingTranscript: true });
+      if (messages.length > 48) messages.splice(0, messages.length - 48);
+      userTranscriptIndex.current = messages.length - 1;
       return messages;
     });
   }, []);
@@ -531,6 +547,7 @@ export default function App() {
         turnHasInput.current = false;
         setInterimInputTranscript("");
         setInputTranscriptSeen(false);
+        reserveUserVoiceBubble();
       },
       onState: (state, detail) => {
         const terminalReason = resolveTerminalVoiceState(state, detail);
@@ -594,7 +611,7 @@ export default function App() {
       client.stop({ reason: "ui_unmount" });
       clientRef.current = null;
     };
-  }, [applyLiveEvent, boot]);
+  }, [applyLiveEvent, boot, reserveUserVoiceBubble]);
 
   async function signIn() {
     setBusy(true);
@@ -1156,9 +1173,14 @@ export default function App() {
               {chatMessages.map((message, index) => (
                 <div className={"chat-row " + message.role} key={index}>
                   <div
-                    className={"chat-bubble " + message.role}
-                    aria-label={(message.role === "user" ? "Вы" : "Мира") + ": " + message.text}
+                    className={"chat-bubble " + message.role + (message.awaitingTranscript ? " awaiting-transcript" : "")}
+                    aria-label={
+                      message.awaitingTranscript
+                        ? "Вы: голосовая реплика; текст распознавания не получен"
+                        : (message.role === "user" ? "Вы" : "Мира") + ": " + message.text
+                    }
                   >
+                    {message.awaitingTranscript && <span className="interim-label">Текст не получен</span>}
                     {message.text}
                   </div>
                 </div>

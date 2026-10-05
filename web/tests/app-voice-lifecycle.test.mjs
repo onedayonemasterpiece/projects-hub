@@ -267,3 +267,14 @@ test("Projects Hub opts into shared adaptive duplex echo rejection", async () =>
   assert.match(source, /longSpeechEndSilenceMs:\s*2500/);
   assert.match(source, /longSpeechAfterMs:\s*2500/);
 });
+
+
+test("accepted microphone turns remain visible when Gemini omits input transcription", async () => {
+  const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  assert.match(source, /VOICE_TURN_PLACEHOLDER = "Голосовая реплика"/);
+  assert.match(source, /const reserveUserVoiceBubble = useCallback/);
+  assert.match(source, /messages\.push\(\{ role: "user", text: VOICE_TURN_PLACEHOLDER, awaitingTranscript: true \}\)/);
+  assert.match(source, /speechStartsNewUserBubble\(event\)[\s\S]*reserveUserVoiceBubble\(\)/);
+  assert.match(source, /role === "user" && messages\[index\]\.awaitingTranscript[\s\S]*awaitingTranscript: false/);
+  assert.match(source, /текст распознавания не получен/);
+});
