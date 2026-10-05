@@ -224,11 +224,19 @@ class AnalysisMaterializer:
             project_id=project_id,
             path=path,
         )
+        with self.store._lock:
+            existing_target = self._row(run_id)
         if repository_id is not None:
             eligible = [
                 item
                 for item in eligible
                 if int(item["repository_id"]) == int(repository_id)
+            ]
+        elif existing_target is not None:
+            eligible = [
+                item
+                for item in eligible
+                if int(item["repository_id"]) == int(existing_target["repository_id"])
             ]
         if not eligible:
             return {
