@@ -38,6 +38,8 @@ import {
 import { replayLocalVoiceSource } from "./bufferedReplay";
 import { recoverServerVoiceSource } from "./serverRecovery";
 import { mergeTranscript, resolveTerminalVoiceState, speechStartsNewUserBubble } from "./voiceUiContract.js";
+import { BoardShell, type BoardFocusRequest, type BoardShareRequest } from "./BoardShell";
+import { ackBoardUi, openBoard, type BoardGeometry } from "./boardApi";
 import {
   acknowledgeDeliveredSource,
   createLocalPersistSink,
@@ -167,6 +169,10 @@ export default function App() {
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [eventOpen, setEventOpen] = useState(false);
   const [backlogOpen, setBacklogOpen] = useState(false);
+  const [boardOpen, setBoardOpen] = useState(false);
+  const [boardFocusRequest, setBoardFocusRequest] = useState<BoardFocusRequest>(null);
+  const [analysisRunId, setAnalysisRunId] = useState<string | null>(null);
+  const [boardShareRequest, setBoardShareRequest] = useState<BoardShareRequest>(null);
   const [busy, setBusy] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
   const [networkOnline, setNetworkOnline] = useState(() => navigator.onLine);
@@ -188,6 +194,7 @@ export default function App() {
   const turnHasInput = useRef(false);
   const userTurnBoundaryPendingRef = useRef(false);
   const conversationRef = useRef<Conversation | null>(null);
+  const boardProjectRef = useRef<string | null>(null);
   const lastDevelopmentUpdateCheckRef = useRef(
     localStorage.getItem("projects-hub-development-update-check") ?? "",
   );
@@ -209,6 +216,20 @@ export default function App() {
     const id = conversation?.focus_project_id;
     return id ? boot.projects.find(project => project.id === id) ?? null : null;
   }, [boot, conversation]);
+
+  useEffect(() => {
+    const nextProjectId = focusProject?.id ?? null;
+    if (
+      boardProjectRef.current !== null
+      && boardProjectRef.current !== nextProjectId
+    ) {
+      setBoardOpen(false);
+      setBoardFocusRequest(null);
+      setAnalysisRunId(null);
+      setBoardShareRequest(null);
+    }
+    boardProjectRef.current = nextProjectId;
+  }, [focusProject?.id]);
 
   const loadMemories = useCallback(async () => {
     if (!boot) return;
@@ -364,6 +385,89 @@ export default function App() {
       turnHasInput.current = false;
       assistantTranscriptIndex.current = -1;
     } else if (event.type === "tool_result" && event.status === "ok") {
+      if (["board_navigate", "board_edit", "board_analysis", "board_share"].includes(event.name ?? "")) {
+        let rawResult: unknown = event.result ?? event.output ?? event.response;
+        if (typeof rawResult === "string") {
+          try {
+            rawResult = JSON.parse(rawResult);
+          } catch {
+            rawResult = null;
+          }
+        }
+        if (rawResult && typeof rawResult === "object") {
+          const ui = (rawResult as Record<string, unknown>).ui_command;
+          if (ui && typeof ui === "object") {
+            const command = ui as Record<string, unknown>;
+            const projectId = String(command.project_id ?? "");
+            const currentProjectId = conversationRef.current?.focus_project_id ?? "";
+            if (!projectId || projectId !== currentProjectId) {
+              setNotice("Команда доски относится уже не к текущему проекту.");
+            } else {
+              const kind = String(command.kind ?? "board");
+              const action = String(command.action ?? "");
+              if (kind === "analysis" && action === "show") {
+                const runId = String(command.run_id ?? "");
+                if (runId) {
+                  setBoardOpen(true);
+                  setContextOpen(false);
+                  setAnalysisRunId(runId);
+                }
+              } else if (kind === "share" && action === "ready") {
+                const shareId = String(command.share_id ?? "");
+                const url = String(command.url ?? "");
+                const expiresAtMs = Number(command.expires_at_ms ?? 0);
+                if (shareId && url && Number.isFinite(expiresAtMs) && expiresAtMs > 0) {
+                  setBoardOpen(true);
+                  setContextOpen(false);
+                  setBoardShareRequest({
+                    id: shareId,
+                    url,
+                    expiresAtMs,
+                    warning: String(command.warning ?? "") || undefined,
+                  });
+                }
+              } else if (action === "close") {
+                setBoardOpen(false);
+                setBoardFocusRequest(null);
+              } else if (action === "open") {
+                setBoardOpen(true);
+                setContextOpen(false);
+              } else if (action === "view_all") {
+                const token = String(command.token ?? "");
+                if (token) {
+                  setBoardOpen(true);
+                  setContextOpen(false);
+                  setBoardFocusRequest({ kind: "view_all", token });
+                }
+              } else if (action === "focus") {
+                const objectId = String(command.object_id ?? "");
+                const token = String(command.token ?? "");
+                const rawBox = command.bbox;
+                if (
+                  objectId
+                  && token
+                  && rawBox
+                  && typeof rawBox === "object"
+                  && ["x", "y", "width", "height", "z"].every(
+                    key => Number.isFinite(Number((rawBox as Record<string, unknown>)[key])),
+                  )
+                ) {
+                  setBoardOpen(true);
+                  setContextOpen(false);
+                  setBoardFocusRequest({
+                    kind: "object",
+                    objectId,
+                    token,
+                    bbox: rawBox as BoardGeometry,
+                  });
+                } else {
+                  setNotice("Мира не получила актуальную позицию объекта на доске.");
+                }
+              }
+            }
+          }
+        }
+      }
       if (event.name === "memory_commit_voice_source") {
         void loadMemories().then(() => setMemoryOpen(true));
       }
@@ -1041,6 +1145,17 @@ export default function App() {
                 <h2>{boot.workspace.name}</h2>
               </div>
               <div className="sheet-actions">
+                {focusProject && (
+                  <button
+                    className="quiet-button"
+                    onClick={() => {
+                      setBoardOpen(true);
+                      setContextOpen(false);
+                    }}
+                  >
+                    Доска
+                  </button>
+                )}
                 <button className="quiet-button" onClick={openBacklog}>Бэклог</button>
                 <button className="quiet-button" onClick={openEvents}>Готовность</button>
                 <button className="quiet-button" onClick={openMemory}>Память</button>
@@ -1469,6 +1584,49 @@ export default function App() {
             </button>
           )}
         </nav>
+      )}
+
+      {focusProject && (
+        <BoardShell
+          visible={boardOpen}
+          workspaceId={boot.workspace.id}
+          projectId={focusProject.id}
+          canEdit={(focusProject.role ?? "viewer") !== "viewer"}
+          canAnalyze={Boolean(focusProject.can_analyze)}
+          canManageShare={Boolean(focusProject.can_manage_share)}
+          focusRequest={boardFocusRequest}
+          analysisRunId={analysisRunId}
+          shareRequest={boardShareRequest}
+          onClose={() => {
+            setBoardOpen(false);
+            setBoardFocusRequest(null);
+            setAnalysisRunId(null);
+            setBoardShareRequest(null);
+          }}
+          onFocusFulfilled={(token, ok) => {
+            const action =
+              boardFocusRequest?.token === token && boardFocusRequest.kind === "view_all"
+                ? "view_all"
+                : "focus";
+            setBoardFocusRequest(current =>
+              current?.token === token ? null : current
+            );
+            void openBoard(boot.workspace.id, focusProject.id)
+              .then(board =>
+                ackBoardUi(
+                  boot.workspace.id,
+                  board.id,
+                  token,
+                  action,
+                  ok,
+                ),
+              )
+              .catch(() => {
+                setNotice("Не удалось подтвердить положение доски серверу.");
+              });
+            if (!ok) setNotice("Объект на доске больше недоступен.");
+          }}
+        />
       )}
 
       <section className="voice-dock">
