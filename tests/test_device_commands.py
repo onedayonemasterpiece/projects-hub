@@ -377,3 +377,84 @@ async def test_calendar_live_tool_returns_pending_without_40_second_voice_stall(
         assert result["pending_device_confirmation"] is True
     finally:
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_android_share_command_confirms_chooser_not_delivery(tmp_path: Path):
+    store = DurableStore(tmp_path)
+    boot = store.ensure_dev_workspace("Share device")
+    actor = boot["actor"]["id"]
+    workspace = boot["workspace"]["id"]
+    project = next(item["id"] for item in boot["projects"] if item["name"] == "Projects Hub")
+    service = DeviceCommandService(store)
+    registration = service.register_device(
+        actor_id=actor,
+        workspace_id=workspace,
+        display_name="Pixel share",
+        platform="android",
+        capabilities=["share.open_chooser"],
+    )
+    try:
+        with pytest.raises(StoreError) as bad_url:
+            service.create_share_command(
+                actor_id=actor,
+                workspace_id=workspace,
+                project_id=project,
+                command_id="cmd_share_bad_url",
+                args={"url": "http://example.test/guest#token=secret"},
+            )
+        assert bad_url.value.code == "INVALID_ARGUMENT"
+
+        command = service.create_share_command(
+            actor_id=actor,
+            workspace_id=workspace,
+            project_id=project,
+            command_id="cmd_share_android_01",
+            args={
+                "url": "https://hub.example/guest/board#token=opaque",
+                "title": "Поделиться доской",
+            },
+        )
+        assert command["capability"] == "share.open_chooser"
+        assert command["payload"]["delivery_claim_allowed"] is False
+
+        authorization = "Device " + registration["device_token"]
+        claimed = await service.next_command(
+            authorization=authorization,
+            wait_ms=0,
+        )
+        assert claimed["command"]["payload"]["url"].startswith("https://")
+        claim_token = claimed["claim_token"]
+
+        with pytest.raises(StoreError) as wrong_semantics:
+            service.receipt(
+                authorization=authorization,
+                command_id=command["id"],
+                claim_token=claim_token,
+                payload_sha256=claimed["command"]["payload_sha256"],
+                status="applied",
+                result={
+                    "readback_verified": True,
+                    "chooser_opened": True,
+                    "delivery_confirmed": True,
+                },
+            )
+        assert wrong_semantics.value.code == "DEVICE_READBACK_REQUIRED"
+
+        receipt = service.receipt(
+            authorization=authorization,
+            command_id=command["id"],
+            claim_token=claim_token,
+            payload_sha256=claimed["command"]["payload_sha256"],
+            status="applied",
+            result={
+                "readback_verified": True,
+                "chooser_opened": True,
+                "delivery_confirmed": False,
+            },
+        )
+        assert receipt["status"] == "applied"
+        assert receipt["result"]["chooser_opened"] is True
+        assert receipt["result"]["delivery_confirmed"] is False
+    finally:
+        store.close()
