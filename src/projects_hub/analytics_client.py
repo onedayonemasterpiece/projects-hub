@@ -134,6 +134,31 @@ class AnalyticsBridgeClient:
             },
         )
 
+    async def council(
+        self,
+        *,
+        prompt: str,
+        evidence_bundle: str,
+        request_key: str,
+    ) -> dict[str, Any]:
+        if not await self.safe_council_available():
+            raise AnalyticsBridgeError(
+                "Tenant-safe council capability is unavailable"
+            )
+        return await self._call(
+            "council_run",
+            {
+                "project": self.project_hint,
+                "prompt": prompt,
+                "context_mode": "provided_only",
+                "evidence_bundle": evidence_bundle,
+                "request_key": request_key,
+                "tier": "free",
+                "rounds": 2,
+                "mode": "debate",
+            },
+        )
+
     async def read_task(self, task_id: str) -> dict[str, Any]:
         return await self._call(
             "read_task",
