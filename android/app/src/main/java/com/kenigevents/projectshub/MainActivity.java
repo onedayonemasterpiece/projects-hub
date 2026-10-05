@@ -408,13 +408,23 @@ public final class MainActivity extends Activity {
         }
         promptedUpdateVersionCode = update.versionCode;
         String version = UpdatePolicy.displayVersion(update.versionName, update.versionCode);
-        new AlertDialog.Builder(this)
+        AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("Доступно обновление Projects Hub")
                 .setMessage("Новая версия " + version + " готова к установке.")
-                .setPositiveButton("Обновить", (dialog, which) ->
-                        updater.downloadAndInstall(update))
+                .setPositiveButton("Обновить", (ignored, which) -> {
+                    Log.i(
+                            "ProjectsHubUpdate",
+                            "update_dialog_confirmed versionCode=" + update.versionCode
+                    );
+                    updater.downloadAndInstall(update);
+                })
                 .setNegativeButton("Позже", null)
-                .show();
+                .create();
+        dialog.setOnShowListener(ignored -> Log.i(
+                "ProjectsHubUpdate",
+                "update_dialog_shown versionCode=" + update.versionCode
+        ));
+        dialog.show();
     }
 
     private Button buildUpdateButton() {
