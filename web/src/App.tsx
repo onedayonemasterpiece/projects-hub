@@ -36,6 +36,8 @@ import {
   type CodexStatus,
 } from "./api";
 import { replayLocalVoiceSource } from "./bufferedReplay";
+import { recoverServerVoiceSource } from "./serverRecovery";
+import { mergeTranscript, resolveTerminalVoiceState } from "./voiceUiContract.js";
 import {
   acknowledgeDeliveredSource,
   createLocalPersistSink,
@@ -78,7 +80,22 @@ const stateLabel: Record<string, string> = {
   start_error: "Не удалось начать",
   offline_recording: "Записываю без сети",
   replaying: "Передаю сохранённую запись",
+  resource_denial: "Лимит Live исчерпан",
+  provider_failure: "Ошибка Live-провайдера",
+  connection_failure: "Соединение прервано",
+  capture_error: "Ошибка записи",
 };
+
+const inactiveVoiceStates = new Set([
+  "off",
+  "start_error",
+  "connection_error",
+  "microphone_unavailable",
+  "resource_denial",
+  "provider_failure",
+  "connection_failure",
+  "capture_error",
+]);
 
 function MicIcon() {
   return (
@@ -93,17 +110,6 @@ function formatWait(wait: NonNullable<WaitState>) {
   const seconds = Math.floor(wait.elapsed_ms / 1000);
   const minutes = Math.floor(seconds / 60);
   return `${String(minutes).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
-}
-
-function mergeTranscript(current: string, fragment: string) {
-  const clean = fragment.trim();
-  if (!clean) return current;
-  if (!current) return clean;
-  if (clean.startsWith(current)) return clean;
-  if (current.endsWith(clean)) return current;
-  let overlap = Math.min(current.length, clean.length);
-  while (overlap >= 3 && current.slice(-overlap) !== clean.slice(0, overlap)) overlap -= 1;
-  return overlap >= 3 ? current + clean.slice(overlap) : current + " " + clean;
 }
 
 function friendlyStartError(error: unknown) {
@@ -143,6 +149,8 @@ export default function App() {
   const [voiceState, setVoiceState] = useState("off");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [interimInputTranscript, setInterimInputTranscript] = useState("");
+  const [inputTranscriptSeen, setInputTranscriptSeen] = useState(false);
+  const [recoverableSourceId, setRecoverableSourceId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [microphoneSettingsAvailable, setMicrophoneSettingsAvailable] = useState(false);
   const [wait, setWait] = useState<WaitState>(null);
@@ -163,6 +171,7 @@ export default function App() {
   const [githubStatus, setGitHubStatus] = useState<GitHubStatus | null>(null);
   const [githubBusy, setGitHubBusy] = useState(false);
   const clientRef = useRef<LiveClient | null>(null);
+  const currentSourceIdRef = useRef<string | null>(null);
   const userTranscriptIndex = useRef(-1);
   const assistantTranscriptIndex = useRef(-1);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -174,6 +183,7 @@ export default function App() {
   } | null>(null);
   const replayingRef = useRef(false);
   const turnHasInput = useRef(false);
+  const userTurnBoundaryPendingRef = useRef(false);
   const conversationRef = useRef<Conversation | null>(null);
   const lastDevelopmentUpdateCheckRef = useRef(
     localStorage.getItem("projects-hub-development-update-check") ?? "",
@@ -189,7 +199,7 @@ export default function App() {
     const element = chatScrollRef.current;
     if (!element || !chatFollowRef.current) return;
     element.scrollTop = element.scrollHeight;
-  }, [chatMessages]);
+  }, [chatMessages, interimInputTranscript]);
 
   const focusProject = useMemo(() => {
     if (!boot) return null;
@@ -314,14 +324,14 @@ export default function App() {
         ? preferred.current
         : -1;
       if (index < 0) {
-        messages.push({ role, text: clean.slice(0, 4000) });
+        messages.push({ role, text: clean });
         if (messages.length > 48) messages.splice(0, messages.length - 48);
         preferred.current = messages.length - 1;
         return messages;
       }
       messages[index] = {
         ...messages[index],
-        text: mergeTranscript(messages[index].text, clean).slice(0, 4000),
+        text: mergeTranscript(messages[index].text, clean),
       };
       return messages;
     });
@@ -329,17 +339,26 @@ export default function App() {
 
   const applyLiveEvent = useCallback((event: LiveEvent) => {
     if (event.type === "interim_input_transcript" && typeof event.text === "string") {
-      setInterimInputTranscript(event.text.trim().slice(-1200));
+      if (userTurnBoundaryPendingRef.current) {
+        userTurnBoundaryPendingRef.current = false;
+        userTranscriptIndex.current = -1;
+        turnHasInput.current = false;
+      }
+      setInputTranscriptSeen(true);
+      setInterimInputTranscript(event.text.trim());
     } else if (event.type === "input_transcript" && typeof event.text === "string") {
+      setInputTranscriptSeen(true);
       setInterimInputTranscript("");
       if (!turnHasInput.current) turnHasInput.current = true;
       mergeChatMessage("user", event.text, userTranscriptIndex);
     } else if (event.type === "output_transcript" && typeof event.text === "string") {
       mergeChatMessage("assistant", event.text, assistantTranscriptIndex);
     } else if (event.type === "turn_complete" || event.type === "interrupted") {
-      setInterimInputTranscript("");
+      // Provider input transcription can arrive after the turn boundary.
+      // Preserve the provisional text and current user bubble until either that
+      // late final arrives or the first interim fragment of the next user turn.
+      userTurnBoundaryPendingRef.current = true;
       turnHasInput.current = false;
-      userTranscriptIndex.current = -1;
       assistantTranscriptIndex.current = -1;
     } else if (event.type === "tool_result" && event.status === "ok") {
       if (event.name === "memory_commit_voice_source") {
@@ -474,13 +493,25 @@ export default function App() {
     const client = createLiveClient({
       transport: "wss",
       voiceControl: null,
-      suppressCaptureDuringPlayback: true,
-      continuousCapture: true,
-      onState: state => {
-        setVoiceState(state);
-        if (["off", "start_error", "connection_error", "microphone_unavailable"].includes(state)) {
+      suppressCaptureDuringPlayback: false,
+      manualActivityDetection: true,
+      continuousCapture: false,
+      speechEndSilenceMs: 4000,
+      longSpeechEndSilenceMs: 8000,
+      longSpeechAfterMs: 12000,
+      onState: (state, detail) => {
+        const terminalReason = resolveTerminalVoiceState(state, detail);
+        setVoiceState(terminalReason || state);
+        if (terminalReason && currentSourceIdRef.current) {
+          setRecoverableSourceId(currentSourceIdRef.current);
+        }
+        if (
+          ["start_error", "connection_error", "microphone_unavailable"].includes(state)
+          || (state === "off" && !terminalReason)
+        ) {
           setInterimInputTranscript("");
         }
+        if (state === "starting") setInputTranscriptSeen(false);
         if (state === "listening") {
           setNotice(null);
           setMicrophoneSettingsAvailable(false);
@@ -504,6 +535,12 @@ export default function App() {
           }
         } else if (kind === "connection_error") {
           setNotice("Связь с Live нестабильна. Пытаюсь переподключиться…");
+        } else if (kind === "resource_denial") {
+          setNotice("Live остановилась из-за ресурсного лимита. Уже принятый голосовой источник сохранён и доступен для восстановления.");
+        } else if (kind === "provider_failure") {
+          setNotice("Live-провайдер завершил сессию с ошибкой. Уже принятый голосовой источник сохранён.");
+        } else if (kind === "capture_error") {
+          setNotice("Запись с микрофона прервалась. Уже подтверждённая часть источника сохранена.");
         }
         else if (kind === "event_gap") setNotice("Интерфейс пропустил часть служебных событий. Источник на сервере сохраняется отдельно.");
         else if (error) setNotice(friendlyStartError(error));
@@ -659,16 +696,48 @@ export default function App() {
       return;
     }
     try {
-      await client.start({
+      const started = await client.start({
         url: `/api/live/${current.id}/sessions`,
         body: liveStartBody(),
         microphone: true,
         captureDuringStart: true,
         authorize: async () => {},
       });
+      if (typeof started?.source_id === "string") currentSourceIdRef.current = started.source_id;
       if (client.sessionId) setNotice("Разговор восстановлен.");
     } catch {
       setNotice("Не удалось автоматически восстановить Live. Нажмите микрофон, чтобы продолжить.");
+    }
+  }
+
+  async function recoverFailedVoiceSource() {
+    const sourceId = recoverableSourceId;
+    const current = conversationRef.current;
+    if (!sourceId || !current || !networkOnline || replayingRef.current) return;
+    replayingRef.current = true;
+    setBusy(true);
+    setVoiceState("replaying");
+    setNotice("Восстанавливаю сохранённую реплику той же Live-моделью…");
+    try {
+      await recoverServerVoiceSource(current.id, sourceId, {
+        clientVersion: nativeVersion,
+        clientTimezone,
+        callbacks: {
+          onState: state => {
+            if (state !== "off") setVoiceState(state);
+          },
+          onEvent: applyLiveEvent,
+          onNotice: message => setNotice(message),
+        },
+      });
+      setRecoverableSourceId(null);
+      setNotice("Реплика восстановлена. Нажмите микрофон и скажите «продолжи» — повторять содержание не нужно.");
+    } catch {
+      setNotice("Не удалось восстановить сохранённую реплику. Исходный PCM остаётся на сервере; можно повторить восстановление.");
+    } finally {
+      replayingRef.current = false;
+      setBusy(false);
+      setVoiceState("off");
     }
   }
 
@@ -679,7 +748,7 @@ export default function App() {
       await stopOfflineCapture();
       return;
     }
-    const active = voiceState !== "off" && voiceState !== "start_error" && voiceState !== "connection_error";
+    const active = !inactiveVoiceStates.has(voiceState);
     if (active || client.sessionId || client.starting) {
       userStoppedVoiceRef.current = true;
       client.stop({ reason: "user_stop" });
@@ -696,13 +765,14 @@ export default function App() {
         return;
       }
       const current = await ensureConversation();
-      await client.start({
+      const started = await client.start({
         url: `/api/live/${current.id}/sessions`,
         body: liveStartBody(),
         microphone: true,
         captureDuringStart: true,
         authorize: async () => {},
       });
+      if (typeof started?.source_id === "string") currentSourceIdRef.current = started.source_id;
       if (!client.sessionId && !navigator.onLine) {
         await startOfflineCapture();
       }
@@ -874,7 +944,7 @@ export default function App() {
     );
   }
 
-  const voiceActive = !["off", "start_error", "connection_error", "microphone_unavailable"].includes(voiceState);
+  const voiceActive = !inactiveVoiceStates.has(voiceState);
   const showWork = Boolean(
     eventOpen || memoryOpen || backlogOpen || ((notice || wait) && chatMessages.length === 0)
   );
@@ -1061,6 +1131,11 @@ export default function App() {
                     <span className="interim-label">Слышу сейчас</span>
                     {interimInputTranscript}
                   </div>
+                </div>
+              )}
+              {voiceState === "listening" && !inputTranscriptSeen && !interimInputTranscript && !notice && (
+                <div className="chat-status" aria-live="polite">
+                  Микрофон работает; текст ещё не получен.
                 </div>
               )}
               {(wait || notice) && (
@@ -1304,6 +1379,11 @@ export default function App() {
               <div className="notice-card">
                 <p className="eyebrow">Состояние</p>
                 <p>{notice}</p>
+                {recoverableSourceId && networkOnline && (
+                  <button className="mini-action" onClick={recoverFailedVoiceSource} disabled={busy}>
+                    Восстановить запись
+                  </button>
+                )}
                 {microphoneSettingsAvailable && (
                   <button className="mini-action microphone-settings-action" onClick={openAndroidMicrophoneSettings}>
                     Открыть настройки микрофона

@@ -248,7 +248,7 @@ def wait_text_bounds(target_text: str, timeout_seconds: int = 45) -> tuple[int, 
             time.sleep(1)
             continue
         for node in root.iter("node"):
-            if str(node.attrib.get("text") or "") != target_text:
+            if str(node.attrib.get("text") or "").casefold() != target_text.casefold():
                 continue
             match = re.fullmatch(
                 r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]",

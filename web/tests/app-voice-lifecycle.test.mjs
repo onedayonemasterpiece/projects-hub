@@ -24,7 +24,8 @@ test("Projects Hub renders both sides of the Live conversation as a bounded mess
   const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(source, /event\.type === "input_transcript"[\s\S]*mergeChatMessage\("user"/);
   assert.match(source, /event\.type === "output_transcript"[\s\S]*mergeChatMessage\("assistant"/);
-  assert.match(source, /function mergeTranscript\(/);
+  assert.match(source, /import \{ mergeTranscript, resolveTerminalVoiceState \} from "\.\/voiceUiContract\.js"/);
+  assert.match(source, /mergeTranscript\(messages\[index\]\.text, clean\)/);
   assert.match(source, /messages\.length > 48/);
   assert.match(source, /className=\{"chat-row " \+ message\.role\}/);
   assert.match(source, /chatFollowRef/);
@@ -117,7 +118,7 @@ test("Android advertises calendar capability but asks permission only on first c
 
 test("Projects Hub suppresses capture while Mira playback is active", async () => {
   const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
-  assert.match(source, /suppressCaptureDuringPlayback:\s*true/);
+  assert.match(source, /suppressCaptureDuringPlayback:\s*false/);
 });
 
 test("backlog stays primary while owner development is observable and triggers updater after success", async () => {
@@ -186,12 +187,28 @@ test("runtime UX distinguishes semantic backend version from build provenance", 
 test("Projects Hub disables provider-transcript voice stop control", async () => {
   const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(source, /voiceControl:\s*null/);
-  assert.match(source, /suppressCaptureDuringPlayback:\s*true/);
+  assert.match(source, /suppressCaptureDuringPlayback:\s*false/);
 });
 
-test("Projects Hub lets Live provider own realtime speech boundaries", async () => {
+test("Projects Hub uses shared manual VAD for reliable realtime speech boundaries", async () => {
   const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
-  assert.match(source, /continuousCapture:\s*true/);
-  assert.doesNotMatch(source, /speechEndSilenceMs:/);
-  assert.match(source, /suppressCaptureDuringPlayback:\s*true/);
+  assert.match(source, /manualActivityDetection:\s*true/);
+  assert.match(source, /continuousCapture:\s*false/);
+  assert.match(source, /speechEndSilenceMs:\s*4000/);
+  assert.match(source, /longSpeechEndSilenceMs:\s*8000/);
+  assert.match(source, /longSpeechAfterMs:\s*12000/);
+  assert.match(source, /suppressCaptureDuringPlayback:\s*false/);
+});
+
+
+test("Projects Hub keeps long provider transcript intact and exposes terminal voice failures", async () => {
+  const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /clean\.slice\(0, 4000\)/);
+  assert.doesNotMatch(source, /mergeTranscript\([^\n]+\)\.slice\(0, 4000\)/);
+  assert.doesNotMatch(source, /setInterimInputTranscript\([^\n]+slice\(-1200\)/);
+  assert.match(source, /onState:\s*\(state, detail\)/);
+  assert.match(source, /resource_denial/);
+  assert.match(source, /provider_failure/);
+  assert.match(source, /Микрофон работает; текст ещё не получен/);
+  assert.match(source, /suppressCaptureDuringPlayback:\s*false/);
 });

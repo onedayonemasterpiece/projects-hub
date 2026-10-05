@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Callable
 
@@ -13,6 +14,8 @@ from .live_admission import ProjectsHubAdmissionMixin
 from .live_resources import live_resource_environment
 from .readiness import ReadinessService
 from .store import DurableStore
+
+log = logging.getLogger("projects_hub.live")
 
 
 def _live_max_sessions(environment: dict[str, str]) -> int:
@@ -95,7 +98,28 @@ def build_live_host(
     ):
         pass
 
+    def live_diagnostic(record: dict[str, Any]) -> None:
+        safe = {
+            key: value
+            for key, value in record.items()
+            if key in {
+                "event",
+                "session_id",
+                "attempt_id",
+                "code",
+                "connection_generation",
+                "frame_seq",
+                "pcm_bytes",
+                "capture_age_ms",
+                "audio_turn_open",
+                "duration_ms",
+            }
+            and isinstance(value, (str, int, float, bool))
+        }
+        log.info("live socket diagnostic", extra=safe)
+
     return ProjectsHubLiveSocketSessionHost(
+        diagnostic=live_diagnostic,
         adapter_factory=lambda **shared: ProjectsHubLiveAdapter(
             store,
             device_commands=device_commands,

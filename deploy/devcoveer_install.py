@@ -27,7 +27,7 @@ from typing import Any, Mapping
 REPOSITORY = "onedayonemasterpiece/projects-hub"
 SERVICE = "projects-hub.service"
 PORT = 8196
-AI_RESOURCE_CONTROL_SHA = "51e9c043ce40dfefea8b2cb4f4956019819bd9d4"
+AI_RESOURCE_CONTROL_SHA = "26278d0330fbb090802326c59e13487dbecd5e24"
 AI_RESOURCE_CONTROL_URL = (
     "git+https://github.com/onedayonemasterpiece/"
     f"ai-resource-control.git@{AI_RESOURCE_CONTROL_SHA}"
