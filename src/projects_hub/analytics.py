@@ -185,6 +185,8 @@ class AnalyticsService:
             "command_id": row["command_id"],
             "purpose": row["purpose"],
             "model": row["model_alias"],
+            "analysis_kind": "council" if row["model_alias"] == "council_free" else "single",
+            "council_tier": "free" if row["model_alias"] == "council_free" else None,
             "question": row["question"],
             "sources": sources,
             "input_sha256": row["input_sha256"],
@@ -360,6 +362,217 @@ class AnalyticsService:
             )
         return self.get_run(actor_id=actor_id, workspace_id=workspace_id, run_id=run_id)
 
+    async def start_council(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        project_id: str,
+        board_id: str,
+        object_ids: list[str],
+        command_id: str,
+        purpose: str,
+        question: str,
+    ) -> dict[str, Any]:
+        if not ANALYSIS_COMMAND_RE.fullmatch(str(command_id or "")):
+            raise StoreError("INVALID_ARGUMENT", "analysis command_id is invalid")
+        if purpose not in ANALYSIS_PURPOSES:
+            raise StoreError("INVALID_ARGUMENT", "Analysis purpose is not supported")
+        clean_question = str(question or "").strip()
+        if not clean_question or len(clean_question) > MAX_ANALYSIS_QUESTION:
+            raise StoreError("INVALID_ARGUMENT", "Analysis question is invalid")
+        try:
+            if not await self.bridge.safe_council_available():
+                raise AnalyticsBridgeError("safe council isolation is unavailable")
+        except AnalyticsBridgeError as exc:
+            raise StoreError(
+                "ANALYTICS_COUNCIL_UNAVAILABLE",
+                "Tenant-safe model council is unavailable",
+            ) from exc
+
+        sources, evidence = self._freeze_sources(
+            actor_id=actor_id,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            board_id=board_id,
+            object_ids=object_ids,
+        )
+        request = {
+            "project_id": project_id,
+            "board_id": board_id,
+            "object_revisions": [
+                {"id": item["id"], "revision": item["revision"]} for item in sources
+            ],
+            "analysis_kind": "council",
+            "council_tier": "free",
+            "purpose": purpose,
+            "question": clean_question,
+        }
+        request_sha = _sha(request)
+        now = _now_ms()
+
+        with self.store._lock:
+            existing = self.store.db.execute(
+                """SELECT * FROM analysis_runs
+                   WHERE initiating_actor_id=? AND project_id=? AND command_id=?""",
+                (actor_id, project_id, command_id),
+            ).fetchone()
+            if existing:
+                if existing["request_sha256"] != request_sha:
+                    raise StoreError(
+                        "ANALYSIS_COMMAND_CONFLICT",
+                        "analysis command_id was already used with another request",
+                    )
+                return self._public(actor_id, workspace_id, existing)
+
+            run_id = _new_id()
+            self.store.db.execute(
+                """INSERT INTO analysis_runs(
+                       id,initiating_actor_id,workspace_id,project_id,board_id,command_id,
+                       request_sha256,purpose,model_alias,question,source_snapshot_json,evidence_bundle,
+                       input_sha256,status,created_at_ms,updated_at_ms)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    run_id, actor_id, workspace_id, project_id, board_id, command_id,
+                    request_sha, purpose, "council_free", clean_question,
+                    _canonical(sources), evidence,
+                    hashlib.sha256(evidence.encode("utf-8")).hexdigest(),
+                    "dispatching", now, now,
+                ),
+            )
+
+        try:
+            response = await self.bridge.council(
+                purpose=purpose,
+                question=clean_question,
+                evidence_bundle=evidence,
+                request_key=f"analysis:{run_id}",
+            )
+        except AnalyticsBridgeError as exc:
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE analysis_runs
+                       SET status='dispatch_unknown',error_code=?,updated_at_ms=?
+                       WHERE id=?""",
+                    ("ANALYTICS_BRIDGE_INTERRUPTED", _now_ms(), run_id),
+                )
+            raise StoreError(
+                "ANALYTICS_DISPATCH_UNKNOWN",
+                "Council dispatch outcome is unknown; the saved run can be reconciled safely",
+            ) from exc
+
+        status = str(response.get("status") or "failed")
+        task_id = response.get("taskId") or response.get("taskReference")
+        if not isinstance(task_id, str):
+            task_id = None
+        if status not in {"running", "completed", "dispatch_unknown", "waiting_capacity"}:
+            error = str(response.get("errorCategory") or "ANALYTICS_PROVIDER_FAILED")
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE analysis_runs
+                       SET status='failed',provider_task_id=?,error_code=?,
+                           updated_at_ms=?,finished_at_ms=?
+                       WHERE id=?""",
+                    (task_id, error, _now_ms(), _now_ms(), run_id),
+                )
+            return self.get_run(
+                actor_id=actor_id, workspace_id=workspace_id, run_id=run_id
+            )
+
+        mapped = (
+            "dispatch_unknown" if status == "dispatch_unknown"
+            else "waiting_capacity" if status == "waiting_capacity"
+            else "running"
+        )
+        with self.store._lock:
+            self.store.db.execute(
+                """UPDATE analysis_runs
+                   SET status=?,provider_task_id=?,error_code=NULL,updated_at_ms=?
+                   WHERE id=?""",
+                (mapped, task_id, _now_ms(), run_id),
+            )
+        if status == "completed":
+            return await self.refresh(
+                actor_id=actor_id, workspace_id=workspace_id, run_id=run_id
+            )
+        return self.get_run(
+            actor_id=actor_id, workspace_id=workspace_id, run_id=run_id
+        )
+
+    @staticmethod
+    def _council_markdown(result: dict[str, Any], question: str) -> str:
+        lines = [
+            "# Council analysis",
+            "",
+            f"- Tier: {result.get('councilLevel') or 'free'}",
+            f"- Execution: {result.get('executionStatus') or 'unknown'}",
+            "",
+            "## Question",
+            "",
+            question.strip(),
+            "",
+            "## Model contributions",
+            "",
+        ]
+        outputs = result.get("model_outputs")
+        if isinstance(outputs, dict):
+            for model, raw in outputs.items():
+                if not isinstance(raw, dict):
+                    continue
+                lines.extend([
+                    f"### {model}",
+                    "",
+                    (
+                        f"- Provider: {raw.get('provider') or 'unknown'}"
+                        f"; status: {raw.get('status') or 'unknown'}"
+                    ),
+                    "",
+                ])
+                position = raw.get("revised_position") or raw.get("initial_position")
+                if isinstance(position, str) and position.strip():
+                    lines.extend([position.strip(), ""])
+                contributions = raw.get("key_contributions")
+                if isinstance(contributions, list) and contributions:
+                    lines.extend(["**Key contributions**", ""])
+                    for item in contributions[:20]:
+                        if isinstance(item, str) and item.strip():
+                            lines.append("- " + item.strip())
+                    lines.append("")
+        for title, key in (
+            ("Novel findings", "novel_findings"),
+            ("Unresolved questions", "unresolved_questions"),
+        ):
+            values = result.get(key)
+            if not isinstance(values, dict):
+                continue
+            lines.extend([f"## {title}", ""])
+            any_value = False
+            for model, items in values.items():
+                if not isinstance(items, list) or not items:
+                    continue
+                any_value = True
+                lines.extend([f"### {model}", ""])
+                for item in items[:20]:
+                    if isinstance(item, str) and item.strip():
+                        lines.append("- " + item.strip())
+                lines.append("")
+            if not any_value:
+                lines.extend(["- None recorded.", ""])
+        expert_reviews = result.get("expert_reviews")
+        if isinstance(expert_reviews, dict) and expert_reviews:
+            lines.extend(["## Expert reviews", ""])
+            for model, review in expert_reviews.items():
+                lines.extend([f"### {model}", "", _canonical(review), ""])
+        usage = result.get("usage")
+        if isinstance(usage, dict):
+            actual = usage.get("actual")
+            lines.extend(["## Usage", "", f"- Policy: {usage.get('policy') or 'unknown'}"])
+            if isinstance(actual, dict):
+                lines.append(f"- Total calls: {actual.get('totalCalls', 'unknown')}")
+                lines.append(f"- NVIDIA calls: {actual.get('nvidiaCalls', 'unknown')}")
+            lines.append("")
+        return "\n".join(lines).strip() + "\n"
+
     @staticmethod
     def _extract_markdown(payload: dict[str, Any]) -> str:
         latest = payload.get("latestTurn")
@@ -466,6 +679,13 @@ class AnalyticsService:
                 evidence_bundle=evidence,
                 request_key=f"analysis:{row['id']}",
             )
+        if row["model_alias"] == "council_free":
+            return await self.bridge.council(
+                purpose=row["purpose"],
+                question=row["question"],
+                evidence_bundle=evidence,
+                request_key=f"analysis:{row['id']}",
+            )
         return await self.bridge.consult(
             model=row["model_alias"],
             purpose=row["purpose"],
@@ -527,12 +747,27 @@ class AnalyticsService:
             if bool(current["cancel_requested"]) or current["status"] == "cancelled":
                 return self._public(actor_id, workspace_id, current)
             if provider_status == "completed":
-                council_result = payload.get("result") if current["model_alias"] == "council_free" else None
-                markdown = (
-                    self._council_markdown(payload, str(current["question"]))
-                    if current["model_alias"] == "council_free"
-                    else self._extract_markdown(payload)
-                )
+                if current["model_alias"] == "council_free":
+                    result = payload.get("result")
+                    if isinstance(result, dict):
+                        markdown = self._council_markdown(result, current["question"])
+                        result_json = _canonical(result)
+                    else:
+                        markdown = ""
+                        result_json = None
+                else:
+                    markdown = self._extract_markdown(payload)
+                    result_json = (
+                        _canonical(
+                            {
+                                "summary": markdown.splitlines()[0][:500],
+                                "participant": current["model_alias"],
+                                "purpose": current["purpose"],
+                            }
+                        )
+                        if markdown
+                        else None
+                    )
                 if not markdown:
                     self.store.db.execute(
                         """UPDATE analysis_runs
@@ -541,24 +776,11 @@ class AnalyticsService:
                         (now, now, run_id),
                     )
                 else:
-                    result_value = (
-                        council_result
-                        if isinstance(council_result, dict)
-                        else {
-                            "summary": markdown.splitlines()[0][:500],
-                            "participant": current["model_alias"],
-                            "purpose": current["purpose"],
-                        }
-                    )
                     self.store.db.execute(
                         """UPDATE analysis_runs
                            SET status='completed',result_markdown=?,result_json=?,
                                error_code=NULL,updated_at_ms=?,finished_at_ms=? WHERE id=?""",
-                        (
-                            markdown,
-                            _canonical(result_value),
-                            now, now, run_id,
-                        ),
+                        (markdown, result_json, now, now, run_id),
                     )
             elif provider_status in {"failed", "cancelled", "interrupted"}:
                 state = "cancelled" if provider_status == "cancelled" else "failed"
