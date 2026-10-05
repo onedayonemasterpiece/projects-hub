@@ -133,6 +133,7 @@ def _http_for_code(code: str) -> int:
         "GITHUB_WRITE_PERMISSION_MISSING",
         "GITHUB_WEBHOOK_INVALID",
         "DEVICE_COMMAND_CLAIM_INVALID",
+        "PROJECT_FORBIDDEN",
     }:
         return 403
     if code in {"IDENTITY_PROVIDER_INVALID"}:
