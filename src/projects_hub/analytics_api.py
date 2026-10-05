@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request, Response
 from pydantic import BaseModel, Field
 
 from .analytics import AnalyticsService
+from .analytics_materialization import AnalysisMaterializer
 
 
 class AnalysisStartRequest(BaseModel):
@@ -23,6 +24,12 @@ class AnalysisWorkspaceRequest(BaseModel):
     workspace_id: str
 
 
+class AnalysisMaterializeRequest(BaseModel):
+    workspace_id: str
+    repository_id: int | None = None
+    allow_public: bool = False
+
+
 class AnalysisPublishRequest(BaseModel):
     workspace_id: str
     command_id: str
@@ -36,6 +43,7 @@ def attach_analytics_routes(
     service: AnalyticsService,
     actor_id_from_request: Callable[[Request], str],
     board_hub: Any | None = None,
+    materializer: AnalysisMaterializer | None = None,
 ) -> None:
     @app.post("/api/analysis/runs")
     async def analysis_start(
@@ -127,6 +135,42 @@ def attach_analytics_routes(
                 {"type": "event", "event": receipt["event"]},
             )
         return receipt
+
+    @app.get("/api/analysis/runs/{run_id}/materialization")
+    async def analysis_materialization_status(
+        run_id: str,
+        workspace_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        if materializer is None:
+            return {
+                "run_id": run_id,
+                "status": "not_configured",
+            }
+        return materializer.status(
+            actor_id=actor_id_from_request(request),
+            workspace_id=workspace_id,
+            run_id=run_id,
+        )
+
+    @app.post("/api/analysis/runs/{run_id}/materialize")
+    async def analysis_materialize(
+        run_id: str,
+        payload: AnalysisMaterializeRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        if materializer is None:
+            return {
+                "run_id": run_id,
+                "status": "not_configured",
+            }
+        return await materializer.materialize(
+            actor_id=actor_id_from_request(request),
+            workspace_id=payload.workspace_id,
+            run_id=run_id,
+            repository_id=payload.repository_id,
+            allow_public=payload.allow_public,
+        )
 
     @app.get("/api/analysis/runs/{run_id}/report.md")
     async def analysis_report(
