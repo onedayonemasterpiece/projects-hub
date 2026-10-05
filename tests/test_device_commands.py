@@ -330,3 +330,50 @@ async def test_calendar_read_command_returns_bounded_device_events(tmp_path: Pat
         assert too_wide.value.code == "INVALID_ARGUMENT"
     finally:
         store.close()
+
+
+
+@pytest.mark.asyncio
+async def test_calendar_live_tool_returns_pending_without_40_second_voice_stall(tmp_path: Path):
+    store, _boot, actor, workspace, project, service, registration = setup(tmp_path)
+    try:
+        conversation = store.create_conversation(actor, workspace, project)
+        binding = ConversationScope(workspace, actor, conversation["id"]).resource_binding()
+        adapter = ProjectsHubLiveAdapter(store, device_commands=service)
+        initialized = adapter.initialize(
+            resource_id=binding,
+            actor={"subject": actor, "tenant_id": workspace},
+            model="gemini-3.8-live",
+            conversation_id=conversation["id"],
+        )
+        seen = {}
+
+        async def return_claimed(**kwargs):
+            seen["timeout_seconds"] = kwargs["timeout_seconds"]
+            return {
+                "command_id": kwargs["command_id"],
+                "device_id": registration["device"]["id"],
+                "capability": "calendar.create_event",
+                "status": "claimed",
+                "pending_device_confirmation": True,
+            }
+
+        service.wait_for_terminal = return_claimed
+        session = SimpleNamespace(state=initialized["state"])
+        result = await adapter.execute_tool(
+            session,
+            {
+                "name": "calendar_create_event_on_device",
+                "id": "provider-calendar-pending",
+                "args": {
+                    **CALENDAR_ARGS,
+                    "project_id": project,
+                    "device_id": registration["device"]["id"],
+                },
+            },
+        )
+        assert seen["timeout_seconds"] == 8.0
+        assert result["status"] == "claimed"
+        assert result["pending_device_confirmation"] is True
+    finally:
+        store.close()

@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   mergeTranscript,
   resolveTerminalVoiceState,
+  speechStartsNewUserBubble,
 } from "../src/voiceUiContract.js";
 
 test("long transcript merge is lossless beyond 4000 chars", () => {
@@ -38,4 +39,11 @@ test("terminal failures remain distinguishable from ordinary off", () => {
   }
   assert.equal(resolveTerminalVoiceState("off", { reason: "user_stop" }), "");
   assert.equal(resolveTerminalVoiceState("listening", { reason: "resource_denial" }), "");
+});
+
+
+test("speech start opens a new user bubble even without provider interim text", () => {
+  assert.equal(speechStartsNewUserBubble("speech_start"), true);
+  assert.equal(speechStartsNewUserBubble("speech_end"), false);
+  assert.equal(speechStartsNewUserBubble("input_transcript"), false);
 });

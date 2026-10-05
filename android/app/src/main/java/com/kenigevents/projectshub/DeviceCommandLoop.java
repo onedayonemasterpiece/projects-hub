@@ -2,6 +2,7 @@ package com.kenigevents.projectshub;
 
 import org.json.JSONObject;
 
+import java.io.IOException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -88,7 +89,7 @@ final class DeviceCommandLoop {
 
                 Outcome value = outcome.get();
                 if (value != null) {
-                    api.submitReceipt(deviceToken, command, value.status, value.result);
+                    submitReceiptReliably(command, value);
                 }
             } catch (ApiClient.ApiException apiFailure) {
                 if (apiFailure.statusCode == 401) {
@@ -103,6 +104,33 @@ final class DeviceCommandLoop {
             } catch (Exception ignored) {
                 sleepQuietly();
             }
+        }
+    }
+
+    private void submitReceiptReliably(
+            ApiClient.ClaimedCommand command,
+            Outcome value
+    ) throws Exception {
+        long backoffMs = 500;
+        while (running.get() && !Thread.currentThread().isInterrupted()) {
+            try {
+                // Retrying the same terminal receipt is idempotent on the backend.
+                // Never execute the already-applied calendar mutation again here.
+                api.submitReceipt(deviceToken, command, value.status, value.result);
+                return;
+            } catch (ApiClient.ApiException failure) {
+                if (failure.statusCode == 401) throw failure;
+                if (failure.statusCode < 500
+                        && failure.statusCode != 408
+                        && failure.statusCode != 429) {
+                    throw failure;
+                }
+            } catch (IOException transientFailure) {
+                // Network failure after the local side effect: keep ownership of
+                // this claimed command and retry only its terminal receipt.
+            }
+            Thread.sleep(backoffMs);
+            backoffMs = Math.min(5000, backoffMs * 2);
         }
     }
 
