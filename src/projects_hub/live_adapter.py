@@ -1232,8 +1232,38 @@ explicit buffered replay is required instead of pretending the provisional text 
                 workspace_id=workspace_id,
                 project_id=project_id,
             )
+            native_share: dict[str, Any] | None = None
+            if state.get("client_version"):
+                try:
+                    native_command_id, _native_args_sha = self._command_id(
+                        session,
+                        "share_open_chooser",
+                        {"project_id": project_id, "url": grant["url"]},
+                    )
+                    command = self.device_commands.create_share_command(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        project_id=project_id,
+                        command_id=native_command_id,
+                        args={
+                            "url": grant["url"],
+                            "title": "Поделиться доской проекта",
+                        },
+                    )
+                    native_share = await self.device_commands.wait_for_terminal(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        command_id=command["id"],
+                        timeout_seconds=8.0,
+                    )
+                except StoreError as exc:
+                    native_share = {
+                        "status": "unavailable",
+                        "error_code": exc.code,
+                    }
             return {
                 **grant,
+                "native_share": native_share,
                 "ui_command": {
                     "kind": "share",
                     "action": "ready",
