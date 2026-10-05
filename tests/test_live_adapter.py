@@ -27,8 +27,13 @@ async def test_live_adapter_persists_audio_transcript_and_verified_memory(tmp_pa
             conversation_id=conversation["id"],
         )
         assert initialized["configuration"]["functions"]
-        assert initialized["configuration"]["manual_activity_detection"] is True
-        assert initialized["configuration"]["automatic_activity_detection"] is None
+        assert initialized["configuration"]["manual_activity_detection"] is False
+        assert initialized["configuration"]["automatic_activity_detection"] == {
+            "start_of_speech_sensitivity": "START_SENSITIVITY_LOW",
+            "end_of_speech_sensitivity": "END_SENSITIVITY_LOW",
+            "silence_duration_ms": 1600,
+            "prefix_padding_ms": 250,
+        }
         assert initialized["response"]["focus_project_id"] == project_id
 
         session = SimpleNamespace(state=initialized["state"])
@@ -407,6 +412,26 @@ def test_voice_failures_emit_correlated_redacted_diagnostics(tmp_path: Path, cap
         assert records[-2].code == "PROVIDER_FAILURE_TEST"
         assert records[-1].code == "LIVE_TRANSPORT_GAP"
         assert records[-1].connection_generation == 2
+
+        caplog.clear()
+        adapter.on_event(session, {
+            "type": "input_timing",
+            "audio_chunks": 7,
+            "max_stdin_delay_ms": 23,
+            "max_ws_send_ms": 11,
+            "audio_stream_end_sent_at": 990,
+        })
+        timing_records = [
+            record for record in caplog.records
+            if getattr(record, "event", None) == "live_provider_event"
+        ]
+        assert len(timing_records) == 1
+        timing = timing_records[0]
+        assert timing.kind == "input_timing"
+        assert timing.audio_chunks == 7
+        assert timing.max_stdin_delay_ms == 23
+        assert timing.max_ws_send_ms == 11
+        assert timing.audio_stream_end_sent_at == 990
 
         caplog.clear()
         adapter.on_event(session, {

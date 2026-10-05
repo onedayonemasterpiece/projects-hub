@@ -165,7 +165,6 @@ def test_projects_hub_wss_binary_push_and_no_http_fallback(live_client):
 
     with socket(client, value) as ws:
         hello(ws, value)
-        ws.send_json({"type": "input", "message": {"activity_start": True}})
         ws.send_bytes(struct.pack("!III", 0x574C4131, 1, 0) + b"\x01\x00\x02\x00")
 
         ack = None
@@ -185,7 +184,7 @@ def test_projects_hub_wss_binary_push_and_no_http_fallback(live_client):
         assert rejected.status_code == 409
         assert rejected.json()["detail"]["code"] == "LIVE_TRANSPORT_MISMATCH"
 
-        ws.send_json({"type": "input", "message": {"activity_end": True}})
+        ws.send_json({"type": "input", "message": {"audio_stream_end": True}})
         ws.send_json({"type": "input", "message": {"text": "reply"}})
 
         transcript = False
@@ -202,11 +201,10 @@ def test_projects_hub_wss_binary_push_and_no_http_fallback(live_client):
         assert binary[12:] == b"\x01\x00\x02\x00"
         ws.send_json({"type": "stop"})
 
-    assert [item["type"] for item in provider.inputs][:5] == [
+    assert [item["type"] for item in provider.inputs][:4] == [
         "start",
-        "activity_start",
         "audio",
-        "activity_end",
+        "audio_stream_end",
         "text",
     ]
 
