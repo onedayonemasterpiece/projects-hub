@@ -239,6 +239,15 @@ async def roundtrip(args) -> dict[str, Any]:
             await hello(ws, started)
             result["hello_ack"] = True
 
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "input",
+                        "message": {"activity_start": True},
+                    }
+                )
+            )
+
             pcm = b"\x00\x00" * 1600
             await ws.send(struct.pack("!III", INPUT_MAGIC, 1, 0) + pcm)
             await recv_until(
@@ -266,7 +275,7 @@ async def roundtrip(args) -> dict[str, Any]:
                 json.dumps(
                     {
                         "type": "input",
-                        "message": {"audio_stream_end": True},
+                        "message": {"activity_end": True},
                     }
                 )
             )

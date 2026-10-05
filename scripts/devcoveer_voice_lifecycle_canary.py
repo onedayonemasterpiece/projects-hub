@@ -101,7 +101,9 @@ async def run(args) -> dict[str, Any]:
                 elif ek=="interrupted":
                     state["interrupted"]+=1
                 elif ek=="tool_call":
-                    state["tool_calls"].append(str(event.get("name") or "unknown"))
+                    for call in event.get("calls") or []:
+                        name=call.get("name") if isinstance(call,dict) else None
+                        state["tool_calls"].append(str(name or "unknown"))
                 elif ek=="error":
                     state["errors"].append(str(event.get("code") or "LIVE_ERROR"))
                 elif ek=="resource_budget" and str(event.get("code") or "").startswith("RESOURCE_"):
