@@ -11,7 +11,13 @@ test("board analysis UI uses isolated run API and renders markdown as text", () 
   assert.match(boardApi, /analysis_publish_ui_/);
   assert.match(shell, /Kimi K3/);
   assert.match(shell, /DeepSeek/);
-  assert.match(shell, /Консилиум · free/);
+  assert.match(shell, /Консилиум · free \(может быть недоступен\)/);
+  assert.match(shell, /Консилиум · Kimi \+ DeepSeek · paid/);
+  assert.match(boardApi, /\/api\/analysis\/runs\/.*\/confirm/);
+  assert.match(shell, /Платный план требует отдельного подтверждения/);
+  assert.match(shell, /Явно подтвердить платный консилиум/);
+  assert.match(shell, /Денежная стоимость провайдером здесь не опубликована/);
+  assert.match(shell, /confirmAnalysisRun\(workspaceId, analysisRun\.id\)/);
   assert.match(shell, /board-analysis-report/);
   assert.match(shell, /<pre className="board-analysis-report">\{analysisRun\.result_markdown\}<\/pre>/);
   assert.doesNotMatch(shell, /dangerouslySetInnerHTML/);
