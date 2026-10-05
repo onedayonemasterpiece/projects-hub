@@ -790,16 +790,12 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "voice": "Aoede",
                 "input_audio_transcription": {},
                 "search_enabled": False,
-                "manual_activity_detection": audio_mode == "buffered",
-                "automatic_activity_detection": (
-                    None
-                    if audio_mode == "buffered"
-                    else {
-                        "end_of_speech_sensitivity": "END_SENSITIVITY_LOW",
-                        "silence_duration_ms": 800,
-                        "prefix_padding_ms": 250,
-                    }
-                ),
+                # Provider auto-VAD did not recognize accepted realtime PCM in real
+                # production runs. Use the shared client VAD for explicit activity
+                # boundaries in both realtime and buffered modes; ASR/semantics stay
+                # inside this same Live model.
+                "manual_activity_detection": True,
+                "automatic_activity_detection": None,
             },
             "response": {
                 "conversation_id": conversation_id,

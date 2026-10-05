@@ -504,7 +504,11 @@ export default function App() {
       transport: "wss",
       voiceControl: null,
       suppressCaptureDuringPlayback: false,
-      continuousCapture: true,
+      manualActivityDetection: true,
+      continuousCapture: false,
+      speechEndSilenceMs: 4000,
+      longSpeechEndSilenceMs: 8000,
+      longSpeechAfterMs: 12000,
       onState: (state, detail) => {
         const reason = typeof detail?.reason === "string" ? detail.reason : "";
         const terminalReason = state === "off" && [

@@ -373,6 +373,10 @@ async def run_once(args, run_number: int, seed: bytes, markers: tuple[str, str, 
                     receiver_finished.set()
 
             receiver = asyncio.create_task(receive_loop())
+            await ws.send(json.dumps({
+                "type": "input",
+                "message": {"activity_start": True},
+            }))
             stream_started_at = time.monotonic()
             checkpoints_seconds = sorted({
                 value for value in (30.0, 60.0, 90.0, 180.0, float(args.seconds))
@@ -409,10 +413,22 @@ async def run_once(args, run_number: int, seed: bytes, markers: tuple[str, str, 
             streamed_seconds = (
                 time.monotonic() - stream_started_at if stream_started_at is not None else 0.0
             )
+            while next_checkpoint < len(checkpoints_seconds):
+                value = checkpoints_seconds[next_checkpoint]
+                if streamed_seconds + 0.05 < value:
+                    break
+                checkpoints.append({
+                    "second": value,
+                    "terminal": terminal,
+                    "acks": ack_count,
+                    "interim_events": len(interims),
+                    "final_events": len(finals),
+                })
+                next_checkpoint += 1
             if terminal is None:
                 await ws.send(json.dumps({
                     "type": "input",
-                    "message": {"audio_stream_end": True},
+                    "message": {"activity_end": True},
                 }))
                 try:
                     await asyncio.wait_for(turn_complete.wait(), args.final_timeout)
