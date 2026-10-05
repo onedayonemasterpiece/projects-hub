@@ -118,7 +118,7 @@ test("Android advertises calendar capability but asks permission only on first c
 
 test("Projects Hub suppresses capture while Mira playback is active", async () => {
   const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
-  assert.match(source, /suppressCaptureDuringPlayback:\s*false/);
+  assert.match(source, /suppressCaptureDuringPlayback:\s*"adaptive"/);
 });
 
 test("backlog stays primary while owner development is observable and triggers updater after success", async () => {
@@ -187,7 +187,7 @@ test("runtime UX distinguishes semantic backend version from build provenance", 
 test("Projects Hub disables provider-transcript voice stop control", async () => {
   const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(source, /voiceControl:\s*null/);
-  assert.match(source, /suppressCaptureDuringPlayback:\s*false/);
+  assert.match(source, /suppressCaptureDuringPlayback:\s*"adaptive"/);
 });
 
 test("Projects Hub finalizes speech chunks after the proven two-second pause without stopping Live", async () => {
@@ -197,7 +197,7 @@ test("Projects Hub finalizes speech chunks after the proven two-second pause wit
   assert.match(source, /speechEndSilenceMs:\s*2000/);
   assert.doesNotMatch(source, /longSpeechEndSilenceMs:/);
   assert.doesNotMatch(source, /longSpeechAfterMs:/);
-  assert.match(source, /suppressCaptureDuringPlayback:\s*false/);
+  assert.match(source, /suppressCaptureDuringPlayback:\s*"adaptive"/);
 });
 
 
@@ -210,7 +210,7 @@ test("Projects Hub keeps long provider transcript intact and exposes terminal vo
   assert.match(source, /resource_denial/);
   assert.match(source, /provider_failure/);
   assert.match(source, /Микрофон работает; текст ещё не получен/);
-  assert.match(source, /suppressCaptureDuringPlayback:\s*false/);
+  assert.match(source, /suppressCaptureDuringPlayback:\s*"adaptive"/);
 });
 
 
@@ -219,4 +219,11 @@ test("a new microphone speech start cannot append to the prior final-only user b
   assert.match(source, /onTiming:\s*event\s*=>\s*\{[\s\S]*speechStartsNewUserBubble\(event\)/);
   assert.match(source, /speechStartsNewUserBubble\(event\)[\s\S]*userTranscriptIndex\.current\s*=\s*-1/);
   assert.match(source, /speechStartsNewUserBubble\(event\)[\s\S]*turnHasInput\.current\s*=\s*false/);
+});
+
+test("Projects Hub opts into shared adaptive duplex echo rejection", async () => {
+  const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  assert.match(source, /suppressCaptureDuringPlayback:\s*"adaptive"/);
+  assert.doesNotMatch(source, /suppressCaptureDuringPlayback:\s*false/);
+  assert.match(source, /speechEndSilenceMs:\s*2000/);
 });
