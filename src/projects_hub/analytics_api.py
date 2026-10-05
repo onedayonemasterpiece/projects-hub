@@ -14,7 +14,6 @@ class AnalysisStartRequest(BaseModel):
     board_id: str
     object_ids: list[str] = Field(min_length=1, max_length=12)
     command_id: str
-    analysis_kind: str = "single"
     model: str = "kimi_k3"
     purpose: str
     question: str = Field(min_length=1, max_length=4000)
@@ -42,22 +41,17 @@ def attach_analytics_routes(
     async def analysis_start(
         payload: AnalysisStartRequest, request: Request
     ) -> dict[str, Any]:
-        common = {
-            "actor_id": actor_id_from_request(request),
-            "workspace_id": payload.workspace_id,
-            "project_id": payload.project_id,
-            "board_id": payload.board_id,
-            "object_ids": payload.object_ids,
-            "command_id": payload.command_id,
-            "purpose": payload.purpose,
-            "question": payload.question,
-        }
-        if payload.analysis_kind == "council":
-            return await service.start_council(**common)
-        if payload.analysis_kind != "single":
-            from .store import StoreError
-            raise StoreError("INVALID_ARGUMENT", "Unknown analysis kind")
-        return await service.start_single(model=payload.model, **common)
+        return await service.start_single(
+            actor_id=actor_id_from_request(request),
+            workspace_id=payload.workspace_id,
+            project_id=payload.project_id,
+            board_id=payload.board_id,
+            object_ids=payload.object_ids,
+            command_id=payload.command_id,
+            model=payload.model,
+            purpose=payload.purpose,
+            question=payload.question,
+        )
 
     @app.get("/api/analysis/runs")
     async def analysis_list(
