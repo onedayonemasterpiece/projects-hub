@@ -16,7 +16,7 @@ def test_live_start_audio_mode_is_bounded():
         LiveStart(audio_mode="other")
 
 
-def test_buffered_mode_uses_shared_manual_activity_contract(tmp_path: Path):
+def test_buffered_mode_keeps_manual_boundary_while_realtime_uses_hybrid_vad(tmp_path: Path):
     store = DurableStore(tmp_path)
     try:
         boot = store.ensure_dev_workspace("Buffered")
@@ -47,7 +47,12 @@ def test_buffered_mode_uses_shared_manual_activity_contract(tmp_path: Path):
             model="gemini-3.8-live",
             conversation_id=conversation["id"],
         )
-        assert realtime["configuration"]["manual_activity_detection"] is True
-        assert realtime["configuration"]["automatic_activity_detection"] is None
+        assert realtime["configuration"]["manual_activity_detection"] is False
+        assert realtime["configuration"]["automatic_activity_detection"] == {
+            "start_of_speech_sensitivity": "START_SENSITIVITY_LOW",
+            "end_of_speech_sensitivity": "END_SENSITIVITY_LOW",
+            "silence_duration_ms": 1600,
+            "prefix_padding_ms": 250,
+        }
     finally:
         store.close()

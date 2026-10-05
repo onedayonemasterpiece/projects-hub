@@ -794,12 +794,22 @@ explicit buffered replay is required instead of pretending the provisional text 
                     "mode": "VERBATIM",
                 },
                 "search_enabled": False,
-                # Provider auto-VAD did not recognize accepted realtime PCM in real
-                # production runs. Use the shared client VAD for explicit activity
-                # boundaries in both realtime and buffered modes; ASR/semantics stay
-                # inside this same Live model.
-                "manual_activity_detection": True,
-                "automatic_activity_detection": None,
+                # Realtime follows Google's hybrid-VAD pattern: provider automatic VAD
+                # owns speech-start detection and prefix buffering, while the shared
+                # client sends audio_stream_end when its local VAD confidently sees
+                # the end. Buffered/recovery replay remains explicitly bounded because
+                # it already represents one complete recorded utterance.
+                "manual_activity_detection": audio_mode != "realtime",
+                "automatic_activity_detection": (
+                    {
+                        "start_of_speech_sensitivity": "START_SENSITIVITY_LOW",
+                        "end_of_speech_sensitivity": "END_SENSITIVITY_LOW",
+                        "silence_duration_ms": 1600,
+                        "prefix_padding_ms": 250,
+                    }
+                    if audio_mode == "realtime"
+                    else None
+                ),
             },
             "response": {
                 "conversation_id": conversation_id,
@@ -868,6 +878,7 @@ explicit buffered replay is required instead of pretending the provisional text 
             "resumed",
             "transport_gap",
             "transport_connected",
+            "input_timing",
         }
         if kind not in diagnostic_kinds:
             return
@@ -916,6 +927,11 @@ explicit buffered replay is required instead of pretending the provisional text 
             "requested_units",
             "granted_units",
             "connection_generation",
+            "audio_chunks",
+            "max_stdin_delay_ms",
+            "max_ws_send_ms",
+            "audio_stream_end_sent_at",
+            "activity_end_sent_at",
         ):
             value = event.get(key)
             if isinstance(value, (str, int, float, bool)):

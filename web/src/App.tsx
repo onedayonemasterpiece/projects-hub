@@ -498,15 +498,20 @@ export default function App() {
       voiceControl: null,
       // Adaptive duplex rejects Mira playback echo while preserving sustained real barge-in.
       suppressCaptureDuringPlayback: "adaptive",
-      manualActivityDetection: true,
+      // Google hybrid VAD: provider auto-VAD owns speech start/prefix buffering;
+      // local VAD only closes the turn early with audio_stream_end. The provider
+      // remains a fallback when the client misses an endpoint.
+      manualActivityDetection: false,
       continuousCapture: false,
-      // Keep the mature manual-boundary path, but finalize a speech segment after
-      // the shared framework's proven 2 s tail. A natural pause now yields the
-      // provider-derived transcript while the Live session itself stays active.
-      speechEndSilenceMs: 2000,
+      // Google's guidance is at least 500 ms for client-side end detection. Use
+      // 650 ms for short commands, but give sustained monologues more room to
+      // contain a thinking pause before finalization.
+      speechEndSilenceMs: 650,
       // Require sustained speech onset before opening provider activity so taps,
       // keyboard clicks and finger snaps do not become semantic user turns.
       speechStartMs: 180,
+      longSpeechEndSilenceMs: 1400,
+      longSpeechAfterMs: 8000,
       onTiming: event => {
         if (event === "speech_end") {
           setSpeechActive(false);

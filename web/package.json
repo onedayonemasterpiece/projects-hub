@@ -10,7 +10,7 @@
     "check:release": "npm ci && npm run test:live-framework && npm run build"
   },
   "dependencies": {
-    "@onedayonemasterpiece/live-interaction": "git+https://github.com/onedayonemasterpiece/live-interaction.git#a86221d6b58eeca3df72d8f32c8d8bf44e126305",
+    "@onedayonemasterpiece/live-interaction": "git+https://github.com/onedayonemasterpiece/live-interaction.git#4d5589bfc52ca74b2fc451e5a27788b42196823a",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
@@ -24,8 +24,8 @@
   "liveFramework": {
     "repository": "https://github.com/onedayonemasterpiece/live-interaction",
     "binding": "browser",
-    "version": "0.3.24",
-    "ref": "a86221d6b58eeca3df72d8f32c8d8bf44e126305",
-    "release_commit": "a86221d6b58eeca3df72d8f32c8d8bf44e126305"
+    "version": "0.3.25",
+    "ref": "4d5589bfc52ca74b2fc451e5a27788b42196823a",
+    "release_commit": "4d5589bfc52ca74b2fc451e5a27788b42196823a"
   }
 }
