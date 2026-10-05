@@ -289,6 +289,7 @@ def create_app(
                 board=app.state.board,
                 board_hub=app.state.board_hub,
                 analytics=app.state.analytics,
+                sharing=app.state.sharing,
                 device_commands=app.state.device_commands,
                 readiness=app.state.readiness,
                 development=app.state.development,
