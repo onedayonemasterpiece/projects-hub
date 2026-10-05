@@ -142,6 +142,7 @@ export default function App() {
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [voiceState, setVoiceState] = useState("off");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [interimInputTranscript, setInterimInputTranscript] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [microphoneSettingsAvailable, setMicrophoneSettingsAvailable] = useState(false);
   const [wait, setWait] = useState<WaitState>(null);
@@ -327,12 +328,16 @@ export default function App() {
   }, []);
 
   const applyLiveEvent = useCallback((event: LiveEvent) => {
-    if (event.type === "input_transcript" && typeof event.text === "string") {
+    if (event.type === "interim_input_transcript" && typeof event.text === "string") {
+      setInterimInputTranscript(event.text.trim().slice(-1200));
+    } else if (event.type === "input_transcript" && typeof event.text === "string") {
+      setInterimInputTranscript("");
       if (!turnHasInput.current) turnHasInput.current = true;
       mergeChatMessage("user", event.text, userTranscriptIndex);
     } else if (event.type === "output_transcript" && typeof event.text === "string") {
       mergeChatMessage("assistant", event.text, assistantTranscriptIndex);
-    } else if (event.type === "turn_complete") {
+    } else if (event.type === "turn_complete" || event.type === "interrupted") {
+      setInterimInputTranscript("");
       turnHasInput.current = false;
       userTranscriptIndex.current = -1;
       assistantTranscriptIndex.current = -1;
@@ -1022,7 +1027,7 @@ export default function App() {
         )}
       </header>
 
-      {chatMessages.length > 0 && (
+      {(chatMessages.length > 0 || interimInputTranscript) && (
         <section className="chat-canvas" aria-label="Диалог с Мирой">
           <div
             className="chat-thread"
@@ -1044,6 +1049,17 @@ export default function App() {
                   </div>
                 </div>
               ))}
+              {interimInputTranscript && (
+                <div className="chat-row user interim" aria-live="polite">
+                  <div
+                    className="chat-bubble user interim"
+                    aria-label={"Вы, сейчас: " + interimInputTranscript}
+                  >
+                    <span className="interim-label">Слышу сейчас</span>
+                    {interimInputTranscript}
+                  </div>
+                </div>
+              )}
               {(wait || notice) && (
                 <div className="chat-status" role={notice ? "alert" : undefined}>
                   {notice ?? (wait?.stage === "action" ? "Мира выполняет действие…" : "Мира думает…")}
@@ -1310,6 +1326,7 @@ export default function App() {
               className="island action-pill"
               onClick={() => {
                 setChatMessages([]);
+                setInterimInputTranscript("");
                 userTranscriptIndex.current = -1;
                 assistantTranscriptIndex.current = -1;
               }}
