@@ -695,6 +695,8 @@ export function BoardShell({
   };
 
   const selected = selectedId ? objects.get(selectedId) ?? null : null;
+  const analysisReferenceId =
+    selected?.reference?.kind === "analysis_run" ? selected.reference.id : null;
   const objectList = useMemo(() => [...objects.values()], [objects]);
   const startSelectedAnalysis = async () => {
     if (!boardId || !selected || !canAnalyze || analysisBusy) return;
@@ -1041,10 +1043,10 @@ export function BoardShell({
               Анализировать
             </button>
           )}
-          {canAnalyze && selected.reference?.kind === "analysis_run" && (
+          {canAnalyze && analysisReferenceId && (
             <button
               onClick={() =>
-                void getAnalysisRun(workspaceId, selected.reference!.id)
+                void getAnalysisRun(workspaceId, analysisReferenceId)
                   .then((run) => {
                     setAnalysisRun(run);
                     setAnalysisOpen(true);
