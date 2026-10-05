@@ -56,6 +56,8 @@ Projects Hub 0.1.30:
 
 ## Acceptance
 
+Delivery gate: PR CI must install both Projects Hub and the exact shared Live dependency in a clean runner; local cached dependencies are not acceptance evidence.
+
 Automated gates before merge:
 
 - shared 0.3.22: 80/80 Node + 53/53 Python + GitHub contracts/native CI;
