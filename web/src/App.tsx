@@ -168,6 +168,7 @@ export default function App() {
   const [backlogOpen, setBacklogOpen] = useState(false);
   const [boardOpen, setBoardOpen] = useState(false);
   const [boardFocusRequest, setBoardFocusRequest] = useState<BoardFocusRequest>(null);
+  const [analysisRunId, setAnalysisRunId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
   const [networkOnline, setNetworkOnline] = useState(() => navigator.onLine);
@@ -220,6 +221,7 @@ export default function App() {
     ) {
       setBoardOpen(false);
       setBoardFocusRequest(null);
+      setAnalysisRunId(null);
     }
     boardProjectRef.current = nextProjectId;
   }, [focusProject?.id]);
@@ -378,7 +380,7 @@ export default function App() {
       turnHasInput.current = false;
       assistantTranscriptIndex.current = -1;
     } else if (event.type === "tool_result" && event.status === "ok") {
-      if (["board_navigate", "board_edit"].includes(event.name ?? "")) {
+      if (["board_navigate", "board_edit", "board_analysis"].includes(event.name ?? "")) {
         let rawResult: unknown = event.result ?? event.output ?? event.response;
         if (typeof rawResult === "string") {
           try {
@@ -396,8 +398,16 @@ export default function App() {
             if (!projectId || projectId !== currentProjectId) {
               setNotice("Команда доски относится уже не к текущему проекту.");
             } else {
+              const kind = String(command.kind ?? "board");
               const action = String(command.action ?? "");
-              if (action === "close") {
+              if (kind === "analysis" && action === "show") {
+                const runId = String(command.run_id ?? "");
+                if (runId) {
+                  setBoardOpen(true);
+                  setContextOpen(false);
+                  setAnalysisRunId(runId);
+                }
+              } else if (action === "close") {
                 setBoardOpen(false);
                 setBoardFocusRequest(null);
               } else if (action === "open") {
@@ -1523,10 +1533,13 @@ export default function App() {
           workspaceId={boot.workspace.id}
           projectId={focusProject.id}
           canEdit={(focusProject.role ?? "viewer") !== "viewer"}
+          canAnalyze={Boolean(focusProject.can_analyze)}
           focusRequest={boardFocusRequest}
+          analysisRunId={analysisRunId}
           onClose={() => {
             setBoardOpen(false);
             setBoardFocusRequest(null);
+            setAnalysisRunId(null);
           }}
           onFocusFulfilled={(token, ok) => {
             const action =
