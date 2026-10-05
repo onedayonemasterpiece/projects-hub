@@ -257,3 +257,114 @@
     justify-content: flex-end;
   }
 }
+
+.board-analysis-panel {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  z-index: 8;
+  width: min(480px, calc(100vw - 28px));
+  max-height: min(72vh, 680px);
+  overflow: auto;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(255,255,255,.13);
+  border-radius: 18px;
+  background: rgba(15,19,28,.94);
+  backdrop-filter: blur(20px);
+  color: #f2f4f8;
+  box-shadow: 0 18px 54px rgba(0,0,0,.36);
+}
+.board-analysis-heading,
+.board-analysis-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.board-analysis-heading > div,
+.board-analysis-meta {
+  display: grid;
+  gap: 3px;
+}
+.board-analysis-heading span,
+.board-analysis-meta span,
+.board-analysis-note {
+  color: rgba(238,241,247,.62);
+  font-size: 11px;
+}
+.board-analysis-panel button,
+.board-analysis-panel a {
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.08);
+  color: #f7f8fb;
+  border-radius: 11px;
+  padding: 8px 10px;
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+.board-analysis-panel button:disabled {
+  opacity: .48;
+  cursor: default;
+}
+.board-analysis-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.board-analysis-fields label {
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+  color: rgba(238,241,247,.7);
+}
+.board-analysis-fields select,
+.board-analysis-panel textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 11px;
+  background: rgba(255,255,255,.07);
+  color: #fff;
+  padding: 9px 10px;
+  font: inherit;
+}
+.board-analysis-panel textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+.board-analysis-report {
+  margin: 0;
+  padding: 12px;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  border-radius: 12px;
+  background: rgba(0,0,0,.25);
+  color: #e9edf6;
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.board-analysis-meta strong {
+  color: #ffd89c;
+  font-size: 11px;
+}
+.board-analysis-wait {
+  margin: 0;
+  color: rgba(238,241,247,.74);
+}
+@media (max-width: 700px) {
+  .board-analysis-panel {
+    left: 10px;
+    bottom: 10px;
+    width: calc(100vw - 20px);
+    max-height: 68vh;
+  }
+  .board-analysis-fields {
+    grid-template-columns: 1fr;
+  }
+}
