@@ -605,6 +605,9 @@ export default function App() {
       // the shared framework's proven 2 s tail. A natural pause now yields the
       // provider-derived transcript while the Live session itself stays active.
       speechEndSilenceMs: 2000,
+      // Require sustained speech onset before opening provider activity so taps,
+      // keyboard clicks and finger snaps do not become semantic user turns.
+      speechStartMs: 180,
       onTiming: event => {
         if (!speechStartsNewUserBubble(event)) return;
         userTurnBoundaryPendingRef.current = false;

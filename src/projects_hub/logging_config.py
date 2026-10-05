@@ -48,6 +48,9 @@ class JsonFormatter(logging.Formatter):
             "frame_seq",
             "pcm_bytes",
             "capture_age_ms",
+            "turn_output_audio_events",
+            "turn_output_audio_bytes",
+            "turn_first_output_audio_provider_at",
             "audio_turn_open",
             "exception_type",
         ):

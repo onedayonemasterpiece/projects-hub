@@ -971,7 +971,11 @@ explicit buffered replay is required instead of pretending the provisional text 
                     )
                 ),
                 "voice": "Aoede",
-                "input_audio_transcription": {},
+                "input_audio_transcription": {
+                    "languageCodes": ["ru-RU", "en-US"],
+                    "customVocabulary": ["Мира", "Projects Hub", "Codex", "DevCoveer", "Калининград"],
+                    "mode": "VERBATIM",
+                },
                 "search_enabled": False,
                 # Provider auto-VAD did not recognize accepted realtime PCM in real
                 # production runs. Use the shared client VAD for explicit activity
@@ -1019,6 +1023,20 @@ explicit buffered replay is required instead of pretending the provisional text 
 
     def on_event(self, session: Any, event: dict[str, Any]) -> None:
         kind = str(event.get("type") or "")
+        state = session.state
+        provider_at = event.get("provider_at") if isinstance(event.get("provider_at"), int) else None
+        diag = state.setdefault("_voice_diag", {})
+        counts = diag.setdefault("counts", {})
+        if kind == "audio":
+            counts["audio"] = int(counts.get("audio", 0)) + 1
+            raw = event.get("data") if isinstance(event.get("data"), str) else ""
+            padding = 2 if raw.endswith("==") else 1 if raw.endswith("=") else 0
+            pcm_bytes = max(0, (len(raw) * 3) // 4 - padding)
+            diag["turn_output_audio_events"] = int(diag.get("turn_output_audio_events", 0)) + 1
+            diag["turn_output_audio_bytes"] = int(diag.get("turn_output_audio_bytes", 0)) + pcm_bytes
+            if provider_at is not None and "turn_first_output_audio_provider_at" not in diag:
+                diag["turn_first_output_audio_provider_at"] = provider_at
+            return
         durable_kinds = {
             "interim_input_transcript",
             "input_transcript",
@@ -1038,9 +1056,7 @@ explicit buffered replay is required instead of pretending the provisional text 
         }
         if kind not in diagnostic_kinds:
             return
-        state = session.state
         text = event.get("text") if isinstance(event.get("text"), str) else None
-        provider_at = event.get("provider_at") if isinstance(event.get("provider_at"), int) else None
         if kind in durable_kinds:
             self.store.append_source_event(
                 state["actor_id"],
@@ -1049,8 +1065,6 @@ explicit buffered replay is required instead of pretending the provisional text 
                 text=text,
                 provider_at_ms=provider_at,
             )
-        diag = state.setdefault("_voice_diag", {})
-        counts = diag.setdefault("counts", {})
         counts[kind] = int(counts.get(kind, 0)) + 1
         if text is not None:
             diag["last_text_length"] = len(text)
@@ -1073,6 +1087,12 @@ explicit buffered replay is required instead of pretending the provisional text 
             "text_length": len(text) if text is not None else 0,
             "provider_at": provider_at,
         }
+        if kind == "turn_complete":
+            extra["turn_output_audio_events"] = int(diag.get("turn_output_audio_events", 0))
+            extra["turn_output_audio_bytes"] = int(diag.get("turn_output_audio_bytes", 0))
+            first_audio_at = diag.get("turn_first_output_audio_provider_at")
+            if isinstance(first_audio_at, int):
+                extra["turn_first_output_audio_provider_at"] = first_audio_at
         for key in (
             "code",
             "status",
@@ -1086,6 +1106,10 @@ explicit buffered replay is required instead of pretending the provisional text 
             if isinstance(value, (str, int, float, bool)):
                 extra[key] = value
         log.info("live provider event", extra=extra)
+        if kind == "turn_complete":
+            diag["turn_output_audio_events"] = 0
+            diag["turn_output_audio_bytes"] = 0
+            diag.pop("turn_first_output_audio_provider_at", None)
 
     def on_stopped(self, session: Any) -> None:
         state = session.state

@@ -158,7 +158,11 @@ async def test_calendar_rejects_offset_that_contradicts_client_timezone(tmp_path
             client_timezone="Europe/Kaliningrad",
         )
         assert initialized["context"]["client_timezone"] == "Europe/Kaliningrad"
-        assert initialized["configuration"]["input_audio_transcription"] == {}
+        assert initialized["configuration"]["input_audio_transcription"] == {
+            "languageCodes": ["ru-RU", "en-US"],
+            "customVocabulary": ["Мира", "Projects Hub", "Codex", "DevCoveer", "Калининград"],
+            "mode": "VERBATIM",
+        }
         session = SimpleNamespace(state=initialized["state"])
         with pytest.raises(Exception, match="offset does not match client timezone"):
             await ProjectsHubLiveAdapter(store).execute_tool(
@@ -403,5 +407,30 @@ def test_voice_failures_emit_correlated_redacted_diagnostics(tmp_path: Path, cap
         assert records[-2].code == "PROVIDER_FAILURE_TEST"
         assert records[-1].code == "LIVE_TRANSPORT_GAP"
         assert records[-1].connection_generation == 2
+
+        caplog.clear()
+        adapter.on_event(session, {
+            "type": "audio",
+            "data": base64.b64encode(b"\x00" * 320).decode("ascii"),
+            "provider_at": 1000,
+        })
+        adapter.on_event(session, {
+            "type": "audio",
+            "data": base64.b64encode(b"\x00" * 160).decode("ascii"),
+            "provider_at": 1010,
+        })
+        adapter.on_event(session, {"type": "turn_complete", "provider_at": 1020})
+        turn_records = [
+            record for record in caplog.records
+            if getattr(record, "event", None) == "live_provider_event"
+        ]
+        assert len(turn_records) == 1
+        turn = turn_records[0]
+        assert turn.kind == "turn_complete"
+        assert turn.turn_output_audio_events == 2
+        assert turn.turn_output_audio_bytes == 480
+        assert turn.turn_first_output_audio_provider_at == 1000
+        assert session.state["_voice_diag"]["counts"]["audio"] == 2
+        assert session.state["_voice_diag"]["turn_output_audio_events"] == 0
     finally:
         store.close()
