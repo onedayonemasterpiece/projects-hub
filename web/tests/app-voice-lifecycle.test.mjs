@@ -190,13 +190,13 @@ test("Projects Hub disables provider-transcript voice stop control", async () =>
   assert.match(source, /suppressCaptureDuringPlayback:\s*false/);
 });
 
-test("Projects Hub uses shared manual VAD for reliable realtime speech boundaries", async () => {
+test("Projects Hub finalizes speech chunks after the proven two-second pause without stopping Live", async () => {
   const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(source, /manualActivityDetection:\s*true/);
   assert.match(source, /continuousCapture:\s*false/);
-  assert.match(source, /speechEndSilenceMs:\s*4000/);
-  assert.match(source, /longSpeechEndSilenceMs:\s*8000/);
-  assert.match(source, /longSpeechAfterMs:\s*12000/);
+  assert.match(source, /speechEndSilenceMs:\s*2000/);
+  assert.doesNotMatch(source, /longSpeechEndSilenceMs:/);
+  assert.doesNotMatch(source, /longSpeechAfterMs:/);
   assert.match(source, /suppressCaptureDuringPlayback:\s*false/);
 });
 
