@@ -53,6 +53,9 @@ declare module "@onedayonemasterpiece/live-interaction/browser" {
     };
     suppressCaptureDuringPlayback?: boolean | (() => boolean);
     speechEndSilenceMs?: number;
+    longSpeechEndSilenceMs?: number | null;
+    longSpeechAfterMs?: number | null;
+    manualActivityDetection?: boolean;
     continuousCapture?: boolean;
   }): LiveClient;
 

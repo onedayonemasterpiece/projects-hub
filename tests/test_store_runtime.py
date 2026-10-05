@@ -87,3 +87,64 @@ def test_conversation_scope_is_not_project_scope(tmp_path: Path):
         assert len(a) == 64 and a != b
     finally:
         store.close()
+
+
+def test_unfinished_voice_source_pages_preserve_provisional_and_final_text(tmp_path: Path):
+    store = DurableStore(tmp_path)
+    try:
+        boot = store.ensure_dev_workspace("Voice recovery")
+        actor = boot["actor"]["id"]
+        workspace = boot["workspace"]["id"]
+        conversation = store.create_conversation(actor, workspace, boot["projects"][0]["id"])
+        source = store.create_source(actor, conversation["id"])
+        store.append_audio(actor, source["id"], b"\\x01\\x00" * 400)
+        provisional = "начало provisional " + ("п" * 5200) + " конец provisional"
+        assert store.append_source_event(
+            actor, source["id"], "interim_input_transcript", provisional, provider_at_ms=100
+        ) == 0
+        page = store.voice_source_transcript_page(actor, conversation["id"], source["id"], offset=0, max_chars=4000)
+        tail = store.voice_source_transcript_page(actor, conversation["id"], source["id"], offset=4000, max_chars=4000)
+        assert page["origin"] == "provisional"
+        assert page["needs_audio_replay"] is True
+        assert page["text"] + tail["text"] == provisional
+
+        final = "начало final " + ("ф" * 5200) + " середина final " + ("я" * 5200) + " конец final"
+        assert store.append_source_event(
+            actor, source["id"], "input_transcript", final, provider_at_ms=200
+        ) == 1
+        pieces = []
+        offset = 0
+        while True:
+            item = store.voice_source_transcript_page(actor, conversation["id"], source["id"], offset=offset, max_chars=4000)
+            pieces.append(item["text"])
+            if item["next_offset"] is None:
+                break
+            offset = item["next_offset"]
+        assert "".join(pieces) == final
+        assert item["origin"] == "final"
+        assert item["needs_audio_replay"] is False
+    finally:
+        store.close()
+
+
+def test_voice_source_audio_path_is_actor_and_conversation_private(tmp_path: Path):
+    store = DurableStore(tmp_path)
+    try:
+        boot = store.ensure_dev_workspace("Private audio")
+        actor = boot["actor"]["id"]
+        workspace = boot["workspace"]["id"]
+        conversation = store.create_conversation(actor, workspace, boot["projects"][0]["id"])
+        source = store.create_source(actor, conversation["id"])
+        store.append_audio(actor, source["id"], b"\\x01\\x00" * 64)
+        assert store.voice_source_audio_path(actor, conversation["id"], source["id"]).read_bytes() == b"\\x01\\x00" * 64
+
+        other_conversation = store.create_conversation(actor, workspace, boot["projects"][0]["id"])
+        import pytest
+        with pytest.raises(Exception, match="current conversation"):
+            store.voice_source_audio_path(actor, other_conversation["id"], source["id"])
+
+        other = store.ensure_dev_workspace("Other actor")
+        with pytest.raises(Exception, match="not available"):
+            store.voice_source_audio_path(other["actor"]["id"], conversation["id"], source["id"])
+    finally:
+        store.close()

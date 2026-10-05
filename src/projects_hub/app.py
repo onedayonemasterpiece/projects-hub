@@ -51,6 +51,7 @@ class LiveStart(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     audio_mode: Literal["realtime", "buffered"] = "realtime"
+    recovery_only: bool = False
     client_source_id: str | None = Field(
         default=None,
         pattern=r"^local_[0-9a-f]{32}$",
@@ -848,6 +849,16 @@ def create_app(
         actor_id = actor_id_from_request(request)
         return {"source": public_source(store.get_source(actor_id, source_id))}
 
+    @app.get("/api/sources/{source_id}/audio")
+    async def source_audio(source_id: str, request: Request) -> FileResponse:
+        actor_id = actor_id_from_request(request)
+        path = store.voice_source_audio_path(actor_id, source_id)
+        return FileResponse(
+            path,
+            media_type="audio/L16;rate=16000",
+            headers={"Cache-Control": "no-store, private"},
+        )
+
     @app.get("/api/conversations/{conversation_id}/sources/by-client/{client_source_id}")
     async def source_by_client(
         conversation_id: str,
@@ -889,6 +900,7 @@ def create_app(
                 history=store.recent_conversation_history(actor_id, conversation_id),
                 conversation_id=conversation_id,
                 audio_mode=payload.audio_mode,
+                recovery_only=payload.recovery_only,
                 client_source_id=payload.client_source_id,
                 client_version=payload.client_version,
                 client_timezone=payload.client_timezone,
