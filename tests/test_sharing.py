@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import unquote, urlsplit
 
 import pytest
@@ -10,6 +11,8 @@ from starlette.websockets import WebSocketDisconnect
 from projects_hub.app import create_app
 from projects_hub.auth import COOKIE_NAME, issue_session
 from projects_hub.board import BoardService
+from projects_hub.live_adapter import ProjectsHubLiveAdapter
+from projects_hub.live_resources import ConversationScope
 from projects_hub.settings import Settings
 from projects_hub.sharing_api import (
     GUEST_CLIENT_PREFIX,
@@ -227,5 +230,89 @@ def test_expired_share_cannot_exchange_or_continue(tmp_path: Path):
             denied = guest.post("/api/guest/exchange", json={"token": token})
             assert denied.status_code == 400
             assert denied.json()["error"]["code"] == "GUEST_TOKEN_INVALID"
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_mira_share_tool_prepares_link_without_claiming_delivery(tmp_path: Path):
+    store, _app, _settings, actor, workspace, project, board, board_id = setup(tmp_path)
+    try:
+        conversation = store.create_conversation(actor, workspace, project)
+        binding = ConversationScope(workspace, actor, conversation["id"]).resource_binding()
+        adapter = ProjectsHubLiveAdapter(store, board=board)
+        initialized = adapter.initialize(
+            resource_id=binding,
+            actor={"subject": actor, "tenant_id": workspace},
+            model="gemini-3.8-live",
+            conversation_id=conversation["id"],
+        )
+        functions = {item["name"] for item in initialized["configuration"]["functions"]}
+        assert "board_share" in functions
+        assert initialized["response"]["sharing_enabled"] is True
+        session = SimpleNamespace(state=initialized["state"])
+
+        result = await adapter.execute_tool(
+            session,
+            {"name": "board_share", "args": {"action": "create"}},
+        )
+        assert result["board_id"] == board_id
+        assert result["url"].startswith("/guest/board#token=")
+        assert result["ui_command"]["kind"] == "share"
+        assert result["ui_command"]["action"] == "ready"
+        assert "future" not in result
+        assert "sent" not in result
+        assert "достав" not in result["warning"].casefold()
+
+        listed = await adapter.execute_tool(
+            session,
+            {"name": "board_share", "args": {"action": "list"}},
+        )
+        assert listed["items"][0]["id"] == result["id"]
+        assert "url" not in listed["items"][0]
+
+        revoked = await adapter.execute_tool(
+            session,
+            {
+                "name": "board_share",
+                "args": {"action": "revoke", "share_id": result["id"]},
+            },
+        )
+        assert revoked["id"] == result["id"]
+        assert revoked["revoked_at_ms"] > 0
+    finally:
+        store.close()
+
+
+def test_share_tool_is_not_exposed_without_project_capability(tmp_path: Path):
+    store, _app, _settings, actor, workspace, project, board, _board_id = setup(tmp_path)
+    try:
+        viewer = "usr_share_viewer"
+        with store._lock:
+            store.db.execute(
+                "INSERT INTO actors(id,display_name,created_at_ms) VALUES(?,?,1)",
+                (viewer, "Viewer"),
+            )
+            store.db.execute(
+                "INSERT INTO memberships(actor_id,workspace_id,role) VALUES(?,?,?)",
+                (viewer, workspace, "member"),
+            )
+            store.db.execute(
+                """INSERT INTO project_grants(
+                       actor_id,project_id,role,can_analyze,can_manage_share,created_at_ms,revoked_at_ms)
+                   VALUES(?,?,?,0,0,1,NULL)""",
+                (viewer, project, "viewer"),
+            )
+        conversation = store.create_conversation(viewer, workspace, project)
+        binding = ConversationScope(workspace, viewer, conversation["id"]).resource_binding()
+        initialized = ProjectsHubLiveAdapter(store, board=board).initialize(
+            resource_id=binding,
+            actor={"subject": viewer, "tenant_id": workspace},
+            model="gemini-3.8-live",
+            conversation_id=conversation["id"],
+        )
+        functions = {item["name"] for item in initialized["configuration"]["functions"]}
+        assert "board_share" not in functions
+        assert initialized["response"]["sharing_enabled"] is False
     finally:
         store.close()
