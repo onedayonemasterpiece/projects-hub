@@ -545,7 +545,7 @@ def _functions(
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["start", "status", "list", "cancel", "publish"],
+                            "enum": ["start", "status", "list", "cancel", "confirm", "publish"],
                         },
                         "project_id": {"type": "string"},
                         "object_ids": {
@@ -556,7 +556,7 @@ def _functions(
                         "run_id": {"type": "string"},
                         "model": {
                             "type": "string",
-                            "enum": ["kimi_k3", "deepseek", "council_free"],
+                            "enum": ["kimi_k3", "deepseek", "council_free", "council_pro"],
                         },
                         "purpose": {
                             "type": "string",
@@ -566,6 +566,7 @@ def _functions(
                         "object_id": {"type": "string"},
                         "geometry": {"type": "object"},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                        "confirmed": {"type": "boolean"},
                     },
                     "required": ["action"],
                 },
@@ -748,7 +749,9 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Для содержательного анализа конкретных стикеров используй board_analysis action=start только с явным списком object_ids из текущей доски. Модель получает замороженные ревизии этих объектов, а не произвольный project checkout.
 - Не объявляй анализ завершённым, пока board_analysis status не вернул completed. dispatch_unknown означает «исход запуска уточняется», а не разрешение запустить второй анализ.
 - Готовый отчёт остаётся Markdown-документом. action=publish добавляет на доску только ссылочную document-card; полный текст не копируется в объект доски.
-- Для консилиума используй model=council_free. Он работает только через provided-only evidence bundle и бесплатный council tier; paid council обычному пользователю не запускай и не обещай.
+- Бесплатный model=council_free остаётся fail-closed: если OpenCode free tier недоступен при безопасных deny read/shell, назови режим временно недоступным и не ослабляй изоляцию.
+- Для рабочего платного консилиума используй model=council_pro. Первый start только возвращает confirmation_required с участниками и budget; NVIDIA на этом шаге не запускается.
+- Перед board_analysis action=confirm обязательно вслух покажи confirmation_plan и получи отдельное явное подтверждение пользователя именно этого платного плана. Передавай confirmed=true только после такого подтверждения. Не считай общее «продолжай» или прежний запрос согласием на платный inference.
 
 # EVENT READINESS
 - После подтверждённого calendar event backend автоматически создаёт event card. Для записи подкаста передавай event_type=podcast, иначе generic.
@@ -1310,7 +1313,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                 )
             project_id = str(project_id)
             action = str(args.get("action") or "")
-            if action not in {"start", "status", "list", "cancel", "publish"}:
+            if action not in {"start", "status", "list", "cancel", "confirm", "publish"}:
                 raise StoreError("INVALID_ARGUMENT", "Unknown analysis action")
 
             if action == "list":
@@ -1329,7 +1332,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                 }
 
             run_id = str(args.get("run_id") or "")
-            if action in {"status", "cancel", "publish"} and not run_id:
+            if action in {"status", "cancel", "confirm", "publish"} and not run_id:
                 raise StoreError("INVALID_ARGUMENT", "run_id is required")
 
             if action == "status":
@@ -1345,6 +1348,27 @@ explicit buffered replay is required instead of pretending the provisional text 
                     workspace_id=workspace_id,
                     run_id=run_id,
                 )
+
+            if action == "confirm":
+                if args.get("confirmed") is not True:
+                    raise StoreError(
+                        "ANALYTICS_EXPLICIT_CONFIRMATION_REQUIRED",
+                        "Paid council requires a new explicit user confirmation",
+                    )
+                confirmed = await self.analytics.confirm_paid(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    run_id=run_id,
+                )
+                return {
+                    **confirmed,
+                    "ui_command": {
+                        "kind": "analysis",
+                        "action": "show",
+                        "project_id": project_id,
+                        "run_id": run_id,
+                    },
+                }
 
             if action == "publish":
                 command_id, _args_sha = self._command_id(session, name, args)
