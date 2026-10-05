@@ -30,7 +30,7 @@ import {
 } from "./boardApi";
 import "./board.css";
 
-type Camera = { x: number; y: number; zoom: number };
+export type BoardCamera = { x: number; y: number; zoom: number };
 export type BoardFocusRequest =
   | {
       kind: "object";
@@ -84,7 +84,7 @@ function worldToScreen(geometry: BoardGeometry, camera: Camera) {
   };
 }
 
-function StickyScene({
+export function StickyScene({
   host,
   objects,
   camera,
@@ -93,7 +93,7 @@ function StickyScene({
 }: {
   host: HTMLDivElement | null;
   objects: BoardObject[];
-  camera: Camera;
+  camera: BoardCamera;
   selectedId: string | null;
   onRendererState: (value: "ready" | "lost" | "unavailable") => void;
 }) {
@@ -259,7 +259,7 @@ export function BoardShell({
   const [boardId, setBoardId] = useState<string | null>(null);
   const [objects, setObjects] = useState<Map<string, BoardObject>>(new Map());
   const [seq, setSeq] = useState(0);
-  const [camera, setCamera] = useState<Camera>({ x: 160, y: 120, zoom: 1 });
+  const [camera, setCamera] = useState<BoardCamera>({ x: 160, y: 120, zoom: 1 });
   const cameraRef = useRef(camera);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
@@ -286,7 +286,7 @@ export function BoardShell({
     objectId?: string;
     startX: number;
     startY: number;
-    camera: Camera;
+    camera: BoardCamera;
     geometry?: BoardGeometry;
     revision?: number;
   } | null>(null);
