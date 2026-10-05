@@ -60,6 +60,23 @@ export type BoardSearchHit = {
   match_terms: string[];
 };
 
+export type AnalysisRun = {
+  id: string;
+  project_id: string;
+  board_id: string;
+  purpose: "requirements" | "edge_cases" | "architecture" | "code_review" | "ideas";
+  model: "kimi_k3" | "deepseek";
+  question: string;
+  status: "dispatching" | "dispatch_unknown" | "waiting_capacity" | "running" | "completed" | "failed" | "cancelled" | "blocked";
+  result_markdown: string;
+  error_code: string | null;
+  source_changed: boolean | null;
+  source_changed_count: number | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+  finished_at_ms: number | null;
+};
+
 export type BoardSocketMessage =
   | ({ type: "snapshot" } & BoardSnapshot)
   | { type: "event"; event: BoardEvent }
@@ -163,6 +180,85 @@ export async function ackBoardUi(
         ok,
       }),
     },
+  );
+}
+
+export async function startAnalysis(
+  workspaceId: string,
+  projectId: string,
+  boardId: string,
+  objectIds: string[],
+  model: AnalysisRun["model"],
+  purpose: AnalysisRun["purpose"],
+  question: string,
+) {
+  return request<AnalysisRun>("/api/analysis/runs", {
+    method: "POST",
+    body: JSON.stringify({
+      workspace_id: workspaceId,
+      project_id: projectId,
+      board_id: boardId,
+      object_ids: objectIds,
+      command_id: "analysis_ui_" + crypto.randomUUID(),
+      model,
+      purpose,
+      question,
+    }),
+  });
+}
+
+export async function getAnalysisRun(workspaceId: string, runId: string) {
+  const query = new URLSearchParams({ workspace_id: workspaceId });
+  return request<AnalysisRun>(
+    "/api/analysis/runs/" + encodeURIComponent(runId) + "?" + query.toString(),
+  );
+}
+
+export async function refreshAnalysisRun(workspaceId: string, runId: string) {
+  return request<AnalysisRun>(
+    "/api/analysis/runs/" + encodeURIComponent(runId) + "/refresh",
+    {
+      method: "POST",
+      body: JSON.stringify({ workspace_id: workspaceId }),
+    },
+  );
+}
+
+export async function cancelAnalysisRun(workspaceId: string, runId: string) {
+  return request<AnalysisRun>(
+    "/api/analysis/runs/" + encodeURIComponent(runId) + "/cancel",
+    {
+      method: "POST",
+      body: JSON.stringify({ workspace_id: workspaceId }),
+    },
+  );
+}
+
+export async function publishAnalysisRun(
+  workspaceId: string,
+  runId: string,
+  objectId: string,
+) {
+  return request<BoardReceipt>(
+    "/api/analysis/runs/" + encodeURIComponent(runId) + "/publish",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        workspace_id: workspaceId,
+        command_id: "analysis_publish_ui_" + crypto.randomUUID(),
+        object_id: objectId,
+      }),
+    },
+  );
+}
+
+export function analysisReportUrl(workspaceId: string, runId: string) {
+  const query = new URLSearchParams({ workspace_id: workspaceId });
+  return (
+    "/api/analysis/runs/" +
+    encodeURIComponent(runId) +
+    "/report.md?" +
+    query.toString()
   );
 }
 
