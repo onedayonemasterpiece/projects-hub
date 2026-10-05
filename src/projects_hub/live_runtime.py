@@ -4,6 +4,7 @@ import logging
 import os
 from typing import Any, Callable
 
+from .analytics import AnalyticsService
 from .board import BoardService
 from .device_commands import DeviceCommandService
 from .development import DevelopmentService
@@ -55,6 +56,7 @@ def build_live_host(
     environment: dict[str, str] | None = None,
     board: BoardService | None = None,
     board_hub: Any | None = None,
+    analytics: AnalyticsService | None = None,
     device_commands: DeviceCommandService | None = None,
     readiness: ReadinessService | None = None,
     development: DevelopmentService | None = None,
@@ -78,6 +80,7 @@ def build_live_host(
     max_sessions = _live_max_sessions(env)
     max_sessions_per_actor = _live_max_sessions_per_actor(env, max_sessions)
     board = board or BoardService(store)
+    analytics = analytics or AnalyticsService(store, board)
     device_commands = device_commands or DeviceCommandService(store)
     readiness = readiness or ReadinessService(store)
     development = development or DevelopmentService(store, readiness)
@@ -128,6 +131,7 @@ def build_live_host(
             store,
             board=board,
             board_hub=board_hub,
+            analytics=analytics,
             device_commands=device_commands,
             readiness=readiness,
             development=development,

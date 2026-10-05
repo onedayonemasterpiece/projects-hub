@@ -8,6 +8,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any, Callable
 
+from .analytics import AnalyticsService
 from .board import BoardService
 from .device_commands import DeviceCommandService
 from .development import DevelopmentService
@@ -37,6 +38,7 @@ def _functions(
     expert_reviews: bool = False,
     regional_knowledge: bool = False,
     owner_development: bool = False,
+    analytics: bool = False,
 ) -> list[dict[str, Any]]:
     functions = [
         {
@@ -500,6 +502,47 @@ def _functions(
                 },
             ]
         )
+    if analytics:
+        functions.append(
+            {
+                "name": "board_analysis",
+                "description": (
+                    "Run or inspect isolated strong-model analysis of explicit board objects, "
+                    "cancel it, or publish a completed Markdown report back as a document card. "
+                    "The backend freezes exact object revisions and never gives the consultant "
+                    "ambient project/file access."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["start", "status", "list", "cancel", "publish"],
+                        },
+                        "project_id": {"type": "string"},
+                        "object_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "maxItems": 12,
+                        },
+                        "run_id": {"type": "string"},
+                        "model": {
+                            "type": "string",
+                            "enum": ["kimi_k3", "deepseek"],
+                        },
+                        "purpose": {
+                            "type": "string",
+                            "enum": ["requirements", "edge_cases", "architecture", "code_review", "ideas"],
+                        },
+                        "question": {"type": "string"},
+                        "object_id": {"type": "string"},
+                        "geometry": {"type": "object"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                    },
+                    "required": ["action"],
+                },
+            }
+        )
     if owner_development:
         functions.extend(
             [
@@ -667,6 +710,12 @@ SYSTEM_INSTRUCTION = """# ROLE
 - development_execution_status используй для «что сейчас делает Codex», «закончилось ли», «какой результат». Не объявляй разработку завершённой раньше terminal status.
 - ChatGPT/Codex, запущенные владельцем вне Projects Hub, остаются допустимыми способами выполнить ту же backlog-задачу; execution Миры — только один из путей исполнения backlog.
 
+# STRONG BOARD ANALYSIS
+- Для содержательного анализа конкретных стикеров используй board_analysis action=start только с явным списком object_ids из текущей доски. Модель получает замороженные ревизии этих объектов, а не произвольный project checkout.
+- Не объявляй анализ завершённым, пока board_analysis status не вернул completed. dispatch_unknown означает «исход запуска уточняется», а не разрешение запустить второй анализ.
+- Готовый отчёт остаётся Markdown-документом. action=publish добавляет на доску только ссылочную document-card; полный текст не копируется в объект доски.
+- council/консилиум не обещай как доступный через эту capability, пока отдельный безопасный council transport не включён.
+
 # EVENT READINESS
 - После подтверждённого calendar event backend автоматически создаёт event card. Для записи подкаста передавай event_type=podcast, иначе generic.
 - Перед событием используй event_cards_list и называй только фактические незакрытые пункты checklist.
@@ -683,6 +732,7 @@ class ProjectsHubLiveAdapter:
         *,
         board: BoardService | None = None,
         board_hub: Any | None = None,
+        analytics: AnalyticsService | None = None,
         device_commands: DeviceCommandService | None = None,
         readiness: ReadinessService | None = None,
         development: DevelopmentService | None = None,
@@ -698,6 +748,7 @@ class ProjectsHubLiveAdapter:
         self.store = store
         self.board = board or BoardService(store)
         self.board_hub = board_hub
+        self.analytics = analytics or AnalyticsService(store, self.board)
         self.device_commands = device_commands or DeviceCommandService(store)
         self.readiness = readiness or ReadinessService(store)
         self.development = development or DevelopmentService(store, self.readiness)
@@ -793,6 +844,7 @@ class ProjectsHubLiveAdapter:
             actor_id,
             conversation["workspace_id"],
         )
+        analysis_enabled = any(bool(project.get("can_analyze")) for project in projects)
         owner_development = False
         try:
             self.store.require_platform_owner(actor_id)
@@ -877,6 +929,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                         expert_reviews=expert_reviews is not None,
                         regional_knowledge=regional_knowledge is not None,
                         owner_development=owner_development,
+                        analytics=analysis_enabled,
                     )
                 ),
                 "voice": "Aoede",
@@ -903,6 +956,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "expert_reviews_enabled": expert_reviews is not None,
                 "regional_knowledge_enabled": regional_knowledge is not None,
                 "owner_development_enabled": owner_development,
+                "analysis_enabled": analysis_enabled,
                 "source_terminal": source["status"] in {"archived", "ephemeral_processed"},
             },
         }
@@ -1099,6 +1153,116 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "android_version": client_version,
                 "backend_version": state.get("backend_version"),
                 "backend_release_sha": state.get("backend_release_sha"),
+            }
+
+        if name == "board_analysis":
+            conversation = self.store.get_conversation(actor_id, conversation_id)
+            project_id = str(args.get("project_id") or "") or conversation.get("focus_project_id")
+            if not project_id:
+                raise StoreError(
+                    "ANALYSIS_PROJECT_REQUIRED",
+                    "Choose a project before using strong analysis",
+                )
+            project_id = str(project_id)
+            action = str(args.get("action") or "")
+            if action not in {"start", "status", "list", "cancel", "publish"}:
+                raise StoreError("INVALID_ARGUMENT", "Unknown analysis action")
+
+            if action == "list":
+                try:
+                    limit = int(args.get("limit", 20))
+                except (TypeError, ValueError):
+                    limit = 20
+                return {
+                    "project_id": project_id,
+                    "items": self.analytics.list_runs(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        project_id=project_id,
+                        limit=limit,
+                    ),
+                }
+
+            run_id = str(args.get("run_id") or "")
+            if action in {"status", "cancel", "publish"} and not run_id:
+                raise StoreError("INVALID_ARGUMENT", "run_id is required")
+
+            if action == "status":
+                return await self.analytics.refresh(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    run_id=run_id,
+                )
+
+            if action == "cancel":
+                return await self.analytics.cancel(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    run_id=run_id,
+                )
+
+            if action == "publish":
+                command_id, _args_sha = self._command_id(session, name, args)
+                object_id = str(args.get("object_id") or "")
+                if not object_id:
+                    object_id = "obj_analysis_" + hashlib.sha256(
+                        run_id.encode("utf-8")
+                    ).hexdigest()[:24]
+                geometry = args.get("geometry")
+                receipt = self.analytics.publish_to_board(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    run_id=run_id,
+                    command_id=command_id,
+                    object_id=object_id,
+                    geometry=geometry if isinstance(geometry, dict) else None,
+                )
+                if self.board_hub is not None:
+                    await self.board_hub.publish(
+                        receipt["board_id"],
+                        {"type": "event", "event": receipt["event"]},
+                    )
+                return {
+                    **receipt,
+                    "project_id": project_id,
+                    "ui_command": {
+                        "kind": "board",
+                        "action": "open",
+                        "project_id": project_id,
+                        "board_id": receipt["board_id"],
+                        "token": "uif_" + command_id[-24:],
+                    },
+                }
+
+            raw_object_ids = args.get("object_ids")
+            if not isinstance(raw_object_ids, list):
+                raise StoreError("INVALID_ARGUMENT", "object_ids must be a list")
+            board = self.board.open_board(
+                actor_id,
+                workspace_id,
+                project_id,
+                create_if_allowed=False,
+            )
+            command_id, _args_sha = self._command_id(session, name, args)
+            run = await self.analytics.start_single(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                board_id=board["id"],
+                object_ids=[str(item) for item in raw_object_ids],
+                command_id=command_id,
+                model=str(args.get("model") or "kimi_k3"),
+                purpose=str(args.get("purpose") or "edge_cases"),
+                question=str(args.get("question") or ""),
+            )
+            return {
+                **run,
+                "ui_command": {
+                    "kind": "analysis",
+                    "action": "show",
+                    "project_id": project_id,
+                    "run_id": run["id"],
+                },
             }
 
         if name.startswith("board_"):

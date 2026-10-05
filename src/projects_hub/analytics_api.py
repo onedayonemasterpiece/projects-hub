@@ -35,6 +35,7 @@ def attach_analytics_routes(
     *,
     service: AnalyticsService,
     actor_id_from_request: Callable[[Request], str],
+    board_hub: Any | None = None,
 ) -> None:
     @app.post("/api/analysis/runs")
     async def analysis_start(
@@ -102,7 +103,7 @@ def attach_analytics_routes(
     async def analysis_publish(
         run_id: str, payload: AnalysisPublishRequest, request: Request
     ) -> dict[str, Any]:
-        return service.publish_to_board(
+        receipt = service.publish_to_board(
             actor_id=actor_id_from_request(request),
             workspace_id=payload.workspace_id,
             run_id=run_id,
@@ -110,6 +111,12 @@ def attach_analytics_routes(
             object_id=payload.object_id,
             geometry=payload.geometry,
         )
+        if board_hub is not None:
+            await board_hub.publish(
+                receipt["board_id"],
+                {"type": "event", "event": receipt["event"]},
+            )
+        return receipt
 
     @app.get("/api/analysis/runs/{run_id}/report.md")
     async def analysis_report(
@@ -130,5 +137,8 @@ def attach_analytics_routes(
             headers={
                 "content-disposition": f'attachment; filename="{run_id}.md"',
                 "cache-control": "no-store",
+                "content-security-policy": "default-src 'none'; sandbox",
+                "referrer-policy": "no-referrer",
+                "x-content-type-options": "nosniff",
             },
         )

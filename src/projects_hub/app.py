@@ -281,6 +281,7 @@ def create_app(
                 store,
                 board=app.state.board,
                 board_hub=app.state.board_hub,
+                analytics=app.state.analytics,
                 device_commands=app.state.device_commands,
                 readiness=app.state.readiness,
                 development=app.state.development,
@@ -365,6 +366,7 @@ def create_app(
         app,
         service=app.state.analytics,
         actor_id_from_request=actor_id_from_request,
+        board_hub=app.state.board_hub,
     )
 
     @app.exception_handler(GitHubAppError)
