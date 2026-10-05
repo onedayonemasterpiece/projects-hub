@@ -62,16 +62,7 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           VERSION_CODE="${GITHUB_RUN_NUMBER}"
-          VERSION_NAME="$(python - <<'PY'
-from pathlib import Path
-import re
-text = Path("src/projects_hub/version.py").read_text(encoding="utf-8")
-match = re.search(r'__version__\s*=\s*"([^"]+)"', text)
-if not match:
-    raise SystemExit("Projects Hub product version is missing")
-print(match.group(1))
-PY
-)"
+          VERSION_NAME="$(python -c 'import re,pathlib; t=pathlib.Path("src/projects_hub/version.py").read_text(encoding="utf-8"); m=re.search(r"__version__\\s*=\\s*\\\"([^\\\"]+)\\\"", t); print(m.group(1) if m else (_ for _ in ()).throw(SystemExit("Projects Hub product version is missing")))' )"
           gradle -p android testDebugUnitTest :app:assembleRelease \
             -PversionCodeOverride="${VERSION_CODE}" \
             -PversionNameOverride="${VERSION_NAME}" \
@@ -113,16 +104,7 @@ PY
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="android-v${GITHUB_RUN_NUMBER}"
-          PRODUCT_VERSION="$(python - <<'PY'
-from pathlib import Path
-import re
-text = Path("src/projects_hub/version.py").read_text(encoding="utf-8")
-match = re.search(r'__version__\s*=\s*"([^"]+)"', text)
-if not match:
-    raise SystemExit("Projects Hub product version is missing")
-print(match.group(1))
-PY
-)"
+          PRODUCT_VERSION="$(python -c 'import re,pathlib; t=pathlib.Path("src/projects_hub/version.py").read_text(encoding="utf-8"); m=re.search(r"__version__\\s*=\\s*\\\"([^\\\"]+)\\\"", t); print(m.group(1) if m else (_ for _ in ()).throw(SystemExit("Projects Hub product version is missing")))' )"
           TITLE="Projects Hub Android ${PRODUCT_VERSION}"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/projects-hub.apk dist/update.json --clobber
