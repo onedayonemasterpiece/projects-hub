@@ -51,7 +51,7 @@ declare module "@onedayonemasterpiece/live-interaction/browser" {
       isStop: (text: string) => boolean;
       confirmation: (text: string) => "confirm" | "cancel" | null;
     };
-    suppressCaptureDuringPlayback?: boolean | (() => boolean);
+    suppressCaptureDuringPlayback?: boolean | "adaptive" | (() => boolean | "adaptive");
     speechEndSilenceMs?: number;
     longSpeechEndSilenceMs?: number | null;
     longSpeechAfterMs?: number | null;

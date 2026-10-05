@@ -493,7 +493,8 @@ export default function App() {
     const client = createLiveClient({
       transport: "wss",
       voiceControl: null,
-      suppressCaptureDuringPlayback: false,
+      // Adaptive duplex rejects Mira playback echo while preserving sustained real barge-in.
+      suppressCaptureDuringPlayback: "adaptive",
       manualActivityDetection: true,
       continuousCapture: false,
       // Keep the mature manual-boundary path, but finalize a speech segment after
