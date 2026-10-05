@@ -289,7 +289,7 @@ def test_lost_dispatch_reuses_exact_frozen_evidence_and_request_key(tmp_path: Pa
                 actor_id=actor, workspace_id=workspace, run_id=runs[0]["id"]
             )
         )
-        assert refreshed["status"] == "running"
+        assert refreshed["status"] == "completed"
         assert len(bridge.consult_calls) == 2
         second = bridge.consult_calls[1]
         assert second["request_key"] == first["request_key"]
