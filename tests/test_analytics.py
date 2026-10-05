@@ -42,6 +42,26 @@ class FakeAnalyticsBridge:
         return None
 
 
+
+class LostDispatchBridge(FakeAnalyticsBridge):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail_first = True
+
+    async def consult(self, **kwargs):
+        self.consult_calls.append(dict(kwargs))
+        if self.fail_first:
+            self.fail_first = False
+            from projects_hub.analytics_client import AnalyticsBridgeError
+            raise AnalyticsBridgeError("lost response after provider dispatch")
+        return {
+            "status": "running",
+            "taskId": "dvt_" + "2" * 32,
+            "model": "nvidia/moonshotai/kimi-k3",
+        }
+
+
+
 def _owner(tmp_path: Path):
     store = DurableStore(tmp_path)
     boot = store.ensure_dev_workspace("Analytics owner")
@@ -232,6 +252,48 @@ def test_analysis_requires_explicit_capability_and_stays_actor_scoped(tmp_path: 
         with pytest.raises(StoreError) as exc:
             service.get_run(actor_id=actor, workspace_id=workspace, run_id=own["id"])
         assert exc.value.code == "ANALYSIS_NOT_FOUND"
+    finally:
+        store.close()
+
+
+def test_lost_dispatch_reuses_exact_frozen_evidence_and_request_key(tmp_path: Path):
+    store, board, actor, workspace, project, board_id = _owner(tmp_path)
+    bridge = LostDispatchBridge()
+    try:
+        _sticky(board, actor=actor, workspace=workspace, board_id=board_id)
+        service = AnalyticsService(store, board, bridge=bridge)
+        with pytest.raises(StoreError) as exc:
+            asyncio.run(
+                service.start_single(
+                    actor_id=actor,
+                    workspace_id=workspace,
+                    project_id=project,
+                    board_id=board_id,
+                    object_ids=["obj_analysis_a"],
+                    command_id="analysis_lost_dispatch_01",
+                    model="kimi_k3",
+                    purpose="edge_cases",
+                    question="Review the selected evidence.",
+                )
+            )
+        assert exc.value.code == "ANALYTICS_DISPATCH_UNKNOWN"
+        runs = service.list_runs(
+            actor_id=actor, workspace_id=workspace, project_id=project
+        )
+        assert len(runs) == 1
+        assert runs[0]["status"] == "dispatch_unknown"
+        first = bridge.consult_calls[0]
+
+        refreshed = asyncio.run(
+            service.refresh(
+                actor_id=actor, workspace_id=workspace, run_id=runs[0]["id"]
+            )
+        )
+        assert refreshed["status"] == "running"
+        assert len(bridge.consult_calls) == 2
+        second = bridge.consult_calls[1]
+        assert second["request_key"] == first["request_key"]
+        assert second["evidence_bundle"] == first["evidence_bundle"]
     finally:
         store.close()
 
