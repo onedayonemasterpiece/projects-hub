@@ -28,6 +28,7 @@ from .regional_knowledge import (
 )
 from .live_resources import ConversationScope
 from .readiness import ReadinessService
+from .sharing import SharingService
 from .store import DurableStore, StoreError
 
 log = logging.getLogger("projects_hub.live")
@@ -39,6 +40,7 @@ def _functions(
     regional_knowledge: bool = False,
     owner_development: bool = False,
     analytics: bool = False,
+    sharing: bool = False,
 ) -> list[dict[str, Any]]:
     functions = [
         {
@@ -124,6 +126,32 @@ def _functions(
                 "required": ["object_id"],
             },
         },
+        *(
+            [
+                {
+                    "name": "board_share",
+                    "description": (
+                        "Create, list, or revoke seven-day live view-only board links for the "
+                        "current authorized project. Creating a link prepares sharing UI only; "
+                        "do not claim that a recipient received anything."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "enum": ["create", "list", "revoke"],
+                            },
+                            "project_id": {"type": "string"},
+                            "share_id": {"type": "string"},
+                        },
+                        "required": ["action"],
+                    },
+                }
+            ]
+            if sharing
+            else []
+        ),
         {
             "name": "runtime_versions_get",
             "description": (
@@ -710,6 +738,12 @@ SYSTEM_INSTRUCTION = """# ROLE
 - development_execution_status используй для «что сейчас делает Codex», «закончилось ли», «какой результат». Не объявляй разработку завершённой раньше terminal status.
 - ChatGPT/Codex, запущенные владельцем вне Projects Hub, остаются допустимыми способами выполнить ту же backlog-задачу; execution Миры — только один из путей исполнения backlog.
 
+# BOARD SHARING
+- Если пользователь просит «поделись доской», используй board_share action=create для текущего разрешённого проекта.
+- Результат create только готовит семидневную view-only ссылку и UI. Не говори «отправлено»: в браузере пользователь должен нажать кнопку системного «Поделиться», а в Android подтверждается только открытие chooser.
+- Ссылка живая: будущие изменения стикеров видны до срока или отзыва. Закрытые документы/analysis-body гостю не раскрываются.
+- Для отзыва используй board_share action=list, затем revoke только по точному share_id.
+
 # STRONG BOARD ANALYSIS
 - Для содержательного анализа конкретных стикеров используй board_analysis action=start только с явным списком object_ids из текущей доски. Модель получает замороженные ревизии этих объектов, а не произвольный project checkout.
 - Не объявляй анализ завершённым, пока board_analysis status не вернул completed. dispatch_unknown означает «исход запуска уточняется», а не разрешение запустить второй анализ.
@@ -733,6 +767,7 @@ class ProjectsHubLiveAdapter:
         board: BoardService | None = None,
         board_hub: Any | None = None,
         analytics: AnalyticsService | None = None,
+        sharing: SharingService | None = None,
         device_commands: DeviceCommandService | None = None,
         readiness: ReadinessService | None = None,
         development: DevelopmentService | None = None,
@@ -749,6 +784,7 @@ class ProjectsHubLiveAdapter:
         self.board = board or BoardService(store)
         self.board_hub = board_hub
         self.analytics = analytics or AnalyticsService(store, self.board)
+        self.sharing = sharing or SharingService(store, self.board)
         self.device_commands = device_commands or DeviceCommandService(store)
         self.readiness = readiness or ReadinessService(store)
         self.development = development or DevelopmentService(store, self.readiness)
@@ -845,6 +881,7 @@ class ProjectsHubLiveAdapter:
             conversation["workspace_id"],
         )
         analysis_enabled = any(bool(project.get("can_analyze")) for project in projects)
+        sharing_enabled = any(bool(project.get("can_manage_share")) for project in projects)
         owner_development = False
         try:
             self.store.require_platform_owner(actor_id)
@@ -930,6 +967,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                         regional_knowledge=regional_knowledge is not None,
                         owner_development=owner_development,
                         analytics=analysis_enabled,
+                        sharing=sharing_enabled,
                     )
                 ),
                 "voice": "Aoede",
@@ -957,6 +995,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "regional_knowledge_enabled": regional_knowledge is not None,
                 "owner_development_enabled": owner_development,
                 "analysis_enabled": analysis_enabled,
+                "sharing_enabled": sharing_enabled,
                 "source_terminal": source["status"] in {"archived", "ephemeral_processed"},
             },
         }
@@ -1153,6 +1192,58 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "android_version": client_version,
                 "backend_version": state.get("backend_version"),
                 "backend_release_sha": state.get("backend_release_sha"),
+            }
+
+        if name == "board_share":
+            conversation = self.store.get_conversation(actor_id, conversation_id)
+            project_id = str(args.get("project_id") or "") or conversation.get("focus_project_id")
+            if not project_id:
+                raise StoreError(
+                    "SHARE_PROJECT_REQUIRED",
+                    "Choose a project before sharing its board",
+                )
+            project_id = str(project_id)
+            action = str(args.get("action") or "")
+            if action not in {"create", "list", "revoke"}:
+                raise StoreError("INVALID_ARGUMENT", "Unknown board sharing action")
+
+            if action == "list":
+                return {
+                    "project_id": project_id,
+                    "items": self.sharing.list_shares(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        project_id=project_id,
+                    ),
+                }
+
+            if action == "revoke":
+                share_id = str(args.get("share_id") or "")
+                if not share_id:
+                    raise StoreError("INVALID_ARGUMENT", "share_id is required")
+                return self.sharing.revoke_share(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    share_id=share_id,
+                )
+
+            grant = self.sharing.create_share(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                project_id=project_id,
+            )
+            return {
+                **grant,
+                "ui_command": {
+                    "kind": "share",
+                    "action": "ready",
+                    "project_id": project_id,
+                    "board_id": grant["board_id"],
+                    "share_id": grant["id"],
+                    "url": grant["url"],
+                    "expires_at_ms": grant["expires_at_ms"],
+                    "warning": grant["warning"],
+                },
             }
 
         if name == "board_analysis":
