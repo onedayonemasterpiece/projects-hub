@@ -27,13 +27,8 @@ async def test_live_adapter_persists_audio_transcript_and_verified_memory(tmp_pa
             conversation_id=conversation["id"],
         )
         assert initialized["configuration"]["functions"]
-        assert initialized["configuration"]["manual_activity_detection"] is False
-        assert initialized["configuration"]["automatic_activity_detection"] == {
-            "start_of_speech_sensitivity": "START_SENSITIVITY_LOW",
-            "end_of_speech_sensitivity": "END_SENSITIVITY_LOW",
-            "silence_duration_ms": 1600,
-            "prefix_padding_ms": 250,
-        }
+        assert initialized["configuration"]["manual_activity_detection"] is True
+        assert initialized["configuration"]["automatic_activity_detection"] is None
         assert initialized["response"]["focus_project_id"] == project_id
 
         session = SimpleNamespace(state=initialized["state"])

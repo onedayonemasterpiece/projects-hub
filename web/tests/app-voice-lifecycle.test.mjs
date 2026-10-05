@@ -190,9 +190,9 @@ test("Projects Hub disables provider-transcript voice stop control", async () =>
   assert.match(source, /suppressCaptureDuringPlayback:\s*"adaptive"/);
 });
 
-test("Projects Hub uses Google-style hybrid VAD with a bounded local endpoint", async () => {
+test("Projects Hub uses explicit client VAD with a bounded low-latency endpoint", async () => {
   const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
-  assert.match(source, /manualActivityDetection:\s*false/);
+  assert.match(source, /manualActivityDetection:\s*true/);
   assert.match(source, /continuousCapture:\s*false/);
   assert.match(source, /speechEndSilenceMs:\s*650/);
   assert.match(source, /speechStartMs:\s*180/);

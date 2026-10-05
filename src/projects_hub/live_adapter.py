@@ -794,22 +794,12 @@ explicit buffered replay is required instead of pretending the provisional text 
                     "mode": "VERBATIM",
                 },
                 "search_enabled": False,
-                # Realtime follows Google's hybrid-VAD pattern: provider automatic VAD
-                # owns speech-start detection and prefix buffering, while the shared
-                # client sends audio_stream_end when its local VAD confidently sees
-                # the end. Buffered/recovery replay remains explicitly bounded because
-                # it already represents one complete recorded utterance.
-                "manual_activity_detection": audio_mode != "realtime",
-                "automatic_activity_detection": (
-                    {
-                        "start_of_speech_sensitivity": "START_SENSITIVITY_LOW",
-                        "end_of_speech_sensitivity": "END_SENSITIVITY_LOW",
-                        "silence_duration_ms": 1600,
-                        "prefix_padding_ms": 250,
-                    }
-                    if audio_mode == "realtime"
-                    else None
-                ),
+                # Conversational Gemini 3.8 Live did not reliably open provider
+                # speech-start on accepted realtime PCM in real-provider canaries.
+                # Keep the proven client activity boundary and shorten only the
+                # end-of-speech window; semantics/ASR stay in this same Live model.
+                "manual_activity_detection": True,
+                "automatic_activity_detection": None,
             },
             "response": {
                 "conversation_id": conversation_id,
