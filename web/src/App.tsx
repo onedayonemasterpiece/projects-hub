@@ -503,15 +503,14 @@ export default function App() {
       // is tightened; the same Live model remains the sole speech/semantic authority.
       manualActivityDetection: true,
       continuousCapture: false,
-      // Google's guidance is at least 500 ms for client-side end detection. Use
-      // 650 ms for short commands, but give sustained monologues more room to
-      // contain a thinking pause before finalization.
-      speechEndSilenceMs: 650,
+      // Keep genuinely short commands responsive, but promote sustained speech
+      // to a conservative tail before normal thinking pauses can split the turn.
+      speechEndSilenceMs: 1200,
       // Require sustained speech onset before opening provider activity so taps,
       // keyboard clicks and finger snaps do not become semantic user turns.
       speechStartMs: 180,
-      longSpeechEndSilenceMs: 1400,
-      longSpeechAfterMs: 8000,
+      longSpeechEndSilenceMs: 2500,
+      longSpeechAfterMs: 2500,
       onTiming: event => {
         if (event === "speech_end") {
           setSpeechActive(false);

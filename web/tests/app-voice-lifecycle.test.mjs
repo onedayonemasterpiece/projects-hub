@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { createLiveAudioSender } from "@onedayonemasterpiece/live-interaction/browser";
 
 test("Projects Hub preflights microphone and cleans failed Live startup", async () => {
   const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
@@ -194,13 +195,48 @@ test("Projects Hub uses explicit client VAD with a bounded low-latency endpoint"
   const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(source, /manualActivityDetection:\s*true/);
   assert.match(source, /continuousCapture:\s*false/);
-  assert.match(source, /speechEndSilenceMs:\s*650/);
+  assert.match(source, /speechEndSilenceMs:\s*1200/);
   assert.match(source, /speechStartMs:\s*180/);
-  assert.match(source, /longSpeechEndSilenceMs:\s*1400/);
-  assert.match(source, /longSpeechAfterMs:\s*8000/);
+  assert.match(source, /longSpeechEndSilenceMs:\s*2500/);
+  assert.match(source, /longSpeechAfterMs:\s*2500/);
   assert.match(source, /suppressCaptureDuringPlayback:\s*"adaptive"/);
 });
 
+
+test("adaptive endpoint keeps short commands responsive and gives sustained speech a conservative pause", async () => {
+  const sent = [];
+  let at = 0;
+  const sender = createLiveAudioSender({
+    send: async message => sent.push(message),
+    now: () => at,
+    batchMs: 0,
+    speechEndMs: 1200,
+    speechStartMs: 180,
+    longSpeechEndMs: 2500,
+    longSpeechAfterMs: 2500,
+    manualActivityDetection: true,
+  });
+  const tick = () => new Promise(resolve => setImmediate(resolve));
+  const push = async (rms, ms = 100) => {
+    at += ms;
+    sender.push(new Int16Array(ms * 16).fill(rms > 0.01 ? 1000 : 0), rms);
+    await tick();
+    await tick();
+  };
+
+  for (let i = 0; i < 10; i += 1) await push(0.05);
+  for (let i = 0; i < 11; i += 1) await push(0);
+  assert.equal(sent.filter(message => message.activity_end).length, 0);
+  await push(0);
+  assert.equal(sent.filter(message => message.activity_end).length, 1);
+
+  for (let i = 0; i < 30; i += 1) await push(0.05);
+  for (let i = 0; i < 24; i += 1) await push(0);
+  assert.equal(sent.filter(message => message.activity_end).length, 1);
+  await push(0);
+  assert.equal(sent.filter(message => message.activity_end).length, 2);
+  sender.stop();
+});
 
 test("Projects Hub keeps long provider transcript intact and exposes terminal voice failures", async () => {
   const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
@@ -226,8 +262,8 @@ test("Projects Hub opts into shared adaptive duplex echo rejection", async () =>
   const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(source, /suppressCaptureDuringPlayback:\s*"adaptive"/);
   assert.doesNotMatch(source, /suppressCaptureDuringPlayback:\s*false/);
-  assert.match(source, /speechEndSilenceMs:\s*650/);
+  assert.match(source, /speechEndSilenceMs:\s*1200/);
   assert.match(source, /speechStartMs:\s*180/);
-  assert.match(source, /longSpeechEndSilenceMs:\s*1400/);
-  assert.match(source, /longSpeechAfterMs:\s*8000/);
+  assert.match(source, /longSpeechEndSilenceMs:\s*2500/);
+  assert.match(source, /longSpeechAfterMs:\s*2500/);
 });

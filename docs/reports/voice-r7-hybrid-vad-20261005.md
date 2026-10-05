@@ -1,7 +1,7 @@
 # Voice R7 — low-latency explicit client VAD acceptance
 
 **Date:** 2026-10-05
-**Final product target:** Projects Hub 0.1.35
+**Final product target:** Projects Hub 0.1.36
 **Shared Live target:** live-interaction 0.3.25 @ `4d5589bfc52ca74b2fc451e5a27788b42196823a`
 
 ## Goal
@@ -26,7 +26,7 @@ However, a real-provider speech lifecycle canary then streamed 3 seconds of synt
 
 Conclusion: hybrid/provider-owned speech start is not reliable enough for this conversational 3.8 Live path. It is rejected for production R7.
 
-Production 0.1.34 was immediately rolled back to the physically accepted 0.1.33 while the final R7 path was prepared. The queued Android 0.1.34 release was cancelled before publication.
+Production 0.1.34 was immediately rolled back to the physically accepted 0.1.33 while the final R7 path was prepared. The queued Android 0.1.34 release was cancelled before publication. A later 0.1.35 Android run was also cancelled before publication after retrospective evidence showed that sub-second/near-one-second endpoints had already caused premature interruptions; final adaptive thresholds ship as 0.1.36.
 
 ## Final R7 behavior
 
@@ -35,12 +35,12 @@ Realtime returns to the proven explicit client activity boundary:
 - `manualActivityDetection: true`;
 - provider automatic VAD disabled;
 - sustained speech-start admission remains 180 ms;
-- ordinary speech-end silence: 650 ms;
-- after 8 seconds of admitted speech, speech-end silence: 1400 ms;
+- short-command speech-end silence: 1200 ms;
+- after 2.5 seconds of admitted speech, speech-end silence: 2500 ms;
 - accepted speech is bracketed by `activity_start/activity_end`;
 - shared audio batch: 40 ms.
 
-This keeps the R4/R6 impulse rejection that physically rejected keyboard/finger-snap noise, while removing 1.35 seconds from the previous ordinary 2-second endpoint wait.
+This keeps the R4/R6 impulse rejection that physically rejected keyboard/finger-snap noise. Short commands save 0.8 seconds versus the previous fixed 2-second tail, while substantive speech gets a wider 2.5-second thinking pause.
 
 Buffered/recovery audio remains on its existing explicit/manual boundary contract.
 
@@ -48,7 +48,7 @@ Buffered/recovery audio remains on its existing explicit/manual boundary contrac
 
 The 180 ms client speech-start path has already been physically accepted on Android and does not rely on provider speech-start detection.
 
-The 650 ms ordinary endpoint remains above the overly aggressive 100–200 ms range that tends to split natural speech. Long speech gets a wider 1400 ms thinking pause after 8 seconds, reducing fragmentation of monologues.
+A previous real-provider one-second boundary produced four premature interruptions across six short turns, so the final R7 does not copy the more aggressive generic VAD recommendation blindly. The 1200 ms fast path is limited to genuinely short turns; once speech reaches 2.5 seconds the tail widens to 2500 ms, preserving normal thinking pauses and long-form speech.
 
 This is deliberately less clever than the rejected hybrid approach: one deterministic client VAD opens/closes the provider activity, while Gemini 3.8 Live still owns transcription, semantics, tools and response audio.
 
@@ -74,14 +74,14 @@ Before final deployment:
 - Projects Hub full backend: 141/141;
 - WSS contracts: 12/12;
 - PWA contracts: 28/28 plus production build;
-- real-provider manual-activity lifecycle must pass after the final 0.1.35 deployment.
+- real-provider manual-activity lifecycle must pass after deployment; the 0.1.35 canary delivered 180/180 ACKs, 6 input transcripts and 6 completed turns, and the final adaptive-threshold change is covered by a direct shared-sender unit test.
 
 ## Deferred work
 
 Do not mix these into R7 before physical acceptance:
 
 1. visible interim user text via Transcribe Live UI-only sidecar;
-2. first-session startup/resource-admission optimization (observed session bootstrap roughly 1.9–3.3 s in recent production runs);
+2. first-session startup/resource-admission optimization (latest real-provider session bootstrap 1.483 s; earlier production runs were roughly 1.9–3.3 s);
 3. bounded preconnect/warm session only if quota/session cleanup remains explicit;
 4. reducing the first output 400 ms jitter reserve only after Android playback-underflow telemetry;
 5. longer real provider GoAway/session-resumption acceptance.
