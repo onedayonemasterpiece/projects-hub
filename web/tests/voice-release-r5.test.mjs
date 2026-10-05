@@ -7,14 +7,16 @@ const source=fs.readFileSync(new URL('../src/App.tsx',import.meta.url),'utf8');
 test('real App timing callback distinguishes admitted speech, queued end and output without inventing transcript',()=>{
   const calls=[];
   const setters=['setSpeechActive','setSpeechPending','setPlaybackProblem','setInterimInputTranscript','setInputTranscriptSeen'];
-  const names=[...setters,'speechStartsNewUserBubble','userTurnBoundaryPendingRef','userTranscriptIndex','turnHasInput'];
+  const names=[...setters,'speechStartsNewUserBubble','reserveUserVoiceBubble','userTurnBoundaryPendingRef','userTranscriptIndex','turnHasInput'];
   const refs=[{current:true},{current:2},{current:true}];
-  const values=[...setters.map(name=>value=>calls.push([name,value])),speechStartsNewUserBubble,...refs];
+  const reserveUserVoiceBubble=()=>calls.push(['reserveUserVoiceBubble',true]);
+  const values=[...setters.map(name=>value=>calls.push([name,value])),speechStartsNewUserBubble,reserveUserVoiceBubble,...refs];
   const body=source.match(/onTiming: event => \{([\s\S]*?)\n      \},\n      onState:/)?.[1];
   assert.ok(body,'must exercise the actual App callback');
   const callback=new Function(...names,`return event=>{${body}}`)(...values);
   callback('speech_start');
   assert.ok(calls.some(([name,value])=>name==='setSpeechActive'&&value===true));
+  assert.ok(calls.some(([name,value])=>name==='reserveUserVoiceBubble'&&value===true));
   assert.equal(refs[1].current,-1);
   calls.length=0;callback('speech_end');
   assert.deepEqual(calls,[['setSpeechActive',false],['setSpeechPending',true]]);
