@@ -478,6 +478,9 @@ export default function App() {
       speechEndSilenceMs: 4000,
       onState: state => {
         setVoiceState(state);
+        if (["off", "start_error", "connection_error", "microphone_unavailable"].includes(state)) {
+          setInterimInputTranscript("");
+        }
         if (state === "listening") {
           setNotice(null);
           setMicrophoneSettingsAvailable(false);
