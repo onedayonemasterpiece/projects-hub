@@ -18,7 +18,20 @@ class AnalyticsBridgeClient:
     """Narrow product-analysis client; it cannot start development tasks."""
 
     REQUIRED_ISOLATION_FIELDS = {"context_mode", "evidence_bundle", "request_key"}
-    ALLOWED_TOOLS = {"consult_model", "read_task", "cancel_task", "council_run"}
+    ALLOWED_TOOLS = {"consult_model", "read_task", "cancel_task", "council_run", "list_models"}
+
+    FREE_COUNCIL_PREFERENCE = (
+        "opencode/nemotron-3-ultra-free",
+        "opencode/nemotron-3.5-lightning-free",
+        "opencode/big-pickle",
+        "opencode/ling-3.0-flash-fin-free",
+        "opencode/ling-3.1-flash-free",
+        "opencode/fledge-alpha-free",
+        "opencode/longcat-2.5-preview-free",
+        "opencode/mimo-v2.6-flash-free",
+        "opencode/muse-spark-1.3-contributor-free",
+        "opencode/space-bunny-free",
+    )
 
     def __init__(
         self,
@@ -134,6 +147,50 @@ class AnalyticsBridgeClient:
             },
         )
 
+    async def _free_council_participants(self) -> list[dict[str, str]]:
+        catalog = await self._call(
+            "list_models",
+            {"provider": "opencode", "verified_only": False},
+        )
+        raw_models = catalog.get("models")
+        if not isinstance(raw_models, list):
+            raw_models = catalog.get("items")
+        if not isinstance(raw_models, list):
+            raise AnalyticsBridgeError("OpenCode model catalog is unavailable")
+
+        candidates: dict[str, dict[str, Any]] = {}
+        for item in raw_models:
+            if not isinstance(item, dict):
+                continue
+            selection = str(item.get("selection") or item.get("id") or "")
+            capabilities = item.get("capabilities")
+            if (
+                item.get("provider") == "opencode"
+                and item.get("free") is True
+                and item.get("routingRecommended") is not False
+                and isinstance(capabilities, dict)
+                and capabilities.get("toolcall") is True
+                and selection.startswith("opencode/")
+            ):
+                candidates[selection] = item
+
+        ordered = [
+            selection
+            for selection in self.FREE_COUNCIL_PREFERENCE
+            if selection in candidates
+        ]
+        ordered.extend(
+            sorted(selection for selection in candidates if selection not in ordered)
+        )
+        if len(ordered) < 2:
+            raise AnalyticsBridgeError(
+                "At least two currently available free OpenCode models are required for council"
+            )
+        return [
+            {"provider": "opencode", "model": selection}
+            for selection in ordered[:2]
+        ]
+
     async def council(
         self,
         *,
@@ -145,6 +202,7 @@ class AnalyticsBridgeClient:
             raise AnalyticsBridgeError(
                 "Tenant-safe council capability is unavailable"
             )
+        participants = await self._free_council_participants()
         return await self._call(
             "council_run",
             {
@@ -154,6 +212,7 @@ class AnalyticsBridgeClient:
                 "evidence_bundle": evidence_bundle,
                 "request_key": request_key,
                 "tier": "free",
+                "participants": participants,
                 "rounds": 2,
                 "mode": "debate",
             },
