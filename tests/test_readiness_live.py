@@ -140,3 +140,85 @@ async def test_live_calendar_creates_readiness_card_and_tools_update_it(tmp_path
         assert done["state"] == "done"
     finally:
         store.close()
+
+
+
+@pytest.mark.asyncio
+async def test_recovered_voice_source_new_instruction_creates_exactly_one_follow_up_task(tmp_path: Path):
+    store = DurableStore(tmp_path)
+    try:
+        boot = store.ensure_dev_workspace("Recovered task")
+        actor = boot["actor"]["id"]
+        workspace = boot["workspace"]["id"]
+        project = boot["projects"][0]["id"]
+        conversation = store.create_conversation(actor, workspace, project)
+        adapter = ProjectsHubLiveAdapter(store)
+
+        old = store.create_source(actor, conversation["id"])
+        old_text = "НАЧАЛО фиолетовый маяк. СЕРЕДИНА зелёный компас. КОНЕЦ янтарный мост."
+        store.append_source_event(
+            actor, old["id"], "input_transcript", old_text, provider_at_ms=100
+        )
+        store.mark_source_stopped(actor, old["id"])
+
+        binding = ConversationScope(workspace, actor, conversation["id"]).resource_binding()
+        initialized = adapter.initialize(
+            resource_id=binding,
+            actor={"subject": actor, "tenant_id": workspace},
+            model="gemini-3.8-live",
+            conversation_id=conversation["id"],
+        )
+        session = SimpleNamespace(state=initialized["state"])
+        assert any(item["id"] == old["id"] for item in initialized["context"]["pending_voice_sources"])
+
+        page = await adapter.execute_tool(
+            session,
+            {"name": "voice_source_read", "args": {"source_id": old["id"], "offset": 0, "max_chars": 4000}},
+        )
+        assert page["text"] == old_text
+        assert page["finalized"] is True
+
+        new_source = initialized["response"]["source_id"]
+        store.append_source_event(
+            actor,
+            new_source,
+            "input_transcript",
+            "Создай новую задачу: проверить афишу.",
+            provider_at_ms=200,
+        )
+        call = {
+            "name": "task_create_follow_up",
+            "args": {
+                "project_id": project,
+                "title": "Проверить афишу",
+                "description": "Новая инструкция после восстановления",
+            },
+        }
+        first = await adapter.execute_tool(session, call)
+        repeated = await adapter.execute_tool(session, call)
+        assert repeated == first
+        tasks = adapter.readiness.list_tasks(
+            actor_id=actor, workspace_id=workspace, project_id=project, limit=20
+        )
+        matching = [item for item in tasks if item["title"] == "Проверить афишу"]
+        assert len(matching) == 1
+
+        other = await adapter.execute_tool(
+            session,
+            {
+                "name": "task_create_follow_up",
+                "args": {
+                    "project_id": project,
+                    "title": "Проверить свет",
+                    "description": "Другая новая инструкция",
+                },
+            },
+        )
+        assert other["id"] != first["id"]
+        tasks = adapter.readiness.list_tasks(
+            actor_id=actor, workspace_id=workspace, project_id=project, limit=20
+        )
+        assert {item["title"] for item in tasks} >= {"Проверить афишу", "Проверить свет"}
+        assert old_text not in first.get("description", "")
+    finally:
+        store.close()

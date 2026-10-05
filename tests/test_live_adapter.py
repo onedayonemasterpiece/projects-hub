@@ -338,3 +338,70 @@ def test_recovery_only_buffered_session_has_no_mutation_tools(tmp_path: Path):
         assert "BUFFERED SOURCE DISPOSITION" not in instruction
     finally:
         store.close()
+
+
+
+def test_voice_failures_emit_correlated_redacted_diagnostics(tmp_path: Path, caplog):
+    store = DurableStore(tmp_path)
+    try:
+        boot = store.ensure_dev_workspace("Voice diagnostics")
+        actor_id = boot["actor"]["id"]
+        workspace_id = boot["workspace"]["id"]
+        conversation = store.create_conversation(actor_id, workspace_id, boot["projects"][0]["id"])
+        binding = ConversationScope(workspace_id, actor_id, conversation["id"]).resource_binding()
+        adapter = ProjectsHubLiveAdapter(store)
+        initialized = adapter.initialize(
+            resource_id=binding,
+            actor={"subject": actor_id, "tenant_id": workspace_id},
+            model="gemini-3.8-live",
+            conversation_id=conversation["id"],
+            attempt_id="attempt_v06",
+            client_version="0.1.26",
+            backend_version="0.1.26",
+            backend_release_sha="b" * 40,
+        )
+        session = SimpleNamespace(id="live_v06", state=initialized["state"])
+        caplog.set_level("INFO", logger="projects_hub.live")
+
+        adapter.on_event(session, {
+            "type": "resource_budget",
+            "status": "denied",
+            "code": "RESOURCE_TOKEN_BUDGET",
+            "modality": "audio",
+            "requested_units": 1024,
+            "granted_units": 0,
+        })
+        adapter.on_event(session, {
+            "type": "error",
+            "code": "PROVIDER_FAILURE_TEST",
+            "message": "must not enter structured diagnostics",
+        })
+        adapter.on_event(session, {
+            "type": "transport_gap",
+            "code": "LIVE_TRANSPORT_GAP",
+            "connection_generation": 2,
+        })
+
+        records = [
+            record for record in caplog.records
+            if getattr(record, "event", None) == "live_provider_event"
+        ]
+        assert [getattr(record, "kind", None) for record in records[-3:]] == [
+            "resource_budget", "error", "transport_gap"
+        ]
+        for record in records[-3:]:
+            assert record.session_id == "live_v06"
+            assert record.source_id == initialized["response"]["source_id"]
+            assert record.attempt_id == "attempt_v06"
+            assert record.client_version == "0.1.26"
+            assert record.backend_version == "0.1.26"
+            assert record.backend_release_sha == "b" * 40
+            assert not hasattr(record, "text")
+            assert not hasattr(record, "message_text")
+        assert records[-3].code == "RESOURCE_TOKEN_BUDGET"
+        assert records[-3].status == "denied"
+        assert records[-2].code == "PROVIDER_FAILURE_TEST"
+        assert records[-1].code == "LIVE_TRANSPORT_GAP"
+        assert records[-1].connection_generation == 2
+    finally:
+        store.close()

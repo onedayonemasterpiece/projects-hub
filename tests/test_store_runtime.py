@@ -148,3 +148,50 @@ def test_voice_source_audio_path_is_actor_and_conversation_private(tmp_path: Pat
             store.voice_source_audio_path(other["actor"]["id"], conversation["id"], source["id"])
     finally:
         store.close()
+
+
+
+def test_late_corrected_final_after_turn_boundary_remains_lossless(tmp_path: Path):
+    store = DurableStore(tmp_path)
+    try:
+        boot = store.ensure_dev_workspace("Late final")
+        actor = boot["actor"]["id"]
+        workspace = boot["workspace"]["id"]
+        conversation = store.create_conversation(actor, workspace, boot["projects"][0]["id"])
+        source = store.create_source(actor, conversation["id"])
+
+        provisional = (
+            "НАЧАЛО " + ("а" * 2300)
+            + " СЕРЕДИНА значение сорок два "
+            + ("б" * 2300)
+            + " КОНЕЦ"
+        )
+        corrected = provisional.replace("сорок два", "семьдесят три")
+        assert len(corrected) > 4000
+
+        assert store.append_source_event(
+            actor, source["id"], "interim_input_transcript", provisional, provider_at_ms=100
+        ) == 0
+        assert store.append_source_event(
+            actor, source["id"], "turn_complete", provider_at_ms=110
+        ) == 0
+        assert store.append_source_event(
+            actor, source["id"], "input_transcript", corrected, provider_at_ms=120
+        ) == 1
+
+        saved = store.get_source(actor, source["id"])
+        assert saved["transcript"] == corrected
+        assert "сорок два" not in saved["transcript"]
+        assert "семьдесят три" in saved["transcript"]
+        assert saved["transcript"].startswith("НАЧАЛО")
+        assert "СЕРЕДИНА" in saved["transcript"]
+        assert saved["transcript"].endswith("КОНЕЦ")
+
+        events = store.source_events(actor, source["id"])
+        assert [item["kind"] for item in events[-3:]] == [
+            "interim_input_transcript",
+            "turn_complete",
+            "input_transcript",
+        ]
+    finally:
+        store.close()
