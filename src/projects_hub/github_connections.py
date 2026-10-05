@@ -476,6 +476,67 @@ class GitHubConnections:
         )
         return token, connection
 
+    @staticmethod
+    def repository_path_allowed(connection: dict[str, Any], path: str) -> bool:
+        clean_path = str(path or "").strip().strip("/")
+        if not clean_path or "\\" in clean_path:
+            return False
+        parts = clean_path.split("/")
+        if any(part in {"", ".", ".."} for part in parts):
+            return False
+        roots = connection.get("allowed_paths")
+        if not isinstance(roots, list) or not roots:
+            return False
+        for raw in roots:
+            root = str(raw or "").strip().strip("/")
+            if not root:
+                continue
+            if clean_path == root or clean_path.startswith(root + "/"):
+                return True
+        return False
+
+    async def write_repository_text(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        repository_id: int,
+        path: str,
+        text: str,
+        message: str,
+        expected_sha: str | None = None,
+    ) -> dict[str, Any]:
+        token, connection = await self.repository_token(
+            actor_id=actor_id,
+            workspace_id=workspace_id,
+            repository_id=repository_id,
+            write=True,
+        )
+        if not self.repository_path_allowed(connection, path):
+            raise StoreError(
+                "GITHUB_PATH_DENIED",
+                "Repository path is outside the configured managed-write roots",
+            )
+        try:
+            result = await self._require_client().put_repository_text(
+                token=token,
+                full_name=str(connection["full_name"]),
+                path=path,
+                text=text,
+                message=message,
+                branch=str(connection["default_branch"]),
+                expected_sha=expected_sha,
+            )
+        except GitHubAppError as exc:
+            raise StoreError(exc.code, str(exc)) from exc
+        return {
+            "repository_id": int(connection["repository_id"]),
+            "full_name": str(connection["full_name"]),
+            "default_branch": str(connection["default_branch"]),
+            "private": bool(connection["private"]),
+            **result,
+        }
+
     async def read_repository_path(
         self,
         *,
