@@ -796,7 +796,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                     if audio_mode == "buffered"
                     else {
                         "end_of_speech_sensitivity": "END_SENSITIVITY_LOW",
-                        "silence_duration_ms": 5000,
+                        "silence_duration_ms": 800,
                         "prefix_padding_ms": 250,
                     }
                 ),

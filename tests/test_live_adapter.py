@@ -29,7 +29,7 @@ async def test_live_adapter_persists_audio_transcript_and_verified_memory(tmp_pa
         assert initialized["configuration"]["functions"]
         assert initialized["configuration"]["automatic_activity_detection"] == {
             "end_of_speech_sensitivity": "END_SENSITIVITY_LOW",
-            "silence_duration_ms": 5000,
+            "silence_duration_ms": 800,
             "prefix_padding_ms": 250,
         }
         assert initialized["response"]["focus_project_id"] == project_id
