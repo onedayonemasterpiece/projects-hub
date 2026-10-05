@@ -475,7 +475,7 @@ export default function App() {
       transport: "wss",
       voiceControl: null,
       suppressCaptureDuringPlayback: true,
-      speechEndSilenceMs: 4000,
+      continuousCapture: true,
       onState: state => {
         setVoiceState(state);
         if (["off", "start_error", "connection_error", "microphone_unavailable"].includes(state)) {
