@@ -457,3 +457,21 @@
     max-height: 68vh;
   }
 }
+
+.board-analysis-confirmation {
+  display: grid;
+  gap: 7px;
+  padding: 11px;
+  border: 1px solid rgba(255, 216, 156, .28);
+  border-radius: 12px;
+  background: rgba(255, 190, 92, .08);
+}
+.board-analysis-confirmation > strong {
+  color: #ffd89c;
+  font-size: 12px;
+}
+.board-analysis-confirmation > span {
+  color: rgba(238,241,247,.72);
+  font-size: 11px;
+  line-height: 1.4;
+}
