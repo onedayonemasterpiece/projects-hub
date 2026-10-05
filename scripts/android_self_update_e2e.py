@@ -247,6 +247,42 @@ def wait_text_bounds(target_text: str, timeout_seconds: int = 45) -> tuple[int, 
         except ET.ParseError:
             time.sleep(1)
             continue
+        alert_title = next(
+            (
+                str(node.attrib.get("text") or "")
+                for node in root.iter("node")
+                if str(node.attrib.get("resource-id") or "") == "android:id/alertTitle"
+            ),
+            "",
+        )
+        if "isn't responding" in alert_title.casefold() and "projects hub" not in alert_title.casefold():
+            wait_button = next(
+                (
+                    node
+                    for node in root.iter("node")
+                    if str(node.attrib.get("resource-id") or "") == "android:id/aerr_wait"
+                ),
+                None,
+            )
+            if wait_button is not None:
+                match = re.fullmatch(
+                    r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]",
+                    str(wait_button.attrib.get("bounds") or ""),
+                )
+                if match:
+                    left, top, right, bottom = map(int, match.groups())
+                    run(
+                        "adb",
+                        "shell",
+                        "input",
+                        "tap",
+                        str((left + right) // 2),
+                        str((top + bottom) // 2),
+                        timeout=15,
+                        retries=3,
+                    )
+                    time.sleep(2)
+                    continue
         for node in root.iter("node"):
             if str(node.attrib.get("text") or "").casefold() != target_text.casefold():
                 continue
