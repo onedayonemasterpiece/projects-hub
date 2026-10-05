@@ -475,3 +475,28 @@
   font-size: 11px;
   line-height: 1.4;
 }
+
+.board-analysis-materialization {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: 12px;
+  background: rgba(255,255,255,.035);
+}
+.board-analysis-materialization > span,
+.board-materialization-targets > span {
+  color: rgba(238,241,247,.68);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.board-analysis-materialization code {
+  color: #cfd9ff;
+  font-size: 11px;
+}
+.board-materialization-targets {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  flex-wrap: wrap;
+}
