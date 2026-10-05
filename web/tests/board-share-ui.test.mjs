@@ -8,7 +8,7 @@ const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 test("owner share UI warns about live access and requires a user click", () => {
   assert.match(shell, /Живая ссылка · только просмотр/);
   assert.match(shell, /Срок — семь дней/);
-  assert.match(shell, /будущие изменения/);
+  assert.match(shell, /дальнейшие изменения/);
   assert.match(shell, /const shareViaSystem = async \(\) =>/);
   assert.match(shell, /await navigator\.share\(/);
   assert.match(shell, /onClick=\{\(\) => void shareViaSystem\(\)\}/);
