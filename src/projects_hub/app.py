@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .auth import COOKIE_NAME, SESSION_TTL_SECONDS, issue_session, parse_session
 from .analytics import AnalyticsService
+from .analytics_materialization import AnalysisMaterializer
 from .analytics_api import attach_analytics_routes
 from .board import BoardService
 from .board_api import attach_board_routes
@@ -279,6 +280,11 @@ def create_app(
     )
     app.state.live_host = live_host
     app.state.github_connections = github_connections or GitHubConnections(store, settings)
+    app.state.analysis_materializer = AnalysisMaterializer(
+        store,
+        app.state.analytics,
+        app.state.github_connections,
+    )
     app.state.device_commands = device_commands or DeviceCommandService(store)
     app.state.readiness = readiness or ReadinessService(store)
     app.state.development = development or DevelopmentService(store, app.state.readiness)
@@ -375,6 +381,7 @@ def create_app(
         service=app.state.analytics,
         actor_id_from_request=actor_id_from_request,
         board_hub=app.state.board_hub,
+        materializer=app.state.analysis_materializer,
     )
     attach_sharing_routes(
         app,
