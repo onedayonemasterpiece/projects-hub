@@ -76,7 +76,7 @@ export type AnalysisRun = {
   project_id: string;
   board_id: string;
   purpose: "requirements" | "edge_cases" | "architecture" | "code_review" | "ideas";
-  model: "kimi_k3" | "deepseek";
+  model: "kimi_k3" | "deepseek" | "council_free";
   question: string;
   status: "dispatching" | "dispatch_unknown" | "waiting_capacity" | "running" | "completed" | "failed" | "cancelled" | "blocked";
   result_markdown: string;
