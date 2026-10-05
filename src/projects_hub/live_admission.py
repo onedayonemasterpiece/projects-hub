@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections import Counter
 from typing import Any
 
@@ -21,15 +22,78 @@ def _session_actor_id(session: Any) -> str:
 class ProjectsHubAdmissionMixin:
     """Product admission only; WSS transport/lifecycle stays in live-interaction."""
 
-    def __init__(self, *args: Any, max_sessions_per_actor: int = 2, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *args: Any,
+        max_sessions_per_actor: int = 2,
+        detached_session_reclaim_ms: int = 15_000,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(*args, **kwargs)
         if not isinstance(max_sessions_per_actor, int) or max_sessions_per_actor < 1:
             raise ValueError("max_sessions_per_actor must be positive")
         self.max_sessions_per_actor = max_sessions_per_actor
+        if not isinstance(detached_session_reclaim_ms, int) or detached_session_reclaim_ms < 1:
+            raise ValueError("detached_session_reclaim_ms must be positive")
+        self.detached_session_reclaim_ms = detached_session_reclaim_ms
         self._projects_hub_admission_lock = asyncio.Lock()
         self._projects_hub_starting_by_actor: Counter[str] = Counter()
         self._projects_hub_starting_resources: set[tuple[str, str]] = set()
         self._projects_hub_starting_sources: set[tuple[str, str]] = set()
+
+    async def _reclaim_detached_sessions(self, actor_id: str, resource_id: str) -> None:
+        socket_states = getattr(self, "_socket_states", None)
+        if not isinstance(socket_states, dict):
+            return
+
+        now_ms = round(time.time() * 1000)
+        candidates: list[str] = []
+        async with self._projects_hub_admission_lock:
+            for session in tuple(self.sessions.values()):
+                if session.closed or _session_actor_id(session) != actor_id:
+                    continue
+                state = socket_states.get(session.id)
+                if state is None or getattr(state, "claim", None) is not None:
+                    continue
+                last_client_at_ms = int(getattr(session, "last_client_at_ms", 0) or 0)
+                age_ms = max(0, now_ms - last_client_at_ms)
+                same_resource = getattr(session, "resource_id", None) == resource_id
+                replaceable_same_resource = same_resource and bool(
+                    getattr(state, "used_wss", False)
+                )
+                if replaceable_same_resource or age_ms >= self.detached_session_reclaim_ms:
+                    candidates.append(session.id)
+
+        for session_id in candidates:
+            # Re-check immediately before the stop so a successful WSS reconnect
+            # wins over stale-session cleanup. A new /sessions POST for the same
+            # resource is an explicit replacement; browser reconnects use the
+            # socket-ticket endpoint instead.
+            session = self.sessions.get(session_id)
+            state = socket_states.get(session_id)
+            if (
+                session is None
+                or session.closed
+                or _session_actor_id(session) != actor_id
+                or state is None
+                or getattr(state, "claim", None) is not None
+            ):
+                continue
+            age_ms = max(0, round(time.time() * 1000) - int(session.last_client_at_ms or 0))
+            same_resource = getattr(session, "resource_id", None) == resource_id
+            replaceable_same_resource = same_resource and bool(
+                getattr(state, "used_wss", False)
+            )
+            if not replaceable_same_resource and age_ms < self.detached_session_reclaim_ms:
+                continue
+            diagnostic = getattr(self, "diagnostic", None)
+            if callable(diagnostic):
+                diagnostic(session, "detached_session_reclaimed", duration_ms=age_ms)
+            await super().stop(
+                session_id=session.id,
+                resource_id=session.resource_id,
+                actor=session.actor,
+            )
 
     async def start(
         self,
@@ -46,6 +110,8 @@ class ProjectsHubAdmissionMixin:
             raise LiveError("INVALID_ARGUMENT", "Live actor identity is required")
         resource_key = (actor_id, resource_id)
         source_key = (actor_id, client_source_id) if client_source_id else None
+
+        await self._reclaim_detached_sessions(actor_id, resource_id)
 
         async with self._projects_hub_admission_lock:
             active_for_actor = sum(
