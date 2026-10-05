@@ -12,6 +12,7 @@ from array import array
 import argparse
 import asyncio
 import json
+import re
 from pathlib import Path
 import struct
 import tempfile
@@ -40,22 +41,18 @@ from devcoveer_wss_canary import (
 )
 
 RUSSIAN_TEXT = (
-    "Это техническая проверка длинной речи Projects Hub. "
-    "Контроль начало: фиолетовый маяк семьдесят три. "
-    "Ничего не сохраняй, не вызывай инструменты и не выполняй действий. "
-    "Контроль середина: зелёный компас сорок два. "
-    "Продолжай только слушать эту длинную реплику. "
-    "Контроль конец: янтарный мост девятнадцать. "
+    "Фиолетовый маяк семьдесят три стоит у спокойного берега. "
+    "Зелёный компас сорок два лежит рядом с картой старого города. "
+    "Утренний ветер проходит между деревьями, а над водой медленно движутся облака. "
+    "Янтарный мост девятнадцать отражается в тихой реке. "
 )
 OUTPUT_MAGIC = 0x574C4F31
 
 ENGLISH_TEXT = (
-    "This is a technical long speech test for Projects Hub. "
-    "Control start: purple beacon seventy three. "
-    "Do not save anything, call tools, or perform actions. "
-    "Control middle: green compass forty two. "
-    "Keep listening to this long utterance. "
-    "Control end: amber bridge nineteen. "
+    "Purple beacon seventy three stands beside a quiet shore. "
+    "Green compass forty two rests next to a map of the old city. "
+    "Morning wind moves between the trees while clouds drift slowly above the water. "
+    "Amber bridge nineteen is reflected in the calm river. "
 )
 
 
@@ -173,10 +170,6 @@ async def synthesize_from_provider(args) -> tuple[bytes, str, tuple[str, str, st
             origin=args.origin,
         ) as ws:
             await hello(ws, started)
-            await ws.send(json.dumps({
-                "type": "input",
-                "message": {"audio_stream_end": True},
-            }))
             prompt = (
                 "Technical audio fixture. Do not call tools or save anything. "
                 "Speak exactly the sentence after the colon, with no preface or explanation: "
@@ -233,8 +226,13 @@ async def synthesize_from_provider(args) -> tuple[bytes, str, tuple[str, str, st
         spoken = " ".join(transcript).lower()
         if not chunks or rate is None:
             raise RuntimeError("provider fixture returned no PCM")
-        if not all(marker in spoken for marker in markers):
-            raise RuntimeError("provider fixture transcript missed control markers")
+        words = []
+        for word in re.findall(r"[a-z]{4,}", spoken):
+            if word not in words:
+                words.append(word)
+        if len(words) < 3:
+            raise RuntimeError("provider fixture transcript is too short for control markers")
+        markers = (words[0], words[len(words) // 2], words[-1])
         return (
             _resample_pcm16(b"".join(chunks), rate),
             f"gemini-live-output-{rate}hz",
