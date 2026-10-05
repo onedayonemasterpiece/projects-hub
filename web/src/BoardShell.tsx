@@ -13,10 +13,13 @@ import {
   analysisReportUrl,
   boardHistory,
   cancelAnalysisRun,
+  createBoardShare,
   getAnalysisRun,
   getBoardSnapshot,
+  listBoardShares,
   openBoard,
   publishAnalysisRun,
+  revokeBoardShare,
   refreshAnalysisRun,
   searchBoard,
   startAnalysis,
@@ -25,6 +28,7 @@ import {
   type BoardGeometry,
   type BoardObject,
   type BoardSearchHit,
+  type BoardShareGrant,
   type BoardSocketMessage,
   type BoardStyle,
 } from "./boardApi";
@@ -41,6 +45,15 @@ export type BoardFocusRequest =
   | {
       kind: "view_all";
       token: string;
+    }
+  | null;
+
+export type BoardShareRequest =
+  | {
+      id: string;
+      url: string;
+      expiresAtMs: number;
+      warning?: string;
     }
   | null;
 
@@ -240,8 +253,10 @@ export function BoardShell({
   projectId,
   canEdit,
   canAnalyze,
+  canManageShare,
   focusRequest,
   analysisRunId,
+  shareRequest,
   onClose,
   onFocusFulfilled,
 }: {
@@ -250,8 +265,10 @@ export function BoardShell({
   projectId: string;
   canEdit: boolean;
   canAnalyze: boolean;
+  canManageShare: boolean;
   focusRequest?: BoardFocusRequest;
   analysisRunId?: string | null;
+  shareRequest?: BoardShareRequest;
   onClose: () => void;
   onFocusFulfilled?: (token: string, ok: boolean) => void;
 }) {
@@ -279,6 +296,11 @@ export function BoardShell({
     "Найди риски, пограничные случаи и конкретные рекомендации по выбранному материалу.",
   );
   const [analysisBusy, setAnalysisBusy] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareActive, setShareActive] = useState<BoardShareGrant | null>(null);
+  const [shareItems, setShareItems] = useState<BoardShareGrant[]>([]);
+  const [shareBusy, setShareBusy] = useState(false);
+  const [shareMessage, setShareMessage] = useState("");
   const socketRef = useRef<BoardSocket | null>(null);
   const fulfilledFocusRef = useRef<string | null>(null);
   const dragRef = useRef<{
@@ -397,6 +419,27 @@ export function BoardShell({
       window.clearInterval(timer);
     };
   }, [analysisRun?.id, analysisRun?.status, visible, workspaceId]);
+
+  useEffect(() => {
+    if (!visible || !shareRequest || !canManageShare) return;
+    setShareActive({
+      id: shareRequest.id,
+      project_id: projectId,
+      board_id: boardId ?? "",
+      created_at_ms: Date.now(),
+      expires_at_ms: shareRequest.expiresAtMs,
+      url: shareRequest.url,
+      warning: shareRequest.warning,
+    });
+    setShareOpen(true);
+    setShareMessage("");
+  }, [boardId, canManageShare, projectId, shareRequest, visible]);
+
+  const refreshShares = useCallback(async () => {
+    if (!canManageShare) return;
+    const result = await listBoardShares(workspaceId, projectId);
+    setShareItems(result.items);
+  }, [canManageShare, projectId, workspaceId]);
 
   const focusGeometry = useCallback(
     (geometry: BoardGeometry, token?: string) => {
@@ -694,6 +737,84 @@ export function BoardShell({
     });
   };
 
+  const prepareShare = async () => {
+    if (!canManageShare || shareBusy) return;
+    setShareBusy(true);
+    setShareMessage("");
+    try {
+      const grant = await createBoardShare(workspaceId, projectId);
+      setShareActive(grant);
+      setShareOpen(true);
+      await refreshShares();
+    } catch (error) {
+      setShareMessage(error instanceof Error ? error.message : "Не удалось создать ссылку");
+      setShareOpen(true);
+    } finally {
+      setShareBusy(false);
+    }
+  };
+
+  const shareViaSystem = async () => {
+    const rawUrl = shareActive?.url;
+    if (!rawUrl) return;
+    const url = new URL(rawUrl, window.location.origin).toString();
+    if (typeof navigator.share !== "function") {
+      try {
+        await navigator.clipboard.writeText(url);
+        setShareMessage("Ссылка скопирована.");
+      } catch {
+        setShareMessage("Не удалось открыть системное меню или скопировать ссылку.");
+      }
+      return;
+    }
+    try {
+      await navigator.share({ title: "Доска проекта", url });
+      setShareMessage("Системное меню завершено; приложение не подтверждает доставку получателю.");
+    } catch (error) {
+      const name =
+        error && typeof error === "object" && "name" in error
+          ? String((error as { name?: unknown }).name ?? "")
+          : "";
+      setShareMessage(
+        name === "AbortError"
+          ? "Поделиться отменено; доставка не выполнялась."
+          : "Системное меню не открылось.",
+      );
+    }
+  };
+
+  const copyShareLink = async () => {
+    const rawUrl = shareActive?.url;
+    if (!rawUrl) return;
+    try {
+      await navigator.clipboard.writeText(
+        new URL(rawUrl, window.location.origin).toString(),
+      );
+      setShareMessage("Ссылка скопирована.");
+    } catch {
+      setShareMessage("Не удалось скопировать ссылку.");
+    }
+  };
+
+  const revokeShare = async (shareId: string) => {
+    if (shareBusy) return;
+    setShareBusy(true);
+    try {
+      await revokeBoardShare(workspaceId, shareId);
+      if (shareActive?.id === shareId) {
+        setShareActive((current) =>
+          current ? { ...current, revoked_at_ms: Date.now() } : null,
+        );
+      }
+      await refreshShares();
+      setShareMessage("Ссылка отозвана; открытые гостевые подключения будут закрыты.");
+    } catch (error) {
+      setShareMessage(error instanceof Error ? error.message : "Не удалось отозвать ссылку");
+    } finally {
+      setShareBusy(false);
+    }
+  };
+
   const selected = selectedId ? objects.get(selectedId) ?? null : null;
   const analysisReferenceId =
     selected?.reference?.kind === "analysis_run" ? selected.reference.id : null;
@@ -786,6 +907,11 @@ export function BoardShell({
             </>
           )}
           <button onClick={fitAll}>Показать всё</button>
+          {canManageShare && (
+            <button onClick={() => void prepareShare()} disabled={shareBusy}>
+              {shareBusy ? "Готовлю ссылку…" : "Поделиться"}
+            </button>
+          )}
           <button onClick={onClose}>Закрыть доску</button>
         </div>
 
@@ -915,6 +1041,78 @@ export function BoardShell({
           );
         })()}
       </div>
+
+      {shareOpen && canManageShare && (
+        <aside className="board-share-panel" aria-label="Поделиться доской">
+          <div className="board-share-heading">
+            <div>
+              <strong>Живая ссылка · только просмотр</strong>
+              <span>Срок — семь дней</span>
+            </div>
+            <button onClick={() => setShareOpen(false)}>Закрыть</button>
+          </div>
+          {shareActive?.url && !shareActive.revoked_at_ms && (
+            <>
+              <p className="board-share-warning">
+                {shareActive.warning ||
+                  "По ссылке доступно содержимое этой доски, включая дальнейшие изменения, до истечения срока или отзыва."}
+              </p>
+              <code className="board-share-url">
+                {new URL(shareActive.url, window.location.origin).toString()}
+              </code>
+              <div className="board-share-actions">
+                <button onClick={() => void shareViaSystem()}>
+                  {typeof navigator.share === "function"
+                    ? "Открыть системное «Поделиться»"
+                    : "Скопировать ссылку"}
+                </button>
+                <button onClick={() => void copyShareLink()}>Копировать</button>
+                <button
+                  onClick={() => void revokeShare(shareActive.id)}
+                  disabled={shareBusy}
+                >
+                  Отозвать
+                </button>
+              </div>
+              <span className="board-share-expiry">
+                Действует до {new Date(shareActive.expires_at_ms).toLocaleString()}
+              </span>
+            </>
+          )}
+          {!shareActive?.url && (
+            <button onClick={() => void prepareShare()} disabled={shareBusy}>
+              Создать новую ссылку
+            </button>
+          )}
+          {shareMessage && <p className="board-share-message">{shareMessage}</p>}
+          <div className="board-share-existing">
+            <div>
+              <strong>Выданные ссылки</strong>
+              <button onClick={() => void refreshShares()}>Обновить</button>
+            </div>
+            {shareItems.length === 0 ? (
+              <span>Список пуст или ещё не загружен.</span>
+            ) : (
+              shareItems.slice(0, 8).map((item) => (
+                <div key={item.id} className="board-share-row">
+                  <span>
+                    до {new Date(item.expires_at_ms).toLocaleString()}
+                    {item.revoked_at_ms ? " · отозвана" : ""}
+                  </span>
+                  {!item.revoked_at_ms && (
+                    <button
+                      onClick={() => void revokeShare(item.id)}
+                      disabled={shareBusy}
+                    >
+                      Отозвать
+                    </button>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </aside>
+      )}
 
       {analysisOpen && canAnalyze && (
         <aside className="board-analysis-panel" aria-label="Сильный анализ">
