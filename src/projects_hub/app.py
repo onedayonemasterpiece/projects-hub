@@ -14,6 +14,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .auth import COOKIE_NAME, SESSION_TTL_SECONDS, issue_session, parse_session
+from .analytics import AnalyticsService
+from .analytics_api import attach_analytics_routes
 from .board import BoardService
 from .board_api import attach_board_routes
 from .github_app import GitHubAppError
@@ -237,6 +239,7 @@ def create_app(
     device_commands: DeviceCommandService | None = None,
     readiness: ReadinessService | None = None,
     development: DevelopmentService | None = None,
+    analytics: AnalyticsService | None = None,
     regional_knowledge_factory: Any | None = None,
 ) -> FastAPI:
     configure_logging()
@@ -255,6 +258,9 @@ def create_app(
             development_service = getattr(app.state, "development", None)
             if development_service is not None and hasattr(development_service, "close"):
                 await development_service.close()
+            analytics_service = getattr(app.state, "analytics", None)
+            if analytics_service is not None and hasattr(analytics_service, "close"):
+                await analytics_service.close()
             if owned_store:
                 store.close()
 
@@ -262,6 +268,7 @@ def create_app(
     app.state.settings = settings
     app.state.store = store
     app.state.board = BoardService(store)
+    app.state.analytics = analytics or AnalyticsService(store, app.state.board)
     app.state.live_host = live_host
     app.state.github_connections = github_connections or GitHubConnections(store, settings)
     app.state.device_commands = device_commands or DeviceCommandService(store)
@@ -351,6 +358,12 @@ def create_app(
         actor_id_from_request=actor_id_from_request,
         session_secret=settings.session_secret,
         cookie_name=COOKIE_NAME,
+    )
+
+    attach_analytics_routes(
+        app,
+        service=app.state.analytics,
+        actor_id_from_request=actor_id_from_request,
     )
 
     @app.exception_handler(GitHubAppError)
