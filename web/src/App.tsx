@@ -37,7 +37,7 @@ import {
 } from "./api";
 import { replayLocalVoiceSource } from "./bufferedReplay";
 import { recoverServerVoiceSource } from "./serverRecovery";
-import { mergeTranscript, resolveTerminalVoiceState } from "./voiceUiContract.js";
+import { mergeTranscript, resolveTerminalVoiceState, speechStartsNewUserBubble } from "./voiceUiContract.js";
 import {
   acknowledgeDeliveredSource,
   createLocalPersistSink,
@@ -499,6 +499,18 @@ export default function App() {
       speechEndSilenceMs: 4000,
       longSpeechEndSilenceMs: 8000,
       longSpeechAfterMs: 12000,
+      onTiming: event => {
+        if (!speechStartsNewUserBubble(event)) return;
+        // A real microphone/VAD speech start is the user-turn boundary. Gemini
+        // conversational Live may emit only a final input_transcript, so waiting
+        // for provider interim text can incorrectly append a later utterance to
+        // the previous user bubble.
+        userTurnBoundaryPendingRef.current = false;
+        userTranscriptIndex.current = -1;
+        turnHasInput.current = false;
+        setInterimInputTranscript("");
+        setInputTranscriptSeen(false);
+      },
       onState: (state, detail) => {
         const terminalReason = resolveTerminalVoiceState(state, detail);
         setVoiceState(terminalReason || state);
