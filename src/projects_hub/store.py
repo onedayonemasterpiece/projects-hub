@@ -2285,6 +2285,128 @@ class DurableStore:
                 raise StoreError("FORBIDDEN", "Source workspace mismatch")
             return dict(row)
 
+    def list_pending_voice_sources(
+        self,
+        actor_id: str,
+        conversation_id: str,
+        *,
+        exclude_source_id: str | None = None,
+        limit: int = 8,
+    ) -> list[dict[str, Any]]:
+        bounded = max(1, min(int(limit), 20))
+        with self._lock:
+            self.get_conversation(actor_id, conversation_id)
+            params: list[Any] = [actor_id, conversation_id]
+            exclude_sql = ""
+            if exclude_source_id:
+                exclude_sql = " AND id<>?"
+                params.append(exclude_source_id)
+            params.append(bounded)
+            rows = self.db.execute(
+                """SELECT id,status,audio_bytes,audio_chunks,transcript_revision,
+                          captured_at_ms,updated_at_ms
+                   FROM sources
+                   WHERE actor_id=? AND conversation_id=?
+                     AND status NOT IN ('archived','ephemeral_processed')"""
+                + exclude_sql
+                + " ORDER BY updated_at_ms DESC LIMIT ?",
+                tuple(params),
+            ).fetchall()
+            result: list[dict[str, Any]] = []
+            for row in rows:
+                interim = self.db.execute(
+                    """SELECT text FROM source_events
+                       WHERE source_id=? AND kind='interim_input_transcript'
+                         AND text IS NOT NULL
+                       ORDER BY id DESC LIMIT 1""",
+                    (row["id"],),
+                ).fetchone()
+                result.append(
+                    {
+                        "id": row["id"],
+                        "status": row["status"],
+                        "audio_bytes": int(row["audio_bytes"]),
+                        "audio_chunks": int(row["audio_chunks"]),
+                        "transcript_revision": int(row["transcript_revision"]),
+                        "provisional_chars": len(str(interim["text"])) if interim else 0,
+                        "captured_at_ms": int(row["captured_at_ms"]),
+                        "updated_at_ms": int(row["updated_at_ms"]),
+                    }
+                )
+            return result
+
+    def voice_source_transcript_page(
+        self,
+        actor_id: str,
+        conversation_id: str,
+        source_id: str,
+        *,
+        offset: int = 0,
+        max_chars: int = 4000,
+    ) -> dict[str, Any]:
+        bounded_offset = max(0, int(offset))
+        bounded_chars = max(200, min(int(max_chars), 4000))
+        with self._lock:
+            source = self.get_source(actor_id, source_id)
+            if source["conversation_id"] != conversation_id:
+                raise StoreError(
+                    "FORBIDDEN",
+                    "Voice source does not belong to the current conversation",
+                )
+            final_text = str(source.get("transcript") or "")
+            finalized = bool(final_text)
+            if finalized:
+                text = final_text
+                origin = "final"
+            else:
+                row = self.db.execute(
+                    """SELECT text FROM source_events
+                       WHERE source_id=? AND kind='interim_input_transcript'
+                         AND text IS NOT NULL
+                       ORDER BY id DESC LIMIT 1""",
+                    (source_id,),
+                ).fetchone()
+                text = str(row["text"] or "") if row else ""
+                origin = "provisional" if text else "none"
+            total = len(text)
+            start = min(bounded_offset, total)
+            end = min(total, start + bounded_chars)
+            return {
+                "source_id": source_id,
+                "status": source["status"],
+                "origin": origin,
+                "finalized": finalized,
+                "transcript_revision": int(source["transcript_revision"]),
+                "text": text[start:end],
+                "offset": start,
+                "next_offset": end if end < total else None,
+                "total_chars": total,
+                "audio_bytes": int(source["audio_bytes"]),
+                "audio_chunks": int(source["audio_chunks"]),
+                "needs_audio_replay": not finalized and int(source["audio_bytes"]) > 0,
+            }
+
+    def voice_source_audio_path(
+        self,
+        actor_id: str,
+        conversation_id: str,
+        source_id: str,
+    ) -> Path:
+        with self._lock:
+            source = self.get_source(actor_id, source_id)
+            if source["conversation_id"] != conversation_id:
+                raise StoreError(
+                    "FORBIDDEN",
+                    "Voice source does not belong to the current conversation",
+                )
+            if int(source["audio_bytes"]) <= 0:
+                raise StoreError("SOURCE_AUDIO_EMPTY", "Voice source has no durable audio")
+            root = self.data_dir.resolve()
+            path = (self.data_dir / source["audio_path"]).resolve()
+            if root not in path.parents or not path.is_file():
+                raise StoreError("SOURCE_AUDIO_MISSING", "Voice source audio is unavailable")
+            return path
+
     def reset_source_for_replay(self, actor_id: str, source_id: str) -> dict[str, Any]:
         terminal = {"archived", "ephemeral_processed"}
         with self._lock:

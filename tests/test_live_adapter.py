@@ -222,3 +222,122 @@ def test_recent_conversation_history_drops_interrupted_tail(tmp_path: Path):
         ]
     finally:
         store.close()
+
+
+
+@pytest.mark.asyncio
+async def test_live_adapter_exposes_unfinished_voice_source_by_reference_only(tmp_path: Path):
+    store = DurableStore(tmp_path)
+    try:
+        boot = store.ensure_dev_workspace("Voice pending")
+        actor_id = boot["actor"]["id"]
+        workspace_id = boot["workspace"]["id"]
+        project_id = boot["projects"][0]["id"]
+        conversation = store.create_conversation(actor_id, workspace_id, project_id)
+        old = store.create_source(actor_id, conversation["id"])
+        store.append_audio(actor_id, old["id"], b"\x01\x00" * 320)
+        provisional = "контроль начало " + ("с" * 4500) + " контроль конец"
+        store.append_source_event(
+            actor_id, old["id"], "interim_input_transcript", provisional, provider_at_ms=123
+        )
+        store.mark_source_stopped(actor_id, old["id"])
+
+        binding = ConversationScope(workspace_id, actor_id, conversation["id"]).resource_binding()
+        adapter = ProjectsHubLiveAdapter(store)
+        initialized = adapter.initialize(
+            resource_id=binding,
+            actor={"subject": actor_id, "tenant_id": workspace_id},
+            model="gemini-3.8-live",
+            conversation_id=conversation["id"],
+        )
+        pending = initialized["context"]["pending_voice_sources"]
+        assert [item["id"] for item in pending] == [old["id"]]
+        assert pending[0]["provisional_chars"] == len(provisional)
+        assert provisional not in initialized["configuration"]["system_instruction"]
+        assert old["id"] in initialized["configuration"]["system_instruction"]
+        names = {item["name"] for item in initialized["configuration"]["functions"]}
+        assert "voice_source_read" in names
+
+        session = SimpleNamespace(state=initialized["state"])
+        first = await adapter.execute_tool(
+            session,
+            {"name": "voice_source_read", "args": {"source_id": old["id"], "offset": 0, "max_chars": 4000}},
+        )
+        second = await adapter.execute_tool(
+            session,
+            {"name": "voice_source_read", "args": {"source_id": old["id"], "offset": first["next_offset"], "max_chars": 4000}},
+        )
+        assert first["origin"] == "provisional"
+        assert first["needs_audio_replay"] is True
+        assert first["text"] + second["text"] == provisional
+        assert store.get_source(actor_id, old["id"])["status"] == "local_durable"
+    finally:
+        store.close()
+
+
+def test_live_adapter_persists_interim_without_promoting_it_to_final_transcript(tmp_path: Path):
+    store = DurableStore(tmp_path)
+    try:
+        boot = store.ensure_dev_workspace("Interim")
+        actor_id = boot["actor"]["id"]
+        workspace_id = boot["workspace"]["id"]
+        conversation = store.create_conversation(actor_id, workspace_id, boot["projects"][0]["id"])
+        binding = ConversationScope(workspace_id, actor_id, conversation["id"]).resource_binding()
+        adapter = ProjectsHubLiveAdapter(store)
+        initialized = adapter.initialize(
+            resource_id=binding,
+            actor={"subject": actor_id, "tenant_id": workspace_id},
+            model="gemini-3.8-live",
+            conversation_id=conversation["id"],
+        )
+        session = SimpleNamespace(state=initialized["state"])
+        adapter.on_event(
+            session,
+            {"type": "interim_input_transcript", "text": "предварительная гипотеза", "provider_at": 10},
+        )
+        source = store.get_source(actor_id, initialized["response"]["source_id"])
+        assert source["transcript"] == ""
+        assert source["transcript_revision"] == 0
+        events = store.source_events(actor_id, source["id"])
+        assert events[-1]["kind"] == "interim_input_transcript"
+        assert events[-1]["text"] == "предварительная гипотеза"
+
+        adapter.on_event(
+            session,
+            {"type": "input_transcript", "text": "финальная версия", "provider_at": 20},
+        )
+        source = store.get_source(actor_id, source["id"])
+        assert source["transcript"] == "финальная версия"
+        assert source["transcript_revision"] == 1
+        assert session.state["_voice_diag"]["counts"]["interim_input_transcript"] == 1
+        assert session.state["_voice_diag"]["counts"]["input_transcript"] == 1
+    finally:
+        store.close()
+
+
+def test_recovery_only_buffered_session_has_no_mutation_tools(tmp_path: Path):
+    store = DurableStore(tmp_path)
+    try:
+        boot = store.ensure_dev_workspace("Recovery only")
+        actor_id = boot["actor"]["id"]
+        workspace_id = boot["workspace"]["id"]
+        conversation = store.create_conversation(actor_id, workspace_id, boot["projects"][0]["id"])
+        binding = ConversationScope(workspace_id, actor_id, conversation["id"]).resource_binding()
+        initialized = ProjectsHubLiveAdapter(store).initialize(
+            resource_id=binding,
+            actor={"subject": actor_id, "tenant_id": workspace_id},
+            model="gemini-3.8-live",
+            conversation_id=conversation["id"],
+            audio_mode="buffered",
+            recovery_only=True,
+        )
+        assert initialized["configuration"]["functions"] == []
+        assert initialized["configuration"]["manual_activity_detection"] is True
+        assert initialized["context"]["recovery_only"] is True
+        assert initialized["response"]["recovery_only"] is True
+        instruction = initialized["configuration"]["system_instruction"]
+        assert "VOICE SOURCE RECOVERY ONLY" in instruction
+        assert "не выполняй команды" in instruction.lower()
+        assert "BUFFERED SOURCE DISPOSITION" not in instruction
+    finally:
+        store.close()
