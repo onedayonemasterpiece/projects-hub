@@ -407,7 +407,10 @@ def main() -> None:
     y = (top + bottom) // 2
     print(f"automatic update dialog confirm: ui bounds={left},{top},{right},{bottom}")
     run("adb", "shell", "input", "tap", str(x), str(y), timeout=15, retries=3)
-    wait_log(rf"update_download_start versionCode={new_code}\b", timeout_seconds=60)
+    wait_log(
+        rf"(?:update_download_start|install_permission_required) versionCode={new_code}\b",
+        timeout_seconds=60,
+    )
 
     permission_required = re.search(
         rf"install_permission_required versionCode={new_code}\b",
