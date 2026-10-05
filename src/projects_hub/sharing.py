@@ -261,30 +261,42 @@ class SharingService:
             projected["text"] = "Закрытый документ"
         return projected
 
+    def _snapshot_for_scope(self, scope: dict[str, Any]) -> dict[str, Any]:
+        rows = self.store.db.execute(
+            """SELECT * FROM board_objects
+               WHERE board_id=? AND deleted_at_ms IS NULL
+               ORDER BY z,id""",
+            (scope["board_id"],),
+        ).fetchall()
+        objects = [
+            self._project_object(self.board._public_object(row))
+            for row in rows
+        ]
+        return {
+            "board": {
+                "id": scope["board_id"],
+                "project_id": scope["project_id"],
+                "project_name": scope["project_name"],
+                "schema_version": int(scope["schema_version"]),
+                "seq": int(scope["seq"]),
+            },
+            "objects": objects,
+            "expires_at_ms": int(scope["expires_at_ms"]),
+        }
+
     def guest_snapshot(self, raw_session: str | None) -> dict[str, Any]:
         with self.store._lock:
             scope = self._guest_scope_by_hash(_hash(raw_session or ""))
-            rows = self.store.db.execute(
-                """SELECT * FROM board_objects
-                   WHERE board_id=? AND deleted_at_ms IS NULL
-                   ORDER BY z,id""",
-                (scope["board_id"],),
-            ).fetchall()
-            objects = [
-                self._project_object(self.board._public_object(row))
-                for row in rows
-            ]
-            return {
-                "board": {
-                    "id": scope["board_id"],
-                    "project_id": scope["project_id"],
-                    "project_name": scope["project_name"],
-                    "schema_version": int(scope["schema_version"]),
-                    "seq": int(scope["seq"]),
-                },
-                "objects": objects,
-                "expires_at_ms": int(scope["expires_at_ms"]),
-            }
+            return self._snapshot_for_scope(scope)
+
+    def guest_snapshot_for_connection(
+        self, *, grant_id: str, session_sha: str
+    ) -> dict[str, Any]:
+        with self.store._lock:
+            scope = self._guest_scope_by_hash(session_sha)
+            if scope["grant_id"] != grant_id:
+                raise StoreError("GUEST_SESSION_INVALID", "Guest session scope changed")
+            return self._snapshot_for_scope(scope)
 
     def project_event(
         self, *, grant_id: str, session_sha: str, payload: dict[str, Any]
