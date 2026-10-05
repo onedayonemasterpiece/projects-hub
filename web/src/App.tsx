@@ -496,9 +496,10 @@ export default function App() {
       suppressCaptureDuringPlayback: false,
       manualActivityDetection: true,
       continuousCapture: false,
-      speechEndSilenceMs: 4000,
-      longSpeechEndSilenceMs: 8000,
-      longSpeechAfterMs: 12000,
+      // Keep the mature manual-boundary path, but finalize a speech segment after
+      // the shared framework's proven 2 s tail. A natural pause now yields the
+      // provider-derived transcript while the Live session itself stays active.
+      speechEndSilenceMs: 2000,
       onTiming: event => {
         if (!speechStartsNewUserBubble(event)) return;
         // A real microphone/VAD speech start is the user-turn boundary. Gemini
