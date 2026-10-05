@@ -434,7 +434,8 @@ def test_free_council_uses_frozen_evidence_and_preserves_attribution(tmp_path: P
         assert dispatched["request_key"] == f"analysis:{run['id']}"
         assert dispatched["prompt"].startswith("Purpose: architecture")
         assert "stale multi-tab focus" in dispatched["evidence_bundle"]
-        assert set(dispatched) == {"prompt", "evidence_bundle", "request_key"}
+        assert set(dispatched) == {"prompt", "evidence_bundle", "request_key", "tier"}
+        assert dispatched["tier"] == "free"
 
         duplicate = asyncio.run(
             service.start_single(
