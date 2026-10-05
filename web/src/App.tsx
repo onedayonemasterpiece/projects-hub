@@ -38,7 +38,7 @@ import {
 import { replayLocalVoiceSource } from "./bufferedReplay";
 import { recoverServerVoiceSource } from "./serverRecovery";
 import { mergeTranscript, resolveTerminalVoiceState, speechStartsNewUserBubble } from "./voiceUiContract.js";
-import { BoardShell, type BoardFocusRequest } from "./BoardShell";
+import { BoardShell, type BoardFocusRequest, type BoardShareRequest } from "./BoardShell";
 import { ackBoardUi, openBoard, type BoardGeometry } from "./boardApi";
 import {
   acknowledgeDeliveredSource,
@@ -169,6 +169,7 @@ export default function App() {
   const [boardOpen, setBoardOpen] = useState(false);
   const [boardFocusRequest, setBoardFocusRequest] = useState<BoardFocusRequest>(null);
   const [analysisRunId, setAnalysisRunId] = useState<string | null>(null);
+  const [boardShareRequest, setBoardShareRequest] = useState<BoardShareRequest>(null);
   const [busy, setBusy] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
   const [networkOnline, setNetworkOnline] = useState(() => navigator.onLine);
@@ -222,6 +223,7 @@ export default function App() {
       setBoardOpen(false);
       setBoardFocusRequest(null);
       setAnalysisRunId(null);
+      setBoardShareRequest(null);
     }
     boardProjectRef.current = nextProjectId;
   }, [focusProject?.id]);
@@ -380,7 +382,7 @@ export default function App() {
       turnHasInput.current = false;
       assistantTranscriptIndex.current = -1;
     } else if (event.type === "tool_result" && event.status === "ok") {
-      if (["board_navigate", "board_edit", "board_analysis"].includes(event.name ?? "")) {
+      if (["board_navigate", "board_edit", "board_analysis", "board_share"].includes(event.name ?? "")) {
         let rawResult: unknown = event.result ?? event.output ?? event.response;
         if (typeof rawResult === "string") {
           try {
@@ -406,6 +408,20 @@ export default function App() {
                   setBoardOpen(true);
                   setContextOpen(false);
                   setAnalysisRunId(runId);
+                }
+              } else if (kind === "share" && action === "ready") {
+                const shareId = String(command.share_id ?? "");
+                const url = String(command.url ?? "");
+                const expiresAtMs = Number(command.expires_at_ms ?? 0);
+                if (shareId && url && Number.isFinite(expiresAtMs) && expiresAtMs > 0) {
+                  setBoardOpen(true);
+                  setContextOpen(false);
+                  setBoardShareRequest({
+                    id: shareId,
+                    url,
+                    expiresAtMs,
+                    warning: String(command.warning ?? "") || undefined,
+                  });
                 }
               } else if (action === "close") {
                 setBoardOpen(false);
@@ -1534,12 +1550,15 @@ export default function App() {
           projectId={focusProject.id}
           canEdit={(focusProject.role ?? "viewer") !== "viewer"}
           canAnalyze={Boolean(focusProject.can_analyze)}
+          canManageShare={Boolean(focusProject.can_manage_share)}
           focusRequest={boardFocusRequest}
           analysisRunId={analysisRunId}
+          shareRequest={boardShareRequest}
           onClose={() => {
             setBoardOpen(false);
             setBoardFocusRequest(null);
             setAnalysisRunId(null);
+            setBoardShareRequest(null);
           }}
           onFocusFulfilled={(token, ok) => {
             const action =
