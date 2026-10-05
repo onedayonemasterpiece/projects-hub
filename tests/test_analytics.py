@@ -13,6 +13,7 @@ from projects_hub.store import DurableStore, StoreError
 class FakeAnalyticsBridge:
     def __init__(self) -> None:
         self.consult_calls: list[dict] = []
+        self.council_calls: list[dict] = []
         self.read_payload: dict = {
             "status": "completed",
             "executionStatus": "completed",
@@ -28,6 +29,15 @@ class FakeAnalyticsBridge:
             "status": "running",
             "taskId": "dvt_" + "1" * 32,
             "model": "nvidia/moonshotai/kimi-k3",
+        }
+
+    async def council(self, **kwargs):
+        self.council_calls.append(dict(kwargs))
+        return {
+            "status": "running",
+            "taskId": "dvt_" + "3" * 32,
+            "backend": "council",
+            "councilLevel": "free",
         }
 
     async def read_task(self, task_id: str):
@@ -363,5 +373,103 @@ def test_completed_report_publishes_as_reference_card_not_copied_body(tmp_path: 
         assert receipt["event"]["after"]["type"] == "document_card"
         assert receipt["event"]["after"]["reference"] == {"kind": "analysis_run", "id": run["id"]}
         assert "Run the smallest test" not in receipt["event"]["after"]["text"]
+    finally:
+        store.close()
+
+
+def test_free_council_uses_frozen_evidence_and_preserves_attribution(tmp_path: Path):
+    store, board, actor, workspace, project, board_id = _owner(tmp_path)
+    bridge = FakeAnalyticsBridge()
+    try:
+        _sticky(
+            board,
+            actor=actor,
+            workspace=workspace,
+            board_id=board_id,
+            object_id="obj_council_a",
+            text="Decision: keep WebGL renderer; risk is stale multi-tab focus.",
+        )
+        service = AnalyticsService(store, board, bridge=bridge)
+        run = asyncio.run(
+            service.start_single(
+                actor_id=actor,
+                workspace_id=workspace,
+                project_id=project,
+                board_id=board_id,
+                object_ids=["obj_council_a"],
+                command_id="analysis_council_001",
+                model="council_free",
+                purpose="architecture",
+                question="Stress-test this decision and name unresolved risks.",
+            )
+        )
+        assert run["status"] == "running"
+        assert run["model"] == "council_free"
+        assert bridge.consult_calls == []
+        assert len(bridge.council_calls) == 1
+        dispatched = bridge.council_calls[0]
+        assert dispatched["request_key"] == f"analysis:{run['id']}"
+        assert dispatched["prompt"].startswith("Purpose: architecture")
+        assert "stale multi-tab focus" in dispatched["evidence_bundle"]
+        assert set(dispatched) == {"prompt", "evidence_bundle", "request_key"}
+
+        duplicate = asyncio.run(
+            service.start_single(
+                actor_id=actor,
+                workspace_id=workspace,
+                project_id=project,
+                board_id=board_id,
+                object_ids=["obj_council_a"],
+                command_id="analysis_council_001",
+                model="council_free",
+                purpose="architecture",
+                question="Stress-test this decision and name unresolved risks.",
+            )
+        )
+        assert duplicate["id"] == run["id"]
+        assert len(bridge.council_calls) == 1
+
+        bridge.read_payload = {
+            "status": "completed",
+            "executionStatus": "completed",
+            "result": {
+                "schema": "devcoveer-council-v1",
+                "model_outputs": {
+                    "opencode/model-a": {
+                        "status": "completed",
+                        "participationMode": "full_debate",
+                        "inferenceCallsUsed": 3,
+                        "initial_position": "Keep the renderer, but isolate client identity.",
+                        "cross_critique": "The other view underweights reconnect races.",
+                        "revision": {
+                            "revised_position": "Keep WebGL and make focus per browsing context.",
+                            "agreements": ["WebGL is appropriate."],
+                            "disagreements": ["Reconnect handling needs stronger proof."],
+                            "novel_findings": ["Guest view can reuse rendering without edit controls."],
+                            "unresolved_questions": ["What is the maximum board object count?"],
+                            "key_contributions": ["Separate visual and synchronization concerns."],
+                        },
+                    }
+                },
+                "novel_findings": ["Guest projection must stay read-only."],
+                "unresolved_questions": ["Measure 2-client convergence under reconnect."],
+                "usage": {"freeCalls": 3, "nvidiaCalls": 0, "totalCalls": 3},
+            },
+        }
+        completed = asyncio.run(
+            service.refresh(
+                actor_id=actor,
+                workspace_id=workspace,
+                run_id=run["id"],
+            )
+        )
+        assert completed["status"] == "completed"
+        assert completed["result"]["schema"] == "devcoveer-council-v1"
+        assert "# Multi-model council" in completed["result_markdown"]
+        assert "### opencode/model-a" in completed["result_markdown"]
+        assert "#### Cross-critique" in completed["result_markdown"]
+        assert "Keep WebGL and make focus per browsing context." in completed["result_markdown"]
+        assert "Measure 2-client convergence under reconnect." in completed["result_markdown"]
+        assert '"nvidiaCalls":0' in completed["result_markdown"]
     finally:
         store.close()
