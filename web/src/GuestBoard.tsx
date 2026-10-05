@@ -326,7 +326,7 @@ export default function GuestBoard() {
           <button onClick={() => void enterFullscreen()}>На весь экран</button>
         </div>
       </header>
-      <section
+      <div
         ref={setHost}
         className="guest-viewport"
         onPointerDown={onPointerDown}
@@ -349,7 +349,7 @@ export default function GuestBoard() {
               : "WebGL недоступен на этом устройстве."}
           </div>
         )}
-      </section>
+      </div>
       <footer className="guest-footnote">
         Только просмотр. По этой ссылке видны текущие стикеры и будущие изменения
         доски до истечения срока или отзыва. Закрытые документы не раскрываются.
