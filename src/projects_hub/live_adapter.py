@@ -748,7 +748,7 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Для содержательного анализа конкретных стикеров используй board_analysis action=start только с явным списком object_ids из текущей доски. Модель получает замороженные ревизии этих объектов, а не произвольный project checkout.
 - Не объявляй анализ завершённым, пока board_analysis status не вернул completed. dispatch_unknown означает «исход запуска уточняется», а не разрешение запустить второй анализ.
 - Готовый отчёт остаётся Markdown-документом. action=publish добавляет на доску только ссылочную document-card; полный текст не копируется в объект доски.
-- council/консилиум не обещай как доступный через эту capability, пока отдельный безопасный council transport не включён.
+- Для консилиума используй model=council_free. Он работает только через provided-only evidence bundle и бесплатный council tier; paid council обычному пользователю не запускай и не обещай.
 
 # EVENT READINESS
 - После подтверждённого calendar event backend автоматически создаёт event card. Для записи подкаста передавай event_type=podcast, иначе generic.
@@ -1389,17 +1389,21 @@ explicit buffered replay is required instead of pretending the provisional text 
                 create_if_allowed=False,
             )
             command_id, _args_sha = self._command_id(session, name, args)
-            run = await self.analytics.start_single(
-                actor_id=actor_id,
-                workspace_id=workspace_id,
-                project_id=project_id,
-                board_id=board["id"],
-                object_ids=[str(item) for item in raw_object_ids],
-                command_id=command_id,
-                model=str(args.get("model") or "kimi_k3"),
-                purpose=str(args.get("purpose") or "edge_cases"),
-                question=str(args.get("question") or ""),
-            )
+            model = str(args.get("model") or "kimi_k3")
+            common = {
+                "actor_id": actor_id,
+                "workspace_id": workspace_id,
+                "project_id": project_id,
+                "board_id": board["id"],
+                "object_ids": [str(item) for item in raw_object_ids],
+                "command_id": command_id,
+                "purpose": str(args.get("purpose") or "edge_cases"),
+                "question": str(args.get("question") or ""),
+            }
+            if model == "council_free":
+                run = await self.analytics.start_council(**common)
+            else:
+                run = await self.analytics.start_single(model=model, **common)
             return {
                 **run,
                 "ui_command": {
