@@ -20,6 +20,11 @@ class AnalyticsBridgeClient:
     REQUIRED_ISOLATION_FIELDS = {"context_mode", "evidence_bundle", "request_key"}
     ALLOWED_TOOLS = {"consult_model", "read_task", "cancel_task", "council_run", "list_models"}
 
+    PRO_COUNCIL_MODELS = (
+        "nvidia/moonshotai/kimi-k3",
+        "nvidia/deepseek-ai/deepseek-v4.1-flash",
+    )
+
     FREE_COUNCIL_PREFERENCE = (
         "opencode/nemotron-3-ultra-free",
         "opencode/nemotron-3.5-lightning-free",
@@ -191,32 +196,74 @@ class AnalyticsBridgeClient:
             for selection in ordered[:2]
         ]
 
+    async def _pro_council_participants(self) -> list[dict[str, str]]:
+        catalog = await self._call(
+            "list_models",
+            {"provider": "nvidia", "verified_only": False},
+        )
+        raw_models = catalog.get("models")
+        if not isinstance(raw_models, list):
+            raw_models = catalog.get("items")
+        if not isinstance(raw_models, list):
+            raise AnalyticsBridgeError("NVIDIA model catalog is unavailable")
+        available = {
+            str(item.get("selection") or item.get("id") or "")
+            for item in raw_models
+            if isinstance(item, dict)
+            and item.get("provider") == "nvidia"
+            and item.get("routingRecommended") is not False
+        }
+        missing = [
+            selection for selection in self.PRO_COUNCIL_MODELS
+            if selection not in available
+        ]
+        if missing:
+            raise AnalyticsBridgeError(
+                "Required paid council models are unavailable: " + ", ".join(missing)
+            )
+        return [
+            {"provider": "nvidia", "model": selection}
+            for selection in self.PRO_COUNCIL_MODELS
+        ]
+
     async def council(
         self,
         *,
         prompt: str,
         evidence_bundle: str,
         request_key: str,
+        tier: str = "free",
+        paid_confirmation_token: str | None = None,
     ) -> dict[str, Any]:
         if not await self.safe_council_available():
             raise AnalyticsBridgeError(
                 "Tenant-safe council capability is unavailable"
             )
-        participants = await self._free_council_participants()
-        return await self._call(
-            "council_run",
-            {
-                "project": self.project_hint,
-                "prompt": prompt,
-                "context_mode": "provided_only",
-                "evidence_bundle": evidence_bundle,
-                "request_key": request_key,
-                "tier": "free",
-                "participants": participants,
-                "rounds": 2,
-                "mode": "debate",
-            },
-        )
+        if tier == "free":
+            if paid_confirmation_token is not None:
+                raise AnalyticsBridgeError(
+                    "Paid confirmation token cannot be used with free council"
+                )
+            participants = await self._free_council_participants()
+        elif tier == "pro":
+            participants = await self._pro_council_participants()
+        else:
+            raise AnalyticsBridgeError("Unsupported council tier")
+
+        arguments: dict[str, Any] = {
+            "project": self.project_hint,
+            "prompt": prompt,
+            "context_mode": "provided_only",
+            "evidence_bundle": evidence_bundle,
+            "request_key": request_key,
+            "tier": tier,
+            "participants": participants,
+            "rounds": 2,
+            "mode": "debate",
+        }
+        if paid_confirmation_token is not None:
+            arguments["paid_confirmation_token"] = paid_confirmation_token
+        return await self._call("council_run", arguments)
 
     async def read_task(self, task_id: str) -> dict[str, Any]:
         return await self._call(
