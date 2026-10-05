@@ -218,7 +218,7 @@ def update_logs() -> str:
     )
 
 
-def wait_update_button_bounds(timeout_seconds: int = 45) -> tuple[int, int, int, int]:
+def wait_text_bounds(target_text: str, timeout_seconds: int = 45) -> tuple[int, int, int, int]:
     deadline = time.time() + timeout_seconds
     last_xml = ""
     while time.time() < deadline:
@@ -248,8 +248,7 @@ def wait_update_button_bounds(timeout_seconds: int = 45) -> tuple[int, int, int,
             time.sleep(1)
             continue
         for node in root.iter("node"):
-            text = str(node.attrib.get("text") or "")
-            if not text.startswith("Доступно обновление"):
+            if str(node.attrib.get("text") or "") != target_text:
                 continue
             match = re.fullmatch(
                 r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]",
@@ -262,7 +261,7 @@ def wait_update_button_bounds(timeout_seconds: int = 45) -> tuple[int, int, int,
                 return left, top, right, bottom
         time.sleep(1)
     raise RuntimeError(
-        "Update button was not found in Android UI hierarchy; "
+        f"Android UI text {target_text!r} was not found; "
         f"tail={last_xml[-1200:]!r}"
     )
 
@@ -360,19 +359,16 @@ def main() -> None:
     run("adb", "shell", "am", "start", "-W", "-n", ACTIVITY, timeout=30, retries=3)
 
     wait_log(rf"update_available versionCode={new_code}\b", timeout_seconds=150)
-    wait_log(
-        rf"update_button_ready versionCode={new_code} bounds=(\d+),(\d+),(\d+),(\d+)",
-        timeout_seconds=60,
-    )
-    left, top, right, bottom = wait_update_button_bounds()
-    x = (left + right) // 2
-    y = (top + bottom) // 2
-    print(f"app update button: ui bounds={left},{top},{right},{bottom}")
+    wait_log(rf"update_dialog_shown versionCode={new_code}\b", timeout_seconds=60)
 
     run("adb", "shell", "input", "keyevent", "KEYCODE_WAKEUP", timeout=15, retries=3)
     run("adb", "shell", "wm", "dismiss-keyguard", check=False, timeout=15, retries=1)
+    left, top, right, bottom = wait_text_bounds("Обновить", timeout_seconds=60)
+    x = (left + right) // 2
+    y = (top + bottom) // 2
+    print(f"automatic update dialog confirm: ui bounds={left},{top},{right},{bottom}")
     run("adb", "shell", "input", "tap", str(x), str(y), timeout=15, retries=3)
-    wait_log(rf"update_button_clicked versionCode={new_code}\b", timeout_seconds=30)
+    wait_log(rf"update_dialog_confirmed versionCode={new_code}\b", timeout_seconds=30)
 
     permission_required = re.search(
         rf"install_permission_required versionCode={new_code}\b",
@@ -444,7 +440,8 @@ def main() -> None:
         f"versionCode={before[0]}->{after[0]} "
         "manifest_sha256_verified=yes "
         "product_update_available=yes "
-        "product_button_clicked=yes "
+        "product_dialog_shown=yes "
+        "product_dialog_confirmed=yes "
         "product_download_verified=yes "
         "package_installer_handoff=yes "
         "same_signature_in_place_update=yes "
