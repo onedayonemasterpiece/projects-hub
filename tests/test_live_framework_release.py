@@ -5,9 +5,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "web"
 
-LIVE_VERSION = "0.3.23"
-LIVE_REF = "d9a34b3a568ce09b893c9fe3d36a76bd78ec9fae"
-LIVE_RELEASE_COMMIT = "d9a34b3a568ce09b893c9fe3d36a76bd78ec9fae"
+LIVE_VERSION = "0.3.24"
+LIVE_REF = "a86221d6b58eeca3df72d8f32c8d8bf44e126305"
+LIVE_RELEASE_COMMIT = "a86221d6b58eeca3df72d8f32c8d8bf44e126305"
 
 
 def test_browser_live_framework_uses_stable_version_contract():
