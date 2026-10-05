@@ -6,10 +6,11 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
-    "test:live-framework": "node --test tests/*.test.mjs"
+    "test:live-framework": "node --test tests/*.test.mjs",
+    "check:release": "npm ci && npm run test:live-framework && npm run build"
   },
   "dependencies": {
-    "@onedayonemasterpiece/live-interaction": "git+https://github.com/onedayonemasterpiece/live-interaction.git#bc4a25e8188df2c4ff293f0e14578330fd0c2c9c",
+    "@onedayonemasterpiece/live-interaction": "git+https://github.com/onedayonemasterpiece/live-interaction.git#d9a34b3a568ce09b893c9fe3d36a76bd78ec9fae",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
@@ -23,8 +24,8 @@
   "liveFramework": {
     "repository": "https://github.com/onedayonemasterpiece/live-interaction",
     "binding": "browser",
-    "version": "0.3.22",
-    "ref": "bc4a25e8188df2c4ff293f0e14578330fd0c2c9c",
-    "release_commit": "bc4a25e8188df2c4ff293f0e14578330fd0c2c9c"
+    "version": "0.3.23",
+    "ref": "d9a34b3a568ce09b893c9fe3d36a76bd78ec9fae",
+    "release_commit": "d9a34b3a568ce09b893c9fe3d36a76bd78ec9fae"
   }
 }

@@ -687,6 +687,13 @@ button:focus-visible {
   background: rgba(23, 23, 26, 0.94);
 }
 
+.finish-turn-action {
+  min-height: 44px;
+  margin-top: 8px;
+  align-self: flex-start;
+  white-space: normal;
+}
+
 .voice-orb {
   position: relative;
   width: 104px;

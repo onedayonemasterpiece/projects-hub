@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "android/**"
+      - "src/projects_hub/version.py"
       - ".github/workflows/android-release.yml"
   workflow_dispatch:
 
@@ -113,5 +114,6 @@ jobs:
               dist/projects-hub.apk \
               dist/update.json \
               --title "$TITLE" \
+              --target "$GITHUB_SHA" \
               --notes "Signed Projects Hub Android build from ${GITHUB_SHA}."
           fi
