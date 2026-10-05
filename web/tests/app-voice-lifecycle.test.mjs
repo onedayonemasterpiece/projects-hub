@@ -30,6 +30,22 @@ test("Projects Hub renders both sides of the Live conversation as a bounded mess
   assert.match(source, /chatFollowRef/);
 });
 
+test("Projects Hub renders provider interim speech without committing it to chat history", async () => {
+  const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  const backend = await readFile(
+    new URL("../../src/projects_hub/live_adapter.py", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /event\.type === "interim_input_transcript"[\s\S]*setInterimInputTranscript/);
+  assert.match(source, /event\.type === "input_transcript"[\s\S]*setInterimInputTranscript\(""/);
+  assert.match(source, /Слышу сейчас/);
+  assert.match(source, /chat-bubble user interim/);
+  assert.doesNotMatch(
+    backend,
+    /kind not in \{[^}]*interim_input_transcript/,
+  );
+});
+
 test("Projects Hub keeps the Android-hosted PWA network-fresh", async () => {
   const worker = await readFile(new URL("../public/sw.js", import.meta.url), "utf8");
   const main = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
@@ -157,7 +173,7 @@ test("runtime UX distinguishes semantic backend version from build provenance", 
   );
   assert.match(source, /backend_version/);
   assert.match(source, /backend_release_sha упоминай только/);
-  assert.match(version, /0\.1\.22/);
+  assert.match(version, /0\.1\.23/);
 });
 
 test("Projects Hub disables provider-transcript voice stop control", async () => {
