@@ -1,81 +1,235 @@
-# Projects Hub — исполнительное окно доски и сильной аналитики
+# Projects Hub — PH-BOARD-ANALYTICS-2026-10-05-R1
 
-**Task ID: PH-BOARD-ANALYTICS-2026-10-05-R1.** Дата постановки: 5 октября 2026.
+**Действующая исполнительная постановка. Обновлено 06.10.2026 после закрепления CORE-BOARD-VOICE-LLM-FIRST и CORE-BOARD-ANALYTICS-ISOLATION.**
 
-Это задача на реализацию, не на новую концепцию. Нужен работающий продуктовый результат: одна коллаборативная доска на проект, управляемая Мирой, и ограниченная аналитика сильными моделями с долговечными документами. Действуй по этой постановке и [спецификации](../product/19-board-and-strong-analysis.md). [Аудит](../audits/board-and-analysis-20261005.md) уже выполнен, [реальная консультация Kimi K3](../audits/kimi-board-analysis-20261005.md) проведена и критически оценена. Не начинай всё с нуля и не повторяй консультацию без конкретного нового вопроса.
+Продолжай issue #86, draft PR #87 и ветку `docs/board-analysis-20261005`. Не начинай новый общий аудит и не повторяй сохранённую консультацию Kimi K3 с нуля. Перед изменением общих файлов сверяй свежий `main` и сохраняй принятый voice baseline.
 
-Используй GitHub и Codex DevCoveer/OpenCode. ChatGPT самостоятельно читает исходники, принимает содержательные/архитектурные решения и пишет точные изменения кода/документов; OpenCode и прямые инструменты применяют подготовленные изменения, запускают проверки и доставку. Не отправляй весь документ агенту с просьбой независимо переписать проект. Native Codex без отдельного явного выбора владельца не запускать.
+Каноническая продуктовая спецификация: [19-board-and-strong-analysis.md](../product/19-board-and-strong-analysis.md). Исторический аудит и консультация остаются источниками контекста, но их ранние рекомендации про классический manual collaborative canvas не имеют силы, если противоречат текущим CORE requirements.
 
-## 1. Начни с восстановления фактического состояния
+## 1. Нормативный продуктовый контракт
 
-Проверь свежий main, текущий runtime, открытый связанный PR/issue, writer tasks, worktrees и требования. Ветка этого направления: **docs/board-analysis-20261005**. Продолжай её и связанный draft PR; не делай вторую копию задачи/документации. В начале там только четыре Markdown-файла, реализация ещё не запускалась.
+### CORE-BOARD-VOICE-LLM-FIRST
 
-Аудит закреплён на main f5155a4834e1f6a3c1983d5c4466a24a6a0e7f93, но это исторический baseline, не целевая версия для отката. В runtime при аудите была 0.1.26 / 3747b87d9b6154d80c5808b3550e7e260367401e. Эти значения перечитать; не выравнивать их reset/deploy старого main.
+Доска — **voice-first и LLM-first**.
 
-Параллельная работа по голосу: **PH-VOICE-2026-10-05-R1**, на момент аудита PR #84, branch chatgpt/projects-hub-voice-long-input-20261005, physical project **projects-hub-owner**, HEAD 64872cc69d4e5784d14a23273b1e0cb8dac17af8. Определи её свежий статус. Не используй этот checkout для новых изменений, не сбрасывай/не чисти его, не запускай параллельные тесты с записью в те же каталоги. Если voice PR уже merged, включи принятые изменения в baseline и продолжай собственную задачу.
+- Пользователь говорит с центральной Мирой Live.
+- Пользователь **не** создаёт, не редактирует, не перетаскивает, не ресайзит и не печатает текст прямо в объекты доски.
+- Все долговечные board-мутации делает только Мира через typed board-tools от имени аутентифицированного пользователя и в пределах его project ACL.
+- Нормальный `execution_origin` для object mutations — `mira`; `analysis_publish` допускается только для публикации сохранённого результата. `direct_ui` — скрытый owner/debug path, не обычный пользовательский UX и не acceptance path.
+- UI доски — в основном **read-only Pixi/WebGL scene**. Допустимы минимальные view-controls: pan/zoom/pinch камеры, focus, «показать всё», открытие read-only history/report/share panels.
+- Guest всегда view-only.
+- Открытие/закрытие доски не создаёт вторую Live-сессию и не ломает microphone/transcript/следующий turn.
 
-Прочитай AGENTS и .devcoveer/requirements.json, а также актуальные shared live-interaction контракты. Сохраняй единую Миру, WSS, private conversation isolation, explicit first-party project grants, owner-only development, долговечность голоса и штатное Android self-update. Не ослабляй критические требования для прохождения тестов. Board/analytics требования добавляй как проверяемое расширение существующего контракта, не как его замену.
+### CORE-BOARD-ANALYTICS-ISOLATION
 
-## 2. Продуктовые цели
+Strong-model analytics — отдельная provided-context-only capability.
 
-Пользователь говорит «Открой доску проекта» — Мира переключает UI в канвас текущего разрешённого проекта. «Закрой доску» возвращает разговор. В обоих случаях работает та же голосовая сессия, микрофон и транскрипция не сбрасываются.
+- Вход — frozen snapshot явно выбранных board objects + explicit question.
+- `consult_model` / `council_run`: `context_mode=provided_only`, `evidence_bundle`, стабильный `request_key`.
+- Analytics allowlist не содержит `start_task` и других development-write tools.
+- Нельзя читать произвольный project checkout, HOME, логи, connected resources или чужие источники вне evidence bundle.
+- `dispatch_unknown` означает неизвестный исход уже сделанного dispatch; blind retry запрещён.
+- Результат хранится как durable Markdown/structured artifact и может быть опубликован на доску как `document_card` через отдельный receipt.
+- Owner self-development остаётся отдельным явным контуром и не запускается автоматически из анализа.
 
-На доске — качественные разноцветные стикеры с редактируемым текстом и реалистичным ощущением бумажного объёма; не PNG с запечённой надписью и не плоский черновой placeholder. Векторная каноническая модель, WebGL-рендерер PixiJS 8, DOM-редактор текста. Малоконтрастная масштабируемая сетка, touch pan/pinch, мышь/trackpad, плавный отменяемый focus, «показать всё», соблюдение reduced motion. Один board на project, два типа v1: sticky и document_card. Не внедряй Three.js или собственный Skia/WASM renderer.
+## 2. Продуктовый результат
 
-Мира ищет объекты по всей доступной доске, уточняет неоднозначность, фокусирует по актуальному ID/revision на исходном устройстве и может ответить, кто создал и кто изменял объект. Камеры коллег не двигаются. История содержит человека-инициатора и способ выполнения, а не только «автор — AI». Персональная полная расшифровка не становится общей историей проекта.
+Пользователь должен иметь возможность сказать:
 
-Сильная модель или ограниченный консилиум анализируют явно выбранные материалы: риски, пограничные случаи, варианты и уточняющие вопросы. Мира кратко обсуждает результат; полный Markdown открывается из беседы/списка результатов и может быть карточкой на доске. В GitHub он материализуется только по разрешённой binding/publication policy. Принятое решение человека и предложение модели различаются.
+- «Открой доску проекта» / «Закрой доску».
+- «Добавь красный стикер: проверить доступность зала».
+- «Измени этот стикер: …».
+- «Сделай его зелёным».
+- «Перемести ближе к стикеру про аренду».
+- «Разложи эти идеи аккуратнее» / «Сгруппируй похожие».
+- «Удалить этот стикер» / «Восстанови удалённый».
+- «Найди заметку про аренду» / «Перейди к ней» / «Покажи всё».
+- «Кто добавил и кто менял этот стикер?».
+- «Проанализируй эти три идеи с Kimi/DeepSeek».
+- «Пусть несколько моделей обсудят слабые места».
+- «Помести выводы на доску».
+- «Поделись доской».
 
-«Поделись доской» готовит **живую view-only ссылку на семь дней**, с явным предупреждением о видимости будущих правок. Гость открывает без аккаунта, pan/zoom/fullscreen доступны, редактирование/аналитика/личный диалог/приватные связанные документы недоступны. Отзыв работает и для уже открытого WebSocket. В Android — системный chooser через узкую native capability; в PWA голос готовит кнопку для user gesture, если navigator.share нельзя вызвать сразу. Не утверждай доставку сообщения по факту открытия chooser.
+Наблюдаемый результат — authoritative server state + receipt/history/event, а не локальная анимация без сохранения.
 
-Камера→оцифровка рисунка, полноценный Kanban, сложные группы, полноценный offline merge, посимвольный CRDT, произвольные виджеты, бесконечный council и auto-development не входят. Не расширяй scope ими «для архитектурной завершённости».
+## 3. P0 — сначала это
 
-## 3. Технические обязательства
+### A. ACL и server authority
 
-### A. Права проекта
+- Одна доска на project.
+- Один канонический project access resolver.
+- Viewer читает сцену/разрешённую историю, но не создаёт доску скрыто и не запускает analysis.
+- Editor означает право **Миры** выполнять board-mutations от имени actor; UI не превращается в manual editor.
+- `manage_share` отдельно.
+- Negative tests: open/snapshot/search/history/command/start_analysis/create_share по чужому project/workspace, guessed IDs и revoked grants.
+- Board state, seq, event, receipt/idempotency — одной транзакцией.
+- Soft-delete/tombstone + restore/history сохраняются.
 
-В проверенном Store bootstrap/list_projects/_project_row использовали workspace membership, а не явный actor→project grant. Проверь, не исправлено ли это в свежем main; переиспользуй один канонический resolver. Если нет — добавь минимальную project-authorized границу и отрицательные тесты для snapshot/search/history/WS/analytics/share. Не выдавай всем workspace members доступ ко всем проектам миграцией. Не переписывай identity/auth систему целиком.
+### B. Read-only Board UI + sync
 
-### B. Долговечная совместная доска
+- PixiJS/WebGL renderer, сетка, качественный цветной sticky/document_card.
+- UI без primary create/edit/delete/move/resize toolbar.
+- Без contenteditable/textarea поверх стикера, drag handles и resize handles в normal product mode.
+- Pan/zoom/pinch двигают только локальную камеру.
+- WebGL context loss → восстановление из server scene; никакого чёрного экрана с потерей данных.
+- Отдельный Board WSS: snapshot + bounded tail, one-use ticket, origin check, seq/gap handling, reconnect/resync.
+- Presence — максимум минимальный viewer indicator; cursor/drag multiplayer не core.
+- Не внедрять CRDT/Yjs/OT/Redis/Kafka ради v1.
 
-Board WSS отделён от voice PCM. Drag/presence — эфемерные типы того же board-сокета, не отдельная инфраструктура. Сервер — authority; per-object expected_revision; command_id + payload hash; state + seq + audit + receipt одной транзакцией; ACK/broadcast после commit. Snapshot + bounded retained tail закрывает gap загрузки и reconnect. Повтор с прежним id не создаёт дубль. Разные объекты не конфликтуют из-за глобальной revision. Тот же объект при stale revision даёт явный конфликт с сохранением draft, а не silent last-write-wins.
+### C. Live board overlay — та же Мира
 
-Не подставляй свежую expected_revision в старую конфликтную команду автоматически. Tombstone и условный undo не отменяют чужие последующие правки. Проверяй single-process authority до in-memory broadcast. Ограничивай payload/очереди/частоту presence; медленный клиент не забивает сервер. SQLite/WAL переиспользуй; не добавляй Redis/PostgreSQL/CRDT без установленной необходимости.
+Compact typed surface, без десятков eager tools:
 
-### C. Live и UI context
+- open_board / close_board;
+- create_sticky;
+- update_sticky (text/color);
+- move_sticky / arrange (семантический layout hint, «ближе», «сгруппируй», «разложи»);
+- delete_sticky / restore;
+- search_board;
+- focus_object / show_all;
+- read_history;
+- start_analysis / publish_analysis;
+- prepare_share / revoke_share.
 
-Используй shared live-interaction lifecycle, компактный mode/capability overlay и typed product tools. BoardShell не владеет microphone lifecycle и не создаёт вторую provider session. Structured viewport/selection привязаны к actor, conversation, project, board, client instance и interaction/view epoch. Поиск возвращает объект/revision/bbox; клиент подтверждает applied/cancelled. Не считай выполнением только произнесённый ответ Миры.
+Допустимо сохранить существующие compact family tools (`board_navigate`, `board_edit`, `board_analysis`, `board_share`), если их closed schemas покрывают те же действия и не превращаются в произвольный JSON executor.
 
-### D. Изолированная аналитика
+BoardShell не владеет microphone lifecycle. Open/close — UI mode/tool overlay в **той же** Live conversation.
 
-Не подключай аналитику к start_codex_task/DevelopmentService: существующий вызов имеет access=write. Новый read-only facade не получает права owner-development. Нельзя дать обычному участнику administrative DevCoveer project/path/task lookup. **Read-only файловый доступ не tenant isolation.** Нужен provided-context-only evidence bundle и технически запрещённое чтение вне него.
+### D. Structural viewport context
 
-Если текущий bridge не обеспечивает этот режим, сделай минимальное дополнение в owning codex-devcoveer-mcp, согласовав фактическую текущую реализацию новой consult_model; не создавай параллельный gateway. Изменения bridge — отдельный узкий PR/патч с тестами и без перезаписи чужой consultant/council работы. До безопасной изоляции обычные участники не получают capability; owner canary не считается завершённой общей аналитикой.
+Мира должна получать структурный context, а не скриншот как основной механизм:
 
-AnalysisRun долговечен, имеет frozen sources/revisions, budget, exact model/effort, provider task binding и статусы. Текущая consult_model schema не имеет request_key: проверь свежую версию; для lost-dispatch добавь bridge-level idempotency/readback либо сохраняй dispatch_unknown без автоматического повтора. Локальный mutex не означает exactly-once через сеть. Результат сохраняется независимо от доступности GitHub; sync и board insertion — отдельные receipts.
+- actor/conversation/project/board/client instance;
+- board_seq/view epoch;
+- focus/selected object;
+- visible object ids;
+- короткий текст/тип/style/revision/bbox видимых/выбранных объектов;
+- truncation marker и возможность search/read подробнее.
 
-Одна консультация — первая рабочая поставка; далее существующий council_run с ограниченным составом/rounds. Free не использует NVIDIA. Paid extended/pro требуют показать точный план и дождаться явного подтверждения, прежде чем вернуть одноразовый токен. Не подменяй недоступную выбранную модель и не запускай native Codex fallback. Каталог/effort брать из реальной capability; не обещать работоспособность всех перечисленных моделей по одному Kimi success.
+Клиентский текст не является ACL evidence: backend достаёт canonical object data сам.
 
-### E. Share
+Search result содержит `object_id + revision + bbox`. Перед focus клиент сверяет локальную scene/revision. Focus завершён только после client ACK `applied/cancelled/unavailable`.
 
-Отдельный scoped guest grant; hash токена, expiry/revoke на сервере. Guest projection не раскрывает private references, members/emails/audit/conversation. Повторная проверка доступа перед выдачей событий, закрытие действующего сокета при revoke. Исключить guest/private API из service worker cache. Голосовая команда не обходит browser user activation и не выбирает получателя сообщения вместо пользователя.
+## 4. P1 — durability и безопасность
 
-## 4. Как работать параллельно
+### Analytics
 
-Сначала реализуй новые board/* и analytics/* модули, собственные schemas/styles/tests. Общие App.tsx, app.py, store.py, live_adapter.py и package lock уже меняются в voice lane: касайся их минимальными интеграционными патчами после свежего rebase, не переписывай целиком. Не трогай VAD, PCM routing, recovery/replay, transcription truncation, voice budgets, SDK pins, release version/signing в промежуточных поставках.
+- Только provided-only.
+- Durable `AnalysisRun`: frozen revisions/hash, exact model/profile, provider task binding, status, result, source_changed.
+- Lifecycle: queued/dispatching/running/completed/failed/cancelled + `dispatch_unknown` + `waiting_capacity`.
+- NVIDIA не требует пользовательского budget confirmation.
+- Free council остаётся OpenCode-only и не делает скрытый NVIDIA fallback.
+- `council_pro` = ровно Kimi K3 + DeepSeek V4.1 Flash через direct provided-only NVIDIA transport.
+- Два distinct NVIDIA credential/project slots = максимум два concurrent provider inference-вызова; третий ждёт bounded capacity.
+- Credential values не попадают в task records/logs/results.
+- Live conversation имеет приоритет над аналитической нагрузкой.
+- Cancel/late-result/revoked access не должны автоматически публиковать результат.
 
-Новые модули и тесты можно делать до merge voice PR. Финальный merge/release и combined acceptance проводи последовательно на объединённом проверенном baseline. Если пересечение блокирует один адаптер, продолжай независимую часть; не замораживай всю разработку и не обходи конфликт вторым Live framework.
+### Guest/share
 
-Работай в одном свободном проверенном checkout этого направления либо штатном bounded handoff. Не создавай новый checkout/venv на каждый этап. После interruption сначала readback текущего состояния и продолжение, не повторная постановка. После доставки убери свои завершённые временные артефакты/worktree, сохрани отчёты; чужую активную работу не удаляй.
+- Семидневный high-entropy capability token, server stores hash only.
+- Fragment → POST exchange → HttpOnly guest session.
+- Guest HTTP/WSS повторно проверяют expiry/revoke; revoke закрывает уже открытый guest socket.
+- Guest projection не содержит private document body/reference, members, email, conversation, hidden history.
+- Guest UI без microphone/analysis/edit/history.
+- Guest routes network-only/no-store/noindex/no-referrer; service worker не выдаёт private cache fallback.
+- PWA `navigator.share` только из user gesture.
+- Android — только narrow `share.open_chooser`; receipt `chooser_opened=true`, `delivery_confirmed=false`.
 
-## 5. Порядок поставок и DoD
+### GitHub materialization
 
-Следуй этапам A–F спецификации: ACL/contracts → renderer/sync/history → Live mode/search/focus → isolated single model и bounded council → guest/share → combined acceptance/release. После каждого этапа фиксируй что реально изменено, выполненные тесты и следующий незакрытый пункт. Не ограничивайся планом, созданным issue или mock-демонстрацией.
+Internal Markdown — canonical. GitHub — optional deterministic materialization:
 
-Обязательны проверки **T01–T28** из спецификации. Особое внимание: concurrent edits; commit-before-ACK crash; reconnect mid-drag; stale object focus; одна учётная запись в двух вкладках; длинная речь и barge-in при открытии/закрытии; hostile input в analytics bundle; double dispatch; отмена/поздний результат; guest expiry/revoke на открытом WS; private MD preview; Markdown XSS; PWA user gesture; combined Live+canvas+analysis нагрузка.
+- только same-project repository binding;
+- `role=generated_artifacts`;
+- `access_mode=app_managed_write`;
+- bounded allowed path (например `docs/analysis/<run-id>.md`);
+- duplicate content → synced/reused без нового commit;
+- update → guarded expected SHA;
+- public repo → отдельное явное подтверждение публикации полного текста;
+- GitHub outage не удаляет и не обесценивает внутренний report.
 
-Минимальные доказательства результата: backend tests, frontend build/tests, два независимых браузерных контекста, реальный WSS reconnect, реальная single-model консультация через продуктовый маршрут, реальный разрешённый council, guest без аккаунта, физический Android с микрофоном и штатным обновлением при изменении native слоя. Performance профили — 500 стикеров Android / 1000 desktop как проверяемая стартовая нагрузка, а не готовый benchmark. Запиши frame-time, задержки ACK/focus, память и влияние на Live; не обещай FPS по выбору WebGL.
+## 5. P2 — после P0/P1
 
-В итоге обнови документацию и product index, оформи concise acceptance report со ссылками на evidence. Отделяй source, CI, deployed, provider, browser и physical acceptance. Если физического устройства/явного paid approval нет, назови конкретный gate и подготовь воспроизводимую проверку; не помечай его пройденным и не заменяй mock.
+- Event retention/pruning: reconnect tail bounded, object history/audit не удалять вместе с transport tail.
+- Viewer presence минимальный и опциональный.
+- Performance profile на 500 sticky Android / 1000 desktop, но не обещать FPS без измерения.
+- Accessibility/read-only semantic representation.
+- Не строить Kanban, Figma import, camera digitization, полноценный manual editor или бесконечный council в этой поставке.
 
-**Задача завершена, когда доской и аналитикой реально можно пользоваться, права/история/сохранность корректны, семидневный guest просмотр работает, а текущие исправления голоса и updater сохранены.**
+## 6. Работа с текущей веткой и voice lane
+
+Продолжай существующие issue #86 / draft PR #87. Не создавай новый board PR без необходимости.
+
+Перед общими файлами (`App.tsx`, `app.py`, `live_adapter.py`, `live_runtime.py`, package/version metadata) всегда сравнивай со свежим `main`.
+
+Свежий voice baseline имеет приоритет. Нельзя восстанавливать старый App/live file целиком и терять PH-VOICE fixes. Board/analytics — отдельные модули + тонкие adapters.
+
+Не трогай локальные dirty/untracked артефакты другого writer’а без доказательства владения. После interruption — readback текущего состояния и продолжение, не повторная реализация постановки.
+
+## 7. Этапы A–F
+
+**A — authority/contracts**  
+Project ACL, Mira-only write origin, schemas/migrations, board server authority, negative authorization tests.
+
+**B — read-only renderer/sync/history**  
+Pixi scene, view camera, board WSS snapshot/tail, history/restore; никакого normal manual object editor.
+
+**C — voice/Mira integration**  
+Open/close same Live session, compact board tools, structural viewport context, search/focus/show-all + client ACK.
+
+**D — isolated analytics**  
+Single Kimi/DeepSeek first; durable provided-only runs; bounded council; Markdown/questions/source_changed; no development-write path.
+
+**E — guest/share/materialization**  
+Seven-day view-only guest, revoke, PWA/Android share, optional deterministic GitHub sync.
+
+**F — combined acceptance/release**  
+Current voice + board + analytics + guest on one baseline; browser/provider/Android/performance evidence; cleanup and acceptance report.
+
+## 8. Обязательные приёмочные сценарии
+
+Каноническая матрица T01–T28 находится в product spec; трактовать её через voice-first contract. Критические сценарии:
+
+1. «Открой доску» / «Закрой доску» — microphone, transcript и следующий turn живы.
+2. Мира создаёт/обновляет/перемещает/удаляет sticky → server receipt, canvas event, history.
+3. В normal UI нет object create/edit/drag/resize/text input.
+4. Два пользователя через независимые Mira sessions меняют разные объекты → обе команды сходятся.
+5. Две Миры с одной expected revision меняют один object → один commit + явный conflict/readback; никакого silent LWW.
+6. Commit принят, ACK потерян → retry с тем же command_id возвращает прежний receipt без duplicate mutation.
+7. Reconnect после неясного board-command → snapshot/tail + receipt; старый intent не пересылается с новой revision.
+8. Голосовой search→focus → актуальный bbox/client ACK; stale/deleted object не уводит камеру в пустоту.
+9. Structural viewport context отражает visible ids/text/focus/revisions и не требует screenshot OCR.
+10. Viewer/guest/direct API не могут мутировать или стартовать analysis.
+11. Frozen analysis → completed Markdown; board меняется после freeze → source_changed.
+12. Hostile evidence не получает filesystem/start_task/web/admin capability.
+13. Duplicate analysis request_key → один provider dispatch; uncertain dispatch → dispatch_unknown, не blind retry.
+14. `council_pro` автоматически использует Kimi+DeepSeek без user confirmation; максимум два concurrent NVIDIA inference, третий ждёт capacity.
+15. Guest revoke при открытом WSS → сокет закрывается, snapshot/tail больше не выдаются.
+16. Guest не получает private document body/reference.
+17. Result publication создаёт document_card, но не меняет исходные stickies автоматически.
+18. GitHub materialization: create → duplicate reuse → guarded update; public target требует отдельного publish confirmation.
+19. Android chooser не заявляет доставку; PWA share требует user gesture.
+20. WebGL context loss и reconnect не уничтожают scene.
+21. Combined Live+board+analysis не блокирует PCM/turn/tool results.
+
+## 9. Чего не делать
+
+- Не строить manual canvas editor «на всякий случай».
+- Не вводить CRDT/Yjs/OT.
+- Не смешивать analytics с owner-development.
+- Не добавлять второй ASR/LLM/router рядом с Мирой.
+- Не выдавать free council за работающий NVIDIA fallback.
+- Не просить у пользователя подтверждение «бюджета» NVIDIA: admission — техническая capacity policy.
+- Не считать mock/unit заменой real browser/provider/physical evidence.
+- Не удалять чужие worktree/untracked/dirty artifacts «для порядка».
+
+## 10. Definition of Done
+
+Задача не завершена красивым mock, созданным issue или зелёным unit-тестом.
+
+Нужен продуктовый результат:
+
+**пользователь говорит с Мирой → Мира меняет server-authoritative доску → read-only UI показывает результат и focus → коллеги/guest видят разрешённую сцену → analysis получает только frozen evidence → результат долговечен и может быть опубликован карточкой → reconnect/revoke/idempotency сохраняют корректность → voice baseline не регрессировал.**
+
+Acceptance report разделяет source, local tests, CI, deployed runtime, provider, browser и physical evidence. Непройденные gates называются прямо.
