@@ -304,7 +304,7 @@ class BoardService:
         object_id: str,
         expected_object_revision: int | None,
         payload: dict[str, Any] | None,
-        execution_origin: str = "direct_ui",
+        execution_origin: str,
     ) -> dict[str, Any]:
         if not COMMAND_ID_RE.fullmatch(str(command_id or "")):
             raise StoreError("INVALID_ARGUMENT", "command_id is invalid")
@@ -312,8 +312,11 @@ class BoardService:
             raise StoreError("INVALID_ARGUMENT", "board operation is not allowed")
         if not OBJECT_ID_RE.fullmatch(str(object_id or "")):
             raise StoreError("INVALID_ARGUMENT", "object_id is invalid")
-        if execution_origin not in {"direct_ui", "mira", "analysis_publish", "undo"}:
-            raise StoreError("INVALID_ARGUMENT", "execution origin is invalid")
+        if execution_origin not in {"mira", "analysis_publish", "undo"}:
+            raise StoreError(
+                "BOARD_VOICE_ONLY",
+                "Board mutations are available only through Mira or approved server workflows",
+            )
         payload = dict(payload or {})
         envelope = {
             "operation": operation,
