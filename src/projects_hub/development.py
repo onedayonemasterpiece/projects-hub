@@ -920,6 +920,44 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
             return "interrupted"
         return "running"
 
+    @classmethod
+    def _task_status_from_result(cls, result: dict[str, Any]) -> str:
+        """Prefer native turn/runtime terminal evidence over stale wrapper running."""
+
+        candidates: list[Any] = []
+        latest = result.get("latestTurn")
+        if isinstance(latest, dict):
+            candidates.append(latest.get("status"))
+
+        runtime = result.get("runtimeStatus")
+        if isinstance(runtime, dict):
+            candidates.append(runtime.get("type") or runtime.get("status"))
+
+        task = result.get("task")
+        if isinstance(task, dict):
+            task_latest = task.get("latestTurn")
+            if isinstance(task_latest, dict):
+                candidates.append(task_latest.get("status"))
+            task_runtime = task.get("runtimeStatus")
+            if isinstance(task_runtime, dict):
+                candidates.append(
+                    task_runtime.get("type") or task_runtime.get("status")
+                )
+
+        candidates.extend(
+            [
+                result.get("executionStatus"),
+                result.get("status"),
+                task.get("status") if isinstance(task, dict) else None,
+            ]
+        )
+
+        for value in candidates:
+            mapped = cls._map_task_status(value)
+            if mapped != "running":
+                return mapped
+        return "running"
+
     def _design_artifact_readback(
         self,
         *,
@@ -1263,11 +1301,7 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
             project=str(item["project_hint"]),
             detail="summary",
         )
-        turn_status = self._map_task_status(
-            result.get("status")
-            or result.get("executionStatus")
-            or (result.get("task") or {}).get("status")
-        )
+        turn_status = self._task_status_from_result(result)
         latest = result.get("latestTurn") if isinstance(result.get("latestTurn"), dict) else {}
         summary = str(
             result.get("finalResponse")
@@ -1304,11 +1338,7 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
                         )
                     except DevCoveerError:
                         resumed = {"status": "interrupted"}
-                    resumed_status = self._map_task_status(
-                        resumed.get("status")
-                        or resumed.get("executionStatus")
-                        or (resumed.get("task") or {}).get("status")
-                    )
+                    resumed_status = self._task_status_from_result(resumed)
                     if resumed_status not in {
                         "failed",
                         "cancelled",

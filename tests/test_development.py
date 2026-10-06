@@ -1243,6 +1243,44 @@ async def test_review_rework_limit_remains_bounded_at_new_maximum(tmp_path: Path
         store.close()
 
 
+
+def test_terminal_native_status_overrides_stale_running_wrapper():
+    stale_interrupted = {
+        "status": "running",
+        "executionStatus": "running",
+        "latestTurn": {"status": "interrupted"},
+        "task": {
+            "status": "running",
+            "runtimeStatus": {"type": "interrupted"},
+        },
+    }
+    assert (
+        DevelopmentService._task_status_from_result(stale_interrupted)
+        == "interrupted"
+    )
+
+    stale_completed = {
+        "status": "running",
+        "latestTurn": {"status": "completed"},
+        "task": {"runtimeStatus": {"type": "running"}},
+    }
+    assert (
+        DevelopmentService._task_status_from_result(stale_completed)
+        == "completed"
+    )
+
+    genuinely_running = {
+        "status": "running",
+        "executionStatus": "running",
+        "latestTurn": {"status": "running"},
+        "task": {"runtimeStatus": {"type": "running"}},
+    }
+    assert (
+        DevelopmentService._task_status_from_result(genuinely_running)
+        == "running"
+    )
+
+
 def test_owner_development_tools_are_not_exposed_to_ordinary_users():
     ordinary = {item["name"] for item in _functions(owner_development=False)}
     owner = {item["name"] for item in _functions(owner_development=True)}
