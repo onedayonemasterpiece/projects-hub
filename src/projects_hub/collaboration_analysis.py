@@ -478,6 +478,32 @@ class CollaborationAnalysisService:
                             prompt[:240], now,
                         ),
                     )
+                blocking_count = self.store.db.execute(
+                    """SELECT COUNT(*) AS n FROM collaboration_questions
+                       WHERE analysis_id=? AND blocking=1""",
+                    (row["id"],),
+                ).fetchone()["n"]
+                if int(blocking_count or 0) == 0:
+                    answers = [
+                        self._question_public(item)
+                        for item in self.store.db.execute(
+                            "SELECT * FROM collaboration_questions WHERE analysis_id=? ORDER BY created_at_ms,id",
+                            (row["id"],),
+                        ).fetchall()
+                    ]
+                    self.store.db.execute(
+                        """INSERT OR IGNORE INTO collaboration_jobs(
+                               id,workspace_id,project_id,analysis_id,kind,
+                               requesting_actor_id,status,request_key,payload_json,
+                               created_at_ms,updated_at_ms)
+                           VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            _id("cj"), row["workspace_id"], row["project_id"], row["id"],
+                            "analysis_followup", row["initiating_actor_id"], "queued",
+                            f"collaboration-continuation:{row['id']}",
+                            _canonical({"answers": answers}), now, now,
+                        ),
+                    )
                 self.store.db.execute("COMMIT")
             except Exception:
                 self.store.db.execute("ROLLBACK")
@@ -834,13 +860,15 @@ class CollaborationAnalysisService:
                 ).fetchall()
                 has_deferred = any(row["state"] == "deferred" for row in blocking)
                 has_unresolved = any(row["state"] in {"open", "skipped", "unknown"} for row in blocking)
-                all_resolved = bool(blocking) and all(row["state"] == "resolved" for row in blocking)
+                all_resolved = all(row["state"] == "resolved" for row in blocking)
                 job = self.store.db.execute(
                     "SELECT * FROM collaboration_jobs WHERE analysis_id=? AND kind='analysis_followup'",
                     (analysis_id,),
                 ).fetchone()
+                continuation_job_id = str(job["id"]) if job else None
                 if all_resolved and not job:
                     job_id = _id("cj")
+                    continuation_job_id = job_id
                     answers = [
                         self._question_public(row)
                         for row in self.store.db.execute(
@@ -876,6 +904,7 @@ class CollaborationAnalysisService:
                         "deferred" if has_deferred else
                         "blocked" if has_unresolved else "not_required"
                     ),
+                    "continuation_job_id": continuation_job_id,
                 }
                 self.store.db.execute(
                     """INSERT INTO collaboration_answer_commands(
