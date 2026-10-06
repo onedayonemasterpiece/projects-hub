@@ -342,12 +342,23 @@ export type ProjectNote = {
   author_roles: string[];
   title: string;
   body: string;
-  audience: "project";
+  source_text: string;
+  structured: Record<string, unknown> | null;
+  audience: "project" | "public";
+  status: "accepted" | "processing" | "waiting_repository" | "blocked" | "ready";
+  processing: {
+    model: string | null;
+    prompt_version: string | null;
+    request_uid: string | null;
+    attempts: number;
+    error: string | null;
+  };
   repository: {
     repository_id: number;
     full_name: string;
     path: string;
     sha: string;
+    commit_sha: string | null;
   };
   revision: number;
   created_at_ms: number;
