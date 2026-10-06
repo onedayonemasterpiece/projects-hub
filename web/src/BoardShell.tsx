@@ -429,7 +429,7 @@ export function BoardShell({
 
   useEffect(() => {
     if (!visible || !analysisRun) return;
-    if (["completed", "failed", "cancelled", "blocked", "confirmation_required"].includes(analysisRun.status)) {
+    if (["completed", "failed", "cancelled", "blocked"].includes(analysisRun.status)) {
       return;
     }
     let cancelled = false;
@@ -1198,7 +1198,6 @@ export function BoardShell({
                   >
                     <option value="kimi_k3">Kimi K3</option>
                     <option value="deepseek">DeepSeek</option>
-                    <option value="council_free">Консилиум · free (может быть недоступен)</option>
                     <option value="council_pro">Консилиум · Kimi + DeepSeek · NVIDIA</option>
                   </select>
                 </label>
