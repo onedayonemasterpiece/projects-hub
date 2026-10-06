@@ -13,7 +13,26 @@ from .store import DurableStore, StoreError
 
 
 ANALYSIS_COMMAND_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
-ANALYSIS_MODELS = {"kimi_k3", "deepseek", "council_free", "council_pro"}
+# Policy order for central Mira, not an automatic backend fallback chain.
+# Every analysis run still selects exactly one model/profile.
+CODEX_ANALYSIS_LADDER = (
+    "gpt_6_luna_medium",
+    "gpt_6_luna_high",
+    "gpt_6_1_sol_low",
+    "gpt_6_1_sol_medium",
+    "gpt_6_1_sol_high",
+    "gpt_6_astra_low",
+    "gpt_6_astra_medium",
+)
+CODEX_COUNCIL_DEFAULT_MODEL = "gpt_6_luna_medium"
+DEFAULT_ANALYSIS_MODEL = CODEX_ANALYSIS_LADDER[0]
+ANALYSIS_MODEL_OPTIONS = CODEX_ANALYSIS_LADDER + (
+    "kimi_k3",
+    "deepseek",
+    "council_free",
+    "council_pro",
+)
+ANALYSIS_MODELS = set(ANALYSIS_MODEL_OPTIONS)
 ANALYSIS_PURPOSES = {"requirements", "edge_cases", "architecture", "code_review", "ideas"}
 MAX_ANALYSIS_OBJECTS = 12
 MAX_ANALYSIS_QUESTION = 4000
