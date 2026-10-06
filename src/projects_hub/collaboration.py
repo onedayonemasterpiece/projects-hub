@@ -359,6 +359,11 @@ class CollaborationService:
                            WHERE id=?""",
                         (exc.code, _now_ms(), note_id),
                     )
+                self._set_intent_state(
+                    note_id,
+                    status="blocked",
+                    error_code=exc.code,
+                )
                 raise StoreError(exc.code, str(exc)) from exc
 
             with self.store._lock:
@@ -431,6 +436,11 @@ class CollaborationService:
                        WHERE id=?""",
                     (exc.code, _now_ms(), note_id),
                 )
+            self._set_intent_state(
+                note_id,
+                status="blocked",
+                error_code=exc.code,
+            )
             raise
 
         repository_sha = str(verified.get("sha") or "")
@@ -443,6 +453,11 @@ class CollaborationService:
                            updated_at_ms=? WHERE id=?""",
                     (_now_ms(), note_id),
                 )
+            self._set_intent_state(
+                note_id,
+                status="blocked",
+                error_code="GITHUB_READBACK_MISMATCH",
+            )
             raise StoreError(
                 "GITHUB_READBACK_MISMATCH",
                 "Repository readback does not match project note Markdown",
@@ -490,6 +505,12 @@ class CollaborationService:
                             now,
                         ),
                     )
+                self.store.db.execute(
+                    """UPDATE project_note_intents
+                       SET status='ready',error_code=NULL,updated_at_ms=?
+                       WHERE id=?""",
+                    (now, note_id),
+                )
                 row = self._note_row(note_id)
                 self.store.db.execute("COMMIT")
             except Exception:
