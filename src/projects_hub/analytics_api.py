@@ -5,7 +5,7 @@ from typing import Any, Callable
 from fastapi import FastAPI, Request, Response
 from pydantic import BaseModel, Field
 
-from .analytics import AnalyticsService
+from .analytics import AnalyticsService, DEFAULT_ANALYSIS_MODEL
 from .analytics_materialization import AnalysisMaterializer
 
 
@@ -15,7 +15,7 @@ class AnalysisStartRequest(BaseModel):
     board_id: str
     object_ids: list[str] = Field(min_length=1, max_length=12)
     command_id: str
-    model: str = "kimi_k3"
+    model: str = DEFAULT_ANALYSIS_MODEL
     purpose: str
     question: str = Field(min_length=1, max_length=4000)
 

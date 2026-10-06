@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 import pytest
 
-from projects_hub.analytics import AnalyticsService
+from projects_hub.analytics import ANALYSIS_MODEL_OPTIONS, CODEX_ANALYSIS_LADDER, AnalyticsService
 from projects_hub.app import create_app
 from projects_hub.auth import COOKIE_NAME, issue_session
 from projects_hub.board import BoardService
@@ -295,6 +295,8 @@ async def test_mira_nvidia_council_starts_without_confirmation_action(tmp_path: 
         )
         assert "confirm" not in analysis_fn["parameters"]["properties"]["action"]["enum"]
         assert "confirmed" not in analysis_fn["parameters"]["properties"]
+        assert analysis_fn["parameters"]["properties"]["model"]["enum"] == list(ANALYSIS_MODEL_OPTIONS)
+        assert list(CODEX_ANALYSIS_LADDER) == analysis_fn["parameters"]["properties"]["model"]["enum"][:7]
         session = SimpleNamespace(state=initialized["state"])
 
         started = await adapter.execute_tool(

@@ -100,7 +100,18 @@ export type AnalysisRun = {
   project_id: string;
   board_id: string;
   purpose: "requirements" | "edge_cases" | "architecture" | "code_review" | "ideas";
-  model: "kimi_k3" | "deepseek" | "council_free" | "council_pro";
+  model:
+    | "gpt_6_luna_medium"
+    | "gpt_6_luna_high"
+    | "gpt_6_1_sol_low"
+    | "gpt_6_1_sol_medium"
+    | "gpt_6_1_sol_high"
+    | "gpt_6_astra_low"
+    | "gpt_6_astra_medium"
+    | "kimi_k3"
+    | "deepseek"
+    | "council_free"
+    | "council_pro";
   question: string;
   status: "dispatching" | "dispatch_unknown" | "waiting_capacity" | "running" | "completed" | "failed" | "cancelled" | "blocked";
   result_markdown: string;
