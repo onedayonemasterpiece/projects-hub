@@ -123,6 +123,7 @@ def _setup(tmp_path: Path):
             "text": "Analyze this",
             "style": {"color": "blue"},
         },
+        execution_origin="mira",
     )
     analytics = AnalyticsService(store, board, bridge=FakeBridge())
     return store, actor, workspace, project, board_id, analytics
