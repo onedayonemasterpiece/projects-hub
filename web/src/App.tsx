@@ -1340,7 +1340,7 @@ export default function App() {
         )}
       </header>
 
-      {(boot || voiceActive || chatMessages.length > 0 || interimInputTranscript || playbackProblem) && (
+      {((voiceActive || chatMessages.length > 0 || interimInputTranscript || playbackProblem) || boot) && (
         <section className="chat-canvas" aria-label="Диалог с Мирой">
           <div
             className="chat-thread"
