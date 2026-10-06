@@ -1,0 +1,393 @@
+from __future__ import annotations
+
+from pathlib import Path
+from types import SimpleNamespace
+from urllib.parse import unquote, urlsplit
+
+import pytest
+from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
+
+from projects_hub.app import create_app
+from projects_hub.auth import COOKIE_NAME, issue_session
+from projects_hub.board import BoardService
+from projects_hub.device_commands import DeviceCommandService
+from projects_hub.live_adapter import ProjectsHubLiveAdapter
+from projects_hub.live_resources import ConversationScope
+from projects_hub.settings import Settings
+from projects_hub.sharing import SharingService
+from projects_hub.sharing_api import (
+    GUEST_CLIENT_PREFIX,
+    GUEST_PROTOCOL,
+    GUEST_TICKET_PREFIX,
+)
+from projects_hub.store import DurableStore
+
+
+def setup(tmp_path: Path):
+    store = DurableStore(tmp_path / "data")
+    boot = store.ensure_dev_workspace("Share owner")
+    actor = boot["actor"]["id"]
+    workspace = boot["workspace"]["id"]
+    project = boot["projects"][0]["id"]
+    board = BoardService(store)
+    board_id = board.open_board(actor, workspace, project)["id"]
+    board.apply_command(
+        actor_id=actor,
+        workspace_id=workspace,
+        board_id=board_id,
+        command_id="cmd_share_public_sticky",
+        operation="create",
+        object_id="obj_share_public",
+        expected_object_revision=None,
+        payload={
+            "type": "sticky",
+            "text": "Visible sticky",
+            "style": {"color": "green"},
+        },
+        execution_origin="mira",
+    )
+    board.apply_command(
+        actor_id=actor,
+        workspace_id=workspace,
+        board_id=board_id,
+        command_id="cmd_share_private_doc",
+        operation="create",
+        object_id="obj_share_private",
+        expected_object_revision=None,
+        payload={
+            "type": "document_card",
+            "text": "Secret analysis title",
+            "style": {"color": "violet"},
+            "reference": {"kind": "analysis_run", "id": "anr_private_report"},
+        },
+        execution_origin="mira",
+    )
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        static_dir=tmp_path / "missing-ui",
+        session_secret="s" * 64,
+        dev_auth=True,
+        cookie_secure=False,
+    )
+    app = create_app(settings, store=store)
+    return store, app, settings, actor, workspace, project, board, board_id
+
+
+def owner_client(app, settings, actor):
+    client = TestClient(app, base_url="http://testserver")
+    client.cookies.set(COOKIE_NAME, issue_session(actor, settings.session_secret))
+    return client
+
+
+def token_from_share_url(value: str) -> str:
+    fragment = urlsplit(value).fragment
+    assert fragment.startswith("token=")
+    return unquote(fragment.removeprefix("token="))
+
+
+def test_guest_projection_hides_private_document_and_direct_apis(tmp_path: Path):
+    store, app, settings, actor, workspace, project, _board, board_id = setup(tmp_path)
+    try:
+        with owner_client(app, settings, actor) as owner:
+            created = owner.post(
+                f"/api/projects/{project}/shares",
+                json={"workspace_id": workspace},
+            )
+            assert created.status_code == 200, created.text
+            payload = created.json()
+            assert payload["board_id"] == board_id
+            assert payload["url"].startswith("/guest/board#token=")
+            assert "?" not in payload["url"]
+            assert payload["expires_at_ms"] - payload["created_at_ms"] == 7 * 24 * 60 * 60 * 1000
+            token = token_from_share_url(payload["url"])
+
+        with TestClient(app, base_url="http://testserver") as guest:
+            exchanged = guest.post("/api/guest/exchange", json={"token": token})
+            assert exchanged.status_code == 200, exchanged.text
+            assert "session_token" not in exchanged.json()
+            assert exchanged.headers["cache-control"] == "no-store"
+            assert exchanged.headers["x-robots-tag"].startswith("noindex")
+            assert exchanged.headers["referrer-policy"] == "no-referrer"
+
+            snapshot = guest.get("/api/guest/board")
+            assert snapshot.status_code == 200, snapshot.text
+            assert snapshot.headers["cache-control"] == "no-store"
+            objects = {item["id"]: item for item in snapshot.json()["objects"]}
+            assert objects["obj_share_public"]["text"] == "Visible sticky"
+            private = objects["obj_share_private"]
+            assert private["text"] == "Закрытый документ"
+            assert private["reference"] is None
+            assert private["created_by"] == ""
+            assert private["updated_by"] == ""
+
+            assert guest.get(
+                f"/api/boards/{board_id}/objects/obj_share_public/history",
+                params={"workspace_id": workspace},
+            ).status_code == 401
+            assert guest.post(
+                "/api/analysis/runs",
+                json={
+                    "workspace_id": workspace,
+                    "project_id": project,
+                    "board_id": board_id,
+                    "object_ids": ["obj_share_public"],
+                    "command_id": "analysis_guest_denied",
+                    "model": "kimi_k3",
+                    "purpose": "edge_cases",
+                    "question": "Should fail.",
+                },
+            ).status_code == 401
+            assert guest.post(
+                f"/api/boards/{board_id}/commands",
+                json={
+                    "workspace_id": workspace,
+                    "command_id": "cmd_guest_edit_denied",
+                    "operation": "update",
+                    "object_id": "obj_share_public",
+                    "expected_object_revision": 1,
+                    "payload": {"text": "should not write"},
+                },
+            ).status_code == 401
+    finally:
+        store.close()
+
+
+def test_guest_wss_streams_durable_projection_and_revoke_closes_open_socket(tmp_path: Path):
+    store, app, settings, actor, workspace, project, board, board_id = setup(tmp_path)
+    try:
+        with owner_client(app, settings, actor) as owner:
+            share = owner.post(
+                f"/api/projects/{project}/shares",
+                json={"workspace_id": workspace},
+            ).json()
+            share_id = share["id"]
+            token = token_from_share_url(share["url"])
+
+        with TestClient(app, base_url="http://testserver") as guest:
+            assert guest.post("/api/guest/exchange", json={"token": token}).status_code == 200
+            ticket = guest.post(
+                "/api/guest/board/socket-ticket",
+                json={"client_instance_id": "guest-browser-one"},
+            )
+            assert ticket.status_code == 200, ticket.text
+            issued = ticket.json()
+            protocols = [
+                GUEST_PROTOCOL,
+                GUEST_TICKET_PREFIX + issued["ticket"],
+                GUEST_CLIENT_PREFIX + "guest-browser-one",
+            ]
+            with guest.websocket_connect(
+                "/api/guest/board/socket",
+                subprotocols=protocols,
+                headers={"origin": "http://testserver"},
+            ) as socket:
+                first = socket.receive_json()
+                assert first["type"] == "snapshot"
+                board.apply_command(
+                    actor_id=actor,
+                    workspace_id=workspace,
+                    board_id=board_id,
+                    command_id="cmd_share_stream_update",
+                    operation="update",
+                    object_id="obj_share_private",
+                    expected_object_revision=1,
+                    payload={"text": "Even newer secret title"},
+                    execution_origin="mira",
+                )
+                event = socket.receive_json()
+                assert event["type"] == "event"
+                assert event["event"]["after"]["text"] == "Закрытый документ"
+                assert event["event"]["after"]["reference"] is None
+                assert "initiating_actor_id" not in event["event"]
+                assert "command_id" not in event["event"]
+
+                with owner_client(app, settings, actor) as owner:
+                    revoked = owner.post(
+                        f"/api/shares/{share_id}/revoke",
+                        json={"workspace_id": workspace},
+                    )
+                    assert revoked.status_code == 200
+                with pytest.raises(WebSocketDisconnect):
+                    while True:
+                        socket.receive_json()
+
+            assert guest.get("/api/guest/board").status_code == 400
+    finally:
+        store.close()
+
+
+def test_expired_share_cannot_exchange_or_continue(tmp_path: Path):
+    store, app, settings, actor, workspace, project, _board, _board_id = setup(tmp_path)
+    try:
+        with owner_client(app, settings, actor) as owner:
+            share = owner.post(
+                f"/api/projects/{project}/shares",
+                json={"workspace_id": workspace},
+            ).json()
+        token = token_from_share_url(share["url"])
+        with store._lock:
+            store.db.execute(
+                "UPDATE board_share_grants SET expires_at_ms=1 WHERE id=?",
+                (share["id"],),
+            )
+        with TestClient(app, base_url="http://testserver") as guest:
+            denied = guest.post("/api/guest/exchange", json={"token": token})
+            assert denied.status_code == 400
+            assert denied.json()["error"]["code"] == "GUEST_TOKEN_INVALID"
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_mira_share_tool_prepares_link_without_claiming_delivery(tmp_path: Path):
+    store, _app, _settings, actor, workspace, project, board, board_id = setup(tmp_path)
+    try:
+        conversation = store.create_conversation(actor, workspace, project)
+        binding = ConversationScope(workspace, actor, conversation["id"]).resource_binding()
+        adapter = ProjectsHubLiveAdapter(store, board=board)
+        initialized = adapter.initialize(
+            resource_id=binding,
+            actor={"subject": actor, "tenant_id": workspace},
+            model="gemini-3.8-live",
+            conversation_id=conversation["id"],
+        )
+        functions = {item["name"] for item in initialized["configuration"]["functions"]}
+        assert "board_share" in functions
+        assert initialized["response"]["sharing_enabled"] is True
+        session = SimpleNamespace(state=initialized["state"])
+
+        result = await adapter.execute_tool(
+            session,
+            {"name": "board_share", "args": {"action": "create"}},
+        )
+        assert result["board_id"] == board_id
+        assert result["url"].startswith("/guest/board#token=")
+        assert result["ui_command"]["kind"] == "share"
+        assert result["ui_command"]["action"] == "ready"
+        assert "future" not in result
+        assert "sent" not in result
+        assert "достав" not in result["warning"].casefold()
+
+        listed = await adapter.execute_tool(
+            session,
+            {"name": "board_share", "args": {"action": "list"}},
+        )
+        assert listed["items"][0]["id"] == result["id"]
+        assert "url" not in listed["items"][0]
+
+        revoked = await adapter.execute_tool(
+            session,
+            {
+                "name": "board_share",
+                "args": {"action": "revoke", "share_id": result["id"]},
+            },
+        )
+        assert revoked["id"] == result["id"]
+        assert revoked["revoked_at_ms"] > 0
+    finally:
+        store.close()
+
+
+def test_share_tool_is_not_exposed_without_project_capability(tmp_path: Path):
+    store, _app, _settings, actor, workspace, project, board, _board_id = setup(tmp_path)
+    try:
+        viewer = "usr_share_viewer"
+        with store._lock:
+            store.db.execute(
+                "INSERT INTO actors(id,display_name,created_at_ms) VALUES(?,?,1)",
+                (viewer, "Viewer"),
+            )
+            store.db.execute(
+                "INSERT INTO memberships(actor_id,workspace_id,role) VALUES(?,?,?)",
+                (viewer, workspace, "member"),
+            )
+            store.db.execute(
+                """INSERT INTO project_grants(
+                       actor_id,project_id,role,can_analyze,can_manage_share,created_at_ms,revoked_at_ms)
+                   VALUES(?,?,?,0,0,1,NULL)""",
+                (viewer, project, "viewer"),
+            )
+        conversation = store.create_conversation(viewer, workspace, project)
+        binding = ConversationScope(workspace, viewer, conversation["id"]).resource_binding()
+        initialized = ProjectsHubLiveAdapter(store, board=board).initialize(
+            resource_id=binding,
+            actor={"subject": viewer, "tenant_id": workspace},
+            model="gemini-3.8-live",
+            conversation_id=conversation["id"],
+        )
+        functions = {item["name"] for item in initialized["configuration"]["functions"]}
+        assert "board_share" not in functions
+        assert initialized["response"]["sharing_enabled"] is False
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_android_mira_share_opens_native_chooser_without_delivery_claim(tmp_path: Path):
+    store, _app, _settings, actor, workspace, project, board, _board_id = setup(tmp_path)
+    device_commands = DeviceCommandService(store)
+    registration = device_commands.register_device(
+        actor_id=actor,
+        workspace_id=workspace,
+        display_name="Pixel share",
+        platform="android",
+        capabilities=["share.open_chooser"],
+    )
+    sharing = SharingService(
+        store,
+        board,
+        public_origin="https://projects-hub.example",
+    )
+    try:
+        conversation = store.create_conversation(actor, workspace, project)
+        binding = ConversationScope(workspace, actor, conversation["id"]).resource_binding()
+        adapter = ProjectsHubLiveAdapter(
+            store,
+            board=board,
+            sharing=sharing,
+            device_commands=device_commands,
+        )
+        initialized = adapter.initialize(
+            resource_id=binding,
+            actor={"subject": actor, "tenant_id": workspace},
+            model="gemini-3.8-live",
+            conversation_id=conversation["id"],
+            client_version="0.1.28",
+        )
+        seen = {}
+
+        async def chooser_applied(**kwargs):
+            seen["timeout_seconds"] = kwargs["timeout_seconds"]
+            command = store.get_device_command(
+                actor_id=actor,
+                workspace_id=workspace,
+                command_id=kwargs["command_id"],
+            )
+            seen["command"] = command
+            return {
+                "command_id": kwargs["command_id"],
+                "device_id": registration["device"]["id"],
+                "capability": "share.open_chooser",
+                "status": "applied",
+                "result": {
+                    "readback_verified": True,
+                    "chooser_opened": True,
+                    "delivery_confirmed": False,
+                },
+            }
+
+        device_commands.wait_for_terminal = chooser_applied
+        result = await adapter.execute_tool(
+            SimpleNamespace(state=initialized["state"]),
+            {"name": "board_share", "args": {"action": "create"}},
+        )
+        assert result["url"].startswith("https://projects-hub.example/guest/board#token=")
+        assert seen["timeout_seconds"] == 8.0
+        assert seen["command"]["capability"] == "share.open_chooser"
+        assert seen["command"]["payload"]["url"] == result["url"]
+        assert result["native_share"]["status"] == "applied"
+        assert result["native_share"]["result"]["chooser_opened"] is True
+        assert result["native_share"]["result"]["delivery_confirmed"] is False
+    finally:
+        store.close()

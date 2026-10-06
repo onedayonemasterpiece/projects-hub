@@ -4,6 +4,9 @@ import logging
 import os
 from typing import Any, Callable
 
+from .analytics import AnalyticsService
+from .board import BoardService
+from .board_view_context import BoardViewContextStore
 from .device_commands import DeviceCommandService
 from .development import DevelopmentService
 from .expert_reviews import ExpertReviewAdapter
@@ -14,6 +17,7 @@ from .live_admission import ProjectsHubAdmissionMixin
 from .live_resources import live_resource_environment
 from .live_transcription import CaptionSidecar
 from .readiness import ReadinessService
+from .sharing import SharingService
 from .store import DurableStore
 
 log = logging.getLogger("projects_hub.live")
@@ -53,6 +57,11 @@ def build_live_host(
     store: DurableStore,
     *,
     environment: dict[str, str] | None = None,
+    board: BoardService | None = None,
+    board_hub: Any | None = None,
+    board_view_context: BoardViewContextStore | None = None,
+    analytics: AnalyticsService | None = None,
+    sharing: SharingService | None = None,
     device_commands: DeviceCommandService | None = None,
     readiness: ReadinessService | None = None,
     development: DevelopmentService | None = None,
@@ -76,6 +85,10 @@ def build_live_host(
     env = dict(os.environ if environment is None else environment)
     max_sessions = _live_max_sessions(env)
     max_sessions_per_actor = _live_max_sessions_per_actor(env, max_sessions)
+    board = board or BoardService(store)
+    board_view_context = board_view_context or BoardViewContextStore(store, board)
+    analytics = analytics or AnalyticsService(store, board)
+    sharing = sharing or SharingService(store, board)
     resource_environment = live_resource_environment(env)
     device_commands = device_commands or DeviceCommandService(store)
     readiness = readiness or ReadinessService(store)
@@ -216,6 +229,11 @@ def build_live_host(
         diagnostic=live_diagnostic,
         adapter_factory=lambda **shared: ProjectsHubLiveAdapter(
             store,
+            board=board,
+            board_hub=board_hub,
+            board_view_context=board_view_context,
+            analytics=analytics,
+            sharing=sharing,
             device_commands=device_commands,
             readiness=readiness,
             development=development,

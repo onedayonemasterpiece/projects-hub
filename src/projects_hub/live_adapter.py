@@ -8,6 +8,15 @@ from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any, Callable
 
+from .analytics import (
+    ANALYSIS_MODEL_OPTIONS,
+    CODEX_ANALYSIS_LADDER,
+    CODEX_COUNCIL_DEFAULT_MODEL,
+    DEFAULT_ANALYSIS_MODEL,
+    AnalyticsService,
+)
+from .board import BoardService
+from .board_view_context import BoardViewContextStore
 from .device_commands import DeviceCommandService
 from .development import DevelopmentService
 from .github_connections import GitHubConnections
@@ -26,9 +35,11 @@ from .regional_knowledge import (
 )
 from .live_resources import ConversationScope
 from .readiness import ReadinessService
+from .sharing import SharingService
 from .store import DurableStore, StoreError
 
 log = logging.getLogger("projects_hub.live")
+assert CODEX_ANALYSIS_LADDER[0] == CODEX_COUNCIL_DEFAULT_MODEL == DEFAULT_ANALYSIS_MODEL
 
 _BASE_TRANSCRIPTION_VOCABULARY = ["Мира", "Projects Hub", "Codex", "DevCoveer", "Калининград"]
 
@@ -53,6 +64,8 @@ def _functions(
     expert_reviews: bool = False,
     regional_knowledge: bool = False,
     owner_development: bool = False,
+    analytics: bool = False,
+    sharing: bool = False,
 ) -> list[dict[str, Any]]:
     functions = [
         {
@@ -60,6 +73,113 @@ def _functions(
             "description": "List projects the current actor may use in this workspace. Use when project context is unclear.",
             "parameters": {"type": "object", "properties": {}},
         },
+        {
+            "name": "board_navigate",
+            "description": (
+                "Control the visual board for the current conversation: open it, close it, "
+                "show all objects, or focus one known object. This does not start another "
+                "voice/model session. Use focus only with an object returned by board_query "
+                "or otherwise known from the current board."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["open", "close", "view_all", "focus"],
+                    },
+                    "project_id": {"type": "string"},
+                    "object_id": {"type": "string"},
+                },
+                "required": ["action"],
+            },
+        },
+        {
+            "name": "board_query",
+            "description": (
+                "Read board structure without mutating it. action=view_context returns the "
+                "current originating browser tab's visible/selected/focused objects using "
+                "server-authoritative text, revisions and bounding boxes. action=search "
+                "searches the whole authorized board by text, normalized color, author or id."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["search", "view_context"],
+                    },
+                    "project_id": {"type": "string"},
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                },
+            },
+        },
+        {
+            "name": "board_edit",
+            "description": (
+                "Create, update, move or delete one board object as the current actor. "
+                "Mutations are server-authoritative and revision-checked. For update/move/delete "
+                "pass expected_object_revision from a fresh board result. Never claim success "
+                "until the returned receipt says saved."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "operation": {
+                        "type": "string",
+                        "enum": ["create", "update", "move", "delete"],
+                    },
+                    "object_id": {"type": "string"},
+                    "expected_object_revision": {"type": "integer", "minimum": 1},
+                    "payload": {"type": "object"},
+                },
+                "required": ["operation"],
+            },
+        },
+        {
+            "name": "board_history",
+            "description": (
+                "Read bounded durable history for one current-board object, including "
+                "initiating actor, server time, operation and before/after state."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "object_id": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                },
+                "required": ["object_id"],
+            },
+        },
+        *(
+            [
+                {
+                    "name": "board_share",
+                    "description": (
+                        "Create, list, or revoke seven-day live view-only board links for the "
+                        "current authorized project. Creating a link prepares sharing UI only; "
+                        "do not claim that a recipient received anything."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "enum": ["create", "list", "revoke"],
+                            },
+                            "project_id": {"type": "string"},
+                            "share_id": {"type": "string"},
+                        },
+                        "required": ["action"],
+                    },
+                }
+            ]
+            if sharing
+            else []
+        ),
         {
             "name": "runtime_versions_get",
             "description": (
@@ -438,6 +558,47 @@ def _functions(
                 },
             ]
         )
+    if analytics:
+        functions.append(
+            {
+                "name": "board_analysis",
+                "description": (
+                    "Run or inspect isolated strong-model analysis of explicit board objects, "
+                    "cancel it, or publish a completed Markdown report back as a document card. "
+                    "The backend freezes exact object revisions and never gives the consultant "
+                    "ambient project/file access."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["start", "status", "list", "cancel", "publish"],
+                        },
+                        "project_id": {"type": "string"},
+                        "object_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "maxItems": 12,
+                        },
+                        "run_id": {"type": "string"},
+                        "model": {
+                            "type": "string",
+                            "enum": list(ANALYSIS_MODEL_OPTIONS),
+                        },
+                        "purpose": {
+                            "type": "string",
+                            "enum": ["requirements", "edge_cases", "architecture", "code_review", "ideas"],
+                        },
+                        "question": {"type": "string"},
+                        "object_id": {"type": "string"},
+                        "geometry": {"type": "object"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                    },
+                    "required": ["action"],
+                },
+            }
+        )
     if owner_development:
         functions.extend(
             [
@@ -550,6 +711,16 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Не зачитывай названия function tools и не делай длинный технический список. Объясняй человеческими сценариями: поговорить и переключаться между проектами, помнить важное, работать с подключёнными репозиториями, календарём/подготовкой к событиям и только теми дополнительными источниками/экспертными функциями, которые реально доступны в этой сессии.
 - Если capability недоступна, можно кратко сказать, что её можно подключить, но не обещай, что она уже работает.
 
+# BOARD
+- Это та же самая Live-сессия Миры: доска не создаёт второй ASR/LLM, не управляет микрофоном и не сбрасывает разговор.
+- На «открой доску проекта» используй board_navigate action=open для текущего project; на «закрой доску» — action=close.
+- Для слов «этот», «здесь», «видимые», «выбранный», «рядом» сначала используй board_query action=view_context. Это структурный context текущей вкладки: server-authoritative text/revision/bbox для видимых/выбранных объектов. Если context unavailable/expired — не угадывай объект: используй search или уточни у пользователя.
+- Для поиска по всей доске используй board_query action=search. Если пользователь просит «покажи/наведи на этот стикер», затем board_navigate action=focus с фактическим object_id из свежего результата.
+- board_navigate action=focus возвращает только запрос клиенту на фокус. Не говори «уже показала», пока не уверена в клиентском результате; безопасная формулировка — «Навожу на него».
+- Изменения делай только через board_edit и объявляй сохранение только после receipt status=saved. Конфликт revision не перезаписывай вслепую: прочитай свежий объект/поиск и уточни действие.
+- Цвета sticky хранятся как yellow/pink/blue/green/orange/violet; русские формулировки пользователя семантически нормализуй к этим значениям при поиске/создании.
+- Историю конкретного объекта читай через board_history; не выдумывай автора или время.
+
 # MEMORY
 - Для явного «запомни/сохрани» и явно долговечной информации используй memory_commit_voice_source.
 - Один voice source может относиться к нескольким проектам: сделай отдельный memory_commit_voice_source для каждого действительно нужного project/result.
@@ -596,6 +767,24 @@ SYSTEM_INSTRUCTION = """# ROLE
 - development_execution_status используй для «что сейчас делает Codex», «закончилось ли», «какой результат». Не объявляй разработку завершённой раньше terminal status.
 - ChatGPT/Codex, запущенные владельцем вне Projects Hub, остаются допустимыми способами выполнить ту же backlog-задачу; execution Миры — только один из путей исполнения backlog.
 
+# BOARD SHARING
+- Если пользователь просит «поделись доской», используй board_share action=create для текущего разрешённого проекта.
+- Результат create только готовит семидневную view-only ссылку и UI. Не говори «отправлено»: в браузере пользователь должен нажать кнопку системного «Поделиться», а в Android подтверждается только открытие chooser.
+- Ссылка живая: будущие изменения стикеров видны до срока или отзыва. Закрытые документы/analysis-body гостю не раскрываются.
+- Для отзыва используй board_share action=list, затем revoke только по точному share_id.
+
+# STRONG BOARD ANALYSIS
+- Для содержательного анализа конкретных стикеров используй board_analysis action=start только с явным списком object_ids из текущей доски. Модель получает замороженные ревизии этих объектов, а не произвольный project checkout.
+- Не объявляй анализ завершённым, пока board_analysis status не вернул completed. dispatch_unknown означает «исход запуска уточняется», а не разрешение запустить второй анализ.
+- Готовый отчёт остаётся Markdown-документом. action=publish добавляет на доску только ссылочную document-card; полный текст не копируется в объект доски.
+- Для обычной сильной консультации при доступном native Codex лимите (>10% после reserve gate) используй лестницу точности строго по порядку: gpt_6_luna_medium → gpt_6_luna_high → gpt_6_1_sol_low → gpt_6_1_sol_medium → gpt_6_1_sol_high → gpt_6_astra_low → gpt_6_astra_medium.
+- Один analysis run выбирает ровно одну модель. Не запускай всю лестницу параллельно и не делай скрытый fan-out. Начинай с Luna Medium; переходи на следующую ступень только после terminal результата, если он действительно недостаточен для цели пользователя: остались существенные противоречия, пограничные случаи, слабые требования/вопросы или нерешённый системный риск.
+- Если конкретную модель явно выбрал пользователь, не подменяй её молча. Если native Codex вернул quota/reserve unavailable, не пробуй следующую Codex-ступень: у неё тот же лимит. Kimi K3, DeepSeek, council_free и council_pro остаются отдельными доступными альтернативами.
+- Если более широкий консилиум собирается из нескольких независимых консультаций и нужен Codex-участник, по умолчанию используй gpt_6_luna_medium; повышай его только по конкретной причине. Это не меняет семантику существующих council_free/council_pro.
+- Бесплатный model=council_free остаётся fail-closed: если OpenCode free tier недоступен при безопасных deny read/shell, назови режим временно недоступным и не ослабляй изоляцию.
+- Для рабочего NVIDIA-консилиума используй model=council_pro: Kimi K3 + DeepSeek запускаются автоматически через два независимых credential/project slot.
+- Пользовательское подтверждение бюджета для NVIDIA не требуется. Если оба NVIDIA-слота заняты, честно сообщи, что консилиум ждёт capacity, и не запускай второй дубликат с новым request_key.
+
 # EVENT READINESS
 - После подтверждённого calendar event backend автоматически создаёт event card. Для записи подкаста передавай event_type=podcast, иначе generic.
 - Перед событием используй event_cards_list и называй только фактические незакрытые пункты checklist.
@@ -610,6 +799,11 @@ class ProjectsHubLiveAdapter:
         self,
         store: DurableStore,
         *,
+        board: BoardService | None = None,
+        board_hub: Any | None = None,
+        board_view_context: BoardViewContextStore | None = None,
+        analytics: AnalyticsService | None = None,
+        sharing: SharingService | None = None,
         device_commands: DeviceCommandService | None = None,
         readiness: ReadinessService | None = None,
         development: DevelopmentService | None = None,
@@ -623,6 +817,11 @@ class ProjectsHubLiveAdapter:
         **_shared: Any,
     ):
         self.store = store
+        self.board = board or BoardService(store)
+        self.board_hub = board_hub
+        self.board_view_context = board_view_context or BoardViewContextStore(store, self.board)
+        self.analytics = analytics or AnalyticsService(store, self.board)
+        self.sharing = sharing or SharingService(store, self.board)
         self.device_commands = device_commands or DeviceCommandService(store)
         self.readiness = readiness or ReadinessService(store)
         self.development = development or DevelopmentService(store, self.readiness)
@@ -827,6 +1026,7 @@ class ProjectsHubLiveAdapter:
         client_source_id: str | None = None,
         client_version: str | None = None,
         client_timezone: str | None = None,
+        client_instance_id: str | None = None,
         backend_version: str | None = None,
         backend_release_sha: str | None = None,
         attempt_id: str | None = None,
@@ -871,6 +1071,8 @@ class ProjectsHubLiveAdapter:
             actor_id,
             conversation["workspace_id"],
         )
+        analysis_enabled = any(bool(project.get("can_analyze")) for project in projects)
+        sharing_enabled = any(bool(project.get("can_manage_share")) for project in projects)
         owner_development = False
         try:
             self.store.require_platform_owner(actor_id)
@@ -925,6 +1127,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "client_source_id": client_source_id,
                 "client_version": client_version,
                 "client_timezone": client_timezone,
+                "client_instance_id": client_instance_id,
                 "backend_version": backend_version,
                 "backend_release_sha": backend_release_sha,
                 "attempt_id": attempt_id,
@@ -943,6 +1146,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "recovery_only": recovery_only,
                 "client_version": client_version,
                 "client_timezone": client_timezone,
+                "client_instance_id": client_instance_id,
                 "backend_version": backend_version,
                 "backend_release_sha": backend_release_sha,
                 "attempt_id": attempt_id,
@@ -956,6 +1160,8 @@ explicit buffered replay is required instead of pretending the provisional text 
                         expert_reviews=expert_reviews is not None,
                         regional_knowledge=regional_knowledge is not None,
                         owner_development=owner_development,
+                        analytics=analysis_enabled,
+                        sharing=sharing_enabled,
                     )
                 ),
                 "voice": "Aoede",
@@ -986,6 +1192,8 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "expert_reviews_enabled": expert_reviews is not None,
                 "regional_knowledge_enabled": regional_knowledge is not None,
                 "owner_development_enabled": owner_development,
+                "analysis_enabled": analysis_enabled,
+                "sharing_enabled": sharing_enabled,
                 "source_terminal": source["status"] in {"archived", "ephemeral_processed"},
                 "pending_voice_sources": pending_voice_sources,
             },
@@ -1278,6 +1486,380 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "backend_version": state.get("backend_version"),
                 "backend_release_sha": state.get("backend_release_sha"),
             }
+
+        if name == "board_share":
+            conversation = self.store.get_conversation(actor_id, conversation_id)
+            project_id = str(args.get("project_id") or "") or conversation.get("focus_project_id")
+            if not project_id:
+                raise StoreError(
+                    "SHARE_PROJECT_REQUIRED",
+                    "Choose a project before sharing its board",
+                )
+            project_id = str(project_id)
+            action = str(args.get("action") or "")
+            if action not in {"create", "list", "revoke"}:
+                raise StoreError("INVALID_ARGUMENT", "Unknown board sharing action")
+
+            if action == "list":
+                return {
+                    "project_id": project_id,
+                    "items": self.sharing.list_shares(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        project_id=project_id,
+                    ),
+                }
+
+            if action == "revoke":
+                share_id = str(args.get("share_id") or "")
+                if not share_id:
+                    raise StoreError("INVALID_ARGUMENT", "share_id is required")
+                return self.sharing.revoke_share(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    share_id=share_id,
+                )
+
+            grant = self.sharing.create_share(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                project_id=project_id,
+            )
+            native_share: dict[str, Any] | None = None
+            if state.get("client_version"):
+                try:
+                    native_command_id, _native_args_sha = self._command_id(
+                        session,
+                        "share_open_chooser",
+                        {"project_id": project_id, "url": grant["url"]},
+                    )
+                    command = self.device_commands.create_share_command(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        project_id=project_id,
+                        command_id=native_command_id,
+                        args={
+                            "url": grant["url"],
+                            "title": "Поделиться доской проекта",
+                        },
+                    )
+                    native_share = await self.device_commands.wait_for_terminal(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        command_id=command["id"],
+                        timeout_seconds=8.0,
+                    )
+                except StoreError as exc:
+                    native_share = {
+                        "status": "unavailable",
+                        "error_code": exc.code,
+                    }
+            return {
+                **grant,
+                "native_share": native_share,
+                "ui_command": {
+                    "kind": "share",
+                    "action": "ready",
+                    "project_id": project_id,
+                    "board_id": grant["board_id"],
+                    "share_id": grant["id"],
+                    "url": grant["url"],
+                    "expires_at_ms": grant["expires_at_ms"],
+                    "warning": grant["warning"],
+                },
+            }
+
+        if name == "board_analysis":
+            conversation = self.store.get_conversation(actor_id, conversation_id)
+            project_id = str(args.get("project_id") or "") or conversation.get("focus_project_id")
+            if not project_id:
+                raise StoreError(
+                    "ANALYSIS_PROJECT_REQUIRED",
+                    "Choose a project before using strong analysis",
+                )
+            project_id = str(project_id)
+            action = str(args.get("action") or "")
+            if action not in {"start", "status", "list", "cancel", "publish"}:
+                raise StoreError("INVALID_ARGUMENT", "Unknown analysis action")
+
+            if action == "list":
+                try:
+                    limit = int(args.get("limit", 20))
+                except (TypeError, ValueError):
+                    limit = 20
+                return {
+                    "project_id": project_id,
+                    "items": self.analytics.list_runs(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        project_id=project_id,
+                        limit=limit,
+                    ),
+                }
+
+            run_id = str(args.get("run_id") or "")
+            if action in {"status", "cancel", "confirm", "publish"} and not run_id:
+                raise StoreError("INVALID_ARGUMENT", "run_id is required")
+
+            if action == "status":
+                return await self.analytics.refresh(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    run_id=run_id,
+                )
+
+            if action == "cancel":
+                return await self.analytics.cancel(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    run_id=run_id,
+                )
+
+            if action == "publish":
+                command_id, _args_sha = self._command_id(session, name, args)
+                object_id = str(args.get("object_id") or "")
+                if not object_id:
+                    object_id = "obj_analysis_" + hashlib.sha256(
+                        run_id.encode("utf-8")
+                    ).hexdigest()[:24]
+                geometry = args.get("geometry")
+                receipt = self.analytics.publish_to_board(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    run_id=run_id,
+                    command_id=command_id,
+                    object_id=object_id,
+                    geometry=geometry if isinstance(geometry, dict) else None,
+                )
+                if self.board_hub is not None:
+                    await self.board_hub.publish(
+                        receipt["board_id"],
+                        {"type": "event", "event": receipt["event"]},
+                    )
+                return {
+                    **receipt,
+                    "project_id": project_id,
+                    "ui_command": {
+                        "kind": "board",
+                        "action": "open",
+                        "project_id": project_id,
+                        "board_id": receipt["board_id"],
+                        "token": "uif_" + command_id[-24:],
+                    },
+                }
+
+            raw_object_ids = args.get("object_ids")
+            if not isinstance(raw_object_ids, list):
+                raise StoreError("INVALID_ARGUMENT", "object_ids must be a list")
+            board = self.board.open_board(
+                actor_id,
+                workspace_id,
+                project_id,
+                create_if_allowed=False,
+            )
+            command_id, _args_sha = self._command_id(session, name, args)
+            run = await self.analytics.start_single(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                board_id=board["id"],
+                object_ids=[str(item) for item in raw_object_ids],
+                command_id=command_id,
+                model=str(args.get("model") or DEFAULT_ANALYSIS_MODEL),
+                purpose=str(args.get("purpose") or "edge_cases"),
+                question=str(args.get("question") or ""),
+            )
+            return {
+                **run,
+                "ui_command": {
+                    "kind": "analysis",
+                    "action": "show",
+                    "project_id": project_id,
+                    "run_id": run["id"],
+                },
+            }
+
+        if name.startswith("board_"):
+            conversation = self.store.get_conversation(actor_id, conversation_id)
+            project_id = str(args.get("project_id") or "") or conversation.get("focus_project_id")
+            if not project_id:
+                raise StoreError(
+                    "BOARD_PROJECT_REQUIRED",
+                    "Choose a project before using its board",
+                )
+            project_id = str(project_id)
+            access = self.store.project_access(actor_id, workspace_id, project_id)
+
+            if name == "board_navigate":
+                action = str(args.get("action") or "")
+                if action not in {"open", "close", "view_all", "focus"}:
+                    raise StoreError("INVALID_ARGUMENT", "Unknown board navigation action")
+                command_id, _args_sha = self._command_id(session, name, args)
+                token = "uif_" + command_id[-24:]
+                if action == "close":
+                    return {
+                        "project_id": project_id,
+                        "ui_command": {
+                            "kind": "board",
+                            "action": "close",
+                            "project_id": project_id,
+                            "token": token,
+                        },
+                    }
+                board = self.board.open_board(
+                    actor_id,
+                    workspace_id,
+                    project_id,
+                    create_if_allowed=(action == "open" and access["role"] != "viewer"),
+                )
+                ui_command: dict[str, Any] = {
+                    "kind": "board",
+                    "action": action,
+                    "project_id": project_id,
+                    "board_id": board["id"],
+                    "token": token,
+                }
+                if action == "focus":
+                    object_id = str(args.get("object_id") or "")
+                    if not object_id:
+                        raise StoreError("INVALID_ARGUMENT", "object_id is required for focus")
+                    snapshot = self.board.snapshot(actor_id, workspace_id, board["id"])
+                    item = next(
+                        (value for value in snapshot["objects"] if value["id"] == object_id),
+                        None,
+                    )
+                    if item is None:
+                        raise StoreError("OBJECT_NOT_FOUND", "Board object is not available")
+                    ui_command["object_id"] = object_id
+                    ui_command["bbox"] = item["geometry"]
+                    ui_command["board_seq"] = snapshot["board"]["seq"]
+                return {
+                    "project_id": project_id,
+                    "board_id": board["id"],
+                    "ui_command": ui_command,
+                    "ui_ack_required": action in {"focus", "view_all"},
+                }
+
+            board = self.board.open_board(
+                actor_id,
+                workspace_id,
+                project_id,
+                create_if_allowed=False,
+            )
+
+            if name == "board_query":
+                action = str(args.get("action") or "search")
+                if action == "view_context":
+                    client_instance_id = str(state.get("client_instance_id") or "")
+                    if not client_instance_id:
+                        return {
+                            "status": "unavailable",
+                            "reason": "live_client_instance_unavailable",
+                            "project_id": project_id,
+                            "board_id": board["id"],
+                        }
+                    return self.board_view_context.resolve(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        conversation_id=conversation_id,
+                        project_id=project_id,
+                        client_instance_id=client_instance_id,
+                    )
+                if action != "search":
+                    raise StoreError("INVALID_ARGUMENT", "Unknown board query action")
+                query = str(args.get("query") or "").strip()
+                if not query:
+                    raise StoreError("INVALID_ARGUMENT", "query is required for board search")
+                try:
+                    limit = int(args.get("limit", 12))
+                except (TypeError, ValueError):
+                    limit = 12
+                return {
+                    "project_id": project_id,
+                    "board_id": board["id"],
+                    "items": self.board.search(
+                        actor_id,
+                        workspace_id,
+                        board["id"],
+                        query,
+                        limit=limit,
+                    ),
+                }
+
+            if name == "board_history":
+                object_id = str(args.get("object_id") or "")
+                if not object_id:
+                    raise StoreError("INVALID_ARGUMENT", "object_id is required")
+                try:
+                    limit = int(args.get("limit", 20))
+                except (TypeError, ValueError):
+                    limit = 20
+                return {
+                    "project_id": project_id,
+                    "board_id": board["id"],
+                    "items": self.board.history(
+                        actor_id,
+                        workspace_id,
+                        board["id"],
+                        object_id,
+                        limit=limit,
+                    ),
+                }
+
+            if name == "board_edit":
+                operation = str(args.get("operation") or "")
+                if operation not in {"create", "update", "move", "delete"}:
+                    raise StoreError("INVALID_ARGUMENT", "Unknown board edit operation")
+                command_id, _args_sha = self._command_id(session, name, args)
+                object_id = str(args.get("object_id") or "")
+                if not object_id:
+                    if operation != "create":
+                        raise StoreError("INVALID_ARGUMENT", "object_id is required")
+                    object_id = "obj_mira_" + hashlib.sha256(
+                        command_id.encode("utf-8")
+                    ).hexdigest()[:24]
+                expected_raw = args.get("expected_object_revision")
+                expected_revision = None
+                if expected_raw is not None:
+                    try:
+                        expected_revision = int(expected_raw)
+                    except (TypeError, ValueError) as exc:
+                        raise StoreError(
+                            "INVALID_ARGUMENT",
+                            "expected_object_revision must be an integer",
+                        ) from exc
+                payload = args.get("payload")
+                if payload is None:
+                    payload = {}
+                if not isinstance(payload, dict):
+                    raise StoreError("INVALID_ARGUMENT", "payload must be an object")
+                receipt = self.board.apply_command(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    board_id=board["id"],
+                    command_id=command_id,
+                    operation=operation,
+                    object_id=object_id,
+                    expected_object_revision=expected_revision,
+                    payload=payload,
+                    execution_origin="mira",
+                )
+                if self.board_hub is not None:
+                    await self.board_hub.publish(
+                        board["id"],
+                        {"type": "event", "event": receipt["event"]},
+                    )
+                return {
+                    **receipt,
+                    "project_id": project_id,
+                    "ui_command": {
+                        "kind": "board",
+                        "action": "open",
+                        "project_id": project_id,
+                        "board_id": board["id"],
+                        "token": "uif_" + command_id[-24:],
+                    },
+                }
 
         if name == "backlog_list":
             self.store.require_platform_owner(actor_id)

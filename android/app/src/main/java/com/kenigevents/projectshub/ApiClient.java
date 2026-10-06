@@ -67,6 +67,7 @@ final class ApiClient {
                         new JSONArray()
                                 .put("calendar.create_event")
                                 .put("calendar.read_events")
+                                .put("share.open_chooser")
                 );
         JSONObject payload = request(
                 "POST",
@@ -86,6 +87,7 @@ final class ApiClient {
                 new JSONArray()
                         .put("calendar.create_event")
                         .put("calendar.read_events")
+                        .put("share.open_chooser")
         );
         return request(
                 "POST",

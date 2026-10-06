@@ -1,4 +1,4 @@
-export type Project = { id: string; name: string; status: string };
+export type Project = { id: string; name: string; status: string; role?: "viewer" | "editor" | "owner"; can_analyze?: number | boolean; can_manage_share?: number | boolean };
 export type Bootstrap = {
   actor: { id: string; display_name: string };
   workspace: { id: string; name: string };

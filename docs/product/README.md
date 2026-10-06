@@ -116,6 +116,8 @@ Stop, «Новый разговор» и delete — разные действи�
 | [GitHub connections](14-github-connections.md) | GitHub App installation, repository roles и отсутствие PAT у обычных участников |
 | [Экспертные review cases](15-expert-review-cases.md) | Межпроектные экспертные проверки: assignment, evidence ACL, typed resolution и readback |
 | [WSS и многопользовательская надёжность](16-wss-multi-user-reliability.md) | Целевой realtime transport, session isolation, concurrency, capability bundles, shared OAuth/Regional Knowledge/POI ownership, implementation evidence, acceptance и rollout |
+| [Доска и сильная аналитика](19-board-and-strong-analysis.md) | WebGL-доска, revisions/history/search/focus, изолированный анализ, council, guest/share и T01–T28 |
+| [Board/analytics acceptance · 5 октября](../reports/board-and-analysis-acceptance-20261005.md) | Combined source/CI evidence и явно незакрытые provider/browser/physical/performance gates |
 | [Owner development / backlog](17-owner-development-backlog.md) | Backlog-first owner-only orchestration: design → implementation → review/rework → delivery, Codex capacity, token usage и Android update |
 | [Live contract](live-contract.json) | Машиночитаемые архитектурные правила |
 

@@ -8,6 +8,7 @@ import json
 import secrets
 import time
 from typing import Any, Callable
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .store import DurableStore, StoreError
@@ -16,6 +17,7 @@ from .store import DurableStore, StoreError
 ALLOWED_DEVICE_CAPABILITIES = {
     "calendar.create_event",
     "calendar.read_events",
+    "share.open_chooser",
 }
 
 TERMINAL_COMMAND_STATUSES = {
@@ -219,6 +221,86 @@ class DeviceCommandService:
             "ends_at": ends_at.isoformat(),
             "limit": limit,
         }
+
+    @staticmethod
+    def _share_payload(args: dict[str, Any]) -> dict[str, Any]:
+        url = str(args.get("url") or "").strip()
+        title = str(args.get("title") or "Поделиться доской").strip()
+        if not url or len(url) > 2400:
+            raise StoreError("INVALID_ARGUMENT", "Share URL is invalid")
+        try:
+            parsed = urlsplit(url)
+        except ValueError as exc:
+            raise StoreError("INVALID_ARGUMENT", "Share URL is invalid") from exc
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+        ):
+            raise StoreError(
+                "INVALID_ARGUMENT",
+                "Android share capability accepts only HTTPS URLs",
+            )
+        if not title or len(title) > 160:
+            raise StoreError("INVALID_ARGUMENT", "Share title is invalid")
+        return {
+            "url": url,
+            "title": title,
+            "delivery_claim_allowed": False,
+        }
+
+    def create_share_command(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        project_id: str,
+        command_id: str,
+        args: dict[str, Any],
+    ) -> dict[str, Any]:
+        capability = "share.open_chooser"
+        requested_device = str(args.get("device_id") or "").strip() or None
+        devices = self.store.list_devices(
+            actor_id,
+            workspace_id,
+            capability=capability,
+        )
+        if requested_device:
+            devices = [item for item in devices if item["id"] == requested_device]
+            if not devices:
+                raise StoreError(
+                    "DEVICE_NOT_FOUND",
+                    "Requested Android device is unavailable for sharing",
+                )
+        elif len(devices) > 1:
+            raise StoreError(
+                "DEVICE_SELECTION_REQUIRED",
+                "More than one Android device can open the share chooser",
+            )
+        if not devices:
+            raise StoreError(
+                "DEVICE_CAPABILITY_NOT_AVAILABLE",
+                "No bound Android device can open the share chooser",
+            )
+        payload = self._share_payload(args)
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return self.store.create_device_command(
+            actor_id=actor_id,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            device_id=str(devices[0]["id"]),
+            capability=capability,
+            payload=payload,
+            payload_sha256=hashlib.sha256(encoded).hexdigest(),
+            command_id=command_id,
+            expires_at_ms=round((self.now() + 5 * 60) * 1000),
+        )
 
     def create_calendar_command(
         self,
@@ -439,6 +521,8 @@ class DeviceCommandService:
             "error_code",
             "events",
             "count",
+            "chooser_opened",
+            "delivery_confirmed",
         }
         if any(key not in allowed_result_keys for key in result):
             raise StoreError("INVALID_ARGUMENT", "Device command result contains unknown fields")
@@ -461,6 +545,15 @@ class DeviceCommandService:
                     raise StoreError(
                         "DEVICE_READBACK_REQUIRED",
                         "Calendar read result is invalid",
+                    )
+            elif command_before["capability"] == "share.open_chooser":
+                if (
+                    result.get("chooser_opened") is not True
+                    or result.get("delivery_confirmed") is not False
+                ):
+                    raise StoreError(
+                        "DEVICE_READBACK_REQUIRED",
+                        "Share receipt may confirm chooser opening only",
                     )
         command = self.store.complete_device_command(
             device_id=device["device_id"],

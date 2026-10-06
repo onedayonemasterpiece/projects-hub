@@ -14,6 +14,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .auth import COOKIE_NAME, SESSION_TTL_SECONDS, issue_session, parse_session
+from .analytics import AnalyticsService
+from .analytics_materialization import AnalysisMaterializer
+from .analytics_api import attach_analytics_routes
+from .board import BoardService
+from .board_api import attach_board_routes
+from .board_view_context import BoardViewContextStore
+from .board_view_context_api import attach_board_view_context_routes
 from .github_app import GitHubAppError
 from .github_connections import GitHubConnections
 from .device_commands import DeviceCommandService
@@ -23,6 +30,8 @@ from .live_runtime import build_live_host
 from .logging_config import configure_logging
 from .readiness import ReadinessService
 from .settings import Settings
+from .sharing import SharingService
+from .sharing_api import attach_sharing_routes
 from .store import DurableStore, StoreError
 from .version import __version__
 
@@ -67,6 +76,11 @@ class LiveStart(BaseModel):
         default=None,
         pattern=r"^[A-Za-z0-9._+/-]{1,100}$",
         max_length=100,
+    )
+    client_instance_id: str | None = Field(
+        default=None,
+        pattern=r"^[0-9A-Za-z._:-]{8,128}$",
+        max_length=128,
     )
     attempt_id: str | None = Field(
         default=None,
@@ -129,6 +143,7 @@ def _http_for_code(code: str) -> int:
         "GITHUB_WRITE_PERMISSION_MISSING",
         "GITHUB_WEBHOOK_INVALID",
         "DEVICE_COMMAND_CLAIM_INVALID",
+        "PROJECT_FORBIDDEN",
     }:
         return 403
     if code in {"IDENTITY_PROVIDER_INVALID"}:
@@ -235,6 +250,7 @@ def create_app(
     device_commands: DeviceCommandService | None = None,
     readiness: ReadinessService | None = None,
     development: DevelopmentService | None = None,
+    analytics: AnalyticsService | None = None,
     regional_knowledge_factory: Any | None = None,
 ) -> FastAPI:
     configure_logging()
@@ -253,14 +269,33 @@ def create_app(
             development_service = getattr(app.state, "development", None)
             if development_service is not None and hasattr(development_service, "close"):
                 await development_service.close()
+            analytics_service = getattr(app.state, "analytics", None)
+            if analytics_service is not None and hasattr(analytics_service, "close"):
+                await analytics_service.close()
             if owned_store:
                 store.close()
 
     app = FastAPI(title="Projects Hub", version=__version__, lifespan=lifespan)
     app.state.settings = settings
     app.state.store = store
+    app.state.board = BoardService(store)
+    app.state.board_view_context = BoardViewContextStore(
+        store,
+        app.state.board,
+    )
+    app.state.analytics = analytics or AnalyticsService(store, app.state.board)
+    app.state.sharing = SharingService(
+        store,
+        app.state.board,
+        public_origin=settings.public_origin,
+    )
     app.state.live_host = live_host
     app.state.github_connections = github_connections or GitHubConnections(store, settings)
+    app.state.analysis_materializer = AnalysisMaterializer(
+        store,
+        app.state.analytics,
+        app.state.github_connections,
+    )
     app.state.device_commands = device_commands or DeviceCommandService(store)
     app.state.readiness = readiness or ReadinessService(store)
     app.state.development = development or DevelopmentService(store, app.state.readiness)
@@ -268,6 +303,11 @@ def create_app(
         if app.state.live_host is None:
             app.state.live_host = build_live_host(
                 store,
+                board=app.state.board,
+                board_hub=app.state.board_hub,
+                board_view_context=app.state.board_view_context,
+                analytics=app.state.analytics,
+                sharing=app.state.sharing,
                 device_commands=app.state.device_commands,
                 readiness=app.state.readiness,
                 development=app.state.development,
@@ -339,6 +379,34 @@ def create_app(
     async def store_error(_request: Request, exc: StoreError):
         http = _error(exc)
         return JSONResponse(status_code=http.status_code, content={"error": http.detail})
+
+    app.state.board_hub = attach_board_routes(
+        app,
+        service=app.state.board,
+        actor_id_from_request=actor_id_from_request,
+        session_secret=settings.session_secret,
+        cookie_name=COOKIE_NAME,
+    )
+
+    attach_board_view_context_routes(
+        app,
+        service=app.state.board_view_context,
+        actor_id_from_request=actor_id_from_request,
+    )
+
+    attach_analytics_routes(
+        app,
+        service=app.state.analytics,
+        actor_id_from_request=actor_id_from_request,
+        board_hub=app.state.board_hub,
+        materializer=app.state.analysis_materializer,
+    )
+    attach_sharing_routes(
+        app,
+        service=app.state.sharing,
+        actor_id_from_request=actor_id_from_request,
+        cookie_secure=settings.cookie_secure,
+    )
 
     @app.exception_handler(GitHubAppError)
     async def github_error(_request: Request, exc: GitHubAppError):
@@ -938,6 +1006,7 @@ def create_app(
                 client_source_id=payload.client_source_id,
                 client_version=payload.client_version,
                 client_timezone=payload.client_timezone,
+                client_instance_id=payload.client_instance_id,
                 backend_version=__version__,
                 backend_release_sha=settings.release_sha,
                 attempt_id=payload.attempt_id,
@@ -1133,6 +1202,25 @@ def create_app(
         assets = settings.static_dir / "assets"
         if assets.is_dir():
             app.mount("/assets", StaticFiles(directory=assets), name="assets")
+
+        @app.get("/guest/board")
+        async def guest_board_page():
+            index = settings.static_dir / "index.html"
+            if index.is_file():
+                return FileResponse(
+                    index,
+                    headers={
+                        "cache-control": "no-store",
+                        "x-robots-tag": "noindex, nofollow, noarchive",
+                        "referrer-policy": "no-referrer",
+                        "x-content-type-options": "nosniff",
+                    },
+                )
+            return JSONResponse(
+                status_code=404,
+                content={"error": {"code": "UI_NOT_BUILT"}},
+                headers={"cache-control": "no-store"},
+            )
 
         @app.get("/{path:path}")
         async def spa(path: str):

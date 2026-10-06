@@ -632,6 +632,11 @@ public final class MainActivity extends Activity {
             return;
         }
 
+        if ("share.open_chooser".equals(command.capability)) {
+            executeShareChooser(command, completion);
+            return;
+        }
+
         completion.complete(
                 "failed",
                 errorResult("UNSUPPORTED_CAPABILITY")
@@ -707,6 +712,43 @@ public final class MainActivity extends Activity {
                     errorResult(failure.getClass().getSimpleName())
             );
             toast("Не удалось создать событие в календаре.");
+        }
+    }
+
+    private void executeShareChooser(
+            ApiClient.ClaimedCommand command,
+            DeviceCommandLoop.Completion completion
+    ) {
+        try {
+            String url = command.payload.optString("url", "").trim();
+            String title = command.payload.optString("title", "Поделиться доской").trim();
+            Uri parsed = Uri.parse(url);
+            if (!"https".equalsIgnoreCase(parsed.getScheme()) || parsed.getHost() == null) {
+                completion.complete("failed", errorResult("INVALID_SHARE_URL"));
+                return;
+            }
+
+            Intent send = new Intent(Intent.ACTION_SEND);
+            send.setType("text/plain");
+            send.putExtra(Intent.EXTRA_TEXT, url);
+            send.putExtra(Intent.EXTRA_SUBJECT, title);
+            Intent chooser = Intent.createChooser(send, title);
+            startActivity(chooser);
+
+            completion.complete(
+                    "applied",
+                    new JSONObject()
+                            .put("readback_verified", true)
+                            .put("chooser_opened", true)
+                            .put("delivery_confirmed", false)
+            );
+        } catch (ActivityNotFoundException missing) {
+            completion.complete("failed", errorResult("SHARE_CHOOSER_UNAVAILABLE"));
+        } catch (Exception failure) {
+            completion.complete(
+                    "failed",
+                    errorResult(failure.getClass().getSimpleName())
+            );
         }
     }
 

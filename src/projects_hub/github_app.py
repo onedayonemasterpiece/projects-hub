@@ -202,6 +202,88 @@ class GitHubAppClient:
             "text": text,
         }
 
+    async def put_repository_text(
+        self,
+        *,
+        token: str,
+        full_name: str,
+        path: str,
+        text: str,
+        message: str,
+        branch: str,
+        expected_sha: str | None = None,
+    ) -> dict[str, Any]:
+        owner, separator, repo = str(full_name or "").partition("/")
+        if (
+            not separator
+            or not owner
+            or not repo
+            or "/" in repo
+            or any(
+                ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._"
+                for ch in owner + repo
+            )
+        ):
+            raise GitHubAppError("INVALID_ARGUMENT", "Repository name is invalid")
+        clean_path = str(path or "").strip().strip("/")
+        parts = clean_path.split("/")
+        if (
+            not clean_path
+            or len(clean_path) > 500
+            or "\\" in clean_path
+            or any(part in {"", ".", ".."} for part in parts)
+        ):
+            raise GitHubAppError("INVALID_ARGUMENT", "Repository path is invalid")
+        clean_branch = str(branch or "").strip()
+        if not clean_branch or len(clean_branch) > 240:
+            raise GitHubAppError("INVALID_ARGUMENT", "Repository branch is invalid")
+        encoded = base64.b64encode(str(text).encode("utf-8")).decode("ascii")
+        if len(encoded) > 800_000:
+            raise GitHubAppError("INVALID_ARGUMENT", "Repository document is too large")
+        body: dict[str, Any] = {
+            "message": str(message or "Update generated analysis")[:200],
+            "content": encoded,
+            "branch": clean_branch,
+        }
+        if expected_sha:
+            if len(expected_sha) > 80 or any(ch not in "0123456789abcdef" for ch in expected_sha):
+                raise GitHubAppError("INVALID_ARGUMENT", "Expected repository SHA is invalid")
+            body["sha"] = expected_sha
+        endpoint = (
+            f"/repos/{quote(owner, safe='-._')}/{quote(repo, safe='-._')}/contents/"
+            + "/".join(quote(part, safe="-._") for part in parts)
+        )
+        payload = await self._json_request(
+            "PUT",
+            endpoint,
+            token=token,
+            body=body,
+        )
+        if not isinstance(payload, dict):
+            raise GitHubAppError(
+                "GITHUB_INVALID_RESPONSE",
+                "GitHub content write response is invalid",
+            )
+        content = payload.get("content")
+        commit = payload.get("commit")
+        if not isinstance(content, dict) or not isinstance(commit, dict):
+            raise GitHubAppError(
+                "GITHUB_INVALID_RESPONSE",
+                "GitHub content write response is incomplete",
+            )
+        content_sha = str(content.get("sha") or "")
+        commit_sha = str(commit.get("sha") or "")
+        if not content_sha or not commit_sha:
+            raise GitHubAppError(
+                "GITHUB_INVALID_RESPONSE",
+                "GitHub content write response has no SHA",
+            )
+        return {
+            "path": clean_path,
+            "content_sha": content_sha[:80],
+            "commit_sha": commit_sha[:80],
+        }
+
     async def get_installation(self, installation_id: int) -> dict[str, Any]:
         payload = await self._json_request(
             "GET",
