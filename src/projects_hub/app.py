@@ -158,8 +158,10 @@ def _http_for_code(code: str) -> int:
         "DEVICE_COMMAND_NOT_FOUND",
     }:
         return 404
-    if code in {"LIVE_BUSY"}:
+    if code in {"LIVE_BUSY", "NOTE_PROCESSOR_CAPACITY"}:
         return 429
+    if code in {"NOTE_TEXT_TOO_LARGE"}:
+        return 413
     if code in {
         "DEVICE_SELECTION_REQUIRED",
         "DEVICE_CAPABILITY_NOT_AVAILABLE",
@@ -168,6 +170,7 @@ def _http_for_code(code: str) -> int:
         "DEVICE_READBACK_REQUIRED",
         "LIVE_TRANSPORT_MISMATCH",
         "LIVE_SOCKET_BUSY",
+        "NOTE_NOT_READY",
         "GITHUB_PROJECT_DOCS_REQUIRED",
         "GITHUB_WRITE_CONFLICT",
         "COLLABORATION_COMMAND_CONFLICT",
@@ -181,6 +184,15 @@ def _http_for_code(code: str) -> int:
         "GITHUB_UNAVAILABLE",
         "GITHUB_ERROR",
         "GITHUB_INVALID_RESPONSE",
+        "NOTE_PROCESSOR_NOT_CONFIGURED",
+        "NOTE_PROCESSOR_UNAVAILABLE",
+        "NOTE_LIMITER_UNAVAILABLE",
+        "NOTE_LIMITER_INVALID_RESPONSE",
+        "NOTE_LIMITER_CONTRACT_MISMATCH",
+        "NOTE_MODEL_LIMIT_NOT_FOUND",
+        "NOTE_MODEL_LIMIT_INVALID",
+        "NOTE_PROCESSOR_KEY_UNAVAILABLE",
+        "NOTE_PROCESSOR_INVALID_RESPONSE",
     } else 400
 
 
