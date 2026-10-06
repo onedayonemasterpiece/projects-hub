@@ -22,6 +22,12 @@ COMMAND_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
 MAX_TITLE = 240
 MAX_BODY = 60_000
 MAX_REPLY = 12_000
+NOTE_PROCESSING_LEASE_MS = 10 * 60 * 1000
+RETRYABLE_GITHUB_NOTE_ERRORS = {
+    "GITHUB_UNAVAILABLE",
+    "GITHUB_ERROR",
+    "GITHUB_INVALID_RESPONSE",
+}
 
 
 def _now_ms() -> int:
@@ -72,6 +78,8 @@ class CollaborationService:
                     processing_limiter_json TEXT,
                     processing_attempts INTEGER NOT NULL DEFAULT 0,
                     processing_error TEXT,
+                    processing_lease_token TEXT,
+                    processing_lease_until_ms INTEGER,
                     repository_id INTEGER NOT NULL,
                     repository_full_name TEXT NOT NULL,
                     repository_path TEXT NOT NULL,
@@ -148,6 +156,20 @@ class CollaborationService:
                 );
                 """
             )
+            note_columns = {
+                str(row["name"])
+                for row in self.store.db.execute(
+                    "PRAGMA table_info(project_notes)"
+                ).fetchall()
+            }
+            if "processing_lease_token" not in note_columns:
+                self.store.db.execute(
+                    "ALTER TABLE project_notes ADD COLUMN processing_lease_token TEXT"
+                )
+            if "processing_lease_until_ms" not in note_columns:
+                self.store.db.execute(
+                    "ALTER TABLE project_notes ADD COLUMN processing_lease_until_ms INTEGER"
+                )
 
     @staticmethod
     def _clean_command(command_id: str) -> str:
@@ -284,6 +306,43 @@ class CollaborationService:
             raise StoreError("NOTE_NOT_FOUND", "Project note is not available")
         return row
 
+    def _claim_note_processing(self, note_id: str) -> str | None:
+        token = secrets.token_hex(16)
+        now = _now_ms()
+        with self.store._lock:
+            row = self._note_row(note_id)
+            if row["status"] == "ready":
+                return None
+            cursor = self.store.db.execute(
+                """UPDATE project_notes
+                   SET processing_lease_token=?,processing_lease_until_ms=?,
+                       updated_at_ms=?
+                   WHERE id=?
+                     AND (
+                       processing_lease_token IS NULL
+                       OR processing_lease_until_ms IS NULL
+                       OR processing_lease_until_ms<?
+                     )""",
+                (
+                    token,
+                    now + NOTE_PROCESSING_LEASE_MS,
+                    now,
+                    note_id,
+                    now,
+                ),
+            )
+            return token if cursor.rowcount == 1 else None
+
+    def _release_note_processing(self, note_id: str, token: str) -> None:
+        with self.store._lock:
+            self.store.db.execute(
+                """UPDATE project_notes
+                   SET processing_lease_token=NULL,processing_lease_until_ms=NULL,
+                       updated_at_ms=?
+                   WHERE id=? AND processing_lease_token=?""",
+                (_now_ms(), note_id, token),
+            )
+
     async def _process_and_publish(
         self,
         *,
@@ -297,226 +356,243 @@ class CollaborationService:
                 raise StoreError("NOTE_NOT_FOUND", "Project note is not available")
             if row["status"] == "ready":
                 return self._public_note(actor_id, workspace_id, row)
-            snapshot = dict(row)
 
-        access = self.store.project_access(
-            actor_id,
-            workspace_id,
-            str(snapshot["project_id"]),
-            require_role="editor",
-        )
-        actor = self._actor(actor_id)
-        project_name = str(access["project_name"])
-        roles = json.loads(snapshot["author_roles_json"])
-        processed: ProcessedNote
-
-        if snapshot.get("structured_json"):
-            try:
-                summary = NoteSummary.model_validate(
-                    json.loads(str(snapshot["structured_json"]))
-                )
-            except (ValueError, TypeError) as exc:
-                raise StoreError(
-                    "NOTE_PROCESSING_STATE_INVALID",
-                    "Saved note structure is invalid",
-                ) from exc
-            processed = ProcessedNote(
-                summary=summary,
-                model=str(snapshot.get("processing_model") or ""),
-                prompt_version=str(snapshot.get("processing_prompt_version") or ""),
-                request_uid=str(snapshot.get("processing_request_uid") or ""),
-                limiter=(
-                    json.loads(str(snapshot["processing_limiter_json"]))
-                    if snapshot.get("processing_limiter_json")
-                    else {}
-                ),
-            )
-        else:
-            attempt_no = int(snapshot["processing_attempts"] or 0) + 1
+        lease_token = self._claim_note_processing(note_id)
+        if lease_token is None:
             with self.store._lock:
-                self.store.db.execute(
-                    """UPDATE project_notes
-                       SET status='processing',processing_attempts=?,
-                           processing_error=NULL,updated_at_ms=?
-                       WHERE id=?""",
-                    (attempt_no, _now_ms(), note_id),
+                current = self._note_row(note_id)
+            return self._public_note(actor_id, workspace_id, current)
+
+        try:
+            with self.store._lock:
+                snapshot = dict(self._note_row(note_id))
+
+            access = self.store.project_access(
+                actor_id,
+                workspace_id,
+                str(snapshot["project_id"]),
+                require_role="editor",
+            )
+            actor = self._actor(actor_id)
+            project_name = str(access["project_name"])
+            roles = json.loads(snapshot["author_roles_json"])
+            processed: ProcessedNote
+
+            if snapshot.get("structured_json"):
+                try:
+                    summary = NoteSummary.model_validate(
+                        json.loads(str(snapshot["structured_json"]))
+                    )
+                except (ValueError, TypeError) as exc:
+                    raise StoreError(
+                        "NOTE_PROCESSING_STATE_INVALID",
+                        "Saved note structure is invalid",
+                    ) from exc
+                processed = ProcessedNote(
+                    summary=summary,
+                    model=str(snapshot.get("processing_model") or ""),
+                    prompt_version=str(snapshot.get("processing_prompt_version") or ""),
+                    request_uid=str(snapshot.get("processing_request_uid") or ""),
+                    limiter=(
+                        json.loads(str(snapshot["processing_limiter_json"]))
+                        if snapshot.get("processing_limiter_json")
+                        else {}
+                    ),
                 )
-            try:
-                processed = await self.note_processor.summarize(
-                    note_id=note_id,
-                    project_name=project_name,
-                    author_display_name=str(actor["display_name"]),
-                    author_roles=[str(item) for item in roles],
-                    source_text=str(snapshot["source_text"]),
-                    suggested_title=str(snapshot["title"]),
-                    attempt_no=attempt_no,
-                )
-            except NoteProcessingError as exc:
+            else:
+                attempt_no = int(snapshot["processing_attempts"] or 0) + 1
                 with self.store._lock:
                     self.store.db.execute(
                         """UPDATE project_notes
-                           SET status='blocked',processing_error=?,updated_at_ms=?
+                           SET status='processing',processing_attempts=?,
+                               processing_error=NULL,updated_at_ms=?
                            WHERE id=?""",
-                        (exc.code, _now_ms(), note_id),
+                        (attempt_no, _now_ms(), note_id),
                     )
-                self._set_intent_state(
-                    note_id,
-                    status="blocked",
-                    error_code=exc.code,
-                )
-                raise StoreError(exc.code, str(exc)) from exc
+                try:
+                    processed = await self.note_processor.summarize(
+                        note_id=note_id,
+                        project_name=project_name,
+                        author_display_name=str(actor["display_name"]),
+                        author_roles=[str(item) for item in roles],
+                        source_text=str(snapshot["source_text"]),
+                        suggested_title=str(snapshot["title"]),
+                        attempt_no=attempt_no,
+                    )
+                except NoteProcessingError as exc:
+                    retry_status = "accepted" if exc.retryable else "blocked"
+                    with self.store._lock:
+                        self.store.db.execute(
+                            """UPDATE project_notes
+                               SET status=?,processing_error=?,updated_at_ms=?
+                               WHERE id=?""",
+                            (retry_status, exc.code, _now_ms(), note_id),
+                        )
+                    self._set_intent_state(
+                        note_id,
+                        status=retry_status,
+                        error_code=exc.code,
+                    )
+                    raise StoreError(exc.code, str(exc)) from exc
 
+                with self.store._lock:
+                    self.store.db.execute(
+                        """UPDATE project_notes
+                           SET structured_json=?,processing_model=?,
+                               processing_prompt_version=?,processing_request_uid=?,
+                               processing_limiter_json=?,processing_error=NULL,
+                               status='waiting_repository',updated_at_ms=?
+                           WHERE id=?""",
+                        (
+                            processed.summary.model_dump_json(),
+                            processed.model,
+                            processed.prompt_version,
+                            processed.request_uid,
+                            json.dumps(
+                                processed.limiter,
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            ),
+                            _now_ms(),
+                            note_id,
+                        ),
+                    )
+                    snapshot = dict(self._note_row(note_id))
+
+            markdown = render_note_markdown(
+                note_id=note_id,
+                project_id=str(snapshot["project_id"]),
+                project_name=project_name,
+                author_id=actor_id,
+                author_display_name=str(actor["display_name"]),
+                author_roles=[str(item) for item in roles],
+                audience=str(snapshot["audience"]),
+                created_at_ms=int(snapshot["created_at_ms"]),
+                revision=int(snapshot["revision"]),
+                source_text=str(snapshot["source_text"]),
+                processed=processed,
+            )
             with self.store._lock:
                 self.store.db.execute(
                     """UPDATE project_notes
-                       SET structured_json=?,processing_model=?,
-                           processing_prompt_version=?,processing_request_uid=?,
-                           processing_limiter_json=?,processing_error=NULL,
-                           status='waiting_repository',updated_at_ms=?
+                       SET markdown=?,status='waiting_repository',
+                           title=?,body=?,updated_at_ms=?
                        WHERE id=?""",
                     (
-                        processed.summary.model_dump_json(),
-                        processed.model,
-                        processed.prompt_version,
-                        processed.request_uid,
-                        json.dumps(
-                            processed.limiter,
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                        ),
+                        markdown,
+                        processed.summary.title,
+                        processed.summary.detailed_summary,
                         _now_ms(),
                         note_id,
                     ),
                 )
-                snapshot = dict(self._note_row(note_id))
 
-        markdown = render_note_markdown(
-            note_id=note_id,
-            project_id=str(snapshot["project_id"]),
-            project_name=project_name,
-            author_id=actor_id,
-            author_display_name=str(actor["display_name"]),
-            author_roles=[str(item) for item in roles],
-            audience=str(snapshot["audience"]),
-            created_at_ms=int(snapshot["created_at_ms"]),
-            revision=int(snapshot["revision"]),
-            source_text=str(snapshot["source_text"]),
-            processed=processed,
-        )
-        with self.store._lock:
-            self.store.db.execute(
-                """UPDATE project_notes
-                   SET markdown=?,status='waiting_repository',
-                       title=?,body=?,updated_at_ms=?
-                   WHERE id=?""",
-                (
-                    markdown,
-                    processed.summary.title,
-                    processed.summary.detailed_summary,
-                    _now_ms(),
-                    note_id,
-                ),
-            )
-
-        try:
-            verified = await self.github.write_repository_text(
-                actor_id=actor_id,
-                workspace_id=workspace_id,
-                repository_id=int(snapshot["repository_id"]),
-                project_id=str(snapshot["project_id"]),
-                path=str(snapshot["repository_path"]),
-                text=markdown,
-                message=f"docs: add project note {note_id}",
-            )
-        except StoreError as exc:
-            with self.store._lock:
-                self.store.db.execute(
-                    """UPDATE project_notes
-                       SET status='blocked',processing_error=?,updated_at_ms=?
-                       WHERE id=?""",
-                    (exc.code, _now_ms(), note_id),
-                )
-            self._set_intent_state(
-                note_id,
-                status="blocked",
-                error_code=exc.code,
-            )
-            raise
-
-        repository_sha = str(verified.get("sha") or "")
-        if verified.get("text") != markdown or not repository_sha:
-            with self.store._lock:
-                self.store.db.execute(
-                    """UPDATE project_notes
-                       SET status='blocked',
-                           processing_error='GITHUB_READBACK_MISMATCH',
-                           updated_at_ms=? WHERE id=?""",
-                    (_now_ms(), note_id),
-                )
-            self._set_intent_state(
-                note_id,
-                status="blocked",
-                error_code="GITHUB_READBACK_MISMATCH",
-            )
-            raise StoreError(
-                "GITHUB_READBACK_MISMATCH",
-                "Repository readback does not match project note Markdown",
-            )
-
-        now = _now_ms()
-        with self.store._lock:
-            self.store.db.execute("BEGIN IMMEDIATE")
             try:
-                self.store.db.execute(
-                    """UPDATE project_notes
-                       SET status='ready',repository_sha=?,
-                           repository_commit_sha=?,processing_error=NULL,
-                           updated_at_ms=? WHERE id=?""",
-                    (
-                        repository_sha,
-                        str(verified.get("commit_sha") or "") or None,
-                        now,
-                        note_id,
-                    ),
+                verified = await self.github.write_repository_text(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    repository_id=int(snapshot["repository_id"]),
+                    project_id=str(snapshot["project_id"]),
+                    path=str(snapshot["repository_path"]),
+                    text=markdown,
+                    message=f"docs: add project note {note_id}",
                 )
-                exists = self.store.db.execute(
-                    """SELECT 1 FROM collaboration_events
-                       WHERE kind='note_created' AND object_kind='note'
-                         AND object_id=? LIMIT 1""",
-                    (note_id,),
-                ).fetchone()
-                if not exists:
+            except StoreError as exc:
+                retry_status = (
+                    "waiting_repository"
+                    if exc.code in RETRYABLE_GITHUB_NOTE_ERRORS
+                    else "blocked"
+                )
+                with self.store._lock:
                     self.store.db.execute(
-                        """INSERT INTO collaboration_events(
-                               workspace_id,project_id,actor_id,kind,object_kind,
-                               object_id,parent_object_id,addressed_to_actor_id,
-                               summary,created_at_ms)
-                           VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                        """UPDATE project_notes
+                           SET status=?,processing_error=?,updated_at_ms=?
+                           WHERE id=?""",
+                        (retry_status, exc.code, _now_ms(), note_id),
+                    )
+                self._set_intent_state(
+                    note_id,
+                    status=retry_status,
+                    error_code=exc.code,
+                )
+                raise
+
+            repository_sha = str(verified.get("sha") or "")
+            if verified.get("text") != markdown or not repository_sha:
+                with self.store._lock:
+                    self.store.db.execute(
+                        """UPDATE project_notes
+                           SET status='blocked',
+                               processing_error='GITHUB_READBACK_MISMATCH',
+                               updated_at_ms=? WHERE id=?""",
+                        (_now_ms(), note_id),
+                    )
+                self._set_intent_state(
+                    note_id,
+                    status="blocked",
+                    error_code="GITHUB_READBACK_MISMATCH",
+                )
+                raise StoreError(
+                    "GITHUB_READBACK_MISMATCH",
+                    "Repository readback does not match project note Markdown",
+                )
+
+            now = _now_ms()
+            with self.store._lock:
+                self.store.db.execute("BEGIN IMMEDIATE")
+                try:
+                    self.store.db.execute(
+                        """UPDATE project_notes
+                           SET status='ready',repository_sha=?,
+                               repository_commit_sha=?,processing_error=NULL,
+                               updated_at_ms=? WHERE id=?""",
                         (
-                            workspace_id,
-                            snapshot["project_id"],
-                            actor_id,
-                            "note_created",
-                            "note",
-                            note_id,
-                            None,
-                            None,
-                            processed.summary.title[:240],
+                            repository_sha,
+                            str(verified.get("commit_sha") or "") or None,
                             now,
+                            note_id,
                         ),
                     )
-                self.store.db.execute(
-                    """UPDATE project_note_intents
-                       SET status='ready',error_code=NULL,updated_at_ms=?
-                       WHERE id=?""",
-                    (now, note_id),
-                )
-                row = self._note_row(note_id)
-                self.store.db.execute("COMMIT")
-            except Exception:
-                self.store.db.execute("ROLLBACK")
-                raise
-        return self._public_note(actor_id, workspace_id, row)
+                    exists = self.store.db.execute(
+                        """SELECT 1 FROM collaboration_events
+                           WHERE kind='note_created' AND object_kind='note'
+                             AND object_id=? LIMIT 1""",
+                        (note_id,),
+                    ).fetchone()
+                    if not exists:
+                        self.store.db.execute(
+                            """INSERT INTO collaboration_events(
+                                   workspace_id,project_id,actor_id,kind,object_kind,
+                                   object_id,parent_object_id,addressed_to_actor_id,
+                                   summary,created_at_ms)
+                               VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                            (
+                                workspace_id,
+                                snapshot["project_id"],
+                                actor_id,
+                                "note_created",
+                                "note",
+                                note_id,
+                                None,
+                                None,
+                                processed.summary.title[:240],
+                                now,
+                            ),
+                        )
+                    self.store.db.execute(
+                        """UPDATE project_note_intents
+                           SET status='ready',error_code=NULL,updated_at_ms=?
+                           WHERE id=?""",
+                        (now, note_id),
+                    )
+                    row = self._note_row(note_id)
+                    self.store.db.execute("COMMIT")
+                except Exception:
+                    self.store.db.execute("ROLLBACK")
+                    raise
+            return self._public_note(actor_id, workspace_id, row)
+        finally:
+            self._release_note_processing(note_id, lease_token)
 
     async def create_note(
         self,
@@ -684,6 +760,36 @@ class CollaborationService:
             workspace_id=workspace_id,
             note_id=note_id,
         )
+
+    async def advance_pending_notes_once(self, limit: int = 2) -> int:
+        """Resume durable note processing independent of any client request."""
+        now = _now_ms()
+        with self.store._lock:
+            rows = self.store.db.execute(
+                """SELECT id,author_actor_id,workspace_id
+                   FROM project_notes
+                   WHERE status IN ('accepted','processing','waiting_repository')
+                     AND (
+                       processing_lease_token IS NULL
+                       OR processing_lease_until_ms IS NULL
+                       OR processing_lease_until_ms<?
+                     )
+                   ORDER BY created_at_ms,id
+                   LIMIT ?""",
+                (now, max(1, min(int(limit), 8))),
+            ).fetchall()
+        advanced = 0
+        for row in rows:
+            try:
+                await self._process_and_publish(
+                    actor_id=str(row["author_actor_id"]),
+                    workspace_id=str(row["workspace_id"]),
+                    note_id=str(row["id"]),
+                )
+            except StoreError:
+                pass
+            advanced += 1
+        return advanced
 
     def get_note(
         self, *, actor_id: str, workspace_id: str, note_id: str
