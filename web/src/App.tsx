@@ -1591,7 +1591,6 @@ export default function App() {
           visible={boardOpen}
           workspaceId={boot.workspace.id}
           projectId={focusProject.id}
-          canEdit={(focusProject.role ?? "viewer") !== "viewer"}
           canAnalyze={Boolean(focusProject.can_analyze)}
           canManageShare={Boolean(focusProject.can_manage_share)}
           focusRequest={boardFocusRequest}
