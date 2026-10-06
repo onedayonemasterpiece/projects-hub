@@ -112,6 +112,24 @@ export type AnalysisRun = {
   finished_at_ms: number | null;
 };
 
+export type BoardViewContextPayload = {
+  workspace_id: string;
+  project_id: string;
+  board_id: string;
+  client_instance_id: string;
+  board_seq: number;
+  camera: {
+    x: number;
+    y: number;
+    zoom: number;
+    width: number;
+    height: number;
+  };
+  visible_object_ids: string[];
+  selected_object_ids: string[];
+  focused_object_id: string | null;
+};
+
 export type BoardSocketMessage =
   | ({ type: "snapshot" } & BoardSnapshot)
   | { type: "event"; event: BoardEvent }
@@ -194,6 +212,28 @@ export async function boardHistory(
       encodeURIComponent(objectId) +
       "/history?" +
       query.toString(),
+  );
+}
+
+export async function updateBoardViewContext(
+  conversationId: string,
+  payload: BoardViewContextPayload,
+) {
+  return request<{
+    ok: boolean;
+    board_id: string;
+    board_seq: number;
+    client_instance_id: string;
+    visible_count: number;
+    updated_at_ms: number;
+  }>(
+    "/api/conversations/" +
+      encodeURIComponent(conversationId) +
+      "/board-view-context",
+    {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    },
   );
 }
 
