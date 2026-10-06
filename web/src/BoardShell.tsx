@@ -254,7 +254,6 @@ export function BoardShell({
   visible,
   workspaceId,
   projectId,
-  canEdit,
   canAnalyze,
   canManageShare,
   focusRequest,
@@ -266,7 +265,6 @@ export function BoardShell({
   visible: boolean;
   workspaceId: string;
   projectId: string;
-  canEdit: boolean;
   canAnalyze: boolean;
   canManageShare: boolean;
   focusRequest?: BoardFocusRequest;
@@ -282,7 +280,6 @@ export function BoardShell({
   const [camera, setCamera] = useState<BoardCamera>({ x: 160, y: 120, zoom: 1 });
   const cameraRef = useRef(camera);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [editing, setEditing] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [hits, setHits] = useState<BoardSearchHit[]>([]);
   const [status, setStatus] = useState("Подключение…");
@@ -311,12 +308,9 @@ export function BoardShell({
   const fulfilledFocusRef = useRef<string | null>(null);
   const dragRef = useRef<{
     pointerId: number;
-    objectId?: string;
     startX: number;
     startY: number;
     camera: BoardCamera;
-    geometry?: BoardGeometry;
-    revision?: number;
   } | null>(null);
   const objectsRef = useRef(objects);
   objectsRef.current = objects;
@@ -564,61 +558,6 @@ export function BoardShell({
     focusGeometry(geometry, focusRequest.token);
   }, [focusGeometry, focusRequest, onFocusFulfilled, visible]);
 
-  const resnapshot = useCallback(async () => {
-    if (!boardId) return;
-    const snapshot = await getBoardSnapshot(workspaceId, boardId);
-    setObjects(normalizedObjects(snapshot.objects));
-    setSeq(snapshot.board.seq);
-  }, [boardId, workspaceId]);
-
-  const send = useCallback(
-    async (
-      operation: string,
-      objectId: string,
-      expectedRevision: number | null,
-      payload: Record<string, unknown>,
-    ) => {
-      const socket = socketRef.current;
-      if (!socket) throw new Error("Доска переподключается");
-      setStatus("Сохраняю…");
-      const receipt = await socket.sendCommand({
-        command_id: commandId("cmd"),
-        operation,
-        object_id: objectId,
-        expected_object_revision: expectedRevision,
-        payload,
-      });
-      setObjects((current) => applyEvent(current, receipt.event));
-      setSeq(receipt.board_seq);
-      setStatus("Сохранено");
-      return receipt;
-    },
-    [],
-  );
-
-  const createSticky = async (color: BoardStyle["color"] = "yellow") => {
-    if (!canEdit || !host) return;
-    const rect = host.getBoundingClientRect();
-    const currentCamera = cameraRef.current;
-    const width = 300;
-    const height = 210;
-    const x = (rect.width / 2 - currentCamera.x) / currentCamera.zoom - width / 2;
-    const y = (rect.height / 2 - currentCamera.y) / currentCamera.zoom - height / 2;
-    const id = "obj_" + crypto.randomUUID();
-    try {
-      await send("create", id, null, {
-        type: "sticky",
-        text: "Новый стикер",
-        style: { color },
-        geometry: { x, y, width, height, z: seq + 1 },
-      });
-      setSelectedId(id);
-      setEditing(id);
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Не удалось создать стикер");
-    }
-  };
-
   const runSearch = useCallback(async () => {
     if (!boardId || !search.trim()) {
       setHits([]);
@@ -659,52 +598,13 @@ export function BoardShell({
     };
   };
 
-  const onObjectPointerDown = (
-    event: PointerEvent<HTMLButtonElement>,
-    object: BoardObject,
-  ) => {
-    event.stopPropagation();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    setSelectedId(object.id);
-    dragRef.current = {
-      pointerId: event.pointerId,
-      objectId: object.id,
-      startX: event.clientX,
-      startY: event.clientY,
-      camera: cameraRef.current,
-      geometry: { ...object.geometry },
-      revision: object.object_revision,
-    };
-    socketRef.current?.sendPresence({ dragging_object_id: object.id });
-  };
-
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
-    const dx = event.clientX - drag.startX;
-    const dy = event.clientY - drag.startY;
-    if (!drag.objectId || !drag.geometry) {
-      setCamera({
-        ...drag.camera,
-        x: drag.camera.x + dx,
-        y: drag.camera.y + dy,
-      });
-      return;
-    }
-    const nextGeometry = {
-      ...drag.geometry,
-      x: drag.geometry.x + dx / drag.camera.zoom,
-      y: drag.geometry.y + dy / drag.camera.zoom,
-    };
-    setObjects((current) => {
-      const next = new Map(current);
-      const object = next.get(drag.objectId as string);
-      if (object) next.set(object.id, { ...object, geometry: nextGeometry });
-      return next;
-    });
-    socketRef.current?.sendPresence({
-      dragging_object_id: drag.objectId,
-      cursor: { x: nextGeometry.x, y: nextGeometry.y },
+    setCamera({
+      ...drag.camera,
+      x: drag.camera.x + event.clientX - drag.startX,
+      y: drag.camera.y + event.clientY - drag.startY,
     });
   };
 
@@ -712,22 +612,6 @@ export function BoardShell({
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     dragRef.current = null;
-    socketRef.current?.sendPresence({});
-
-    if (!drag.objectId || !drag.geometry || drag.revision == null) return;
-    const current = objectsRef.current.get(drag.objectId);
-    if (!current) return;
-    const moved =
-      Math.abs(current.geometry.x - drag.geometry.x) > 0.01 ||
-      Math.abs(current.geometry.y - drag.geometry.y) > 0.01;
-    if (!moved) return;
-
-    void send("move", drag.objectId, drag.revision, {
-      geometry: current.geometry,
-    }).catch(async (error) => {
-      setStatus(error instanceof Error ? error.message : "Конфликт перемещения");
-      await resnapshot().catch(() => undefined);
-    });
   };
 
   const onWheel = (event: WheelEvent<HTMLDivElement>) => {
@@ -950,21 +834,6 @@ export function BoardShell({
         </div>
 
         <div className="board-actions">
-          {canEdit && (
-            <>
-              <button onClick={() => void createSticky("yellow")}>+ Стикер</button>
-              <div className="board-colors" aria-label="Цвет нового стикера">
-                {(Object.keys(palette) as BoardStyle["color"][]).map((color) => (
-                  <button
-                    key={color}
-                    aria-label={color}
-                    className={"board-color board-color-" + color}
-                    onClick={() => void createSticky(color)}
-                  />
-                ))}
-              </div>
-            </>
-          )}
           <button onClick={fitAll}>Показать всё</button>
           {canManageShare && (
             <button onClick={() => void prepareShare()} disabled={shareBusy}>
@@ -1043,8 +912,6 @@ export function BoardShell({
                   width: rect.width,
                   height: rect.height,
                 }}
-                onPointerDown={(event) => onObjectPointerDown(event, object)}
-                onDoubleClick={() => canEdit && setEditing(object.id)}
                 onClick={() => void showHistory(object.id)}
                 aria-label={object.text || "Стикер"}
               />
@@ -1052,53 +919,6 @@ export function BoardShell({
           })}
         </div>
 
-        {editing && canEdit && objects.get(editing) && (() => {
-          const object = objects.get(editing) as BoardObject;
-          const rect = worldToScreen(object.geometry, camera);
-          return (
-            <textarea
-              autoFocus
-              className="board-editor"
-              style={{
-                left: rect.left + 14,
-                top: rect.top + 18,
-                width: Math.max(80, rect.width - 28),
-                height: Math.max(60, rect.height - 44),
-                fontSize: Math.max(13, 18 * camera.zoom),
-              }}
-              defaultValue={object.text}
-              onPointerDown={(event) => event.stopPropagation()}
-              onBlur={(event) => {
-                const text = event.currentTarget.value;
-                setEditing(null);
-                if (text !== object.text) {
-                  void send("update", object.id, object.object_revision, { text }).catch(
-                    async (error) => {
-                      setStatus(
-                        error instanceof Error
-                          ? error.message
-                          : "Конфликт редактирования",
-                      );
-                      await resnapshot().catch(() => undefined);
-                    },
-                  );
-                }
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  event.currentTarget.value = object.text;
-                  event.currentTarget.blur();
-                }
-                if (
-                  (event.metaKey || event.ctrlKey) &&
-                  event.key === "Enter"
-                ) {
-                  event.currentTarget.blur();
-                }
-              }}
-            />
-          );
-        })()}
       </div>
 
       {shareOpen && canManageShare && (
@@ -1421,22 +1241,6 @@ export function BoardShell({
               }
             >
               Открыть отчёт
-            </button>
-          )}
-          {canEdit && (
-            <button
-              onClick={() =>
-                void send("delete", selected.id, selected.object_revision, {})
-                  .then(() => {
-                    setSelectedId(null);
-                    setHistory([]);
-                  })
-                  .catch((error) =>
-                    setStatus(error instanceof Error ? error.message : "Ошибка удаления"),
-                  )
-              }
-            >
-              Удалить
             </button>
           )}
           <div className="board-history">
