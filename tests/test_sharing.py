@@ -45,6 +45,7 @@ def setup(tmp_path: Path):
             "text": "Visible sticky",
             "style": {"color": "green"},
         },
+        execution_origin="mira",
     )
     board.apply_command(
         actor_id=actor,
@@ -60,6 +61,7 @@ def setup(tmp_path: Path):
             "style": {"color": "violet"},
             "reference": {"kind": "analysis_run", "id": "anr_private_report"},
         },
+        execution_origin="mira",
     )
     settings = Settings(
         data_dir=tmp_path / "data",
@@ -191,6 +193,7 @@ def test_guest_wss_streams_durable_projection_and_revoke_closes_open_socket(tmp_
                     object_id="obj_share_private",
                     expected_object_revision=1,
                     payload={"text": "Even newer secret title"},
+                    execution_origin="mira",
                 )
                 event = socket.receive_json()
                 assert event["type"] == "event"
