@@ -165,7 +165,7 @@ async def run(args) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--http-base", default="http://127.0.0.1:8088")
+    parser.add_argument("--http-base", default="http://127.0.0.1:8196")
     parser.add_argument("--ws-base")
     parser.add_argument("--origin")
     parser.add_argument("--display-name", default="PH Transcribe Canary")
