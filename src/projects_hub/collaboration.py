@@ -87,6 +87,26 @@ class CollaborationService:
                 CREATE INDEX IF NOT EXISTS project_notes_project_idx
                     ON project_notes(project_id, created_at_ms DESC, id);
 
+                CREATE TABLE IF NOT EXISTS project_note_intents(
+                    id TEXT PRIMARY KEY,
+                    workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+                    project_id TEXT NOT NULL REFERENCES projects(id),
+                    author_actor_id TEXT NOT NULL REFERENCES actors(id),
+                    title TEXT NOT NULL,
+                    source_text TEXT NOT NULL,
+                    author_roles_json TEXT NOT NULL,
+                    audience TEXT NOT NULL DEFAULT 'project',
+                    command_id TEXT NOT NULL,
+                    request_sha256 TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'accepted',
+                    error_code TEXT,
+                    created_at_ms INTEGER NOT NULL,
+                    updated_at_ms INTEGER NOT NULL,
+                    UNIQUE(author_actor_id, project_id, command_id)
+                );
+                CREATE INDEX IF NOT EXISTS project_note_intents_project_idx
+                    ON project_note_intents(project_id, created_at_ms DESC, id);
+
                 CREATE TABLE IF NOT EXISTS project_discussion_entries(
                     id TEXT PRIMARY KEY,
                     workspace_id TEXT NOT NULL REFERENCES workspaces(id),
@@ -220,10 +240,41 @@ class CollaborationService:
         }
 
     @staticmethod
-    def _repository_audience(repository: dict[str, Any]) -> str:
-        # Repository binding is the one-time audience choice. Never claim
-        # project-private visibility for content committed to a public repo.
-        return "project" if bool(repository.get("private")) else "public"
+    def _require_project_audience_repository(repository: dict[str, Any]) -> str:
+        if not bool(repository.get("private")):
+            raise StoreError(
+                "NOTE_AUDIENCE_REPOSITORY_MISMATCH",
+                "Project-audience notes require a private project_docs repository",
+            )
+        return "project"
+
+    def _intent_row(
+        self,
+        *,
+        actor_id: str,
+        project_id: str,
+        command_id: str,
+    ) -> Any | None:
+        return self.store.db.execute(
+            """SELECT * FROM project_note_intents
+               WHERE author_actor_id=? AND project_id=? AND command_id=?""",
+            (actor_id, project_id, command_id),
+        ).fetchone()
+
+    def _set_intent_state(
+        self,
+        note_id: str,
+        *,
+        status: str,
+        error_code: str | None = None,
+    ) -> None:
+        with self.store._lock:
+            self.store.db.execute(
+                """UPDATE project_note_intents
+                   SET status=?,error_code=?,updated_at_ms=?
+                   WHERE id=?""",
+                (status, error_code, _now_ms(), note_id),
+            )
 
     def _note_row(self, note_id: str) -> Any:
         row = self.store.db.execute(
@@ -497,27 +548,72 @@ class CollaborationService:
         if workspace_role not in roles:
             roles.append(workspace_role)
         note_id, path = self._note_identity(actor_id, project_id, command_id)
-        repository = self._project_docs_repository(actor_id, workspace_id, project_id)
-        audience = self._repository_audience(repository)
         now = _now_ms()
 
-        # Persist the exact intended shared source before any model/provider call.
+        # Save the exact intended shared source before repository or model
+        # configuration checks. A configuration blocker must not force the user
+        # to repeat the note or lose its intended content.
         with self.store._lock:
             self.store.db.execute("BEGIN IMMEDIATE")
             try:
-                existing = self.store.db.execute(
-                    """SELECT * FROM project_notes
-                       WHERE author_actor_id=? AND project_id=? AND command_id=?""",
-                    (actor_id, project_id, command_id),
-                ).fetchone()
-                if existing:
-                    if existing["request_sha256"] != request_sha:
+                intent = self._intent_row(
+                    actor_id=actor_id,
+                    project_id=project_id,
+                    command_id=command_id,
+                )
+                if intent:
+                    if intent["request_sha256"] != request_sha:
                         raise StoreError(
                             "COLLABORATION_COMMAND_CONFLICT",
                             "command_id was already used with another note payload",
                         )
-                    note_id = str(existing["id"])
+                    note_id = str(intent["id"])
                 else:
+                    self.store.db.execute(
+                        """INSERT INTO project_note_intents(
+                               id,workspace_id,project_id,author_actor_id,title,
+                               source_text,author_roles_json,audience,command_id,
+                               request_sha256,status,error_code,created_at_ms,updated_at_ms)
+                           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            note_id,
+                            workspace_id,
+                            project_id,
+                            actor_id,
+                            clean_title,
+                            clean_body,
+                            json.dumps(roles, ensure_ascii=False),
+                            "project",
+                            command_id,
+                            request_sha,
+                            "accepted",
+                            None,
+                            now,
+                            now,
+                        ),
+                    )
+                self.store.db.execute("COMMIT")
+            except Exception:
+                self.store.db.execute("ROLLBACK")
+                raise
+
+        try:
+            repository = self._project_docs_repository(
+                actor_id, workspace_id, project_id
+            )
+            audience = self._require_project_audience_repository(repository)
+        except StoreError as exc:
+            self._set_intent_state(note_id, status="blocked", error_code=exc.code)
+            raise
+
+        with self.store._lock:
+            self.store.db.execute("BEGIN IMMEDIATE")
+            try:
+                existing = self.store.db.execute(
+                    "SELECT * FROM project_notes WHERE id=?",
+                    (note_id,),
+                ).fetchone()
+                if not existing:
                     self.store.db.execute(
                         """INSERT INTO project_notes(
                                id,workspace_id,project_id,author_actor_id,title,body,
@@ -551,6 +647,12 @@ class CollaborationService:
                             now,
                         ),
                     )
+                self.store.db.execute(
+                    """UPDATE project_note_intents
+                       SET status='materialized',error_code=NULL,updated_at_ms=?
+                       WHERE id=?""",
+                    (_now_ms(), note_id),
+                )
                 self.store.db.execute("COMMIT")
             except Exception:
                 self.store.db.execute("ROLLBACK")
