@@ -38,6 +38,7 @@ test("Projects Hub renders provider interim speech without committing it to chat
     new URL("../../src/projects_hub/live_adapter.py", import.meta.url),
     "utf8",
   );
+  assert.match(source, /event\.type === "interim_input_transcript"[\s\S]*applyCaptionToUserBubble\(event\.text, false\)/);
   assert.match(source, /event\.type === "interim_input_transcript"[\s\S]*setInterimInputTranscript/);
   assert.match(source, /event\.type === "input_transcript"[\s\S]*setInterimInputTranscript\(""/);
   assert.doesNotMatch(source, /Слышу сейчас/);
@@ -272,9 +273,11 @@ test("Projects Hub opts into shared adaptive duplex echo rejection", async () =>
 
 test("accepted microphone turns stay visible without premature transcription errors", async () => {
   const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
-  assert.match(source, /VOICE_TURN_PLACEHOLDER = "Голосовая реплика"/);
+  assert.match(source, /VOICE_TURN_PLACEHOLDER = ""/);
+  assert.doesNotMatch(source, /"Голосовая реплика"/);
   assert.match(source, /const reserveUserVoiceBubble = useCallback/);
   assert.match(source, /messages\.push\(\{ role: "user", text: VOICE_TURN_PLACEHOLDER, awaitingTranscript: true \}\)/);
+  assert.match(source, /\{message\.text && \(/);
   assert.match(source, /speechStartsNewUserBubble\(event\)[\s\S]*settleCurrentVoiceBubble\(\)[\s\S]*reserveUserVoiceBubble\(\)/);
   assert.match(source, /Текст не удалось отобразить/);
   assert.doesNotMatch(source, /Текст не получен/);

@@ -58,7 +58,7 @@ type ChatMessage = {
   deliveryNote?: string;
 };
 
-const VOICE_TURN_PLACEHOLDER = "Голосовая реплика";
+const VOICE_TURN_PLACEHOLDER = "";
 
 const developmentStageLabel: Record<string, string> = {
   design: "Проектирование",
@@ -377,11 +377,7 @@ export default function App() {
       }
       const messages = [...previous];
       const current = messages[index];
-      const hasVisibleCaption = Boolean(
-        current.provisionalCaption
-        && current.text
-        && current.text !== VOICE_TURN_PLACEHOLDER,
-      );
+      const hasVisibleCaption = Boolean(current.provisionalCaption && current.text);
       messages[index] = {
         ...current,
         awaitingTranscript: keepAwaiting,
@@ -451,7 +447,12 @@ export default function App() {
         turnHasInput.current = false;
       }
       setInputTranscriptSeen(true);
-      setInterimInputTranscript(event.text.trim());
+      if (userTranscriptIndex.current >= 0) {
+        setInterimInputTranscript("");
+        applyCaptionToUserBubble(event.text, false);
+      } else {
+        setInterimInputTranscript(event.text.trim());
+      }
     } else if (event.type === "input_transcript" && typeof event.text === "string") {
       setInputTranscriptSeen(true);
       setInterimInputTranscript("");
@@ -1295,18 +1296,20 @@ export default function App() {
               {chatMessages.map((message, index) => (
                 <div className={"chat-row " + message.role} key={index}>
                   <div className={"chat-message " + message.role}>
-                    <div
-                      className={
-                        "chat-bubble " + message.role
-                        + (message.awaitingTranscript ? " awaiting-transcript" : "")
-                        + (message.provisionalCaption ? " sidecar-caption" : "")
-                      }
-                      aria-label={
-                        (message.role === "user" ? "Вы" : "Мира") + ": " + message.text
-                      }
-                    >
-                      {message.text}
-                    </div>
+                    {message.text && (
+                      <div
+                        className={
+                          "chat-bubble " + message.role
+                          + (message.awaitingTranscript ? " awaiting-transcript" : "")
+                          + (message.provisionalCaption ? " sidecar-caption" : "")
+                        }
+                        aria-label={
+                          (message.role === "user" ? "Вы" : "Мира") + ": " + message.text
+                        }
+                      >
+                        {message.text}
+                      </div>
+                    )}
                     {message.deliveryNote && (
                       <span className="message-delivery-note">{message.deliveryNote}</span>
                     )}
