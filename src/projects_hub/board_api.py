@@ -47,7 +47,6 @@ class BoardCommandRequest(BaseModel):
     object_id: str
     expected_object_revision: int | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
-    execution_origin: str = "direct_ui"
 
 
 @dataclass
@@ -218,19 +217,13 @@ def attach_board_routes(
     async def board_command(
         board_id: str, payload: BoardCommandRequest, request: Request
     ) -> dict[str, Any]:
-        receipt = service.apply_command(
-            actor_id=actor_id_from_request(request),
-            workspace_id=payload.workspace_id,
-            board_id=board_id,
-            command_id=payload.command_id,
-            operation=payload.operation,
-            object_id=payload.object_id,
-            expected_object_revision=payload.expected_object_revision,
-            payload=payload.payload,
-            execution_origin=payload.execution_origin,
+        # Keep a deterministic legacy response instead of silently accepting
+        # an old direct-edit client. Board writes belong to Mira Live tools.
+        actor_id_from_request(request)
+        raise StoreError(
+            "BOARD_VOICE_ONLY",
+            "Board mutations are available only through Mira Live tools",
         )
-        await hub.publish(board_id, {"type": "event", "event": receipt["event"]})
-        return receipt
 
     @app.post("/api/boards/{board_id}/ui-ack")
     async def board_ui_ack(
@@ -335,30 +328,14 @@ def attach_board_routes(
                         continue
                     kind = message.get("type")
                     if kind == "command":
-                        try:
-                            receipt = service.apply_command(
-                                actor_id=peer.actor_id,
-                                workspace_id=peer.workspace_id,
-                                board_id=board_id,
-                                command_id=str(message.get("command_id") or ""),
-                                operation=str(message.get("operation") or ""),
-                                object_id=str(message.get("object_id") or ""),
-                                expected_object_revision=message.get("expected_object_revision"),
-                                payload=message.get("payload") if isinstance(message.get("payload"), dict) else {},
-                                execution_origin="direct_ui",
-                            )
-                            await peer.queue.put({"type": "ack", "receipt": receipt})
-                            await hub.publish(
-                                board_id,
-                                {"type": "event", "event": receipt["event"]},
-                                except_peer_id=peer.peer_id,
-                            )
-                        except StoreError as exc:
-                            await peer.queue.put(
-                                {"type": "conflict" if exc.code.endswith("CONFLICT") else "error",
-                                 "code": exc.code, "message": str(exc)[:300],
-                                 "command_id": message.get("command_id")}
-                            )
+                        await peer.queue.put(
+                            {
+                                "type": "error",
+                                "code": "BOARD_VOICE_ONLY",
+                                "message": "Board mutations are available only through Mira Live tools",
+                                "command_id": message.get("command_id"),
+                            }
+                        )
                     elif kind == "presence":
                         encoded = json.dumps(message, ensure_ascii=False)
                         if len(encoded.encode("utf-8")) > MAX_PRESENCE_TEXT_BYTES:
