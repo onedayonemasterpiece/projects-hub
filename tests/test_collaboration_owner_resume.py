@@ -178,3 +178,74 @@ async def test_non_owner_cannot_answer_owner_question(tmp_path: Path):
         await service.close()
         await development.close()
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_owner_resume_refuses_when_another_execution_is_active(tmp_path: Path):
+    store, service, development, devcoveer, actor, workspace = make_state(tmp_path)
+    try:
+        question = next(
+            item for item in service.inbox(actor_id=actor, workspace_id=workspace)
+            if item["source_kind"] == "owner_development"
+        )
+        with store._lock:
+            base = store.db.execute(
+                "SELECT * FROM task_executions WHERE id='devexec_waiting'"
+            ).fetchone()
+            store.db.execute(
+                """INSERT INTO task_executions(
+                       id,actor_id,workspace_id,project_id,task_ids_json,project_hint,
+                       provider,model_profile,prompt,prompt_sha256,status,phase,phase_detail,
+                       devcoveer_task_id,quota_remaining_percent,result_summary,error_code,
+                       created_at_ms,updated_at_ms,started_at_ms,finished_at_ms,
+                       quality_task_id,implementation_task_id,review_cycle,spec_path)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    "devexec_other_active",
+                    base["actor_id"],
+                    base["workspace_id"],
+                    base["project_id"],
+                    "[]",
+                    base["project_hint"],
+                    "codex",
+                    "gpt-6.1-sol:medium",
+                    "other active execution",
+                    "1" * 64,
+                    "running",
+                    "implementing",
+                    "Other owner work is active",
+                    "dvt_other_active",
+                    80.0,
+                    "",
+                    None,
+                    int(base["created_at_ms"]) + 1,
+                    int(base["updated_at_ms"]) + 1,
+                    int(base["started_at_ms"]) + 1,
+                    None,
+                    "dvt_other_quality",
+                    "dvt_other_impl",
+                    0,
+                    "docs/prompts/other.md",
+                ),
+            )
+
+        with pytest.raises(StoreError) as exc:
+            await service.answer_owner_development_question(
+                actor_id=actor,
+                workspace_id=workspace,
+                question_id=question["id"],
+                command_id="owner.reply.busy",
+                disposition="answer",
+                body="Ответ достаточен, но другое owner execution уже активно.",
+            )
+        assert exc.value.code == "DEVELOPMENT_EXECUTION_ACTIVE"
+        assert devcoveer.calls == []
+        with store._lock:
+            row = store.db.execute(
+                "SELECT status,phase FROM task_executions WHERE id='devexec_waiting'"
+            ).fetchone()
+        assert dict(row) == {"status": "blocked", "phase": "needs_owner"}
+    finally:
+        await service.close()
+        await development.close()
+        store.close()
