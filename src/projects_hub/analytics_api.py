@@ -97,16 +97,6 @@ def attach_analytics_routes(
             run_id=run_id,
         )
 
-    @app.post("/api/analysis/runs/{run_id}/confirm")
-    async def analysis_confirm(
-        run_id: str, payload: AnalysisWorkspaceRequest, request: Request
-    ) -> dict[str, Any]:
-        return await service.confirm_paid(
-            actor_id=actor_id_from_request(request),
-            workspace_id=payload.workspace_id,
-            run_id=run_id,
-        )
-
     @app.post("/api/analysis/runs/{run_id}/cancel")
     async def analysis_cancel(
         run_id: str, payload: AnalysisWorkspaceRequest, request: Request
