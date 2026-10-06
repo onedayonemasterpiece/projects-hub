@@ -7,7 +7,38 @@ import pytest
 
 from projects_hub.collaboration import CollaborationService
 from projects_hub.collaboration_analysis import CollaborationAnalysisService
+from projects_hub.note_processing import NoteSummary, ProcessedNote
 from projects_hub.store import DurableStore, StoreError
+
+
+class FakeNoteProcessor:
+    async def summarize(self, **kwargs):
+        source = str(kwargs["source_text"])
+        return ProcessedNote(
+            summary=NoteSummary(
+                title=str(kwargs.get("suggested_title") or "Note"),
+                short_summary=source,
+                detailed_summary=source,
+                theses=[],
+                ideas=[],
+                decisions=[],
+                tasks=[],
+                facts=[],
+                entities=[],
+                related_projects=[],
+                open_questions=[],
+                contradictions=[],
+                uncertain_fragments=[],
+                tags=[],
+            ),
+            model="gemini-test",
+            prompt_version="test-v1",
+            request_uid="req-test",
+            limiter={"contract": "test"},
+        )
+
+    async def close(self):
+        return None
 
 
 class FakeGitHub:
@@ -136,7 +167,11 @@ def setup(tmp_path: Path):
             ),
         )
     github = FakeGitHub(store)
-    collaboration = CollaborationService(store, github)  # type: ignore[arg-type]
+    collaboration = CollaborationService(
+        store,
+        github,  # type: ignore[arg-type]
+        note_processor=FakeNoteProcessor(),  # type: ignore[arg-type]
+    )
     invite = collaboration.invite_participant(
         owner_actor_id=actor_a,
         workspace_id=workspace_id,
