@@ -24,8 +24,8 @@ class DevCoveerClient:
     the persistent bridge process they require between start/read/continue calls.
     """
 
-    _ALLOWED = {"codex_status", "list_models", "start_task", "continue_task", "read_task"}
-    _REQUIRED = {"codex_status", "list_models", "start_task", "continue_task", "read_task"}
+    _ALLOWED = {"codex_status", "list_models", "list_tasks", "start_task", "continue_task", "read_task"}
+    _REQUIRED = {"codex_status", "list_models", "list_tasks", "start_task", "continue_task", "read_task"}
 
     def __init__(
         self,
@@ -169,6 +169,21 @@ class DevCoveerClient:
             "quota": quota,
             "models": models.get("models", []),
         }
+
+    async def list_codex_tasks(
+        self,
+        *,
+        project: str,
+        search: str | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        arguments: dict[str, Any] = {
+            "project": project,
+            "limit": max(1, min(int(limit), 100)),
+        }
+        if search:
+            arguments["search"] = search
+        return await self._call("list_tasks", arguments)
 
     async def start_codex_task(
         self,

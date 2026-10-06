@@ -31,6 +31,7 @@ class FakeSession:
         names = [
             "codex_status",
             "list_models",
+            "list_tasks",
             "start_task",
             "continue_task",
             "read_task",
@@ -81,6 +82,35 @@ async def test_worker_owns_stdio_context_across_request_and_lifespan_tasks(
     await client.close()
     assert stdio_tasks["exit"] is stdio_tasks["enter"]
     assert stdio_tasks["exit"] is not asyncio.current_task()
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_is_bounded_and_filterable():
+    client = DevCoveerClient(command="/tmp/not-used")
+    captured: list[tuple[str, dict]] = []
+
+    async def fake_call(name: str, arguments: dict):
+        captured.append((name, dict(arguments)))
+        return {"status": "ok", "tasks": []}
+
+    client._call = fake_call  # type: ignore[method-assign]
+    result = await client.list_codex_tasks(
+        project="projects-hub-owner",
+        search="ODR-fe82",
+        limit=500,
+    )
+
+    assert result["tasks"] == []
+    assert captured == [
+        (
+            "list_tasks",
+            {
+                "project": "projects-hub-owner",
+                "limit": 100,
+                "search": "ODR-fe82",
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio

@@ -71,7 +71,8 @@ const developmentStageLabel: Record<string, string> = {
   deploying: "Развёртывание",
   releasing: "Релиз",
   ready: "Готово",
-  capacity_wait: "Ожидание лимита",
+  capacity_wait: "Ожидание ресурса",
+  recovering: "Автовосстановление",
   needs_owner: "Нужно решение владельца",
   failed: "Ошибка",
 };

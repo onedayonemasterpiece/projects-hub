@@ -20,10 +20,11 @@ TERMINAL_EXECUTION_STATES = {"completed", "failed", "cancelled", "blocked"}
 DEFAULT_CODEX_PROFILE = "gpt-6.1-medium"
 QUALITY_MODEL = "gpt-6-astra"
 QUALITY_EFFORT = "high"
-MAX_REWORK_CYCLES = 4
+MAX_REWORK_CYCLES = 12
 MAX_INTERRUPTED_RESUME_ATTEMPTS = 1
 MAX_INTERRUPTED_DESIGN_ATTEMPTS = 3
-MAX_INTERRUPTED_REVIEW_ATTEMPTS = 2
+MAX_INTERRUPTED_REVIEW_ATTEMPTS = 4
+MAX_INTERRUPTED_WRITE_CONTINUATIONS = 6
 PROJECTS_ROOT = Path(os.getenv("PROJECTS_HUB_PROJECTS_ROOT", "/home/dev/projects")).resolve()
 BACKGROUND_SYNC_INTERVAL_SECONDS = 2.0
 SELF_REPOSITORY_ENV = "PROJECTS_HUB_SELF_REPOSITORY"
@@ -1063,7 +1064,7 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
                 ).fetchone()
         return int(row["value"] if row else 0)
 
-    def _block_interrupted_execution(
+    def _queue_interrupted_recovery(
         self,
         *,
         item: dict[str, Any],
@@ -1079,12 +1080,12 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
         with self.store._lock:
             self.store.db.execute(
                 """UPDATE task_executions
-                   SET status='blocked',phase='needs_owner',
-                       phase_detail='Стадия разработки прервана; безопасное автоматическое продолжение недоступно',
+                   SET status='running',phase='recovering',
+                       phase_detail='Техническое прерывание: автоматически восстанавливаю ту же задачу',
                        result_summary=?,error_code='DEVELOPMENT_STAGE_INTERRUPTED',
-                       finished_at_ms=?,updated_at_ms=?
+                       finished_at_ms=NULL,updated_at_ms=?
                    WHERE id=?""",
-                (summary[:12000], now, now, item["id"]),
+                (summary[:12000], now, item["id"]),
             )
         row = self._execution_row(
             actor_id=str(item["actor_id"]),
@@ -1094,6 +1095,448 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
         public = self._execution_public(row)
         public["update_check_recommended"] = False
         return {"execution": public}
+
+    def _latest_stage(self, execution_id: str) -> dict[str, Any] | None:
+        with self.store._lock:
+            row = self.store.db.execute(
+                """SELECT * FROM task_execution_stages
+                   WHERE execution_id=?
+                   ORDER BY created_at_ms DESC LIMIT 1""",
+                (execution_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def _latest_review_summary(self, execution_id: str, cycle: int) -> str:
+        with self.store._lock:
+            row = self.store.db.execute(
+                """SELECT summary FROM task_execution_stages
+                   WHERE execution_id=? AND stage='review'
+                     AND cycle=? AND status='completed'
+                   ORDER BY created_at_ms DESC LIMIT 1""",
+                (execution_id, int(cycle)),
+            ).fetchone()
+        return str(row["summary"] or "") if row else ""
+
+    @staticmethod
+    def _dispatch_marker(
+        execution_id: str,
+        stage_name: str,
+        cycle: int,
+        attempt: int,
+    ) -> str:
+        compact = str(execution_id).removeprefix("devrun_")[:16]
+        safe_stage = re.sub(r"[^a-z0-9_-]+", "-", stage_name.lower()).strip("-")
+        return f"ODR-{compact}-{safe_stage}-{int(cycle)}-a{int(attempt)}"
+
+    @staticmethod
+    def _task_reference(task: dict[str, Any]) -> str:
+        return str(
+            task.get("taskId")
+            or task.get("taskReference")
+            or task.get("threadId")
+            or ""
+        ).strip()
+
+    async def _find_marked_task(
+        self,
+        *,
+        project: str,
+        marker: str,
+        model: str,
+        access: str,
+    ) -> str | None:
+        history = await self.devcoveer.list_codex_tasks(
+            project=project,
+            search=marker,
+            limit=20,
+        )
+        rows = history.get("tasks")
+        if not isinstance(rows, list):
+            raise StoreError(
+                "DEVELOPMENT_DISPATCH_UNKNOWN",
+                "DevCoveer task history did not return a task list",
+            )
+        matches: list[str] = []
+        for raw in rows:
+            if not isinstance(raw, dict):
+                continue
+            searchable = "\n".join(
+                str(raw.get(key) or "")
+                for key in ("name", "title", "preview")
+            )
+            if marker not in searchable:
+                continue
+            backend = str(raw.get("backend") or raw.get("provider") or "").lower()
+            if backend and backend not in {"codex", "native_codex"}:
+                continue
+            candidate_model = str(raw.get("model") or "")
+            if candidate_model and candidate_model != model:
+                continue
+            candidate_access = str(raw.get("access") or "")
+            if candidate_access and candidate_access != access:
+                continue
+            reference = self._task_reference(raw)
+            if reference and reference not in matches:
+                matches.append(reference)
+        if len(matches) > 1:
+            raise StoreError(
+                "DEVELOPMENT_DISPATCH_AMBIGUOUS",
+                "More than one DevCoveer task matches the durable dispatch marker",
+            )
+        return matches[0] if matches else None
+
+    async def _start_marked_codex_task(
+        self,
+        *,
+        project: str,
+        marker: str,
+        prompt: str,
+        model: str,
+        reasoning_effort: str,
+        access: str,
+    ) -> tuple[str, dict[str, Any]]:
+        try:
+            existing = await self._find_marked_task(
+                project=project,
+                marker=marker,
+                model=model,
+                access=access,
+            )
+        except DevCoveerError as exc:
+            raise StoreError(
+                "DEVELOPMENT_DISPATCH_UNKNOWN",
+                "DevCoveer task history is temporarily unavailable",
+            ) from exc
+        if existing:
+            return existing, {
+                "status": "reconciled",
+                "taskId": existing,
+                "dispatchMarker": marker,
+            }
+
+        marked_prompt = marker + "\n" + prompt
+        try:
+            started = await self.devcoveer.start_codex_task(
+                project=project,
+                prompt=marked_prompt,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                access=access,
+            )
+        except DevCoveerError as exc:
+            try:
+                reconciled = await self._find_marked_task(
+                    project=project,
+                    marker=marker,
+                    model=model,
+                    access=access,
+                )
+            except (DevCoveerError, StoreError) as history_error:
+                raise StoreError(
+                    "DEVELOPMENT_DISPATCH_UNKNOWN",
+                    "DevCoveer start outcome is unknown and history readback failed",
+                ) from history_error
+            if not reconciled:
+                raise StoreError(
+                    "DEVELOPMENT_DISPATCH_UNKNOWN",
+                    "DevCoveer start outcome is unknown; retry will reconcile before dispatch",
+                ) from exc
+            return reconciled, {
+                "status": "reconciled",
+                "taskId": reconciled,
+                "dispatchMarker": marker,
+            }
+
+        task_id = str(
+            started.get("taskId") or started.get("taskReference") or ""
+        ).strip()
+        if not task_id:
+            try:
+                reconciled = await self._find_marked_task(
+                    project=project,
+                    marker=marker,
+                    model=model,
+                    access=access,
+                )
+            except (DevCoveerError, StoreError) as history_error:
+                raise StoreError(
+                    "DEVELOPMENT_DISPATCH_UNKNOWN",
+                    "DevCoveer returned no task id and history readback failed",
+                ) from history_error
+            if reconciled:
+                return reconciled, {
+                    "status": "reconciled",
+                    "taskId": reconciled,
+                    "dispatchMarker": marker,
+                }
+            raise StoreError(
+                "DEVELOPMENT_DISPATCH_UNKNOWN",
+                "DevCoveer returned no task id; retry will reconcile before dispatch",
+            )
+        return task_id, started
+
+    def _recovery_write_prompt(
+        self,
+        *,
+        item: dict[str, Any],
+        stage: dict[str, Any],
+        summary: str,
+    ) -> str:
+        logical_stage = str(stage.get("stage") or "")
+        cycle = int(stage.get("cycle") or 0)
+        execution_id = str(item["id"])
+        spec_path = str(item.get("spec_path") or "")
+        prior_task = str(stage.get("devcoveer_task_id") or "")
+        if logical_stage == "delivery":
+            return f"""Autonomous delivery recovery for already-authorized execution {execution_id}.
+Specification: {spec_path}
+Previous delivery thread {prior_task} ended in terminal interrupted state.
+
+Do not start the product work over. Inspect the existing Git branch/worktree, PRs, CI runs, release tags/manifests and production receipts first. Continue idempotently from the latest durable result. Merge only the accepted implementation, wait for required CI, refresh origin/main and deploy only the exact merged SHA from fresh origin/main history. If Android changed, bump to the next unused product version, publish the normal signed Android release/update manifest and verify the self-update path. Verify running service, static assets and release metadata all resolve to the same immutable release. Do not broaden scope."""
+        review_summary = self._latest_review_summary(execution_id, cycle)
+        return f"""Autonomous write-stage recovery for already-authorized execution {execution_id}.
+Specification: {spec_path}
+Stage: {logical_stage}
+Cycle: {cycle}
+Previous write thread: {prior_task}
+Previous turn ended in terminal interrupted state.
+
+Do not recreate the implementation from scratch and do not broaden scope. Inspect git status/log/branches and the existing specification first. Locate and continue the existing implementation branch containing the work for this execution; preserve its commits and unrelated work. If the checkout is already on that branch, continue there. Complete only the remaining fixes, run the available deterministic tests/build/browser/emulator checks, and commit the recovered changes on the same implementation branch.
+
+Previous stage summary:
+{summary[:6000]}
+
+Latest independent review findings for this cycle:
+{review_summary[:6000]}
+
+Do NOT merge, deploy or release. Stop when the existing implementation is again ready for independent review."""
+
+    async def _start_write_recovery_continuation(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        item: dict[str, Any],
+        stage: dict[str, Any],
+        summary: str,
+    ) -> bool:
+        logical_stage = str(stage.get("stage") or "")
+        if logical_stage not in {"implementation", "rework", "delivery"}:
+            return False
+        cycle = int(stage.get("cycle") or 0)
+        attempts = self._stage_attempt_count(
+            str(item["id"]),
+            logical_stage,
+            cycle=cycle,
+        )
+        if attempts >= MAX_INTERRUPTED_WRITE_CONTINUATIONS:
+            now = _now_ms()
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE task_executions
+                       SET status='failed',phase='failed',
+                           phase_detail='Автоматическое восстановление write-stage исчерпало безопасный предел',
+                           error_code='AUTONOMOUS_RECOVERY_EXHAUSTED',
+                           result_summary=?,finished_at_ms=?,updated_at_ms=?
+                       WHERE id=?""",
+                    (summary[:12000], now, now, item["id"]),
+                )
+            return False
+
+        implementation_model, implementation_effort = str(
+            item["model_profile"]
+        ).rsplit(":", 1)
+        remaining = await self._require_stage_capacity(
+            actor_id=actor_id,
+            workspace_id=workspace_id,
+            model=implementation_model,
+            reasoning_effort=implementation_effort,
+        )
+        marker = self._dispatch_marker(
+            str(item["id"]),
+            logical_stage,
+            cycle,
+            attempts + 1,
+        )
+        task_id, _started = await self._start_marked_codex_task(
+            project=str(item["project_hint"]),
+            marker=marker,
+            prompt=self._recovery_write_prompt(
+                item=item,
+                stage=stage,
+                summary=summary,
+            ),
+            model=implementation_model,
+            reasoning_effort=implementation_effort,
+            access="write",
+        )
+
+        self._finish_stage(
+            stage_id=str(stage["id"]),
+            status="superseded",
+            summary=(
+                summary
+                or "Interrupted write-stage superseded by autonomous continuation."
+            ),
+        )
+        self._record_stage(
+            execution_id=str(item["id"]),
+            stage=logical_stage,
+            cycle=cycle,
+            model=implementation_model,
+            reasoning_effort=implementation_effort,
+            devcoveer_task_id=task_id,
+        )
+        phase, detail = self._phase_after_resume(logical_stage)
+        detail = (
+            "Автоматическое продолжение поставки после технического прерывания"
+            if logical_stage == "delivery"
+            else "Автоматический continuation продолжает существующую реализацию"
+        )
+        now = _now_ms()
+        with self.store._lock:
+            if logical_stage in {"implementation", "rework"}:
+                self.store.db.execute(
+                    """UPDATE task_executions
+                       SET status='running',phase=?,phase_detail=?,
+                           implementation_task_id=?,devcoveer_task_id=?,
+                           quota_remaining_percent=?,error_code=NULL,
+                           finished_at_ms=NULL,updated_at_ms=?
+                       WHERE id=?""",
+                    (
+                        phase,
+                        detail,
+                        task_id,
+                        task_id,
+                        remaining,
+                        now,
+                        item["id"],
+                    ),
+                )
+            else:
+                self.store.db.execute(
+                    """UPDATE task_executions
+                       SET status='running',phase='delivering',phase_detail=?,
+                           devcoveer_task_id=?,quota_remaining_percent=?,
+                           error_code=NULL,finished_at_ms=NULL,updated_at_ms=?
+                       WHERE id=?""",
+                    (
+                        detail,
+                        task_id,
+                        remaining,
+                        now,
+                        item["id"],
+                    ),
+                )
+        return True
+
+    async def _recover_interrupted_execution_locked(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        execution_id: str,
+    ) -> bool:
+        row = self._execution_row(
+            actor_id=actor_id,
+            workspace_id=workspace_id,
+            execution_id=execution_id,
+        )
+        item = dict(row)
+        stage = self._latest_stage(execution_id)
+        if stage is None or str(stage.get("status") or "") not in {
+            "interrupted",
+            "superseded",
+        }:
+            return False
+
+        logical_stage = str(stage.get("stage") or "")
+        if logical_stage in {"implementation", "rework", "delivery"}:
+            try:
+                return await self._start_write_recovery_continuation(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    item=item,
+                    stage=stage,
+                    summary=str(stage.get("summary") or item.get("result_summary") or ""),
+                )
+            except StoreError as exc:
+                now = _now_ms()
+                if exc.code in {
+                    "CODEX_CAPACITY_RESERVED",
+                    "CODEX_MODEL_UNAVAILABLE",
+                    "CODEX_REASONING_UNAVAILABLE",
+                }:
+                    with self.store._lock:
+                        self.store.db.execute(
+                            """UPDATE task_executions
+                               SET status='running',phase='capacity_wait',
+                                   phase_detail='Автоматическое восстановление ждёт доступной Codex capacity',
+                                   error_code=?,finished_at_ms=NULL,updated_at_ms=?
+                               WHERE id=?""",
+                            (exc.code, now, execution_id),
+                        )
+                    return False
+                if exc.code == "DEVELOPMENT_DISPATCH_UNKNOWN":
+                    with self.store._lock:
+                        self.store.db.execute(
+                            """UPDATE task_executions
+                               SET status='running',phase='recovering',
+                                   phase_detail='Проверяю неизвестный результат запуска continuation перед повтором',
+                                   error_code=?,finished_at_ms=NULL,updated_at_ms=?
+                               WHERE id=?""",
+                            (exc.code, now, execution_id),
+                        )
+                    return False
+                if exc.code == "DEVELOPMENT_DISPATCH_AMBIGUOUS":
+                    with self.store._lock:
+                        self.store.db.execute(
+                            """UPDATE task_executions
+                               SET status='failed',phase='failed',
+                                   phase_detail='Обнаружены неоднозначные дубли recovery-dispatch',
+                                   error_code=?,finished_at_ms=?,updated_at_ms=?
+                               WHERE id=?""",
+                            (exc.code, now, now, execution_id),
+                        )
+                    return False
+                raise
+            except DevCoveerError:
+                now = _now_ms()
+                with self.store._lock:
+                    self.store.db.execute(
+                        """UPDATE task_executions
+                           SET status='running',phase='recovering',
+                               phase_detail='Продолжаю автоматическое восстановление после сбоя DevCoveer',
+                               error_code='DEVELOPMENT_RECOVERY_RETRY',
+                               finished_at_ms=NULL,updated_at_ms=?
+                           WHERE id=?""",
+                        (now, execution_id),
+                    )
+                return False
+
+        # Read-only/design recovery can safely re-enter the existing logic.
+        with self.store._lock:
+            self.store.db.execute(
+                """UPDATE task_execution_stages
+                   SET status='running',finished_at_ms=NULL,updated_at_ms=?
+                   WHERE id=?""",
+                (_now_ms(), stage["id"]),
+            )
+            self.store.db.execute(
+                """UPDATE task_executions
+                   SET status='running',phase='recovering',
+                       phase_detail='Автоматически восстанавливаю стадию',
+                       error_code=NULL,finished_at_ms=NULL,updated_at_ms=?
+                   WHERE id=?""",
+                (_now_ms(), execution_id),
+            )
+        await self._advance_execution_locked(
+            actor_id=actor_id,
+            workspace_id=workspace_id,
+            execution_id=execution_id,
+            sync=True,
+        )
+        return True
 
     @staticmethod
     def _phase_after_resume(stage_name: str) -> tuple[str, str]:
@@ -1277,16 +1720,97 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
                 return {"execution": public}
 
             now = _now_ms()
+            logical_stage = str(stage.get("stage") or "")
+            self._finish_stage(
+                stage_id=str(stage["id"]),
+                status="interrupted",
+                summary=(
+                    "Stage interrupted because the exact DevCoveer checkout changed "
+                    f"from {stored_project_hint} to {desired_project_hint}; autonomous "
+                    "recovery will continue the same authorized execution in the new target."
+                ),
+            )
             with self.store._lock:
                 self.store.db.execute(
                     """UPDATE task_executions
-                       SET status='blocked',phase='needs_owner',
-                           phase_detail='Изменился точный рабочий checkout разработки',
+                       SET project_hint=?,status='running',phase='recovering',
+                           phase_detail='Автоматически переношу текущую стадию в корректный checkout',
                            error_code='DEVELOPMENT_TARGET_CHANGED',
-                           finished_at_ms=?,updated_at_ms=?
+                           finished_at_ms=NULL,updated_at_ms=?
                        WHERE id=?""",
-                    (now, now, item["id"]),
+                    (desired_project_hint, now, item["id"]),
                 )
+            item["project_hint"] = desired_project_hint
+
+            if logical_stage in {"implementation", "rework", "delivery"}:
+                recovered = await self._start_write_recovery_continuation(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    item=item,
+                    stage=stage,
+                    summary=(
+                        "Exact DevCoveer target changed; continue the existing Git work "
+                        "in the correct checkout without broadening scope."
+                    ),
+                )
+                if recovered:
+                    row = self._execution_row(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        execution_id=str(item["id"]),
+                    )
+                    public = self._execution_public(row)
+                    public["update_check_recommended"] = False
+                    return {"execution": public}
+
+            if logical_stage == "review":
+                cycle = int(stage.get("cycle") or 0)
+                review_attempt = (
+                    self._stage_attempt_count(str(item["id"]), "review", cycle=cycle)
+                    + 1
+                )
+                marker = self._dispatch_marker(
+                    str(item["id"]), "review", cycle, review_attempt
+                )
+                review_task_id, _ = await self._start_marked_codex_task(
+                    project=desired_project_hint,
+                    marker=marker,
+                    prompt=self._recovery_review_prompt(
+                        str(item.get("spec_path") or ""),
+                        cycle,
+                    ),
+                    model=QUALITY_MODEL,
+                    reasoning_effort=QUALITY_EFFORT,
+                    access="read",
+                )
+                self._record_stage(
+                    execution_id=str(item["id"]),
+                    stage="review",
+                    cycle=cycle,
+                    model=QUALITY_MODEL,
+                    reasoning_effort=QUALITY_EFFORT,
+                    devcoveer_task_id=review_task_id,
+                )
+                with self.store._lock:
+                    self.store.db.execute(
+                        """UPDATE task_executions
+                           SET quality_task_id=?,devcoveer_task_id=?,
+                               status='running',phase='reviewing',
+                               phase_detail='Read-only ревью перенесено в корректный checkout',
+                               error_code=NULL,finished_at_ms=NULL,updated_at_ms=?
+                           WHERE id=?""",
+                        (review_task_id, review_task_id, now, item["id"]),
+                    )
+                row = self._execution_row(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    execution_id=str(item["id"]),
+                )
+                public = self._execution_public(row)
+                public["update_check_recommended"] = False
+                return {"execution": public}
+
+            # Unknown future stage types remain in technical recovery, never a false owner decision.
             row = self._execution_row(
                 actor_id=actor_id,
                 workspace_id=workspace_id,
@@ -1509,7 +2033,47 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
                             public["update_check_recommended"] = False
                             return {"execution": public}
 
-                return self._block_interrupted_execution(
+                if logical_stage in {"implementation", "rework", "delivery"}:
+                    try:
+                        recovered = await self._start_write_recovery_continuation(
+                            actor_id=actor_id,
+                            workspace_id=workspace_id,
+                            item=item,
+                            stage=stage,
+                            summary=summary,
+                        )
+                    except StoreError as exc:
+                        if exc.code in {
+                            "CODEX_CAPACITY_RESERVED",
+                            "CODEX_MODEL_UNAVAILABLE",
+                            "CODEX_REASONING_UNAVAILABLE",
+                        }:
+                            now = _now_ms()
+                            with self.store._lock:
+                                self.store.db.execute(
+                                    """UPDATE task_executions
+                                       SET status='running',phase='capacity_wait',
+                                           phase_detail='Автоматическое восстановление ждёт доступной Codex capacity',
+                                           error_code=?,finished_at_ms=NULL,updated_at_ms=?
+                                       WHERE id=?""",
+                                    (exc.code, now, item["id"]),
+                                )
+                            recovered = False
+                        else:
+                            raise
+                    except DevCoveerError:
+                        recovered = False
+                    if recovered:
+                        row = self._execution_row(
+                            actor_id=actor_id,
+                            workspace_id=workspace_id,
+                            execution_id=str(item["id"]),
+                        )
+                        public = self._execution_public(row)
+                        public["update_check_recommended"] = False
+                        return {"execution": public}
+
+                return self._queue_interrupted_recovery(
                     item=item,
                     stage=stage,
                     summary=summary,
@@ -1637,6 +2201,7 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
                                phase_detail='Разработчик реализует принятую постановку',
                                implementation_task_id=?,devcoveer_task_id=?,
                                quota_remaining_percent=?,result_summary=?,
+                               error_code=NULL,finished_at_ms=NULL,
                                updated_at_ms=? WHERE id=?""",
                         (
                             implementation_task_id,
@@ -1656,16 +2221,35 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
                     reasoning_effort=QUALITY_EFFORT,
                 )
                 quality_task_id = str(item.get("quality_task_id") or "").strip()
+                quality_restarted = False
+                if quality_task_id:
+                    try:
+                        await self.devcoveer.continue_codex_task(
+                            quality_task_id,
+                            project=str(item["project_hint"]),
+                            prompt=self._review_prompt(spec_path, cycle),
+                            access="read",
+                            model=QUALITY_MODEL,
+                            reasoning_effort=QUALITY_EFFORT,
+                        )
+                    except DevCoveerError:
+                        quality_task_id = ""
                 if not quality_task_id:
-                    raise StoreError("DEVELOPMENT_STAGE_MISSING", "Quality thread is unavailable")
-                await self.devcoveer.continue_codex_task(
-                    quality_task_id,
-                    project=str(item["project_hint"]),
-                    prompt=self._review_prompt(spec_path, cycle),
-                    access="read",
-                    model=QUALITY_MODEL,
-                    reasoning_effort=QUALITY_EFFORT,
-                )
+                    review_attempt = self._stage_attempt_count(
+                        str(item["id"]), "review", cycle=cycle
+                    ) + 1
+                    marker = self._dispatch_marker(
+                        str(item["id"]), "review", cycle, review_attempt
+                    )
+                    quality_task_id, _ = await self._start_marked_codex_task(
+                        project=str(item["project_hint"]),
+                        marker=marker,
+                        prompt=self._recovery_review_prompt(spec_path, cycle),
+                        model=QUALITY_MODEL,
+                        reasoning_effort=QUALITY_EFFORT,
+                        access="read",
+                    )
+                    quality_restarted = True
                 self._record_stage(
                     execution_id=str(item["id"]),
                     stage="review",
@@ -1678,11 +2262,17 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
                     self.store.db.execute(
                         """UPDATE task_executions
                            SET status='running',phase='reviewing',
-                               phase_detail=?,devcoveer_task_id=?,
+                               phase_detail=?,quality_task_id=?,devcoveer_task_id=?,
                                quota_remaining_percent=?,result_summary=?,
+                               error_code=NULL,finished_at_ms=NULL,
                                updated_at_ms=? WHERE id=?""",
                         (
-                            f"Сильная модель принимает реализацию, цикл {cycle}",
+                            (
+                                f"Read-only ревью восстановлено новым quality-thread, цикл {cycle}"
+                                if quality_restarted
+                                else f"Сильная модель принимает реализацию, цикл {cycle}"
+                            ),
+                            quality_task_id,
                             quality_task_id,
                             remaining,
                             summary,
@@ -1700,33 +2290,67 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
                         reasoning_effort=implementation_effort,
                     )
                     implementation_task_id = str(item.get("implementation_task_id") or "").strip()
-                    if not implementation_task_id:
-                        raise StoreError("DEVELOPMENT_STAGE_MISSING", "Implementation thread is unavailable")
-                    await self.devcoveer.continue_codex_task(
-                        implementation_task_id,
-                        project=str(item["project_hint"]),
-                        prompt=self._delivery_prompt(spec_path),
-                        access="write",
-                        model=implementation_model,
-                        reasoning_effort=implementation_effort,
-                    )
+                    delivery_task_id = implementation_task_id
+                    delivery_restarted = False
+                    if implementation_task_id:
+                        try:
+                            await self.devcoveer.continue_codex_task(
+                                implementation_task_id,
+                                project=str(item["project_hint"]),
+                                prompt=self._delivery_prompt(spec_path),
+                                access="write",
+                                model=implementation_model,
+                                reasoning_effort=implementation_effort,
+                            )
+                        except DevCoveerError:
+                            delivery_task_id = ""
+                    if not delivery_task_id:
+                        delivery_attempt = self._stage_attempt_count(
+                            str(item["id"]), "delivery", cycle=cycle
+                        ) + 1
+                        marker = self._dispatch_marker(
+                            str(item["id"]), "delivery", cycle, delivery_attempt
+                        )
+                        delivery_task_id, _ = await self._start_marked_codex_task(
+                            project=str(item["project_hint"]),
+                            marker=marker,
+                            prompt=self._recovery_write_prompt(
+                                item=item,
+                                stage={
+                                    "stage": "delivery",
+                                    "cycle": cycle,
+                                    "devcoveer_task_id": implementation_task_id,
+                                },
+                                summary=summary,
+                            ),
+                            model=implementation_model,
+                            reasoning_effort=implementation_effort,
+                            access="write",
+                        )
+                        delivery_restarted = True
                     self._record_stage(
                         execution_id=str(item["id"]),
                         stage="delivery",
                         cycle=cycle,
                         model=implementation_model,
                         reasoning_effort=implementation_effort,
-                        devcoveer_task_id=implementation_task_id,
+                        devcoveer_task_id=delivery_task_id,
                     )
                     with self.store._lock:
                         self.store.db.execute(
                             """UPDATE task_executions
                                SET status='running',phase='delivering',
-                                   phase_detail='Ревью принято; идёт поставка',
+                                   phase_detail=?,
                                    devcoveer_task_id=?,quota_remaining_percent=?,
-                                   result_summary=?,updated_at_ms=? WHERE id=?""",
+                                   result_summary=?,error_code=NULL,
+                                   finished_at_ms=NULL,updated_at_ms=? WHERE id=?""",
                             (
-                                implementation_task_id,
+                                (
+                                    "Ревью принято; delivery восстановлен новым continuation"
+                                    if delivery_restarted
+                                    else "Ревью принято; идёт поставка"
+                                ),
+                                delivery_task_id,
                                 remaining,
                                 summary,
                                 now,
@@ -1738,12 +2362,12 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
                         with self.store._lock:
                             self.store.db.execute(
                                 """UPDATE task_executions
-                                   SET status='blocked',phase='needs_owner',
+                                   SET status='failed',phase='failed',
                                        phase_detail=?,
                                        result_summary=?,error_code='REVIEW_REWORK_LIMIT',
                                        finished_at_ms=?,updated_at_ms=? WHERE id=?""",
                                 (
-                                    f"После {MAX_REWORK_CYCLES} циклов ревью остались существенные замечания",
+                                    f"Автоматический quality loop исчерпал {MAX_REWORK_CYCLES} циклов без приёмки",
                                     summary,
                                     now,
                                     now,
@@ -1759,34 +2383,69 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
                             reasoning_effort=implementation_effort,
                         )
                         implementation_task_id = str(item.get("implementation_task_id") or "").strip()
-                        if not implementation_task_id:
-                            raise StoreError("DEVELOPMENT_STAGE_MISSING", "Implementation thread is unavailable")
-                        await self.devcoveer.continue_codex_task(
-                            implementation_task_id,
-                            project=str(item["project_hint"]),
-                            prompt=self._rework_prompt(spec_path, summary, next_cycle),
-                            access="write",
-                            model=implementation_model,
-                            reasoning_effort=implementation_effort,
-                        )
+                        rework_task_id = implementation_task_id
+                        rework_restarted = False
+                        if implementation_task_id:
+                            try:
+                                await self.devcoveer.continue_codex_task(
+                                    implementation_task_id,
+                                    project=str(item["project_hint"]),
+                                    prompt=self._rework_prompt(spec_path, summary, next_cycle),
+                                    access="write",
+                                    model=implementation_model,
+                                    reasoning_effort=implementation_effort,
+                                )
+                            except DevCoveerError:
+                                rework_task_id = ""
+                        if not rework_task_id:
+                            rework_attempt = self._stage_attempt_count(
+                                str(item["id"]), "rework", cycle=next_cycle
+                            ) + 1
+                            marker = self._dispatch_marker(
+                                str(item["id"]), "rework", next_cycle, rework_attempt
+                            )
+                            rework_task_id, _ = await self._start_marked_codex_task(
+                                project=str(item["project_hint"]),
+                                marker=marker,
+                                prompt=self._recovery_write_prompt(
+                                    item=item,
+                                    stage={
+                                        "stage": "rework",
+                                        "cycle": next_cycle,
+                                        "devcoveer_task_id": implementation_task_id,
+                                    },
+                                    summary=summary,
+                                ),
+                                model=implementation_model,
+                                reasoning_effort=implementation_effort,
+                                access="write",
+                            )
+                            rework_restarted = True
                         self._record_stage(
                             execution_id=str(item["id"]),
                             stage="rework",
                             cycle=next_cycle,
                             model=implementation_model,
                             reasoning_effort=implementation_effort,
-                            devcoveer_task_id=implementation_task_id,
+                            devcoveer_task_id=rework_task_id,
                         )
                         with self.store._lock:
                             self.store.db.execute(
                                 """UPDATE task_executions
                                    SET status='running',phase='reworking',
-                                       phase_detail=?,devcoveer_task_id=?,
+                                       phase_detail=?,implementation_task_id=?,
+                                       devcoveer_task_id=?,
                                        quota_remaining_percent=?,review_cycle=?,
-                                       result_summary=?,updated_at_ms=? WHERE id=?""",
+                                       result_summary=?,error_code=NULL,
+                                       finished_at_ms=NULL,updated_at_ms=? WHERE id=?""",
                                 (
-                                    f"Исправление замечаний, цикл {next_cycle}",
-                                    implementation_task_id,
+                                    (
+                                        f"Rework восстановлен новым continuation, цикл {next_cycle}"
+                                        if rework_restarted
+                                        else f"Исправление замечаний, цикл {next_cycle}"
+                                    ),
+                                    rework_task_id,
+                                    rework_task_id,
                                     remaining,
                                     next_cycle,
                                     summary,
@@ -1795,14 +2454,54 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
                                 ),
                             )
                 else:
+                    remaining = await self._require_stage_capacity(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        model=QUALITY_MODEL,
+                        reasoning_effort=QUALITY_EFFORT,
+                    )
+                    restarted = await self.devcoveer.start_codex_task(
+                        project=str(item["project_hint"]),
+                        prompt=self._recovery_review_prompt(spec_path, cycle),
+                        model=QUALITY_MODEL,
+                        reasoning_effort=QUALITY_EFFORT,
+                        access="read",
+                    )
+                    restarted_task_id = str(
+                        restarted.get("taskId")
+                        or restarted.get("taskReference")
+                        or ""
+                    ).strip()
+                    if not restarted_task_id:
+                        raise StoreError(
+                            "DEVCOVEER_INVALID_RESPONSE",
+                            "DevCoveer did not return a recovery review task id",
+                        )
+                    self._record_stage(
+                        execution_id=str(item["id"]),
+                        stage="review",
+                        cycle=cycle,
+                        model=QUALITY_MODEL,
+                        reasoning_effort=QUALITY_EFFORT,
+                        devcoveer_task_id=restarted_task_id,
+                    )
                     with self.store._lock:
                         self.store.db.execute(
                             """UPDATE task_executions
-                               SET status='blocked',phase='needs_owner',
-                                   phase_detail='Ревью завершилось без однозначного verdict',
-                                   result_summary=?,error_code='REVIEW_VERDICT_MISSING',
-                                   finished_at_ms=?,updated_at_ms=? WHERE id=?""",
-                            (summary, now, now, item["id"]),
+                               SET status='running',phase='reviewing',
+                                   phase_detail='Повторяю read-only ревью после неясного verdict',
+                                   quality_task_id=?,devcoveer_task_id=?,
+                                   quota_remaining_percent=?,result_summary=?,
+                                   error_code=NULL,finished_at_ms=NULL,updated_at_ms=?
+                               WHERE id=?""",
+                            (
+                                restarted_task_id,
+                                restarted_task_id,
+                                remaining,
+                                summary,
+                                now,
+                                item["id"],
+                            ),
                         )
 
             elif stage["stage"] == "delivery":
@@ -1826,30 +2525,51 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
         except Exception as exc:
             now = _now_ms()
             code = exc.code if isinstance(exc, StoreError) else type(exc).__name__
-            blocked = code in {
+            retryable_capacity = code in {
                 "CODEX_CAPACITY_RESERVED",
                 "CODEX_MODEL_UNAVAILABLE",
                 "CODEX_REASONING_UNAVAILABLE",
             }
             with self.store._lock:
-                self.store.db.execute(
-                    """UPDATE task_executions
-                       SET status=?,phase=?,phase_detail=?,error_code=?,
-                           result_summary=?,finished_at_ms=?,updated_at_ms=?
-                       WHERE id=?""",
-                    (
-                        "blocked" if blocked else "failed",
-                        "capacity_wait" if blocked else "failed",
-                        "Следующая стадия ожидает доступной Codex capacity"
-                        if blocked
-                        else "Не удалось перейти к следующей стадии",
-                        str(code)[:120],
-                        summary,
-                        now,
-                        now,
-                        item["id"],
-                    ),
-                )
+                if retryable_capacity:
+                    self.store.db.execute(
+                        """UPDATE task_execution_stages
+                           SET status='running',finished_at_ms=NULL,updated_at_ms=?
+                           WHERE id=?""",
+                        (now, stage["id"]),
+                    )
+                    self.store.db.execute(
+                        """UPDATE task_executions
+                           SET status='running',phase='capacity_wait',
+                               phase_detail='Следующая стадия автоматически ждёт доступной Codex capacity',
+                               error_code=?,result_summary=?,finished_at_ms=NULL,
+                               updated_at_ms=? WHERE id=?""",
+                        (str(code)[:120], summary, now, item["id"]),
+                    )
+                elif isinstance(exc, DevCoveerError) or code == "DEVELOPMENT_DISPATCH_UNKNOWN":
+                    self.store.db.execute(
+                        """UPDATE task_execution_stages
+                           SET status='running',finished_at_ms=NULL,updated_at_ms=?
+                           WHERE id=?""",
+                        (now, stage["id"]),
+                    )
+                    self.store.db.execute(
+                        """UPDATE task_executions
+                           SET status='running',phase='recovering',
+                               phase_detail='Автоматически сверяю результат перехода между стадиями',
+                               error_code=?,result_summary=?,finished_at_ms=NULL,
+                               updated_at_ms=? WHERE id=?""",
+                        (str(code)[:120], summary, now, item["id"]),
+                    )
+                else:
+                    self.store.db.execute(
+                        """UPDATE task_executions
+                           SET status='failed',phase='failed',
+                               phase_detail='Не удалось перейти к следующей стадии',
+                               error_code=?,result_summary=?,finished_at_ms=?,
+                               updated_at_ms=? WHERE id=?""",
+                        (str(code)[:120], summary, now, now, item["id"]),
+                    )
 
         row = self._execution_row(
             actor_id=actor_id,
@@ -1880,9 +2600,26 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
         if (
             item.get("status") != "blocked"
             or item.get("error_code") != "REVIEW_REWORK_LIMIT"
-            or current_cycle >= MAX_REWORK_CYCLES
         ):
             return False
+        if current_cycle >= MAX_REWORK_CYCLES:
+            now = _now_ms()
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE task_executions
+                       SET status='failed',phase='failed',
+                           phase_detail=?,
+                           error_code='REVIEW_REWORK_LIMIT',
+                           finished_at_ms=?,updated_at_ms=?
+                       WHERE id=?""",
+                    (
+                        f"Автоматический quality loop исчерпал {MAX_REWORK_CYCLES} циклов без приёмки",
+                        now,
+                        now,
+                        execution_id,
+                    ),
+                )
+            return True
 
         with self.store._lock:
             review = self.store.db.execute(
@@ -1932,14 +2669,35 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
         except Exception as exc:
             now = _now_ms()
             code = exc.code if isinstance(exc, StoreError) else type(exc).__name__
+            self._record_stage(
+                execution_id=execution_id,
+                stage="rework",
+                cycle=next_cycle,
+                model=implementation_model,
+                reasoning_effort=implementation_effort,
+                devcoveer_task_id=implementation_task_id,
+            )
+            recovery_stage = self._active_stage(execution_id)
+            if recovery_stage is not None:
+                self._finish_stage(
+                    stage_id=str(recovery_stage["id"]),
+                    status="interrupted",
+                    summary=(
+                        "Legacy rework continuation did not produce a confirmed running "
+                        f"turn ({str(code)[:120]}). Autonomous recovery will reconcile Git "
+                        "state before starting a replacement continuation."
+                    ),
+                )
             with self.store._lock:
                 self.store.db.execute(
                     """UPDATE task_executions
-                       SET status='blocked',phase='needs_owner',
-                           phase_detail='Не удалось безопасно продолжить тот же rework-thread',
-                           error_code=?,updated_at_ms=?
+                       SET status='running',phase='recovering',
+                           phase_detail='Автоматически восстанавливаю rework после технического сбоя',
+                           review_cycle=?,devcoveer_task_id=?,
+                           error_code='DEVELOPMENT_STAGE_INTERRUPTED',
+                           finished_at_ms=NULL,updated_at_ms=?
                        WHERE id=?""",
-                    (str(code)[:120], now, execution_id),
+                    (next_cycle, implementation_task_id, now, execution_id),
                 )
             return False
 
@@ -1977,23 +2735,24 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
 
         with self.store._lock:
             rows = self.store.db.execute(
-                """SELECT id,actor_id,workspace_id,status,error_code,review_cycle
+                """SELECT id,actor_id,workspace_id,status,phase,error_code,review_cycle
                    FROM task_executions
                    WHERE status IN ('starting','running')
                       OR (
                           status='blocked'
-                          AND error_code='REVIEW_REWORK_LIMIT'
-                          AND review_cycle < ?
+                          AND (
+                              error_code='DEVELOPMENT_STAGE_INTERRUPTED'
+                              OR error_code='REVIEW_REWORK_LIMIT'
+                          )
                       )
-                   ORDER BY created_at_ms ASC LIMIT 10""",
-                (MAX_REWORK_CYCLES,),
+                   ORDER BY created_at_ms ASC LIMIT 10"""
             ).fetchall()
         advanced = 0
         for candidate in rows:
             async with self._transition_guard():
                 with self.store._lock:
                     fresh = self.store.db.execute(
-                        """SELECT status,error_code,review_cycle
+                        """SELECT status,phase,error_code,review_cycle
                            FROM task_executions WHERE id=?""",
                         (candidate["id"],),
                     ).fetchone()
@@ -2001,8 +2760,19 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
                     continue
                 if (
                     fresh["status"] == "blocked"
+                    and fresh["error_code"] == "DEVELOPMENT_STAGE_INTERRUPTED"
+                ):
+                    recovered = await self._recover_interrupted_execution_locked(
+                        actor_id=str(candidate["actor_id"]),
+                        workspace_id=str(candidate["workspace_id"]),
+                        execution_id=str(candidate["id"]),
+                    )
+                    if recovered:
+                        advanced += 1
+                    continue
+                if (
+                    fresh["status"] == "blocked"
                     and fresh["error_code"] == "REVIEW_REWORK_LIMIT"
-                    and int(fresh["review_cycle"] or 0) < MAX_REWORK_CYCLES
                 ):
                     resumed = await self._resume_blocked_rework_limit_locked(
                         actor_id=str(candidate["actor_id"]),
@@ -2014,6 +2784,17 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
                     continue
                 if fresh["status"] not in ACTIVE_EXECUTION_STATES:
                     continue
+                if str(fresh["phase"] or "") in {"recovering", "capacity_wait"}:
+                    latest = self._latest_stage(str(candidate["id"]))
+                    if latest and str(latest.get("status") or "") == "interrupted":
+                        recovered = await self._recover_interrupted_execution_locked(
+                            actor_id=str(candidate["actor_id"]),
+                            workspace_id=str(candidate["workspace_id"]),
+                            execution_id=str(candidate["id"]),
+                        )
+                        if recovered:
+                            advanced += 1
+                        continue
                 await self._advance_execution_locked(
                     actor_id=str(candidate["actor_id"]),
                     workspace_id=str(candidate["workspace_id"]),

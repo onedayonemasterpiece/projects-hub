@@ -79,6 +79,21 @@ class FakeDevCoveer:
             "models": models,
         }
 
+    async def list_codex_tasks(
+        self,
+        *,
+        project: str,
+        search: str | None = None,
+        limit: int = 20,
+    ):
+        self.calls.append(
+            (
+                "list_tasks",
+                {"project": project, "search": search, "limit": limit},
+            )
+        )
+        return {"status": "ok", "tasks": []}
+
     async def start_codex_task(
         self,
         *,
@@ -203,7 +218,9 @@ class InterruptedStageDevCoveer(FakeDevCoveer):
         self.resume_success = resume_success
         self.cwd = cwd
         self._quality_start_count = 0
+        self._implementation_start_count = 0
         self._recovery_quality_task = "dvt_" + "r" * 32
+        self._recovery_implementation_task = "dvt_" + "w" * 32
 
     @staticmethod
     def _interrupted(cwd: Path | None = None):
@@ -250,6 +267,28 @@ class InterruptedStageDevCoveer(FakeDevCoveer):
                 return {
                     "status": "running",
                     "taskId": self._recovery_quality_task,
+                    "provider": "codex",
+                    "model": model,
+                }
+        else:
+            self._implementation_start_count += 1
+            if self._implementation_start_count >= 2:
+                self.calls.append(
+                    (
+                        "start",
+                        {
+                            "project": project,
+                            "prompt": prompt,
+                            "model": model,
+                            "reasoning_effort": reasoning_effort,
+                            "access": access,
+                            "task": self._recovery_implementation_task,
+                        },
+                    )
+                )
+                return {
+                    "status": "running",
+                    "taskId": self._recovery_implementation_task,
                     "provider": "codex",
                     "model": model,
                 }
@@ -312,6 +351,11 @@ class InterruptedStageDevCoveer(FakeDevCoveer):
                 "Recovery review passed.\nREVIEW_VERDICT: ACCEPTED",
                 40,
             )
+        if task_id == self._recovery_implementation_task:
+            return self._completed(
+                "Recovered existing implementation branch and completed remaining fixes.",
+                90,
+            )
         if task_id == self._quality_task:
             self._quality_reads += 1
             if self.interrupted_stage == "design" and self._quality_reads == 1:
@@ -335,6 +379,84 @@ class InterruptedStageDevCoveer(FakeDevCoveer):
         ):
             return self._interrupted(self.cwd)
         return self._completed("Implemented and tested; ready for review.", 200)
+
+
+class LostRecoveryDispatchDevCoveer(InterruptedStageDevCoveer):
+    def __init__(self) -> None:
+        super().__init__("implementation", resume_success=False)
+        self.lost_marker: str | None = None
+        self.lost_task_id = "dvt_" + "l" * 32
+        self.recovery_start_calls = 0
+
+    async def list_codex_tasks(
+        self,
+        *,
+        project: str,
+        search: str | None = None,
+        limit: int = 20,
+    ):
+        self.calls.append(
+            (
+                "list_tasks",
+                {"project": project, "search": search, "limit": limit},
+            )
+        )
+        if self.lost_marker and search == self.lost_marker:
+            return {
+                "status": "ok",
+                "tasks": [
+                    {
+                        "taskId": self.lost_task_id,
+                        "backend": "codex",
+                        "model": "gpt-6.1-sol",
+                        "access": "write",
+                        "name": "projects-hub-owner: " + self.lost_marker,
+                    }
+                ],
+            }
+        return {"status": "ok", "tasks": []}
+
+    async def start_codex_task(
+        self,
+        *,
+        project: str,
+        prompt: str,
+        model: str,
+        reasoning_effort: str,
+        access: str = "write",
+    ):
+        if model != "gpt-6-astra" and prompt.startswith("ODR-"):
+            self.recovery_start_calls += 1
+            self.lost_marker = prompt.splitlines()[0]
+            raise DevCoveerError("response lost after accepted dispatch")
+        return await super().start_codex_task(
+            project=project,
+            prompt=prompt,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            access=access,
+        )
+
+    async def read_task(
+        self,
+        task_id: str,
+        *,
+        project: str | None = None,
+        detail: str = "summary",
+    ):
+        if task_id == self.lost_task_id:
+            self.calls.append(
+                ("read", {"task": task_id, "project": project, "detail": detail})
+            )
+            return self._completed(
+                "Recovered after lost dispatch receipt; ready for review.",
+                90,
+            )
+        return await super().read_task(
+            task_id,
+            project=project,
+            detail=detail,
+        )
 
 
 class SlowStartDevCoveer(FakeDevCoveer):
@@ -1058,7 +1180,7 @@ async def test_interrupted_review_falls_back_to_one_read_only_review(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_interrupted_implementation_never_starts_second_write_task(tmp_path: Path):
+async def test_interrupted_implementation_starts_safe_continuation(tmp_path: Path):
     store, readiness, boot, project = setup(tmp_path)
     fake = InterruptedStageDevCoveer("implementation", resume_success=False)
     try:
@@ -1080,14 +1202,30 @@ async def test_interrupted_implementation_never_starts_second_write_task(tmp_pat
             execution_id=execution_id,
         )
 
-        assert current["execution"]["status"] == "blocked"
-        assert current["execution"]["phase"] == "needs_owner"
+        assert current["execution"]["status"] == "running"
+        assert current["execution"]["phase"] == "implementing"
+        assert current["execution"]["error_code"] is None
         assert (
-            current["execution"]["error_code"]
-            == "DEVELOPMENT_STAGE_INTERRUPTED"
+            current["execution"]["implementation_task_id"]
+            == fake._recovery_implementation_task
         )
         starts_after = len([1 for name, _ in fake.calls if name == "start"])
-        assert starts_after == starts_before
+        assert starts_after == starts_before + 1
+
+        implementation_stages = [
+            stage
+            for stage in current["execution"]["stages"]
+            if stage["stage"] == "implementation"
+        ]
+        assert [stage["status"] for stage in implementation_stages] == [
+            "superseded",
+            "running",
+        ]
+        assert (
+            implementation_stages[-1]["devcoveer_task_id"]
+            == fake._recovery_implementation_task
+        )
+
         resume_calls = [
             args
             for name, args in fake.calls
@@ -1097,6 +1235,159 @@ async def test_interrupted_implementation_never_starts_second_write_task(tmp_pat
         assert len(resume_calls) == 1
         assert resume_calls[0]["task"] == fake._implementation_task
         assert resume_calls[0]["access"] == "write"
+
+        recovery_start = [
+            args
+            for name, args in fake.calls
+            if name == "start" and args["task"] == fake._recovery_implementation_task
+        ][0]
+        assert recovery_start["access"] == "write"
+        assert "Do not recreate the implementation from scratch" in recovery_start["prompt"]
+
+        await service.advance_active_once()
+        after = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+        assert after["execution"]["phase"] == "reviewing"
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_lost_recovery_dispatch_is_reconciled_without_duplicate_write(
+    tmp_path: Path,
+):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = LostRecoveryDispatchDevCoveer()
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+
+        await service.advance_active_once()
+        await service.advance_active_once()
+        current = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+
+        assert fake.recovery_start_calls == 1
+        assert current["execution"]["status"] == "running"
+        assert current["execution"]["phase"] == "implementing"
+        assert current["execution"]["implementation_task_id"] == fake.lost_task_id
+
+        await service.advance_active_once()
+        assert fake.recovery_start_calls == 1
+        after = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+        assert after["execution"]["phase"] == "reviewing"
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_legacy_interrupted_block_is_unblocked_by_worker(tmp_path: Path):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = InterruptedStageDevCoveer("none", resume_success=False)
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+
+        await service.advance_active_once()
+        stage = service._active_stage(execution_id)
+        assert stage is not None and stage["stage"] == "implementation"
+        service._finish_stage(
+            stage_id=stage["id"],
+            status="interrupted",
+            summary="Native write turn ended before review.",
+        )
+        with store._lock:
+            store.db.execute(
+                """UPDATE task_executions
+                   SET status='blocked',phase='needs_owner',
+                       error_code='DEVELOPMENT_STAGE_INTERRUPTED',
+                       finished_at_ms=123,updated_at_ms=123
+                   WHERE id=?""",
+                (execution_id,),
+            )
+
+        advanced = await service.advance_active_once()
+        current = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+
+        assert advanced == 1
+        assert current["execution"]["status"] == "running"
+        assert current["execution"]["phase"] == "implementing"
+        assert current["execution"]["error_code"] is None
+        assert (
+            current["execution"]["implementation_task_id"]
+            == fake._recovery_implementation_task
+        )
+        assert current["execution"]["finished_at_ms"] is None
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_capacity_wait_retries_without_owner_action(tmp_path: Path):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = FakeDevCoveer()
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+
+        fake.remaining = 9.0
+        await service.advance_active_once()
+        waiting = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+        assert waiting["execution"]["status"] == "running"
+        assert waiting["execution"]["phase"] == "capacity_wait"
+        assert waiting["execution"]["error_code"] == "CODEX_CAPACITY_RESERVED"
+        assert waiting["execution"]["finished_at_ms"] is None
+        assert waiting["execution"]["stages"][0]["status"] == "running"
+
+        fake.remaining = 85.0
+        await service.advance_active_once()
+        resumed = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+        assert resumed["execution"]["status"] == "running"
+        assert resumed["execution"]["phase"] == "implementing"
+        assert resumed["execution"]["error_code"] is None
     finally:
         await service.close()
         store.close()
@@ -1233,8 +1524,9 @@ async def test_review_rework_limit_remains_bounded_at_new_maximum(tmp_path: Path
             execution_id=execution_id,
         )
 
-        assert advanced == 0
-        assert current["execution"]["status"] == "blocked"
+        assert advanced == 1
+        assert current["execution"]["status"] == "failed"
+        assert current["execution"]["phase"] == "failed"
         assert current["execution"]["error_code"] == "REVIEW_REWORK_LIMIT"
         assert current["execution"]["review_cycle"] == max_cycle
         assert len([1 for name, _ in fake.calls if name == "continue"]) == continues_before
@@ -1242,6 +1534,119 @@ async def test_review_rework_limit_remains_bounded_at_new_maximum(tmp_path: Path
         await service.close()
         store.close()
 
+
+
+
+@pytest.mark.asyncio
+async def test_missing_review_verdict_restarts_read_only_review(tmp_path: Path):
+    class MissingVerdictDevCoveer(FakeDevCoveer):
+        async def read_task(self, task_id: str, *, project=None, detail="summary"):
+            self.calls.append(("read", {"task": task_id, "project": project, "detail": detail}))
+            if task_id == self._quality_task:
+                self._quality_reads += 1
+                if self._quality_reads == 1:
+                    return self._completed(
+                        "Design complete. Spec: docs/prompts/owner-development-test.md",
+                        100,
+                    )
+                if self._quality_reads == 2:
+                    return self._completed("Review finished but malformed output.", 50)
+            return await super().read_task(task_id, project=project, detail=detail)
+
+    store, readiness, boot, project = setup(tmp_path)
+    fake = MissingVerdictDevCoveer()
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+
+        await service.advance_active_once()
+        await service.advance_active_once()
+        await service.advance_active_once()
+        current = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+
+        assert current["execution"]["status"] == "running"
+        assert current["execution"]["phase"] == "reviewing"
+        assert current["execution"]["error_code"] is None
+        review_stages = [
+            stage for stage in current["execution"]["stages"]
+            if stage["stage"] == "review"
+        ]
+        assert [stage["status"] for stage in review_stages] == [
+            "completed",
+            "running",
+        ]
+        starts = [args for name, args in fake.calls if name == "start"]
+        assert starts[-1]["model"] == "gpt-6-astra"
+        assert starts[-1]["access"] == "read"
+    finally:
+        await service.close()
+        store.close()
+
+
+def test_owner_development_has_no_technical_needs_owner_fallback():
+    source = Path("src/projects_hub/development.py").read_text(encoding="utf-8")
+    assert "phase='needs_owner'" not in source
+
+
+@pytest.mark.asyncio
+async def test_marked_dispatch_without_task_id_reconciles_history(tmp_path: Path):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = FakeDevCoveer()
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        marker = "ODR-no-id-reconcile"
+        existing = "dvt_" + "n" * 32
+        calls = 0
+
+        async def history(*, project: str, search: str | None = None, limit: int = 20):
+            nonlocal calls
+            calls += 1
+            if calls >= 2:
+                return {
+                    "status": "ok",
+                    "tasks": [{
+                        "taskId": existing,
+                        "backend": "codex",
+                        "model": "gpt-6.1-sol",
+                        "access": "write",
+                        "name": marker,
+                    }],
+                }
+            return {"status": "ok", "tasks": []}
+
+        async def start_without_id(**kwargs):
+            fake.calls.append(("start-no-id", kwargs))
+            return {"status": "running"}
+
+        fake.list_codex_tasks = history  # type: ignore[method-assign]
+        fake.start_codex_task = start_without_id  # type: ignore[method-assign]
+
+        task_id, result = await service._start_marked_codex_task(
+            project="projects-hub-owner",
+            marker=marker,
+            prompt="continue safely",
+            model="gpt-6.1-sol",
+            reasoning_effort="medium",
+            access="write",
+        )
+
+        assert task_id == existing
+        assert result["status"] == "reconciled"
+        assert calls == 2
+        assert len([1 for name, _ in fake.calls if name == "start-no-id"]) == 1
+    finally:
+        await service.close()
+        store.close()
 
 
 def test_terminal_native_status_overrides_stale_running_wrapper():
