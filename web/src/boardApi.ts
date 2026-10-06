@@ -387,11 +387,6 @@ export class BoardSocket {
   private active = false;
   private reconnectTimer: number | null = null;
   private reconnectAttempt = 0;
-  private pending = new Map<
-    string,
-    { resolve: (receipt: BoardReceipt) => void; reject: (error: Error) => void }
-  >();
-
   constructor(
     private readonly workspaceId: string,
     private readonly boardId: string,
@@ -446,22 +441,6 @@ export class BoardSocket {
       } catch {
         return;
       }
-      if (message.type === "ack") {
-        const pending = this.pending.get(message.receipt.event.command_id);
-        if (pending) {
-          this.pending.delete(message.receipt.event.command_id);
-          pending.resolve(message.receipt);
-        }
-      } else if (message.type === "conflict" || message.type === "error") {
-        const commandId = message.command_id || "";
-        const pending = this.pending.get(commandId);
-        if (pending) {
-          this.pending.delete(commandId);
-          const error = new Error(message.message) as Error & { code?: string };
-          error.code = message.code;
-          pending.reject(error);
-        }
-      }
       this.onMessage(message);
     };
     socket.onclose = () => {
@@ -481,43 +460,12 @@ export class BoardSocket {
     this.socket.send(JSON.stringify({ type: "presence", ...payload }));
   }
 
-  sendCommand(command: {
-    command_id: string;
-    operation: string;
-    object_id: string;
-    expected_object_revision: number | null;
-    payload: Record<string, unknown>;
-  }) {
-    return new Promise<BoardReceipt>((resolve, reject) => {
-      if (this.socket?.readyState !== WebSocket.OPEN) {
-        reject(new Error("Доска переподключается"));
-        return;
-      }
-      this.pending.set(command.command_id, { resolve, reject });
-      this.socket.send(JSON.stringify({ type: "command", ...command }));
-      window.setTimeout(() => {
-        const pending = this.pending.get(command.command_id);
-        if (!pending) return;
-        this.pending.delete(command.command_id);
-        reject(
-          new Error(
-            "Нет подтверждения сохранения; состояние будет сверено после переподключения",
-          ),
-        );
-      }, 12_000);
-    });
-  }
-
   close() {
     this.active = false;
     if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     this.socket?.close(1000, "board closed");
     this.socket = null;
-    for (const pending of this.pending.values()) {
-      pending.reject(new Error("Доска закрыта"));
-    }
-    this.pending.clear();
   }
 }
 
