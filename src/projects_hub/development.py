@@ -20,7 +20,7 @@ TERMINAL_EXECUTION_STATES = {"completed", "failed", "cancelled", "blocked"}
 DEFAULT_CODEX_PROFILE = "gpt-6.1-medium"
 QUALITY_MODEL = "gpt-6-astra"
 QUALITY_EFFORT = "high"
-MAX_REWORK_CYCLES = 2
+MAX_REWORK_CYCLES = 4
 MAX_INTERRUPTED_RESUME_ATTEMPTS = 1
 MAX_INTERRUPTED_DESIGN_ATTEMPTS = 3
 MAX_INTERRUPTED_REVIEW_ATTEMPTS = 2
@@ -1709,10 +1709,16 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
                             self.store.db.execute(
                                 """UPDATE task_executions
                                    SET status='blocked',phase='needs_owner',
-                                       phase_detail='После двух циклов ревью остались существенные замечания',
+                                       phase_detail=?,
                                        result_summary=?,error_code='REVIEW_REWORK_LIMIT',
                                        finished_at_ms=?,updated_at_ms=? WHERE id=?""",
-                                (summary, now, now, item["id"]),
+                                (
+                                    f"После {MAX_REWORK_CYCLES} циклов ревью остались существенные замечания",
+                                    summary,
+                                    now,
+                                    now,
+                                    item["id"],
+                                ),
                             )
                     else:
                         next_cycle = cycle + 1
@@ -1824,25 +1830,159 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
         public["update_check_recommended"] = public["status"] == "completed"
         return {"execution": public}
 
+    async def _resume_blocked_rework_limit_locked(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        execution_id: str,
+    ) -> bool:
+        """Resume the same authorized write thread after an older rework cap."""
+
+        self._authorize_owner(actor_id, workspace_id)
+        row = self._execution_row(
+            actor_id=actor_id,
+            workspace_id=workspace_id,
+            execution_id=execution_id,
+        )
+        item = dict(row)
+        current_cycle = int(item.get("review_cycle") or 0)
+        if (
+            item.get("status") != "blocked"
+            or item.get("error_code") != "REVIEW_REWORK_LIMIT"
+            or current_cycle >= MAX_REWORK_CYCLES
+        ):
+            return False
+
+        with self.store._lock:
+            review = self.store.db.execute(
+                """SELECT * FROM task_execution_stages
+                   WHERE execution_id=? AND stage='review'
+                     AND status='completed'
+                     AND review_verdict='rework_required'
+                     AND cycle=?
+                   ORDER BY created_at_ms DESC LIMIT 1""",
+                (execution_id, current_cycle),
+            ).fetchone()
+        if review is None:
+            return False
+
+        implementation_task_id = str(
+            item.get("implementation_task_id") or ""
+        ).strip()
+        if not implementation_task_id:
+            return False
+
+        implementation_model, implementation_effort = str(
+            item["model_profile"]
+        ).rsplit(":", 1)
+        next_cycle = current_cycle + 1
+        review_summary = str(review["summary"] or item.get("result_summary") or "")
+        spec_path = str(item.get("spec_path") or "")
+
+        try:
+            remaining = await self._require_stage_capacity(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                model=implementation_model,
+                reasoning_effort=implementation_effort,
+            )
+            await self.devcoveer.continue_codex_task(
+                implementation_task_id,
+                project=str(item["project_hint"]),
+                prompt=self._rework_prompt(
+                    spec_path,
+                    review_summary,
+                    next_cycle,
+                ),
+                access="write",
+                model=implementation_model,
+                reasoning_effort=implementation_effort,
+            )
+        except Exception as exc:
+            now = _now_ms()
+            code = exc.code if isinstance(exc, StoreError) else type(exc).__name__
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE task_executions
+                       SET status='blocked',phase='needs_owner',
+                           phase_detail='Не удалось безопасно продолжить тот же rework-thread',
+                           error_code=?,updated_at_ms=?
+                       WHERE id=?""",
+                    (str(code)[:120], now, execution_id),
+                )
+            return False
+
+        self._record_stage(
+            execution_id=execution_id,
+            stage="rework",
+            cycle=next_cycle,
+            model=implementation_model,
+            reasoning_effort=implementation_effort,
+            devcoveer_task_id=implementation_task_id,
+        )
+        now = _now_ms()
+        with self.store._lock:
+            self.store.db.execute(
+                """UPDATE task_executions
+                   SET status='running',phase='reworking',
+                       phase_detail=?,devcoveer_task_id=?,
+                       quota_remaining_percent=?,review_cycle=?,
+                       result_summary=?,error_code=NULL,finished_at_ms=NULL,
+                       updated_at_ms=? WHERE id=?""",
+                (
+                    f"Исправление замечаний, цикл {next_cycle}",
+                    implementation_task_id,
+                    remaining,
+                    next_cycle,
+                    review_summary,
+                    now,
+                    execution_id,
+                ),
+            )
+        return True
+
     async def advance_active_once(self) -> int:
         """Advance durable executions independently of any client/status read."""
 
         with self.store._lock:
             rows = self.store.db.execute(
-                """SELECT id,actor_id,workspace_id
+                """SELECT id,actor_id,workspace_id,status,error_code,review_cycle
                    FROM task_executions
                    WHERE status IN ('starting','running')
-                   ORDER BY created_at_ms ASC LIMIT 10"""
+                      OR (
+                          status='blocked'
+                          AND error_code='REVIEW_REWORK_LIMIT'
+                          AND review_cycle < ?
+                      )
+                   ORDER BY created_at_ms ASC LIMIT 10""",
+                (MAX_REWORK_CYCLES,),
             ).fetchall()
         advanced = 0
         for candidate in rows:
             async with self._transition_guard():
                 with self.store._lock:
                     fresh = self.store.db.execute(
-                        "SELECT status FROM task_executions WHERE id=?",
+                        """SELECT status,error_code,review_cycle
+                           FROM task_executions WHERE id=?""",
                         (candidate["id"],),
                     ).fetchone()
-                if not fresh or fresh["status"] not in ACTIVE_EXECUTION_STATES:
+                if not fresh:
+                    continue
+                if (
+                    fresh["status"] == "blocked"
+                    and fresh["error_code"] == "REVIEW_REWORK_LIMIT"
+                    and int(fresh["review_cycle"] or 0) < MAX_REWORK_CYCLES
+                ):
+                    resumed = await self._resume_blocked_rework_limit_locked(
+                        actor_id=str(candidate["actor_id"]),
+                        workspace_id=str(candidate["workspace_id"]),
+                        execution_id=str(candidate["id"]),
+                    )
+                    if resumed:
+                        advanced += 1
+                    continue
+                if fresh["status"] not in ACTIVE_EXECUTION_STATES:
                     continue
                 await self._advance_execution_locked(
                     actor_id=str(candidate["actor_id"]),
