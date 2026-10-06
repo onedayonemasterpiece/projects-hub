@@ -124,11 +124,11 @@ final class WebOriginPolicy {
     }
 
     boolean isTrustedVoiceAudioFocusAcquireAction(String currentPageUrl, String targetUrl) {
-        return isTrustedVoiceAudioFocusAction(currentPageUrl, targetUrl, "/acquire");
+        return isTrustedVoiceAudioFocusAction(currentPageUrl, targetUrl, "/focus/acquire");
     }
 
     boolean isTrustedVoiceAudioFocusReleaseAction(String currentPageUrl, String targetUrl) {
-        return isTrustedVoiceAudioFocusAction(currentPageUrl, targetUrl, "/release");
+        return isTrustedVoiceAudioFocusAction(currentPageUrl, targetUrl, "/focus/release");
     }
 
     private boolean isTrustedVoiceAudioFocusAction(
