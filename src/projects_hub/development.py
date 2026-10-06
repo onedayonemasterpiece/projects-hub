@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+from pathlib import Path
 import re
 import time
 import uuid
@@ -20,6 +21,10 @@ DEFAULT_CODEX_PROFILE = "gpt-6.1-medium"
 QUALITY_MODEL = "gpt-6-astra"
 QUALITY_EFFORT = "high"
 MAX_REWORK_CYCLES = 2
+MAX_INTERRUPTED_RESUME_ATTEMPTS = 1
+MAX_INTERRUPTED_DESIGN_ATTEMPTS = 3
+MAX_INTERRUPTED_REVIEW_ATTEMPTS = 2
+PROJECTS_ROOT = Path(os.getenv("PROJECTS_HUB_PROJECTS_ROOT", "/home/dev/projects")).resolve()
 BACKGROUND_SYNC_INTERVAL_SECONDS = 2.0
 SELF_REPOSITORY_ENV = "PROJECTS_HUB_SELF_REPOSITORY"
 SELF_DEVCOVEER_PROJECT_ENV = "PROJECTS_HUB_SELF_DEVCOVEER_PROJECT"
@@ -102,6 +107,8 @@ class DevelopmentService:
                     summary TEXT NOT NULL DEFAULT '',
                     review_verdict TEXT,
                     token_usage_json TEXT,
+                    recovery_attempts INTEGER NOT NULL DEFAULT 0,
+                    recovery_last_at_ms INTEGER,
                     started_at_ms INTEGER,
                     finished_at_ms INTEGER,
                     created_at_ms INTEGER NOT NULL,
@@ -149,6 +156,22 @@ class DevelopmentService:
             if "spec_path" not in columns:
                 self.store.db.execute(
                     "ALTER TABLE task_executions ADD COLUMN spec_path TEXT"
+                )
+            stage_columns = {
+                str(row["name"])
+                for row in self.store.db.execute(
+                    "PRAGMA table_info(task_execution_stages)"
+                ).fetchall()
+            }
+            if "recovery_attempts" not in stage_columns:
+                self.store.db.execute(
+                    "ALTER TABLE task_execution_stages "
+                    "ADD COLUMN recovery_attempts INTEGER NOT NULL DEFAULT 0"
+                )
+            if "recovery_last_at_ms" not in stage_columns:
+                self.store.db.execute(
+                    "ALTER TABLE task_execution_stages "
+                    "ADD COLUMN recovery_last_at_ms INTEGER"
                 )
 
     def _authorize_owner(self, actor_id: str, workspace_id: str) -> None:
@@ -902,7 +925,158 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
             return "failed"
         if clean in {"cancelled", "canceled"}:
             return "cancelled"
+        if clean in {"interrupted", "aborted"}:
+            return "interrupted"
         return "running"
+
+    def _design_artifact_readback(
+        self,
+        *,
+        item: dict[str, Any],
+        stage: dict[str, Any],
+        result: dict[str, Any],
+    ) -> str | None:
+        if str(stage.get("stage") or "") != "design":
+            return None
+        spec_path = str(item.get("spec_path") or "").strip()
+        task = result.get("task")
+        cwd_raw = str(task.get("cwd") or "").strip() if isinstance(task, dict) else ""
+        if not spec_path or not cwd_raw:
+            return None
+        try:
+            cwd = Path(cwd_raw).resolve(strict=True)
+            if cwd != PROJECTS_ROOT and PROJECTS_ROOT not in cwd.parents:
+                return None
+            candidate = (cwd / spec_path).resolve(strict=True)
+            if cwd != candidate and cwd not in candidate.parents:
+                return None
+            if candidate.is_symlink() or not candidate.is_file():
+                return None
+            size = candidate.stat().st_size
+            if size < 1024 or size > 2_000_000:
+                return None
+            body = candidate.read_text(encoding="utf-8")
+        except (OSError, UnicodeError, ValueError):
+            return None
+
+        try:
+            task_ids = [str(value) for value in json.loads(item["task_ids_json"])]
+        except (TypeError, ValueError):
+            return None
+        folded = body.casefold()
+        markers = [str(item["id"]), *task_ids, "definition of done"]
+        if not all(marker.casefold() in folded for marker in markers):
+            return None
+        return (
+            "Design brief verified by exact artifact readback after interrupted turn: "
+            + spec_path
+        )
+
+    @staticmethod
+    def _interrupted_resume_prompt(stage: str) -> str:
+        return (
+            f"Resume the same already-authorized {stage} stage after an interrupted "
+            "native turn. Preserve the existing backlog scope, requirements, project "
+            "target and Definition of Done. Continue from the saved task/thread state. "
+            "Do not create a new product goal or broaden scope."
+        )
+
+    @staticmethod
+    def _recovery_review_prompt(spec_path: str, cycle: int) -> str:
+        return f"""Recovery review cycle {cycle} for the already-authorized implementation of:
+{spec_path}
+
+The original quality/review turn was interrupted and could not be resumed. Independently re-read the specification, inspect the current implementation diff/PR and verification evidence, and perform the same acceptance/code review. Do not implement fixes and do not merge/deploy/release.
+
+If acceptable, end with the exact line:
+REVIEW_VERDICT: ACCEPTED
+
+If material fixes are required, give concrete findings and end with:
+REVIEW_VERDICT: REWORK_REQUIRED"""
+
+    def _mark_recovery_attempt(self, stage_id: str) -> int:
+        now = _now_ms()
+        with self.store._lock:
+            row = self.store.db.execute(
+                "SELECT recovery_attempts FROM task_execution_stages WHERE id=?",
+                (stage_id,),
+            ).fetchone()
+            attempts = int(row["recovery_attempts"] or 0) + 1 if row else 1
+            self.store.db.execute(
+                """UPDATE task_execution_stages
+                   SET recovery_attempts=?,recovery_last_at_ms=?,updated_at_ms=?
+                   WHERE id=?""",
+                (attempts, now, now, stage_id),
+            )
+        return attempts
+
+    def _stage_attempt_count(
+        self,
+        execution_id: str,
+        stage_name: str,
+        *,
+        cycle: int | None = None,
+    ) -> int:
+        with self.store._lock:
+            if cycle is None:
+                row = self.store.db.execute(
+                    """SELECT COUNT(*) AS value
+                       FROM task_execution_stages
+                       WHERE execution_id=? AND stage=?""",
+                    (execution_id, stage_name),
+                ).fetchone()
+            else:
+                row = self.store.db.execute(
+                    """SELECT COUNT(*) AS value
+                       FROM task_execution_stages
+                       WHERE execution_id=? AND stage=? AND cycle=?""",
+                    (execution_id, stage_name, int(cycle)),
+                ).fetchone()
+        return int(row["value"] if row else 0)
+
+    def _block_interrupted_execution(
+        self,
+        *,
+        item: dict[str, Any],
+        stage: dict[str, Any],
+        summary: str,
+    ) -> dict[str, Any]:
+        self._finish_stage(
+            stage_id=str(stage["id"]),
+            status="interrupted",
+            summary=summary or "DevCoveer stage was interrupted and could not resume.",
+        )
+        now = _now_ms()
+        with self.store._lock:
+            self.store.db.execute(
+                """UPDATE task_executions
+                   SET status='blocked',phase='needs_owner',
+                       phase_detail='Стадия разработки прервана; безопасное автоматическое продолжение недоступно',
+                       result_summary=?,error_code='DEVELOPMENT_STAGE_INTERRUPTED',
+                       finished_at_ms=?,updated_at_ms=?
+                   WHERE id=?""",
+                (summary[:12000], now, now, item["id"]),
+            )
+        row = self._execution_row(
+            actor_id=str(item["actor_id"]),
+            workspace_id=str(item["workspace_id"]),
+            execution_id=str(item["id"]),
+        )
+        public = self._execution_public(row)
+        public["update_check_recommended"] = False
+        return {"execution": public}
+
+    @staticmethod
+    def _phase_after_resume(stage_name: str) -> tuple[str, str]:
+        if stage_name == "design":
+            return "designing", "Проектирование продолжено после прерывания"
+        if stage_name == "review":
+            return "reviewing", "Ревью продолжено после прерывания"
+        if stage_name == "rework":
+            return "reworking", "Исправление замечаний продолжено после прерывания"
+        if stage_name == "delivery":
+            return "delivering", "Поставка продолжена после прерывания"
+        return "implementing", "Реализация продолжена после прерывания"
 
     async def status(
         self,
@@ -1111,6 +1285,214 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
             or ""
         ).strip()[:12000]
         token_usage = self._token_usage(result)
+
+        if turn_status == "interrupted":
+            artifact_summary = self._design_artifact_readback(
+                item=item,
+                stage=stage,
+                result=result,
+            )
+            if artifact_summary:
+                turn_status = "completed"
+                summary = artifact_summary
+            else:
+                logical_stage = str(stage.get("stage") or "")
+                stage_id = str(stage["id"])
+                recovery_attempts = int(stage.get("recovery_attempts") or 0)
+                if recovery_attempts < MAX_INTERRUPTED_RESUME_ATTEMPTS:
+                    self._mark_recovery_attempt(stage_id)
+                    resume_access = (
+                        "read" if logical_stage in {"design", "review"} else "write"
+                    )
+                    try:
+                        resumed = await self.devcoveer.continue_codex_task(
+                            str(stage["devcoveer_task_id"]),
+                            project=str(item["project_hint"]),
+                            prompt=self._interrupted_resume_prompt(logical_stage),
+                            access=resume_access,
+                        )
+                    except DevCoveerError:
+                        resumed = {"status": "interrupted"}
+                    resumed_status = self._map_task_status(
+                        resumed.get("status")
+                        or resumed.get("executionStatus")
+                        or (resumed.get("task") or {}).get("status")
+                    )
+                    if resumed_status not in {
+                        "failed",
+                        "cancelled",
+                        "interrupted",
+                    }:
+                        phase, detail = self._phase_after_resume(logical_stage)
+                        now = _now_ms()
+                        with self.store._lock:
+                            self.store.db.execute(
+                                """UPDATE task_executions
+                                   SET status='running',phase=?,phase_detail=?,
+                                       error_code=NULL,finished_at_ms=NULL,
+                                       updated_at_ms=? WHERE id=?""",
+                                (phase, detail, now, item["id"]),
+                            )
+                        row = self._execution_row(
+                            actor_id=actor_id,
+                            workspace_id=workspace_id,
+                            execution_id=str(item["id"]),
+                        )
+                        public = self._execution_public(row)
+                        public["update_check_recommended"] = False
+                        return {"execution": public}
+
+                if logical_stage == "design":
+                    attempts = self._stage_attempt_count(str(item["id"]), "design")
+                    if attempts < MAX_INTERRUPTED_DESIGN_ATTEMPTS:
+                        remaining = await self._require_stage_capacity(
+                            actor_id=actor_id,
+                            workspace_id=workspace_id,
+                            model=QUALITY_MODEL,
+                            reasoning_effort=QUALITY_EFFORT,
+                        )
+                        try:
+                            restarted = await self.devcoveer.start_codex_task(
+                                project=str(item["project_hint"]),
+                                prompt=str(item.get("prompt") or ""),
+                                model=QUALITY_MODEL,
+                                reasoning_effort=QUALITY_EFFORT,
+                                access="write",
+                            )
+                        except DevCoveerError:
+                            restarted = {}
+                        restarted_task_id = str(
+                            restarted.get("taskId")
+                            or restarted.get("taskReference")
+                            or ""
+                        ).strip()
+                        if restarted_task_id:
+                            self._finish_stage(
+                                stage_id=stage_id,
+                                status="superseded",
+                                summary=(
+                                    summary
+                                    or "Interrupted design could not resume; safe design restart created."
+                                ),
+                                token_usage=token_usage,
+                            )
+                            self._record_stage(
+                                execution_id=str(item["id"]),
+                                stage="design",
+                                cycle=int(stage.get("cycle") or 0),
+                                model=QUALITY_MODEL,
+                                reasoning_effort=QUALITY_EFFORT,
+                                devcoveer_task_id=restarted_task_id,
+                            )
+                            now = _now_ms()
+                            with self.store._lock:
+                                self.store.db.execute(
+                                    """UPDATE task_executions
+                                       SET quality_task_id=?,devcoveer_task_id=?,
+                                           status='running',phase='designing',
+                                           phase_detail='Проектирование безопасно перезапущено после прерывания',
+                                           quota_remaining_percent=?,error_code=NULL,
+                                           finished_at_ms=NULL,updated_at_ms=?
+                                       WHERE id=?""",
+                                    (
+                                        restarted_task_id,
+                                        restarted_task_id,
+                                        remaining,
+                                        now,
+                                        item["id"],
+                                    ),
+                                )
+                            row = self._execution_row(
+                                actor_id=actor_id,
+                                workspace_id=workspace_id,
+                                execution_id=str(item["id"]),
+                            )
+                            public = self._execution_public(row)
+                            public["update_check_recommended"] = False
+                            return {"execution": public}
+
+                if logical_stage == "review":
+                    cycle = int(stage.get("cycle") or 0)
+                    attempts = self._stage_attempt_count(
+                        str(item["id"]),
+                        "review",
+                        cycle=cycle,
+                    )
+                    if attempts < MAX_INTERRUPTED_REVIEW_ATTEMPTS:
+                        remaining = await self._require_stage_capacity(
+                            actor_id=actor_id,
+                            workspace_id=workspace_id,
+                            model=QUALITY_MODEL,
+                            reasoning_effort=QUALITY_EFFORT,
+                        )
+                        try:
+                            restarted = await self.devcoveer.start_codex_task(
+                                project=str(item["project_hint"]),
+                                prompt=self._recovery_review_prompt(
+                                    str(item.get("spec_path") or ""),
+                                    cycle,
+                                ),
+                                model=QUALITY_MODEL,
+                                reasoning_effort=QUALITY_EFFORT,
+                                access="read",
+                            )
+                        except DevCoveerError:
+                            restarted = {}
+                        restarted_task_id = str(
+                            restarted.get("taskId")
+                            or restarted.get("taskReference")
+                            or ""
+                        ).strip()
+                        if restarted_task_id:
+                            self._finish_stage(
+                                stage_id=stage_id,
+                                status="superseded",
+                                summary=(
+                                    summary
+                                    or "Interrupted review could not resume; recovery review created."
+                                ),
+                                token_usage=token_usage,
+                            )
+                            self._record_stage(
+                                execution_id=str(item["id"]),
+                                stage="review",
+                                cycle=cycle,
+                                model=QUALITY_MODEL,
+                                reasoning_effort=QUALITY_EFFORT,
+                                devcoveer_task_id=restarted_task_id,
+                            )
+                            now = _now_ms()
+                            with self.store._lock:
+                                self.store.db.execute(
+                                    """UPDATE task_executions
+                                       SET quality_task_id=?,devcoveer_task_id=?,
+                                           status='running',phase='reviewing',
+                                           phase_detail='Ревью безопасно восстановлено после прерывания',
+                                           quota_remaining_percent=?,error_code=NULL,
+                                           finished_at_ms=NULL,updated_at_ms=?
+                                       WHERE id=?""",
+                                    (
+                                        restarted_task_id,
+                                        restarted_task_id,
+                                        remaining,
+                                        now,
+                                        item["id"],
+                                    ),
+                                )
+                            row = self._execution_row(
+                                actor_id=actor_id,
+                                workspace_id=workspace_id,
+                                execution_id=str(item["id"]),
+                            )
+                            public = self._execution_public(row)
+                            public["update_check_recommended"] = False
+                            return {"execution": public}
+
+                return self._block_interrupted_execution(
+                    item=item,
+                    stage=stage,
+                    summary=summary,
+                )
 
         if turn_status == "running":
             runtime_phase, runtime_detail = self._phase_from_result(result, "running")
