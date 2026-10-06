@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from projects_hub.analytics import AnalyticsService
+from projects_hub.analytics import (
+    ANALYSIS_MODELS,
+    CODEX_ANALYSIS_LADDER,
+    CODEX_COUNCIL_DEFAULT_MODEL,
+    DEFAULT_ANALYSIS_MODEL,
+    AnalyticsService,
+)
 from projects_hub.board import BoardService
 from projects_hub.store import DurableStore, StoreError
 
@@ -110,6 +116,49 @@ def _sticky(
         payload={"type": "sticky", "text": text, "style": {"color": "yellow"}},
         execution_origin="mira",
     )
+
+
+def test_codex_consultation_ladder_routes_one_model_per_run(tmp_path: Path):
+    assert CODEX_ANALYSIS_LADDER == (
+        "gpt_6_luna_medium",
+        "gpt_6_luna_high",
+        "gpt_6_1_sol_low",
+        "gpt_6_1_sol_medium",
+        "gpt_6_1_sol_high",
+        "gpt_6_astra_low",
+        "gpt_6_astra_medium",
+    )
+    assert DEFAULT_ANALYSIS_MODEL == "gpt_6_luna_medium"
+    assert CODEX_COUNCIL_DEFAULT_MODEL == DEFAULT_ANALYSIS_MODEL
+    assert set(CODEX_ANALYSIS_LADDER).issubset(ANALYSIS_MODELS)
+    assert {"kimi_k3", "deepseek", "council_free", "council_pro"}.issubset(ANALYSIS_MODELS)
+
+    store, board, actor, workspace, project, board_id = _owner(tmp_path)
+    bridge = FakeAnalyticsBridge()
+    try:
+        _sticky(board, actor=actor, workspace=workspace, board_id=board_id)
+        service = AnalyticsService(store, board, bridge=bridge)
+        for index, model in enumerate(CODEX_ANALYSIS_LADDER):
+            run = asyncio.run(
+                service.start_single(
+                    actor_id=actor,
+                    workspace_id=workspace,
+                    project_id=project,
+                    board_id=board_id,
+                    object_ids=["obj_analysis_a"],
+                    command_id=f"analysis_ladder_{index:02d}",
+                    model=model,
+                    purpose="requirements",
+                    question="Find unresolved requirements and questions.",
+                )
+            )
+            assert run["status"] == "running"
+            assert bridge.consult_calls[-1]["model"] == model
+
+        assert [call["model"] for call in bridge.consult_calls] == list(CODEX_ANALYSIS_LADDER)
+        assert bridge.council_calls == []
+    finally:
+        store.close()
 
 
 def test_single_analysis_is_frozen_idempotent_and_provided_context_only(tmp_path: Path):
