@@ -135,7 +135,71 @@ def test_any_provider_semantic_output_prevents_no_turn_closed_classification(tmp
         adapter.on_stopped(session)
 
         verdict = _verdicts(store, actor_id, initialized["response"]["source_id"])[-1]
-        assert verdict["verdict"] == "turn_closed_no_transcript"
+        assert verdict["verdict"] == "turn_committed"
         assert verdict["semantic_observed"] is True
+        assert verdict["committed"] is True
+    finally:
+        store.close()
+
+
+
+def test_prior_unknown_cannot_steal_next_canonical_transcript(tmp_path: Path):
+    store, adapter, session, initialized, actor_id, *_ = _live(tmp_path, "Sequential")
+    try:
+        first_pcm = b"\x05\x00" * 640
+        second_pcm = b"\x06\x00" * 640
+
+        adapter.input(session, {"activity_start": True})
+        adapter.input(session, _audio_message(first_pcm))
+        adapter.input(session, {"activity_end": True})
+
+        # Opening the next utterance retires the first as an unresolved
+        # ended turn, but it must not remain the target for the next canonical
+        # transcript after the second activity_end.
+        adapter.input(session, {"activity_start": True})
+        adapter.input(session, _audio_message(second_pcm))
+        adapter.input(session, {"activity_end": True})
+        adapter.on_event(
+            session,
+            {"type": "input_transcript", "text": "вторая фраза", "provider_at": 20},
+        )
+        adapter.on_stopped(session)
+
+        verdicts = _verdicts(store, actor_id, initialized["response"]["source_id"])
+        by_sequence = {}
+        for verdict in verdicts:
+            by_sequence.setdefault(verdict["sequence"], []).append(verdict["verdict"])
+        assert by_sequence[1][-1] == "turn_closed_no_transcript"
+        assert by_sequence[2][-1] == "turn_committed"
+    finally:
+        store.close()
+
+
+def test_late_provider_event_before_next_activity_end_stays_with_prior_turn(tmp_path: Path):
+    store, adapter, session, initialized, actor_id, *_ = _live(tmp_path, "Late provider event")
+    try:
+        first_pcm = b"\x07\x00" * 640
+        second_pcm = b"\x08\x00" * 640
+
+        adapter.input(session, {"activity_start": True})
+        adapter.input(session, _audio_message(first_pcm))
+        adapter.input(session, {"activity_end": True})
+        adapter.input(session, {"activity_start": True})
+        adapter.input(session, _audio_message(second_pcm))
+
+        # The second turn is still open, so this late model event belongs to
+        # the prior ended turn rather than falsely committing the new speech.
+        adapter.on_event(
+            session,
+            {"type": "output_transcript", "text": "поздний ответ", "provider_at": 21},
+        )
+        adapter.on_stopped(session)
+
+        verdicts = _verdicts(store, actor_id, initialized["response"]["source_id"])
+        by_sequence = {}
+        for verdict in verdicts:
+            by_sequence.setdefault(verdict["sequence"], []).append(verdict["verdict"])
+        assert by_sequence[1][-1] == "turn_committed"
+        assert by_sequence[2][-1] == "no_turn_closed"
     finally:
         store.close()

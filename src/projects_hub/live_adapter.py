@@ -736,9 +736,22 @@ class ProjectsHubLiveAdapter:
         return utterance
 
     def _semantic_utterance(self, session: Any) -> dict[str, Any] | None:
+        current = self._current_utterance(session)
+        if not current or not current.get("pcm_accepted") or current.get("committed"):
+            return None
+        if current.get("activity_end"):
+            # Once the current activity boundary is closed, provider events
+            # belong to this newest turn. Do not let an older unknown turn
+            # steal the next canonical transcript.
+            return current
+        # While a newer turn is still open, a late provider event may still
+        # belong to the most recent ended-but-uncommitted turn. Prefer that
+        # prior turn until the current activity_end establishes a new boundary.
         utterances = session.state.get("_utterances")
         if isinstance(utterances, list):
-            for utterance in utterances:
+            for utterance in reversed(utterances):
+                if utterance is current:
+                    continue
                 if (
                     isinstance(utterance, dict)
                     and utterance.get("pcm_accepted")
@@ -746,8 +759,7 @@ class ProjectsHubLiveAdapter:
                     and not utterance.get("committed")
                 ):
                     return utterance
-        current = self._current_utterance(session)
-        return current if current and current.get("pcm_accepted") else None
+        return current
 
     def _mark_semantic_observed(
         self,
@@ -1030,8 +1042,12 @@ explicit buffered replay is required instead of pretending the provisional text 
                 evidence="canonical_input_transcript",
             )
         elif kind in {"audio", "output_transcript", "turn_complete", "interrupted"}:
+            # Any model-derived output proves that the semantic turn was
+            # consumed. Treat it as committed even if input transcription is
+            # missing, otherwise recovery could duplicate an accepted action.
             self._mark_semantic_observed(
                 session,
+                committed=True,
                 evidence=f"provider_{kind}",
             )
         if kind == "audio":
@@ -1240,6 +1256,7 @@ explicit buffered replay is required instead of pretending the provisional text 
         args = self._args(call)
         self._mark_semantic_observed(
             session,
+            committed=True,
             evidence=f"tool_call:{name or 'unknown'}",
         )
         state = session.state
