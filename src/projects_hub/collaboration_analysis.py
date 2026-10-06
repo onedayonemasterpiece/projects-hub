@@ -125,6 +125,33 @@ class CollaborationAnalysisService:
                     PRIMARY KEY(actor_id,analysis_id,command_id)
                 );
 
+                CREATE TABLE IF NOT EXISTS owner_development_questions(
+                    id TEXT PRIMARY KEY,
+                    execution_id TEXT NOT NULL UNIQUE,
+                    workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+                    project_id TEXT NOT NULL REFERENCES projects(id),
+                    addressed_to_actor_id TEXT NOT NULL REFERENCES actors(id),
+                    prompt TEXT NOT NULL,
+                    shared_context TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    disposition TEXT,
+                    answer_text TEXT,
+                    deferred_until_ms INTEGER,
+                    created_at_ms INTEGER NOT NULL,
+                    updated_at_ms INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS owner_development_questions_addressee_idx
+                    ON owner_development_questions(addressed_to_actor_id,state,created_at_ms);
+                CREATE TABLE IF NOT EXISTS owner_development_answer_commands(
+                    actor_id TEXT NOT NULL REFERENCES actors(id),
+                    question_id TEXT NOT NULL REFERENCES owner_development_questions(id),
+                    command_id TEXT NOT NULL,
+                    payload_sha256 TEXT NOT NULL,
+                    receipt_json TEXT NOT NULL,
+                    created_at_ms INTEGER NOT NULL,
+                    PRIMARY KEY(actor_id,question_id,command_id)
+                );
+
                 CREATE TABLE IF NOT EXISTS collaboration_jobs(
                     id TEXT PRIMARY KEY,
                     workspace_id TEXT NOT NULL REFERENCES workspaces(id),
@@ -162,6 +189,7 @@ class CollaborationAnalysisService:
     def _question_public(self, row: Any) -> dict[str, Any]:
         return {
             "id": row["id"],
+            "source_kind": "analysis",
             "analysis_id": row["analysis_id"],
             "project_id": row["project_id"],
             "asked_by_actor_id": row["asked_by_actor_id"],
@@ -179,6 +207,96 @@ class CollaborationAnalysisService:
             "created_at_ms": int(row["created_at_ms"]),
             "updated_at_ms": int(row["updated_at_ms"]),
         }
+
+    def _owner_question_public(self, row: Any) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "source_kind": "owner_development",
+            "analysis_id": f"development:{row['execution_id']}",
+            "execution_id": row["execution_id"],
+            "project_id": row["project_id"],
+            "asked_by_actor_id": row["addressed_to_actor_id"],
+            "addressed_to_actor_id": row["addressed_to_actor_id"],
+            "addressed_role": "owner",
+            "prompt": row["prompt"],
+            "shared_context": row["shared_context"],
+            "blocking": True,
+            "alternatives": ["answer", "unknown", "skip", "later"],
+            "state": row["state"],
+            "disposition": row["disposition"],
+            "answer_text": row["answer_text"],
+            "answered_by_actor_id": row["addressed_to_actor_id"] if row["answer_text"] else None,
+            "deferred_until_ms": row["deferred_until_ms"],
+            "created_at_ms": int(row["created_at_ms"]),
+            "updated_at_ms": int(row["updated_at_ms"]),
+        }
+
+    def _sync_owner_development_questions(self) -> int:
+        if self.development is None:
+            return 0
+        now = _now_ms()
+        created = 0
+        with self.store._lock:
+            rows = self.store.db.execute(
+                """SELECT id,actor_id,workspace_id,project_id,phase_detail,
+                          result_summary,error_code
+                   FROM task_executions
+                   WHERE status='blocked' AND phase='needs_owner'
+                     AND error_code IN ('REVIEW_REWORK_LIMIT','REVIEW_VERDICT_MISSING')
+                   ORDER BY updated_at_ms"""
+            ).fetchall()
+            for row in rows:
+                qid = "devq_" + hashlib.sha256(
+                    str(row["id"]).encode("utf-8")
+                ).hexdigest()[:32]
+                exists = self.store.db.execute(
+                    "SELECT 1 FROM owner_development_questions WHERE execution_id=?",
+                    (row["id"],),
+                ).fetchone()
+                if exists:
+                    continue
+                prompt = str(row["phase_detail"] or "Нужно решение владельца").strip()
+                context = str(row["result_summary"] or "").strip()[:4000]
+                self.store.db.execute(
+                    """INSERT INTO owner_development_questions(
+                           id,execution_id,workspace_id,project_id,addressed_to_actor_id,
+                           prompt,shared_context,state,created_at_ms,updated_at_ms)
+                       VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        qid, row["id"], row["workspace_id"], row["project_id"],
+                        row["actor_id"], prompt, context, "open", now, now,
+                    ),
+                )
+                self.store.db.execute(
+                    """INSERT INTO collaboration_events(
+                           workspace_id,project_id,actor_id,kind,object_kind,object_id,
+                           parent_object_id,addressed_to_actor_id,summary,created_at_ms)
+                       VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        row["workspace_id"], row["project_id"], row["actor_id"],
+                        "question_addressed", "question", qid, row["id"], row["actor_id"],
+                        prompt[:240], now,
+                    ),
+                )
+                created += 1
+
+            # If the execution was resumed by another authorized surface, the old
+            # question stops being actionable without inventing an answer.
+            self.store.db.execute(
+                """UPDATE owner_development_questions
+                   SET state='resolved',updated_at_ms=?
+                   WHERE state IN ('open','deferred')
+                     AND execution_id IN (
+                       SELECT q.execution_id
+                       FROM owner_development_questions q
+                       LEFT JOIN task_executions e ON e.id=q.execution_id
+                       WHERE e.id IS NULL
+                          OR e.status!='blocked'
+                          OR e.phase!='needs_owner'
+                     )""",
+                (now,),
+            )
+        return created
 
     def _analysis_public(self, actor_id: str, workspace_id: str, row: Any) -> dict[str, Any]:
         self.store.project_access(actor_id, workspace_id, row["project_id"])
@@ -563,15 +681,32 @@ class CollaborationAnalysisService:
         self, *, actor_id: str, workspace_id: str, limit: int = 30
     ) -> list[dict[str, Any]]:
         self.store._membership(actor_id, workspace_id)
+        self._sync_owner_development_questions()
+        bounded = max(1, min(int(limit), 100))
         with self.store._lock:
-            rows = self.store.db.execute(
+            analysis_rows = self.store.db.execute(
                 """SELECT * FROM collaboration_questions
-                   WHERE workspace_id=? AND addressed_to_actor_id=?
-                   ORDER BY CASE state WHEN 'open' THEN 0 WHEN 'deferred' THEN 1 ELSE 2 END,
-                            created_at_ms,id LIMIT ?""",
-                (workspace_id, actor_id, max(1, min(int(limit), 100))),
+                   WHERE workspace_id=? AND addressed_to_actor_id=?""",
+                (workspace_id, actor_id),
             ).fetchall()
-        return [self._question_public(row) for row in rows]
+            owner_rows = self.store.db.execute(
+                """SELECT * FROM owner_development_questions
+                   WHERE workspace_id=? AND addressed_to_actor_id=?""",
+                (workspace_id, actor_id),
+            ).fetchall()
+        items = [
+            *[self._question_public(row) for row in analysis_rows],
+            *[self._owner_question_public(row) for row in owner_rows],
+        ]
+        state_rank = {"open": 0, "deferred": 1}
+        items.sort(
+            key=lambda item: (
+                state_rank.get(str(item["state"]), 2),
+                int(item["created_at_ms"]),
+                str(item["id"]),
+            )
+        )
+        return items[:bounded]
 
     def answer_questions(
         self,
@@ -737,6 +872,122 @@ class CollaborationAnalysisService:
                 raise
         return receipt
 
+    async def answer_owner_development_question(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        question_id: str,
+        command_id: str,
+        disposition: str,
+        body: str = "",
+        deferred_until_ms: int | None = None,
+    ) -> dict[str, Any]:
+        if self.development is None:
+            raise StoreError("TOOL_NOT_AVAILABLE", "Owner development is unavailable")
+        if not COMMAND_RE.fullmatch(str(command_id or "")):
+            raise StoreError("INVALID_ARGUMENT", "answer command_id is invalid")
+        if disposition not in DISPOSITIONS:
+            raise StoreError("INVALID_ARGUMENT", "question disposition is invalid")
+        clean_body = str(body or "").strip()
+        if disposition == "answer" and not clean_body:
+            raise StoreError("INVALID_ARGUMENT", "answer text is required")
+        if len(clean_body) > 12000:
+            raise StoreError("INVALID_ARGUMENT", "answer text is too large")
+        if disposition == "later" and deferred_until_ms is None:
+            deferred_until_ms = _now_ms() + 86_400_000
+        request = {
+            "disposition": disposition,
+            "body": clean_body,
+            "deferred_until_ms": deferred_until_ms,
+        }
+        payload_sha = _sha(request)
+        with self.store._lock:
+            row = self.store.db.execute(
+                "SELECT * FROM owner_development_questions WHERE id=?",
+                (question_id,),
+            ).fetchone()
+            if not row or row["workspace_id"] != workspace_id:
+                raise StoreError("QUESTION_NOT_FOUND", "Owner question is not available")
+            self.store.project_access(actor_id, workspace_id, row["project_id"])
+            if row["addressed_to_actor_id"] != actor_id:
+                raise StoreError("PROJECT_FORBIDDEN", "Question is addressed to another actor")
+            existing = self.store.db.execute(
+                """SELECT * FROM owner_development_answer_commands
+                   WHERE actor_id=? AND question_id=? AND command_id=?""",
+                (actor_id, question_id, command_id),
+            ).fetchone()
+            if existing:
+                if existing["payload_sha256"] != payload_sha:
+                    raise StoreError("COLLABORATION_COMMAND_CONFLICT", "answer command_id conflict")
+                return json.loads(existing["receipt_json"])
+            if row["state"] not in {"open", "deferred"}:
+                raise StoreError("QUESTION_ALREADY_ANSWERED", "Question already has a disposition")
+            snapshot = dict(row)
+
+        resume = None
+        if disposition == "answer":
+            resume = await self.development.resume_needs_owner(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                execution_id=str(snapshot["execution_id"]),
+                command_id=command_id,
+                answer=clean_body,
+            )
+
+        state = {
+            "answer": "resolved",
+            "skip": "skipped",
+            "unknown": "unknown",
+            "later": "deferred",
+        }[disposition]
+        now = _now_ms()
+        receipt = {
+            "question_id": question_id,
+            "execution_id": snapshot["execution_id"],
+            "state": state,
+            "disposition": disposition,
+            "continuation": "resumed" if resume else (
+                "deferred" if disposition == "later" else "blocked"
+            ),
+            "execution": resume["execution"] if resume else None,
+        }
+        with self.store._lock:
+            self.store.db.execute("BEGIN IMMEDIATE")
+            try:
+                self.store.db.execute(
+                    """UPDATE owner_development_questions
+                       SET state=?,disposition=?,answer_text=?,deferred_until_ms=?,
+                           updated_at_ms=? WHERE id=?""",
+                    (
+                        state, disposition, clean_body or None, deferred_until_ms,
+                        now, question_id,
+                    ),
+                )
+                self.store.db.execute(
+                    """INSERT INTO owner_development_answer_commands(
+                           actor_id,question_id,command_id,payload_sha256,receipt_json,created_at_ms)
+                       VALUES(?,?,?,?,?,?)""",
+                    (actor_id, question_id, command_id, payload_sha, _canonical(receipt), now),
+                )
+                self.store.db.execute(
+                    """INSERT INTO collaboration_events(
+                           workspace_id,project_id,actor_id,kind,object_kind,object_id,
+                           parent_object_id,addressed_to_actor_id,summary,created_at_ms)
+                       VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        workspace_id, snapshot["project_id"], actor_id,
+                        "question_answered" if state == "resolved" else f"question_{state}",
+                        "question", question_id, snapshot["execution_id"], actor_id,
+                        (clean_body or disposition)[:240], now,
+                    ),
+                )
+                self.store.db.execute("COMMIT")
+            except Exception:
+                self.store.db.execute("ROLLBACK")
+                raise
+        return receipt
+
     def _job_public(self, row: Any) -> dict[str, Any]:
         return {
             "id": row["id"],
@@ -842,6 +1093,7 @@ class CollaborationAnalysisService:
 
     async def advance_jobs_once(self) -> int:
         async with self._lock:
+            self._sync_owner_development_questions()
             with self.store._lock:
                 rows = self.store.db.execute(
                     """SELECT * FROM collaboration_jobs
