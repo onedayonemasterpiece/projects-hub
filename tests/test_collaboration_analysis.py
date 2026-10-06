@@ -337,6 +337,13 @@ async def test_blocking_question_non_answer_does_not_continue(
         ],
     )
     assert receipt["continuation"] == expected
+    inbox_after = service.inbox(actor_id=actor_b, workspace_id=workspace_id)
+    if disposition == "later":
+        assert all(item["id"] != blocking["id"] for item in inbox_after)
+    else:
+        still_open = next(item for item in inbox_after if item["id"] == blocking["id"])
+        assert still_open["state"] == "open"
+        assert still_open["disposition"] == disposition
     with store._lock:
         assert store.db.execute(
             "SELECT COUNT(*) AS n FROM collaboration_jobs WHERE analysis_id=?",
