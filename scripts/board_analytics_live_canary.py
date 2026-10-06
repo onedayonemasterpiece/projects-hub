@@ -76,7 +76,7 @@ async def run(model: str = "council_free") -> dict:
                 ),
             )
 
-            deadline = time.monotonic() + 180.0
+            deadline = time.monotonic() + (900.0 if model == "council_pro" else 180.0)
             while run_row["status"] not in {"completed", "failed", "cancelled", "blocked"}:
                 if time.monotonic() >= deadline:
                     raise RuntimeError(
