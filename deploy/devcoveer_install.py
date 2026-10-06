@@ -27,6 +27,7 @@ import urllib.request
 from typing import Any, Mapping
 
 REPOSITORY = "onedayonemasterpiece/projects-hub"
+MAIN_REF = "refs/remotes/origin/main"
 SERVICE = "projects-hub.service"
 PORT = 8196
 AI_RESOURCE_CONTROL_SHA = "6ec1929dc3183f4bafb112de96ee0571334c0b40"
@@ -262,6 +263,44 @@ def resolve_sha(value: str) -> str:
     return resolved
 
 
+def require_main_history(sha: str) -> str:
+    """Allow production activation only from fresh origin/main history."""
+
+    run(
+        [
+            "git",
+            "fetch",
+            "--quiet",
+            "origin",
+            "refs/heads/main:refs/remotes/origin/main",
+        ],
+        cwd=REPO_ROOT,
+        timeout=90,
+    )
+    main_sha = run(
+        ["git", "rev-parse", MAIN_REF],
+        cwd=REPO_ROOT,
+        timeout=30,
+    ).strip()
+    check = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", sha, main_sha],
+        cwd=REPO_ROOT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+        timeout=30,
+    )
+    if check.returncode == 1:
+        raise DeployError(
+            "production release SHA is not in fresh origin/main history"
+        )
+    if check.returncode != 0:
+        raise DeployError(
+            f"cannot verify production release ancestry ({check.returncode})"
+        )
+    return main_sha
+
+
 def _safe_release_dir(sha: str) -> Path:
     path = RELEASES_ROOT / sha
     if path.parent != RELEASES_ROOT or not SHA_RE.fullmatch(path.name):
@@ -446,7 +485,7 @@ def _restore_current(previous: str | None) -> None:
     os.replace(temp, CURRENT_LINK)
 
 
-def write_runtime_environment(sha: str) -> bytes | None:
+def write_runtime_environment(sha: str, release: Path) -> bytes | None:
     STATE_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
     DATA_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
     LOG_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -463,10 +502,10 @@ def write_runtime_environment(sha: str) -> bytes | None:
         render_env(
             {
                 "PROJECTS_HUB_DATA_DIR": str(DATA_ROOT),
-                "PROJECTS_HUB_STATIC_DIR": str(CURRENT_LINK / "source/web/dist"),
+                "PROJECTS_HUB_STATIC_DIR": str(release / "source/web/dist"),
                 "PROJECTS_HUB_SESSION_SECRET_FILE": str(SESSION_SECRET_FILE),
                 "PROJECTS_HUB_DEVCOVEER_COMMAND": str(
-                    CURRENT_LINK / "source/scripts/run_devcoveer_mcp.sh"
+                    release / "source/scripts/run_devcoveer_mcp.sh"
                 ),
                 "PROJECTS_HUB_SELF_REPOSITORY": REPOSITORY,
                 "PROJECTS_HUB_SELF_DEVCOVEER_PROJECT": "projects-hub-owner",
@@ -491,7 +530,7 @@ def restore_service_environment(content: bytes | None) -> None:
     private_write(SERVICE_ENV, content.decode("utf-8"))
 
 
-def install_unit() -> None:
+def install_unit(release: Path) -> None:
     UNIT_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
     unit = "\n".join(
         (
@@ -502,10 +541,10 @@ def install_unit() -> None:
             "",
             "[Service]",
             "Type=simple",
-            f"WorkingDirectory={CURRENT_LINK}/source",
+            f"WorkingDirectory={release}/source",
             f"EnvironmentFile={PROVIDER_ENV}",
             f"EnvironmentFile={SERVICE_ENV}",
-            f"ExecStart={CURRENT_LINK}/venv/bin/python {CURRENT_LINK}/source/scripts/run_server.py",
+            f"ExecStart={release}/venv/bin/python {release}/source/scripts/run_server.py",
             "Restart=on-failure",
             "RestartSec=3",
             "TimeoutStopSec=30",
@@ -525,6 +564,15 @@ def install_unit() -> None:
     env = systemd_env()
     run(["systemctl", "--user", "daemon-reload"], env=env, timeout=30)
     run(["systemctl", "--user", "enable", SERVICE], env=env, timeout=30)
+
+
+def restore_unit(content: bytes | None) -> None:
+    if content is None:
+        with contextlib.suppress(FileNotFoundError):
+            UNIT_FILE.unlink()
+    else:
+        private_write(UNIT_FILE, content.decode("utf-8"))
+    run(["systemctl", "--user", "daemon-reload"], env=systemd_env(), timeout=30)
 
 
 def restart_service() -> None:
@@ -595,17 +643,20 @@ def wait_healthy(sha: str, seconds: float = 30.0) -> dict[str, Any]:
 
 def _deploy_serialized(sha: str) -> dict[str, Any]:
     sha = resolve_sha(sha)
+    main_sha = require_main_history(sha)
     release = _build_release(sha)
     old_service_env = SERVICE_ENV.read_bytes() if SERVICE_ENV.is_file() else None
+    old_unit = UNIT_FILE.read_bytes() if UNIT_FILE.is_file() else None
     previous = _replace_current(release)
     try:
-        write_runtime_environment(sha)
-        install_unit()
+        write_runtime_environment(sha, release)
+        install_unit(release)
         restart_service()
         live_health = wait_healthy(sha)
     except Exception:
         _restore_current(previous)
         restore_service_environment(old_service_env)
+        restore_unit(old_unit)
         if previous is None:
             stop_service()
         else:
@@ -627,6 +678,7 @@ def _deploy_serialized(sha: str) -> dict[str, Any]:
     return {
         "repository": REPOSITORY,
         "release_sha": sha,
+        "verified_main_sha": main_sha,
         "release": str(release),
         "current": str(CURRENT_LINK),
         "service": status,

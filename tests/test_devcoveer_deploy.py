@@ -10,6 +10,7 @@ from deploy import devcoveer_install as deploy
 from deploy.devcoveer_install import (
     DeployError,
     deployment_lock,
+    require_main_history,
     prune_old_releases,
     render_env,
     select_provider_environment,
@@ -186,3 +187,62 @@ def test_deploy_wraps_entire_transaction_in_process_lock(monkeypatch):
 
     assert result["release_sha"] == "1" * 40
     assert events == ["lock-enter", "deploy:" + "1" * 40, "lock-exit"]
+
+def test_require_main_history_rejects_non_main_sha(monkeypatch):
+    sha = "1" * 40
+    main_sha = "2" * 40
+    calls: list[list[str]] = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(list(argv))
+        if argv[:2] == ["git", "fetch"]:
+            return ""
+        if argv[:2] == ["git", "rev-parse"]:
+            return main_sha + "\n"
+        raise AssertionError(argv)
+
+    class Result:
+        returncode = 1
+
+    monkeypatch.setattr(deploy, "run", fake_run)
+    monkeypatch.setattr(deploy.subprocess, "run", lambda *a, **k: Result())
+
+    with pytest.raises(DeployError, match="not in fresh origin/main history"):
+        require_main_history(sha)
+
+    assert calls[0][:3] == ["git", "fetch", "--quiet"]
+    assert calls[1] == ["git", "rev-parse", deploy.MAIN_REF]
+
+
+def test_require_main_history_accepts_main_ancestor(monkeypatch):
+    sha = "1" * 40
+    main_sha = "2" * 40
+
+    def fake_run(argv, **kwargs):
+        if argv[:2] == ["git", "fetch"]:
+            return ""
+        if argv[:2] == ["git", "rev-parse"]:
+            return main_sha + "\n"
+        raise AssertionError(argv)
+
+    class Result:
+        returncode = 0
+
+    monkeypatch.setattr(deploy, "run", fake_run)
+    monkeypatch.setattr(deploy.subprocess, "run", lambda *a, **k: Result())
+
+    assert require_main_history(sha) == main_sha
+
+
+def test_runtime_paths_are_release_specific_not_current_symlink():
+    source = Path("deploy/devcoveer_install.py").read_text(encoding="utf-8")
+
+    assert '"PROJECTS_HUB_STATIC_DIR": str(release / "source/web/dist")' in source
+    assert 'release / "source/scripts/run_devcoveer_mcp.sh"' in source
+    assert 'f"WorkingDirectory={release}/source"' in source
+    assert (
+        'f"ExecStart={release}/venv/bin/python {release}/source/scripts/run_server.py"'
+        in source
+    )
+    assert 'CURRENT_LINK / "source/web/dist"' not in source
+    assert 'f"WorkingDirectory={CURRENT_LINK}/source"' not in source

@@ -1281,6 +1281,18 @@ def test_terminal_native_status_overrides_stale_running_wrapper():
     )
 
 
+
+def test_delivery_prompt_requires_merged_main_before_production_deploy():
+    prompt = DevelopmentService._delivery_prompt(
+        "docs/prompts/owner-development-test.md"
+    )
+    lowered = prompt.lower()
+    assert "never deploy a branch-only" in lowered
+    assert "fresh origin/main history" in lowered
+    assert "exact merged sha" in lowered
+    assert "running service, static assets and release metadata" in lowered
+
+
 def test_owner_development_tools_are_not_exposed_to_ordinary_users():
     ordinary = {item["name"] for item in _functions(owner_development=False)}
     owner = {item["name"] for item in _functions(owner_development=True)}
