@@ -123,11 +123,32 @@
       "statement": "Only the explicit platform owner may use Projects Hub to turn conversation-discovered product gaps into a durable development backlog and explicitly launch bounded implementation batches through the existing GitHub/DevCoveer delivery path; ordinary users have no development fallback.",
       "critical": true,
       "acceptance": [
-        "Mira can create/refine typed development requests containing the observed gap, desired outcome, relevant project/repository, acceptance criteria and evidence/context.",
-        "Development requests are durable, reviewable and batchable; conversation alone never authorizes implementation.",
-        "Starting implementation requires an explicit current owner command and produces durable batch status, tests/CI and deployment/readback evidence.",
-        "Owner-only development tools are absent from ordinary users' Live tool surfaces and direct API calls are independently authorization-checked.",
-        "Android changes delivered through self-development end in the normal signed release/update-manifest path so installed apps can self-update."
+        "Development tools and start_task write path are available only to the bound platform owner.",
+        "Ordinary users cannot launch implementation tasks from conversation.",
+        "Owner development remains an explicit bounded action, not an automatic side effect of analysis or board tools."
+      ]
+    },
+    {
+      "id": "CORE-BOARD-VOICE-LLM-FIRST",
+      "statement": "Project boards are voice-first and LLM-first: the user does not manually create, edit, drag, resize or type into board objects. Board mutations are performed only by the central Mira Live agent interpreting user speech and calling board tools. The board UI is primarily a read-only visual surface with camera/focus controlled via voice or minimal view controls.",
+      "critical": true,
+      "acceptance": [
+        "There is no primary user-facing text editor, drag-to-move, or toolbar for creating/editing stickies in the normal product path.",
+        "Board write tools are exposed to Mira (execution_origin=mira) and require authenticated Live session plus project editor rights.",
+        "Opening or closing the board does not break the ongoing voice session, microphone, transcript, or next turn admission.",
+        "Mira receives structural viewport/context (visible object ids, short texts, focus state) rather than relying on screenshots as the primary understanding path.",
+        "Guest share remains view-only; guests cannot mutate the board."
+      ]
+    },
+    {
+      "id": "CORE-BOARD-ANALYTICS-ISOLATION",
+      "statement": "Strong-model board analysis is an explicit, provided-context-only capability separate from owner self-development: analysis uses frozen board evidence, consult_model/council_run with context_mode=provided_only, evidence_bundle and request_key, and cannot start development write tasks.",
+      "critical": true,
+      "acceptance": [
+        "Analytics client allowlist excludes start_task and other development write tools.",
+        "Analysis input is a frozen snapshot of selected board objects plus an explicit question; no arbitrary project filesystem read for ordinary analysis.",
+        "Idempotent dispatch uses request_key; uncertain dispatch is represented as dispatch_unknown rather than blind retry.",
+        "Analysis results may be published back to the board as document cards; this does not grant development write access."
       ]
     }
   ]
