@@ -5,10 +5,12 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from projects_hub.app import create_app
 from projects_hub.auth import COOKIE_NAME, issue_session
 from projects_hub.board import BoardService
+from projects_hub.board_api import BOARD_PROTOCOL, CLIENT_PREFIX, TICKET_PREFIX
 from projects_hub.live_adapter import ProjectsHubLiveAdapter
 from projects_hub.live_resources import ConversationScope
 from projects_hub.settings import Settings
@@ -238,5 +240,98 @@ async def test_mira_board_tools_share_same_live_surface_and_viewport_context(tmp
         assert resolved["status"] == "current"
         assert resolved["objects"][0]["id"] == created["object_id"]
         assert resolved["objects"][0]["text"] == "Голосовой стикер"
+    finally:
+        store.close()
+
+
+def test_open_board_socket_rechecks_revoked_project_grant_on_active_client(tmp_path: Path):
+    store, _boot, owner, workspace, project, _board = setup_board(tmp_path)
+    viewer = "usr_board_socket_viewer"
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        static_dir=tmp_path / "missing-ui",
+        session_secret="board-socket-session-secret-" * 3,
+        dev_auth=True,
+        cookie_secure=False,
+    )
+    with store._lock:
+        store.db.execute(
+            "INSERT INTO actors(id,display_name,created_at_ms) VALUES(?,?,?)",
+            (viewer, "Socket Viewer", 1),
+        )
+        store.db.execute(
+            "INSERT INTO memberships(actor_id,workspace_id,role) VALUES(?,?,?)",
+            (viewer, workspace, "member"),
+        )
+    store.grant_project_access(
+        actor_id=owner,
+        workspace_id=workspace,
+        project_id=project,
+        target_actor_id=viewer,
+        role="viewer",
+    )
+    app = create_app(settings, store=store)
+    try:
+        with TestClient(app, base_url="http://testserver") as client:
+            client.cookies.set(
+                COOKIE_NAME,
+                issue_session(viewer, settings.session_secret),
+            )
+            opened = client.post(
+                f"/api/projects/{project}/board/open",
+                json={"workspace_id": workspace, "create_if_allowed": False},
+            )
+            # A viewer cannot create the board; create it as owner first if absent.
+            if opened.status_code != 200:
+                client.cookies.set(
+                    COOKIE_NAME,
+                    issue_session(owner, settings.session_secret),
+                )
+                owner_open = client.post(
+                    f"/api/projects/{project}/board/open",
+                    json={"workspace_id": workspace},
+                )
+                assert owner_open.status_code == 200
+                board_id = owner_open.json()["id"]
+                client.cookies.set(
+                    COOKIE_NAME,
+                    issue_session(viewer, settings.session_secret),
+                )
+            else:
+                board_id = opened.json()["id"]
+
+            client_instance_id = "socket-viewer-tab-001"
+            ticket = client.post(
+                f"/api/boards/{board_id}/socket-ticket",
+                json={
+                    "workspace_id": workspace,
+                    "client_instance_id": client_instance_id,
+                },
+            )
+            assert ticket.status_code == 200
+            raw_ticket = ticket.json()["ticket"]
+
+            with client.websocket_connect(
+                f"/api/boards/{board_id}/socket",
+                headers={"origin": "http://testserver"},
+                subprotocols=[
+                    BOARD_PROTOCOL,
+                    TICKET_PREFIX + raw_ticket,
+                    CLIENT_PREFIX + client_instance_id,
+                ],
+            ) as socket:
+                snapshot = socket.receive_json()
+                assert snapshot["type"] == "snapshot"
+
+                store.revoke_project_access(
+                    actor_id=owner,
+                    workspace_id=workspace,
+                    project_id=project,
+                    target_actor_id=viewer,
+                )
+                socket.send_json({"type": "ping"})
+                with pytest.raises(WebSocketDisconnect) as closed:
+                    socket.receive_json()
+                assert closed.value.code == 1008
     finally:
         store.close()
