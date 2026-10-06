@@ -180,6 +180,9 @@ export default function App() {
   const [githubStatus, setGitHubStatus] = useState<GitHubStatus | null>(null);
   const [githubBusy, setGitHubBusy] = useState(false);
   const clientRef = useRef<LiveClient | null>(null);
+  const clientInstanceIdRef = useRef(
+    "cli_" + crypto.randomUUID().replaceAll("-", ""),
+  );
   const currentSourceIdRef = useRef<string | null>(null);
   const userTranscriptIndex = useRef(-1);
   const assistantTranscriptIndex = useRef(-1);
@@ -825,6 +828,7 @@ export default function App() {
     return {
       ...(nativeVersion ? { client_version: nativeVersion } : {}),
       client_timezone: clientTimezone,
+      client_instance_id: clientInstanceIdRef.current,
     };
   }
 
@@ -1590,7 +1594,9 @@ export default function App() {
         <BoardShell
           visible={boardOpen}
           workspaceId={boot.workspace.id}
+          conversationId={conversation?.id ?? ""}
           projectId={focusProject.id}
+          clientInstanceId={clientInstanceIdRef.current}
           canAnalyze={Boolean(focusProject.can_analyze)}
           canManageShare={Boolean(focusProject.can_manage_share)}
           focusRequest={boardFocusRequest}
