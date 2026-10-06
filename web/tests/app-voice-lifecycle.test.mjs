@@ -12,6 +12,20 @@ test("Projects Hub preflights microphone and cleans failed Live startup", async 
   assert.match(source, /Открыть настройки микрофона/);
 });
 
+test("Projects Hub enables the voice orb only after the Live client exists", async () => {
+  const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  assert.match(source, /const \[voiceClientReady, setVoiceClientReady\] = useState\(false\)/);
+  assert.match(
+    source,
+    /clientRef\.current = client;\s*setVoiceClientReady\(true\)/,
+  );
+  assert.match(
+    source,
+    /client\.stop\(\{ reason: "ui_unmount" \}\);[\s\S]*setVoiceClientReady\(false\)/,
+  );
+  assert.match(source, /disabled=\{busy \|\| !voiceClientReady\}/);
+});
+
 test("Android package grants Chromium full microphone audio capability", async () => {
   const manifest = await readFile(
     new URL("../../android/app/src/main/AndroidManifest.xml", import.meta.url),

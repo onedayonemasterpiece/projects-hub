@@ -1,3 +1,4 @@
+from live_tools import execute, bundle_setup
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -157,7 +158,7 @@ async def test_live_knowledge_tool_is_absent_without_user_delegation(tmp_path: P
         assert initialized["response"]["regional_knowledge_enabled"] is False
 
         with pytest.raises(StoreError) as raised:
-            await adapter.execute_tool(
+            await execute(adapter,
                 session,
                 {
                     "name": "knowledge_search",
@@ -193,10 +194,12 @@ async def test_live_knowledge_tool_uses_current_actor_workspace_and_evidence(
         names = {
             item["name"] for item in initialized["configuration"]["functions"]
         }
+        selected, _ = bundle_setup(adapter, initialized, "knowledge")
+        names = {item["name"] for item in selected["functions"]}
         assert "knowledge_search" in names
         assert initialized["response"]["regional_knowledge_enabled"] is True
 
-        result = await adapter.execute_tool(
+        result = await execute(adapter,
             session,
             {
                 "name": "knowledge_search",
@@ -283,7 +286,7 @@ async def test_knowledge_provider_failure_degrades_only_capability(tmp_path: Pat
     )
     try:
         with pytest.raises(StoreError) as raised:
-            await adapter.execute_tool(
+            await execute(adapter,
                 session,
                 {
                     "name": "knowledge_search",

@@ -31,6 +31,9 @@ import android.widget.FrameLayout;
 import android.widget.Toast;
 
 import org.json.JSONObject;
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
+import java.util.Collections;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -45,6 +48,8 @@ public final class MainActivity extends Activity {
     private final ExecutorService io = Executors.newFixedThreadPool(3);
     private final AtomicBoolean pairing = new AtomicBoolean(false);
 
+    private FrameLayout themeRoot;
+    private final ThemePresentation themePresentation = new ThemePresentation();
     private WebView webView;
     private Button updateButton;
     private WebOriginPolicy webOriginPolicy;
@@ -131,6 +136,7 @@ public final class MainActivity extends Activity {
         });
 
         FrameLayout root = new FrameLayout(this);
+        themeRoot = root;
         root.setBackgroundColor(Color.rgb(7, 7, 8));
 
         webView = new WebView(this);
@@ -160,6 +166,7 @@ public final class MainActivity extends Activity {
                             + Uri.encode(BuildConfig.VERSION_NAME)
             );
         }
+        applyThemeChrome("dark");
         updater.checkForUpdate();
     }
 
@@ -176,6 +183,10 @@ public final class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (webView != null && webOriginPolicy.isTrustedPageUrl(webView.getUrl())) {
+            // Fixed presentation notification, no reload or programmable native channel.
+            webView.evaluateJavascript("window.dispatchEvent(new Event('projects-hub-theme-resume'))", null);
+        }
         if (voiceFocusDesired && !voiceFocusHeld) {
             requestVoiceAudioFocus();
         }
@@ -224,6 +235,38 @@ public final class MainActivity extends Activity {
     }
 
     private void configureWebView(WebView view) {
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            WebViewCompat.addWebMessageListener(view, "projectsHubTheme",
+                    Collections.singleton(Uri.parse(BuildConfig.HUB_URL).buildUpon().path("").query(null).fragment(null).build().toString()),
+                    (sourceView, message, sourceOrigin, isMainFrame, reply) -> {
+                        if (!isMainFrame || !webOriginPolicy.isTrustedPermissionOrigin(sourceOrigin.toString())
+                                || !webOriginPolicy.isTrustedPageUrl(sourceView.getUrl())) return;
+                        try {
+                            String raw = message.getData();
+                            if (raw == null || raw.length() > 512) return;
+                            JSONObject input = new JSONObject(raw);
+                            if (input.length() != 5 || !(input.get("version") instanceof Integer)
+                                    || input.getInt("version") != 1
+                                    || !(input.get("theme") instanceof String)
+                                    || !(input.get("request_id") instanceof String)
+                                    || !(input.get("revision") instanceof Integer || input.get("revision") instanceof Long)
+                                    || !(input.get("reset") instanceof Boolean)) return;
+                            String requestId = input.getString("request_id");
+                            String theme = input.getString("theme");
+                            long revision = input.getLong("revision");
+                            boolean reset = input.getBoolean("reset");
+                            if (!requestId.matches("[a-zA-Z0-9-]{1,64}")
+                                    || !themePresentation.admit(theme, revision, reset)) return;
+                            applyThemeChrome(theme);
+                            JSONObject ack = new JSONObject();
+                            ack.put("request_id", requestId).put("theme", theme)
+                                    .put("revision", revision).put("applied", true);
+                            reply.postMessage(ack.toString());
+                        } catch (Exception invalid) {
+                            // Bounded malformed presentation input is ignored; no authority or code channel.
+                        }
+                    });
+        }
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
         view.setBackgroundColor(Color.rgb(7, 7, 8));
         view.getSettings().setJavaScriptEnabled(true);
@@ -239,6 +282,7 @@ public final class MainActivity extends Activity {
         cookies.setAcceptThirdPartyCookies(view, true);
 
         view.setWebViewClient(new WebViewClient() {
+
             @Override
             public boolean shouldOverrideUrlLoading(WebView webView, WebResourceRequest request) {
                 String targetUrl = request.getUrl().toString();
@@ -275,6 +319,8 @@ public final class MainActivity extends Activity {
             @Override
             public void onPageStarted(WebView webView, String url, android.graphics.Bitmap favicon) {
                 super.onPageStarted(webView, url, favicon);
+                themePresentation.reset();
+                applyThemeChrome("dark");
                 if (!webOriginPolicy.isTrustedPageUrl(url)) {
                     PermissionRequest pending = pendingWebPermission;
                     pendingWebPermission = null;
@@ -517,6 +563,28 @@ public final class MainActivity extends Activity {
         ));
         dialog.show();
     }
+
+    void applyThemeChrome(String theme) {
+        boolean light = "light".equals(theme);
+        int canvas = light ? Color.rgb(244, 245, 247) : Color.rgb(7, 7, 8);
+        if (themeRoot != null) themeRoot.setBackgroundColor(canvas);
+        if (webView != null) webView.setBackgroundColor(canvas);
+        getWindow().setStatusBarColor(canvas);
+        getWindow().setNavigationBarColor(canvas);
+        int flags = getWindow().getDecorView().getSystemUiVisibility();
+        int lightBars = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+        getWindow().getDecorView().setSystemUiVisibility(light ? flags | lightBars : flags & ~lightBars);
+        if (updateButton != null) {
+            updateButton.setTextColor(light ? Color.rgb(29, 32, 41) : Color.rgb(245, 245, 247));
+            GradientDrawable background = new GradientDrawable();
+            background.setColor(light ? Color.WHITE : Color.rgb(31, 31, 35));
+            background.setCornerRadius(dp(18));
+            background.setStroke(dp(1), light ? Color.rgb(116, 118, 128) : Color.rgb(160, 160, 170));
+            updateButton.setBackground(background);
+        }
+    }
+
+    WebView themeWebView() { return webView; }
 
     private Button buildUpdateButton() {
         Button button = new Button(this);

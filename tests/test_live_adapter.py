@@ -1,3 +1,4 @@
+from live_tools import execute, bundle_setup
 import base64
 from pathlib import Path
 from types import SimpleNamespace
@@ -44,7 +45,7 @@ async def test_live_adapter_persists_audio_transcript_and_verified_memory(tmp_pa
         )
         assert store.get_source(actor_id, source["id"])["transcript"] == full
 
-        result = await adapter.execute_tool(
+        result = await execute(adapter,
             session,
             {
                 "name": "memory_commit_voice_source",
@@ -60,7 +61,7 @@ async def test_live_adapter_persists_audio_transcript_and_verified_memory(tmp_pa
         assert result["status"] == "archived"
         assert result["transcript_revision"] == 1
 
-        repeated = await adapter.execute_tool(
+        repeated = await execute(adapter,
             session,
             {
                 "name": "memory_commit_voice_source",
@@ -126,7 +127,7 @@ async def test_runtime_versions_tool_reports_exact_session_versions(tmp_path: Pa
         )
         names = {item["name"] for item in initialized["configuration"]["functions"]}
         assert "runtime_versions_get" in names
-        result = await adapter.execute_tool(
+        result = await execute(adapter,
             SimpleNamespace(state=initialized["state"]),
             {"name": "runtime_versions_get", "args": {}},
         )
@@ -172,7 +173,7 @@ async def test_calendar_rejects_offset_that_contradicts_client_timezone(tmp_path
         assert initialized["state"]["caption_vocabulary"] == transcription["customVocabulary"]
         session = SimpleNamespace(state=initialized["state"])
         with pytest.raises(Exception, match="offset does not match client timezone"):
-            await ProjectsHubLiveAdapter(store).execute_tool(
+            await execute(ProjectsHubLiveAdapter(store),
                 session,
                 {
                     "name": "calendar_create_event_on_device",
@@ -264,14 +265,16 @@ async def test_live_adapter_exposes_unfinished_voice_source_by_reference_only(tm
         assert provisional not in initialized["configuration"]["system_instruction"]
         assert old["id"] in initialized["configuration"]["system_instruction"]
         names = {item["name"] for item in initialized["configuration"]["functions"]}
+        selected, _ = bundle_setup(adapter, initialized, "memory")
+        names = {item["name"] for item in selected["functions"]}
         assert "voice_source_read" in names
 
         session = SimpleNamespace(state=initialized["state"])
-        first = await adapter.execute_tool(
+        first = await execute(adapter,
             session,
             {"name": "voice_source_read", "args": {"source_id": old["id"], "offset": 0, "max_chars": 4000}},
         )
-        second = await adapter.execute_tool(
+        second = await execute(adapter,
             session,
             {"name": "voice_source_read", "args": {"source_id": old["id"], "offset": first["next_offset"], "max_chars": 4000}},
         )

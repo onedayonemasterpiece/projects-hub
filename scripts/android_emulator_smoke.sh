@@ -34,3 +34,6 @@ sleep 3
 PID="$(adb_retry shell pidof com.kenigevents.projectshub.debug | tr -d '\r')"
 test -n "$PID"
 echo "ANDROID_LAUNCH_PASS pid=$PID"
+
+# Installed presentation/origin checks; emulator has no audible/physical acceptance.
+gradle -p android connectedDebugAndroidTest --stacktrace
