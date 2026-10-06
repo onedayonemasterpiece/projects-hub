@@ -1833,7 +1833,15 @@ explicit buffered replay is required instead of pretending the provisional text 
                     job_id=str(args.get("job_id") or ""),
                 )
 
-        if name.startswith("project_note") or name == "project_notes_list" or name == "collaboration_personal_brief":
+        if (
+            name.startswith("project_note")
+            or name == "project_notes_list"
+            or name in {
+                "collaboration_personal_brief",
+                "collaboration_brief_seen",
+                "collaboration_general_news_set",
+            }
+        ):
             if self.collaboration is None:
                 raise StoreError("TOOL_NOT_AVAILABLE", "Project collaboration is unavailable")
             if name == "project_notes_list":
