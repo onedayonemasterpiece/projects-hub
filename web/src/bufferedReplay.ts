@@ -26,6 +26,7 @@ async function serverSource(
 export type ReplayCallbacks = {
   onState?: (state: string) => void;
   onEvent?: (event: LiveEvent) => void;
+  onPreferenceEvent?: (event: LiveEvent, isCurrent: () => boolean) => void;
   onNotice?: (message: string) => void;
 };
 
@@ -78,7 +79,8 @@ export async function replayLocalVoiceSource(
         if (!completed) completeReject?.(reason);
       }
     },
-    onEvent: event => {
+    onEvent: (event, generation) => {
+      callbacks.onPreferenceEvent?.(event, () => client.generation === generation && client.sessionId === event.session_id && source.conversation_id === event.conversation_id);
       callbacks.onEvent?.(event);
       if (event.type === "turn_complete" && !completed) {
         completed = true;

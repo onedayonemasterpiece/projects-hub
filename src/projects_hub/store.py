@@ -63,6 +63,22 @@ class DurableStore:
             display_name TEXT NOT NULL,
             created_at_ms INTEGER NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS actor_preferences(
+            actor_id TEXT PRIMARY KEY REFERENCES actors(id),
+            theme TEXT NOT NULL CHECK(theme IN ('light','dark')),
+            revision INTEGER NOT NULL CHECK(revision >= 0),
+            updated_at_ms INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS preference_receipts(
+            command_id TEXT PRIMARY KEY,
+            actor_id TEXT NOT NULL REFERENCES actors(id),
+            source_id TEXT NOT NULL REFERENCES sources(id),
+            conversation_id TEXT NOT NULL REFERENCES conversations(id),
+            turn_id TEXT NOT NULL,
+            args_sha256 TEXT NOT NULL,
+            receipt_json TEXT NOT NULL,
+            created_at_ms INTEGER NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS external_identities(
             provider TEXT NOT NULL,
             subject TEXT NOT NULL,
@@ -2068,10 +2084,88 @@ class DurableStore:
             ]
             return {
                 "actor": dict(actor),
+                "preferences": self.get_preferences(actor_id),
                 "workspace": dict(workspace),
                 "role": membership["role"],
                 "projects": projects,
             }
+
+    def get_preferences(self, actor_id: str) -> dict[str, Any]:
+        with self._lock:
+            if not self.db.execute("SELECT 1 FROM actors WHERE id=?", (actor_id,)).fetchone():
+                raise StoreError("UNAUTHENTICATED", "Unknown actor")
+            row = self.db.execute(
+                "SELECT theme,revision FROM actor_preferences WHERE actor_id=?", (actor_id,)
+            ).fetchone()
+            return dict(row) if row else {"theme": "dark", "revision": 0}
+
+    def preference_receipt(self, actor_id: str, command_id: str) -> dict[str, Any]:
+        with self._lock:
+            self.get_preferences(actor_id)  # Authenticate before any receipt lookup.
+            row = self.db.execute(
+                "SELECT * FROM preference_receipts WHERE command_id=? AND actor_id=?",
+                (command_id, actor_id),
+            ).fetchone()
+            if not row:
+                raise StoreError("FORBIDDEN", "Preference receipt unavailable")
+            return dict(row)
+
+    def set_theme(self, *, actor_id: str, conversation_id: str, source_id: str,
+                  turn_id: str, command_id: str, theme: str,
+                  expected_revision: int) -> dict[str, Any]:
+        if theme not in ("light", "dark") or type(expected_revision) is not int or expected_revision < 0:
+            raise StoreError("INVALID_ARGUMENT", "Invalid theme preference")
+        if not turn_id or not command_id:
+            raise StoreError("INVALID_ARGUMENT", "Accepted command binding required")
+        payload = json.dumps([actor_id, conversation_id, source_id, turn_id, theme,
+                              expected_revision], separators=(",", ":"))
+        digest = hashlib.sha256(payload.encode()).hexdigest()
+        with self._lock:
+            self.get_conversation(actor_id, conversation_id)
+            source = self.get_source(actor_id, source_id)
+            if source["conversation_id"] != conversation_id:
+                raise StoreError("FORBIDDEN", "Source binding mismatch")
+            try:
+                self.db.execute("BEGIN IMMEDIATE")
+                prior = self.db.execute(
+                    "SELECT * FROM preference_receipts WHERE command_id=?", (command_id,)
+                ).fetchone()
+                current = self.get_preferences(actor_id)
+                if prior:
+                    if prior["actor_id"] != actor_id or prior["args_sha256"] != digest:
+                        raise StoreError("COMMAND_CONFLICT", "Command payload changed")
+                    receipt = json.loads(prior["receipt_json"])
+                else:
+                    if expected_revision != current["revision"]:
+                        raise StoreError("REVISION_CONFLICT", "Theme changed; read current preference before asking to overwrite")
+                    changed = theme != current["theme"]
+                    revision = current["revision"] + int(changed)
+                    if changed:
+                        self.db.execute(
+                            """INSERT INTO actor_preferences VALUES(?,?,?,?)
+                               ON CONFLICT(actor_id) DO UPDATE SET theme=excluded.theme,
+                               revision=excluded.revision,updated_at_ms=excluded.updated_at_ms""",
+                            (actor_id, theme, revision, _now_ms()),
+                        )
+                    receipt = {"command_id": command_id, "theme": theme, "revision": revision,
+                               "changed": changed, "persistence_status": "verified"}
+                    self.db.execute(
+                        "INSERT INTO preference_receipts VALUES(?,?,?,?,?,?,?,?)",
+                        (command_id, actor_id, source_id, conversation_id, turn_id, digest,
+                         json.dumps(receipt), _now_ms()),
+                    )
+                readback = self.get_preferences(actor_id)
+                self.db.execute("COMMIT")
+            except Exception as exc:
+                if self.db.in_transaction:
+                    self.db.execute("ROLLBACK")
+                if isinstance(exc, sqlite3.Error):
+                    raise StoreError("PREFERENCE_STORE_UNAVAILABLE", "Preference could not be saved") from exc
+                raise
+            return {**receipt, "current": readback,
+                    "application_status": "pending" if readback == {
+                        "theme": receipt["theme"], "revision": receipt["revision"]
+                    } else "superseded"}
 
     def create_conversation(
         self, actor_id: str, workspace_id: str, focus_project_id: str | None = None

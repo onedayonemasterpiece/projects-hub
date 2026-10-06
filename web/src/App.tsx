@@ -1,3 +1,4 @@
+import { createThemePreferences, renderTheme } from "./themePreferences.js";
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import {
   createDurableMicrophoneCapture,
@@ -9,6 +10,8 @@ import {
 import {
   ApiError,
   bootstrap,
+  getPreferences,
+  acknowledgePreference,
   bindGitHubRepository,
   createConversation,
   getConversation,
@@ -187,7 +190,39 @@ export default function App() {
   const [pendingSources, setPendingSources] = useState<LocalVoiceSource[]>([]);
   const [githubStatus, setGitHubStatus] = useState<GitHubStatus | null>(null);
   const [githubBusy, setGitHubBusy] = useState(false);
+  const themeRef = useRef(createThemePreferences({
+    render: renderTheme,
+    acknowledge: acknowledgePreference,
+    onStatus: (message: string) => setNotice(message),
+  }));
   const clientRef = useRef<LiveClient | null>(null);
+  const reconcilePreferences = useCallback(() => {
+    const actor = themeRef.current.actor;
+    if (!actor) return;
+    void getPreferences().then(value => {
+      if (themeRef.current.actor === actor) return themeRef.current.apply(value);
+    }).catch(error => {
+      if (error instanceof ApiError && error.status === 401 && themeRef.current.actor === actor) {
+        clientRef.current?.stop({ reason: "authentication_expired" });
+        void themeRef.current.reset();
+        setBoot(null); setConversation(null); conversationRef.current = null;
+      }
+    });
+  }, []);
+  const hydratePreferences = useCallback(async (value: Bootstrap) => {
+    if (themeRef.current.actor !== value.actor.id) {
+      clientRef.current?.stop({ reason: "actor_change" });
+      setConversation(null); conversationRef.current = null;
+      await themeRef.current.reset(value.actor.id);
+    }
+    await themeRef.current.apply(value.preferences);
+  }, []);
+  useEffect(() => {
+    const resume = () => { if (document.visibilityState === "visible") reconcilePreferences(); };
+    window.addEventListener("focus", resume);
+    document.addEventListener("visibilitychange", resume);
+    return () => { window.removeEventListener("focus", resume); document.removeEventListener("visibilitychange", resume); };
+  }, [reconcilePreferences]);
   const currentSourceIdRef = useRef<string | null>(null);
   const userTranscriptIndex = useRef(-1);
   const assistantTranscriptIndex = useRef(-1);
@@ -436,6 +471,14 @@ export default function App() {
     });
   }, []);
 
+  const applyPreferenceEvent = useCallback((event: LiveEvent, isCurrent: () => boolean) => {
+    if (event.type !== "preferences_changed" || !isCurrent()) return;
+    void themeRef.current.apply(event, event, isCurrent).catch(() => {
+      setNotice("Настройка сохранена, но применение на этом экране пока не подтверждено.");
+      reconcilePreferences();
+    });
+  }, [reconcilePreferences]);
+
   const applyLiveEvent = useCallback((event: LiveEvent) => {
     if (event.type === "caption_interim_transcript" && typeof event.text === "string") {
       setInputTranscriptSeen(true);
@@ -510,6 +553,12 @@ export default function App() {
         void getConversation(conversationRef.current.id).then(setConversation);
         void loadEventCards();
       }
+    } else if (event.type === "capability_transition_requested") {
+      setNotice("Подключаю нужную возможность…");
+    } else if (event.type === "capability_ready") {
+      setNotice(null);
+    } else if (event.type === "capability_transition_error" || event.type === "capability_transition_rejected") {
+      setNotice("Не удалось подключить эту возможность. Можно продолжить разговор или остановить его.");
     } else if (event.type === "capability_unavailable" && event.code !== "NOT_CONFIGURED") {
       setNotice("Одна из дополнительных возможностей сейчас недоступна.");
     }
@@ -520,7 +569,8 @@ export default function App() {
 
     async function applyBootstrap(value: Bootstrap) {
       if (cancelled) return;
-      setBoot(value);
+      await hydratePreferences(value);
+      if (!cancelled) setBoot(value);
       const saved = localStorage.getItem("projects-hub-conversation");
       if (!saved) return;
       try {
@@ -658,6 +708,7 @@ export default function App() {
           setSpeechPending(false);
         }
         if (state === "starting") setPlaybackProblem(null);
+        if (state === "listening" || state === "reconnecting") reconcilePreferences();
         if (terminalReason) {
           if (userTurnAwaitingFinalRef.current) {
             settleCurrentVoiceBubble(
@@ -721,11 +772,16 @@ export default function App() {
           if (userTurnAwaitingFinalRef.current) settleCurrentVoiceBubble(undefined, true);
           setNotice("Запись с микрофона прервалась. Уже подтверждённая часть источника сохранена.");
         }
-        else if (kind === "event_gap") setNotice("Интерфейс пропустил часть служебных событий. Источник на сервере сохраняется отдельно.");
+        else if (kind === "event_gap") { reconcilePreferences(); setNotice("Интерфейс пропустил часть служебных событий. Источник на сервере сохраняется отдельно."); }
         else if (error) setNotice(friendlyStartError(error));
       },
       onWait: value => setWait(value),
-      onEvent: applyLiveEvent,
+      onEvent: (event, generation) => {
+        const current = () => clientRef.current === client && client.generation === generation
+          && client.sessionId === event.session_id && conversationRef.current?.id === event.conversation_id;
+        applyPreferenceEvent(event, current);
+        if (clientRef.current === client && client.generation === generation) applyLiveEvent(event);
+      },
     });
     clientRef.current = client;
     return () => {
@@ -733,7 +789,7 @@ export default function App() {
       client.stop({ reason: "ui_unmount" });
       clientRef.current = null;
     };
-  }, [applyLiveEvent, boot, reserveUserVoiceBubble, setAndroidVoiceAudioFocus, settleCurrentVoiceBubble]);
+  }, [applyLiveEvent, applyPreferenceEvent, reconcilePreferences, boot, reserveUserVoiceBubble, setAndroidVoiceAudioFocus, settleCurrentVoiceBubble]);
 
   async function signIn() {
     setBusy(true);
@@ -742,7 +798,9 @@ export default function App() {
       if (authConfig?.mode === "first_party_invite") {
         const value = inviteCode.trim();
         if (!value) throw new Error("Введите одноразовый код приглашения.");
-        setBoot(await exchangeInvite(value));
+        const authenticated = await exchangeInvite(value);
+        await hydratePreferences(authenticated);
+        setBoot(authenticated);
         setInviteCode("");
         return;
       }
@@ -750,6 +808,7 @@ export default function App() {
         throw new Error("Вход сейчас недоступен.");
       }
       const value = await login();
+      await hydratePreferences(value);
       setBoot(value);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Не удалось войти.");
@@ -836,6 +895,7 @@ export default function App() {
           if (state !== "off") setVoiceState(state);
         },
         onEvent: applyLiveEvent,
+        onPreferenceEvent: applyPreferenceEvent,
         onNotice: message => setNotice(message),
       });
       if (result.status === "delivered") {

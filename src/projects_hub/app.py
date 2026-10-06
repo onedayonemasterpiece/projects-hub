@@ -33,6 +33,12 @@ class DevLogin(BaseModel):
     display_name: str = Field(default="Pilot user", max_length=80)
 
 
+class PreferenceApplication(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    theme: Literal["light", "dark"]
+    revision: int = Field(ge=0)
+
+
 class InviteLogin(BaseModel):
     token: str = Field(min_length=20, max_length=200)
 
@@ -154,11 +160,14 @@ def _http_for_code(code: str) -> int:
         "DEVICE_READBACK_REQUIRED",
         "LIVE_TRANSPORT_MISMATCH",
         "LIVE_SOCKET_BUSY",
+        "REVISION_CONFLICT",
+        "COMMAND_CONFLICT",
     }:
         return 409
     if code.startswith("INVALID") or code in {"SOURCE_TRANSCRIPT_PENDING"}:
         return 409 if code == "SOURCE_TRANSCRIPT_PENDING" else 400
     return 503 if code.startswith(("LIVE_", "RESOURCE_")) or code in {
+        "PREFERENCE_STORE_UNAVAILABLE",
         "GITHUB_APP_NOT_CONFIGURED",
         "GITHUB_UNAVAILABLE",
         "GITHUB_ERROR",
@@ -980,6 +989,27 @@ def create_app(
                 f"{started['session_id']}/socket"
             ),
         }
+
+    @app.get("/api/preferences")
+    async def preferences(request: Request) -> dict[str, Any]:
+        return store.get_preferences(actor_id_from_request(request))
+
+    @app.post("/api/live/{conversation_id}/sessions/{session_id}/preferences/{command_id}/applied")
+    async def preference_applied(conversation_id: str, session_id: str, command_id: str,
+                                 request: Request, payload: PreferenceApplication) -> dict[str, Any]:
+        # Product control path is independent of the serialized waiting Live tool.
+        # Even dev/test callers must use the page's exact same origin.
+        origin = request.headers.get("origin", "").rstrip("/")
+        expected_origin = settings.public_origin if settings.public_auth_enabled else str(request.base_url).rstrip("/")
+        if origin != expected_origin:
+            raise StoreError("FORBIDDEN", "Application origin mismatch")
+        actor_id = actor_id_from_request(request)
+        _conversation, resource_id, actor = live_context(actor_id, conversation_id)
+        try:
+            active = host()._get(session_id, resource_id, actor)
+            return host().adapter.acknowledge_preference(active, command_id, payload.theme, payload.revision)
+        except Exception as exc:
+            raise _error(exc) from exc
 
     @app.post("/api/live/{conversation_id}/sessions/{session_id}/socket-ticket")
     async def live_socket_ticket(

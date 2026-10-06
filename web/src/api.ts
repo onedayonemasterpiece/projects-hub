@@ -4,6 +4,7 @@ export type Bootstrap = {
   workspace: { id: string; name: string };
   role: string;
   projects: Project[];
+  preferences: { theme: "light" | "dark"; revision: number };
 };
 export type Conversation = {
   id: string;
@@ -216,6 +217,12 @@ export const exchangeInvite = (token: string) =>
 
 export const login = () =>
   api<Bootstrap>("/api/dev/login", { method: "POST", body: JSON.stringify({}) });
+
+export const getPreferences = () => api<Bootstrap["preferences"]>("/api/preferences");
+export const acknowledgePreference = (binding: {conversation_id: string; session_id: string; command_id: string}, value: Bootstrap["preferences"]) =>
+  api(`/api/live/${encodeURIComponent(binding.conversation_id)}/sessions/${encodeURIComponent(binding.session_id)}/preferences/${encodeURIComponent(binding.command_id)}/applied`, {
+    method: "POST", body: JSON.stringify(value),
+  });
 
 export const bootstrap = () => api<Bootstrap>("/api/bootstrap");
 
