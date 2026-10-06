@@ -22,6 +22,17 @@ class ReplyCreate(BaseModel):
     body: str = Field(min_length=1, max_length=12_000)
 
 
+class BriefSeen(BaseModel):
+    workspace_id: str
+    personal_through_id: int | None = Field(default=None, ge=0)
+    general_through_id: int | None = Field(default=None, ge=0)
+
+
+class GeneralNewsPreference(BaseModel):
+    workspace_id: str
+    enabled: bool
+
+
 class ParticipantInvite(BaseModel):
     workspace_id: str
     display_name: str = Field(min_length=1, max_length=80)
@@ -125,6 +136,26 @@ def attach_collaboration_routes(
         return service.personal_brief(
             actor_id=actor_id_from_request(request),
             workspace_id=workspace_id,
+        )
+
+    @app.post("/api/collaboration/brief/seen")
+    async def brief_seen(payload: BriefSeen, request: Request) -> dict[str, Any]:
+        return service.mark_brief_seen(
+            actor_id=actor_id_from_request(request),
+            workspace_id=payload.workspace_id,
+            personal_through_id=payload.personal_through_id,
+            general_through_id=payload.general_through_id,
+        )
+
+    @app.post("/api/collaboration/preferences/general-news")
+    async def general_news_preference(
+        payload: GeneralNewsPreference,
+        request: Request,
+    ) -> dict[str, Any]:
+        return service.set_general_news(
+            actor_id=actor_id_from_request(request),
+            workspace_id=payload.workspace_id,
+            enabled=payload.enabled,
         )
 
     @app.post("/api/projects/{project_id}/participants/invite")
