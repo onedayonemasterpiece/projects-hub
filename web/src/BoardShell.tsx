@@ -25,6 +25,7 @@ import {
   refreshAnalysisRun,
   searchBoard,
   startAnalysis,
+  updateBoardViewContext,
   type AnalysisMaterialization,
   type AnalysisRun,
   type BoardEvent,
@@ -249,7 +250,9 @@ export function StickyScene({
 export function BoardShell({
   visible,
   workspaceId,
+  conversationId,
   projectId,
+  clientInstanceId,
   canAnalyze,
   canManageShare,
   focusRequest,
@@ -260,7 +263,9 @@ export function BoardShell({
 }: {
   visible: boolean;
   workspaceId: string;
+  conversationId: string;
   projectId: string;
+  clientInstanceId: string;
   canAnalyze: boolean;
   canManageShare: boolean;
   focusRequest?: BoardFocusRequest;
@@ -276,6 +281,7 @@ export function BoardShell({
   const [camera, setCamera] = useState<BoardCamera>({ x: 160, y: 120, zoom: 1 });
   const cameraRef = useRef(camera);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [focusedId, setFocusedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [hits, setHits] = useState<BoardSearchHit[]>([]);
   const [status, setStatus] = useState("Подключение…");
@@ -354,7 +360,12 @@ export function BoardShell({
         if (cancelled) return;
         setObjects(normalizedObjects(snapshot.objects));
         setSeq(snapshot.board.seq);
-        const socket = new BoardSocket(workspaceId, board.id, handleSocket);
+        const socket = new BoardSocket(
+          workspaceId,
+          board.id,
+          handleSocket,
+          clientInstanceId,
+        );
         socketRef.current = socket;
         await socket.connect();
         if (!cancelled) setStatus("Синхронизировано");
@@ -371,7 +382,7 @@ export function BoardShell({
       socketRef.current = null;
       setBoardId(null);
     };
-  }, [handleSocket, projectId, visible, workspaceId]);
+  }, [clientInstanceId, handleSocket, projectId, visible, workspaceId]);
 
   useEffect(() => {
     if (!visible || !analysisRunId) return;
@@ -519,6 +530,7 @@ export function BoardShell({
     if (fulfilledFocusRef.current === focusRequest.token) return;
     fulfilledFocusRef.current = focusRequest.token;
     if (focusRequest.kind === "view_all") {
+      setFocusedId(null);
       const list = [...objectsRef.current.values()];
       if (list.length === 0) {
         onFocusFulfilled?.(focusRequest.token, true);
@@ -551,6 +563,7 @@ export function BoardShell({
       return;
     }
     setSelectedId(focusRequest.objectId);
+    setFocusedId(focusRequest.objectId);
     focusGeometry(geometry, focusRequest.token);
   }, [focusGeometry, focusRequest, onFocusFulfilled, visible]);
 
@@ -629,6 +642,7 @@ export function BoardShell({
   };
 
   const fitAll = () => {
+    setFocusedId(null);
     if (!host || objects.size === 0) return;
     const list = [...objects.values()];
     const left = Math.min(...list.map((item) => item.geometry.x));
@@ -730,6 +744,72 @@ export function BoardShell({
   const analysisReferenceId =
     selected?.reference?.kind === "analysis_run" ? selected.reference.id : null;
   const objectList = useMemo(() => [...objects.values()], [objects]);
+  const visibleObjectIds = useMemo(() => {
+    if (!host || camera.zoom <= 0) return [] as string[];
+    const left = -camera.x / camera.zoom;
+    const top = -camera.y / camera.zoom;
+    const right = left + host.clientWidth / camera.zoom;
+    const bottom = top + host.clientHeight / camera.zoom;
+    return objectList
+      .filter((item) => {
+        const box = item.geometry;
+        return (
+          box.x + box.width >= left &&
+          box.x <= right &&
+          box.y + box.height >= top &&
+          box.y <= bottom
+        );
+      })
+      .slice(0, 40)
+      .map((item) => item.id);
+  }, [camera, host, objectList]);
+
+  useEffect(() => {
+    if (!visible || !boardId || !conversationId || !host) return;
+    let cancelled = false;
+    const publish = () => {
+      if (cancelled) return;
+      void updateBoardViewContext(conversationId, {
+        workspace_id: workspaceId,
+        project_id: projectId,
+        board_id: boardId,
+        client_instance_id: clientInstanceId,
+        board_seq: seq,
+        camera: {
+          x: camera.x,
+          y: camera.y,
+          zoom: camera.zoom,
+          width: host.clientWidth,
+          height: host.clientHeight,
+        },
+        visible_object_ids: visibleObjectIds,
+        selected_object_ids: selectedId ? [selectedId] : [],
+        focused_object_id: focusedId,
+      }).catch(() => {
+        // View context is advisory and must never interrupt voice or board rendering.
+      });
+    };
+    const timer = window.setTimeout(publish, 180);
+    const heartbeat = window.setInterval(publish, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      window.clearInterval(heartbeat);
+    };
+  }, [
+    boardId,
+    camera,
+    clientInstanceId,
+    conversationId,
+    focusedId,
+    host,
+    projectId,
+    selectedId,
+    seq,
+    visible,
+    visibleObjectIds,
+    workspaceId,
+  ]);
   const startSelectedAnalysis = async () => {
     if (!boardId || !selected || !canAnalyze || analysisBusy) return;
     const question = analysisQuestion.trim();
