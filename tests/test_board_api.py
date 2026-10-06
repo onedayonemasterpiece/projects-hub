@@ -72,32 +72,35 @@ def test_board_http_and_wss_collaboration(tmp_path: Path):
                             "operation": "create",
                             "object_id": "obj_socket1",
                             "expected_object_revision": None,
-                            "payload": {
-                                "text": "Совместный стикер",
-                                "style": {"color": "green"},
-                                "geometry": {"x": 40, "y": 70},
-                            },
+                            "payload": {"text": "Browser must not write"},
                         }
                     )
-                    ack = second.receive_json()
-                    assert ack["type"] == "ack"
-                    assert ack["receipt"]["board_seq"] == 1
-                    event = first.receive_json()
-                    assert event["type"] == "event"
-                    assert event["event"]["object_id"] == "obj_socket1"
+                    denied = second.receive_json()
+                    assert denied["type"] == "error"
+                    assert denied["code"] == "BOARD_VOICE_ONLY"
+                    assert denied["command_id"] == "cmd_socket_001"
+
+            denied_http = client.post(
+                f"/api/boards/{board_id}/commands",
+                json={
+                    "workspace_id": workspace,
+                    "command_id": "cmd_http_denied",
+                    "operation": "create",
+                    "object_id": "obj_http_denied",
+                    "expected_object_revision": None,
+                    "payload": {"text": "Browser must not write"},
+                },
+            )
+            assert denied_http.status_code == 400
+            assert denied_http.json()["error"]["code"] == "BOARD_VOICE_ONLY"
 
             snapshot = client.get(
                 f"/api/boards/{board_id}/snapshot",
                 params={"workspace_id": workspace},
             )
             assert snapshot.status_code == 200
-            assert snapshot.json()["objects"][0]["text"] == "Совместный стикер"
-            search = client.get(
-                f"/api/boards/{board_id}/search",
-                params={"workspace_id": workspace, "q": "совместный"},
-            )
-            assert search.status_code == 200
-            assert search.json()["items"][0]["object_id"] == "obj_socket1"
+            assert snapshot.json()["board"]["seq"] == 0
+            assert snapshot.json()["objects"] == []
     finally:
         store.close()
 
