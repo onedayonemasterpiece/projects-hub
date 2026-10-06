@@ -53,6 +53,7 @@ async def run(model: str = "council_free") -> dict:
                     ),
                     "style": {"color": "blue"},
                 },
+                execution_origin="mira",
             )
 
             if not await bridge.safe_council_available():
