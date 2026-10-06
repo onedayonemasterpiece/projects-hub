@@ -11,6 +11,8 @@ from __future__ import annotations
 import argparse
 import http.cookiejar
 import json
+import hashlib
+import secrets
 import sqlite3
 import time
 import urllib.error
@@ -114,8 +116,10 @@ def _create_same_workspace_actor_without_project(
     data_dir: Path,
     workspace_id: str,
     display_name: str,
-) -> str:
+) -> tuple[str, str]:
     actor_id = "usr_canary_" + uuid.uuid4().hex
+    invite_token = secrets.token_urlsafe(32)
+    token_sha256 = hashlib.sha256(invite_token.encode("utf-8")).hexdigest()
     now = round(time.time() * 1000)
     db = sqlite3.connect(data_dir / "projects-hub.sqlite3")
     try:
@@ -129,8 +133,14 @@ def _create_same_workspace_actor_without_project(
             "INSERT INTO memberships(actor_id,workspace_id,role) VALUES(?,?,?)",
             (actor_id, workspace_id, "member"),
         )
+        db.execute(
+            """INSERT INTO login_invites(
+                   token_sha256,actor_id,expires_at_ms,used_at_ms,created_at_ms)
+               VALUES(?,?,?,?,?)""",
+            (token_sha256, actor_id, now + 3_600_000, None, now),
+        )
         db.commit()
-        return actor_id
+        return actor_id, invite_token
     finally:
         db.close()
 
@@ -221,6 +231,7 @@ def _poll_job(
 def run(
     *,
     base: str,
+    public_base: str,
     data_dir: Path,
     project_name: str,
     with_analysis: bool,
@@ -279,10 +290,10 @@ def run(
 
         login_b = _request(
             participant,
-            base,
+            public_base,
             "POST",
-            "/api/dev/login",
-            {"display_name": f"Collaboration canary B {run_id}"},
+            "/api/auth/invite",
+            {"token": str(invited.get("invite_token") or "")},
         )
         b_projects = login_b.get("projects") or []
         if [item.get("id") for item in b_projects if isinstance(item, dict)] != [project_id]:
@@ -326,7 +337,7 @@ def run(
 
         visible_b = _request(
             participant,
-            base,
+            public_base,
             "GET",
             f"/api/collaboration/notes/{note_id}?"
             + urllib.parse.urlencode({"workspace_id": workspace_id}),
@@ -336,7 +347,7 @@ def run(
 
         reply = _request(
             participant,
-            base,
+            public_base,
             "POST",
             f"/api/collaboration/notes/{note_id}/replies",
             {
@@ -358,21 +369,21 @@ def run(
         ):
             raise RuntimeError("A did not read back B's linked reply")
 
-        actor_c = _create_same_workspace_actor_without_project(
+        actor_c, outsider_token = _create_same_workspace_actor_without_project(
             data_dir,
             workspace_id,
             f"Collaboration canary C {run_id}",
         )
         _request(
             outsider,
-            base,
+            public_base,
             "POST",
-            "/api/dev/login",
-            {"display_name": f"Collaboration canary C {run_id}"},
+            "/api/auth/invite",
+            {"token": outsider_token},
         )
         denied_status = _request_status(
             outsider,
-            base,
+            public_base,
             "GET",
             f"/api/collaboration/notes/{note_id}?"
             + urllib.parse.urlencode({"workspace_id": workspace_id}),
@@ -422,7 +433,7 @@ def run(
 
             inbox = _request(
                 participant,
-                base,
+                public_base,
                 "GET",
                 "/api/collaboration/questions/inbox?"
                 + urllib.parse.urlencode({"workspace_id": workspace_id, "limit": 50}),
@@ -450,7 +461,7 @@ def run(
             ]
             answered = _request(
                 participant,
-                base,
+                public_base,
                 "POST",
                 f"/api/collaboration/analyses/{analysis_id}/answers",
                 {
@@ -554,6 +565,10 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", default="http://127.0.0.1:8196")
     parser.add_argument(
+        "--public-base",
+        default="https://projects-hub.kenigevents.ru",
+    )
+    parser.add_argument(
         "--data-dir",
         default="/home/dev/.local/state/projects-hub/data",
     )
@@ -563,6 +578,7 @@ def main() -> int:
     args = parser.parse_args()
     result = run(
         base=args.base,
+        public_base=args.public_base,
         data_dir=Path(args.data_dir),
         project_name=args.project,
         with_analysis=bool(args.with_analysis),
