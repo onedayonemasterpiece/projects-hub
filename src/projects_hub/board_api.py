@@ -21,6 +21,7 @@ MAX_SOCKET_TEXT_BYTES = 48 * 1024
 MAX_PRESENCE_TEXT_BYTES = 4 * 1024
 MAX_BOARD_PEERS = 32
 PEER_QUEUE = 64
+BOARD_AUTH_RECHECK_SECONDS = 1.0
 
 
 class BoardOpen(BaseModel):
@@ -125,9 +126,12 @@ def _subprotocol(scope: dict[str, Any], prefix: str) -> str | None:
     return None
 
 
-async def _writer(peer: _Peer) -> None:
+async def _writer(peer: _Peer, service: BoardService) -> None:
     while True:
         payload = await peer.queue.get()
+        # Shared board data must be authorized at delivery time, not only when
+        # the socket was opened.
+        service.snapshot(peer.actor_id, peer.workspace_id, peer.board_id)
         await peer.websocket.send_text(
             json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         )
@@ -305,17 +309,23 @@ def attach_board_routes(
                     separators=(",", ":"),
                 )
             )
-            writer = asyncio.create_task(_writer(peer))
+            writer = asyncio.create_task(_writer(peer, service))
             try:
                 while True:
                     try:
-                        raw = await asyncio.wait_for(websocket.receive_text(), timeout=5.0)
+                        raw = await asyncio.wait_for(
+                            websocket.receive_text(),
+                            timeout=BOARD_AUTH_RECHECK_SECONDS,
+                        )
                     except asyncio.TimeoutError:
-                        # Revocation applies to already-open sockets, not only new requests.
+                        # Quiet sockets still recheck current grants on a bounded cadence.
                         service.snapshot(peer.actor_id, peer.workspace_id, board_id)
                         continue
                     except WebSocketDisconnect:
                         break
+                    # Busy clients cannot keep a revoked project grant alive:
+                    # every inbound frame is authorized before it is handled.
+                    service.snapshot(peer.actor_id, peer.workspace_id, board_id)
                     if len(raw.encode("utf-8")) > MAX_SOCKET_TEXT_BYTES:
                         await websocket.close(code=1009)
                         break
