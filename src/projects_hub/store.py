@@ -2104,13 +2104,7 @@ class DurableStore:
             workspace = self.db.execute(
                 "SELECT id,name FROM workspaces WHERE id=?", (workspace_id,)
             ).fetchone()
-            projects = [
-                dict(row)
-                for row in self.db.execute(
-                    "SELECT id,name,status FROM projects WHERE workspace_id=? ORDER BY created_at_ms,id",
-                    (workspace_id,),
-                ).fetchall()
-            ]
+            projects = self.list_projects(actor_id, workspace_id)
             return {
                 "actor": dict(actor),
                 "workspace": dict(workspace),
@@ -2124,8 +2118,8 @@ class DurableStore:
         now = _now_ms()
         with self._lock:
             self._membership(actor_id, workspace_id)
-            if focus_project_id is not None and not self._project_row(workspace_id, focus_project_id):
-                raise StoreError("PROJECT_NOT_FOUND", "Project is not available")
+            if focus_project_id is not None:
+                self.project_access(actor_id, workspace_id, focus_project_id)
             conversation_id = _id("conv")
             self.db.execute(
                 """INSERT INTO conversations
