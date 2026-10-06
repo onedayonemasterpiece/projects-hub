@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import errno
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -43,6 +45,8 @@ BACKEND_LOG = LOG_ROOT / "backend.jsonl"
 PROVIDER_ENV = STATE_ROOT / "providers.env"
 SERVICE_ENV = STATE_ROOT / "service.env"
 SESSION_SECRET_FILE = STATE_ROOT / "session-secret"
+DEPLOY_LOCK = STATE_ROOT / "deploy.lock"
+DEPLOY_LOCK_TIMEOUT_SECONDS = 15 * 60
 HOST_ENV = Path("/home/dev/.env")
 UNIT_ROOT = Path.home() / ".config/systemd/user"
 UNIT_FILE = UNIT_ROOT / SERVICE
@@ -105,6 +109,48 @@ def run(
 
 def _mode(path: Path) -> int:
     return stat.S_IMODE(path.lstat().st_mode)
+
+
+@contextlib.contextmanager
+def deployment_lock(timeout_seconds: float = DEPLOY_LOCK_TIMEOUT_SECONDS):
+    """Serialize exact-SHA build/activate/rollback transactions across processes."""
+
+    timeout_seconds = float(timeout_seconds)
+    if timeout_seconds <= 0:
+        raise DeployError("deploy lock timeout must be positive")
+
+    STATE_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(STATE_ROOT, 0o700)
+    fd = os.open(
+        DEPLOY_LOCK,
+        os.O_CREAT | os.O_RDWR | getattr(os, "O_CLOEXEC", 0),
+        0o600,
+    )
+    acquired = False
+    try:
+        os.fchmod(fd, 0o600)
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except OSError as exc:
+                if exc.errno not in {errno.EACCES, errno.EAGAIN}:
+                    raise DeployError(
+                        f"deploy lock failed: {type(exc).__name__}"
+                    ) from None
+                if time.monotonic() >= deadline:
+                    raise DeployError(
+                        "another Projects Hub deploy is still running"
+                    ) from None
+                time.sleep(0.25)
+        yield
+    finally:
+        if acquired:
+            with contextlib.suppress(OSError):
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
 
 
 def private_write(path: Path, content: str) -> None:
@@ -545,7 +591,7 @@ def wait_healthy(sha: str, seconds: float = 30.0) -> dict[str, Any]:
     raise DeployError(f"Projects Hub did not become healthy: {last}")
 
 
-def deploy(sha: str) -> dict[str, Any]:
+def _deploy_serialized(sha: str) -> dict[str, Any]:
     sha = resolve_sha(sha)
     release = _build_release(sha)
     old_service_env = SERVICE_ENV.read_bytes() if SERVICE_ENV.is_file() else None
@@ -590,6 +636,11 @@ def deploy(sha: str) -> dict[str, Any]:
         "provider_environment_keys": sorted(select_provider_environment(_parse_env(HOST_ENV))),
         "provider_environment_values_exposed": False,
     }
+
+
+def deploy(sha: str) -> dict[str, Any]:
+    with deployment_lock():
+        return _deploy_serialized(sha)
 
 
 def main() -> int:

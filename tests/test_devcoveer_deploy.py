@@ -1,11 +1,15 @@
+import fcntl
 import os
 from pathlib import Path
+import threading
+
 
 import pytest
 
 from deploy import devcoveer_install as deploy
 from deploy.devcoveer_install import (
     DeployError,
+    deployment_lock,
     prune_old_releases,
     render_env,
     select_provider_environment,
@@ -120,3 +124,63 @@ def test_production_devcoveer_escapes_backend_mount_namespace_without_weakening_
     assert "/home/dev/.local/bin/codex-mcp-server" in bridge
     assert "ProtectSystem" not in bridge
     assert "ProtectHome" not in bridge
+
+def test_deployment_lock_serializes_independent_file_descriptors(
+    tmp_path, monkeypatch
+):
+    state_root = tmp_path / "state"
+    lock_path = state_root / "deploy.lock"
+    monkeypatch.setattr(deploy, "STATE_ROOT", state_root)
+    monkeypatch.setattr(deploy, "DEPLOY_LOCK", lock_path)
+
+    state_root.mkdir()
+    first = lock_path.open("a+")
+    fcntl.flock(first.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    entered = threading.Event()
+    finished = threading.Event()
+    errors: list[BaseException] = []
+
+    def contender():
+        try:
+            with deployment_lock(timeout_seconds=2):
+                entered.set()
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            finished.set()
+
+    thread = threading.Thread(target=contender, daemon=True)
+    thread.start()
+    try:
+        assert not entered.wait(0.15)
+        fcntl.flock(first.fileno(), fcntl.LOCK_UN)
+        assert entered.wait(1.5)
+        assert finished.wait(1.5)
+        assert errors == []
+    finally:
+        first.close()
+        thread.join(timeout=1)
+
+
+def test_deploy_wraps_entire_transaction_in_process_lock(monkeypatch):
+    events: list[str] = []
+
+    class FakeLock:
+        def __enter__(self):
+            events.append("lock-enter")
+
+        def __exit__(self, exc_type, exc, tb):
+            events.append("lock-exit")
+
+    monkeypatch.setattr(deploy, "deployment_lock", lambda: FakeLock())
+    monkeypatch.setattr(
+        deploy,
+        "_deploy_serialized",
+        lambda sha: events.append(f"deploy:{sha}") or {"release_sha": sha},
+    )
+
+    result = deploy.deploy("1" * 40)
+
+    assert result["release_sha"] == "1" * 40
+    assert events == ["lock-enter", "deploy:" + "1" * 40, "lock-exit"]
