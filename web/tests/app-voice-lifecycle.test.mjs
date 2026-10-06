@@ -25,7 +25,7 @@ test("Projects Hub renders both sides of the Live conversation as a bounded mess
   const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(source, /event\.type === "input_transcript"[\s\S]*mergeChatMessage\("user"/);
   assert.match(source, /event\.type === "output_transcript"[\s\S]*mergeChatMessage\("assistant"/);
-  assert.match(source, /import \{ mergeTranscript, resolveTerminalVoiceState, speechStartsNewUserBubble \} from "\.\/voiceUiContract\.js"/);
+  assert.match(source, /import \{ mergeTranscript, resolveTerminalVoiceState, selectProvisionalCaption, speechStartsNewUserBubble \} from "\.\/voiceUiContract\.js"/);
   assert.match(source, /mergeTranscript\(messages\[index\]\.text, clean\)/);
   assert.match(source, /messages\.length > 48/);
   assert.match(source, /className=\{"chat-row " \+ message\.role\}/);
@@ -291,7 +291,9 @@ test("Transcribe Live captions update silently and main Mira final wins", async 
   assert.match(source, /event\.type === "caption_interim_transcript"[\s\S]*applyCaptionToUserBubble\(event\.text, false\)/);
   assert.match(source, /event\.type === "caption_final_transcript"[\s\S]*applyCaptionToUserBubble\(event\.text, true\)/);
   assert.match(source, /const applyCaptionToUserBubble = useCallback/);
-  assert.match(source, /text: clean,[\s\S]*awaitingTranscript: true,[\s\S]*provisionalCaption: true/);
+  assert.match(source, /selectProvisionalCaption\(messages\[index\]\.text, clean, _final\)/);
+  assert.match(source, /projectshub:\/\/audio\/focus\/acquire/);
+  assert.match(source, /text,[\s\S]*awaitingTranscript: true,[\s\S]*provisionalCaption: true/);
   assert.match(source, /role === "user" && messages\[index\]\.awaitingTranscript[\s\S]*deliveryNote: undefined/);
   assert.doesNotMatch(source, /"Распознаю"/);
   assert.doesNotMatch(source, /"Транскрипция"/);
