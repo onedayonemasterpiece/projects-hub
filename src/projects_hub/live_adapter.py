@@ -1123,6 +1123,7 @@ class ProjectsHubLiveAdapter:
         backend_version: str | None = None,
         backend_release_sha: str | None = None,
         attempt_id: str | None = None,
+        client_instance_id: str | None = None,
         **_args: Any,
     ) -> dict[str, Any]:
         actor_id = str(actor.get("subject") or "")
@@ -1221,6 +1222,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "backend_version": backend_version,
                 "backend_release_sha": backend_release_sha,
                 "attempt_id": attempt_id,
+                "client_instance_id": client_instance_id,
                 "caption_vocabulary": transcription_vocabulary,
             },
             "context": {
@@ -1239,6 +1241,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "backend_version": backend_version,
                 "backend_release_sha": backend_release_sha,
                 "attempt_id": attempt_id,
+                "client_instance_id": client_instance_id,
             },
             "configuration": {
                 "system_instruction": system_instruction,
