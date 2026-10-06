@@ -767,3 +767,89 @@ def test_owner_development_tools_are_not_exposed_to_ordinary_users():
         "development_execution_status",
         "backlog_list",
     } <= owner
+
+
+@pytest.mark.asyncio
+async def test_needs_owner_resume_reuses_authorized_execution_and_quality_thread(tmp_path: Path):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = FakeDevCoveer()
+    service = DevelopmentService(store, readiness, devcoveer=fake)
+    try:
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+        quality_task_id = started["execution"]["quality_task_id"]
+        assert quality_task_id
+
+        # Represent a real terminal review blocker without creating a new execution.
+        with store._lock:
+            store.db.execute(
+                """UPDATE task_execution_stages
+                   SET status='completed',finished_at_ms=updated_at_ms
+                   WHERE execution_id=? AND status='running'""",
+                (execution_id,),
+            )
+            store.db.execute(
+                """UPDATE task_executions
+                   SET status='blocked',phase='needs_owner',
+                       phase_detail='Ревью требует решения владельца',
+                       result_summary='Нужно выбрать допустимый компромисс.',
+                       error_code='REVIEW_VERDICT_MISSING',
+                       finished_at_ms=updated_at_ms
+                   WHERE id=?""",
+                (execution_id,),
+            )
+
+        before_starts = len([1 for name, _ in fake.calls if name == "start"])
+        resumed = await service.resume_needs_owner(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+            command_id="owner.answer.0001",
+            answer="Сохраняем текущий scope; компромисс допустим, если DoD выполнен.",
+        )
+        assert resumed["resumed"] is True
+        execution = resumed["execution"]
+        assert execution["id"] == execution_id
+        assert execution["status"] == "running"
+        assert execution["phase"] == "reviewing"
+        assert execution["error_code"] is None
+        assert execution["finished_at_ms"] is None
+        assert len([1 for name, _ in fake.calls if name == "start"]) == before_starts
+        continuations = [
+            args for name, args in fake.calls
+            if name == "continue" and args["task"] == quality_task_id
+        ]
+        assert len(continuations) == 1
+        assert continuations[0]["access"] == "read"
+        assert "Сохраняем текущий scope" in continuations[0]["prompt"]
+
+        again = await service.resume_needs_owner(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+            command_id="owner.answer.0001",
+            answer="Сохраняем текущий scope; компромисс допустим, если DoD выполнен.",
+        )
+        assert again["execution"]["id"] == execution_id
+        assert len([
+            1 for name, args in fake.calls
+            if name == "continue" and args["task"] == quality_task_id
+        ]) == 1
+
+        with pytest.raises(StoreError) as exc:
+            await service.resume_needs_owner(
+                actor_id=boot["actor"]["id"],
+                workspace_id=boot["workspace"]["id"],
+                execution_id=execution_id,
+                command_id="owner.answer.0001",
+                answer="Другой ответ с тем же command id.",
+            )
+        assert exc.value.code == "DEVELOPMENT_RESUME_CONFLICT"
+    finally:
+        await service.close()
+        store.close()
