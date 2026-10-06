@@ -4,7 +4,7 @@ export function validPreference(value) {
     && Number.isSafeInteger(value.revision) && value.revision >= 0;
 }
 
-export function createThemePreferences({ render, acknowledge, onStatus = () => {} }) {
+export function createThemePreferences({ render, acknowledge, onStatus = (_message) => {} }) {
   let actor = null, preference = { theme: 'dark', revision: 0 }, epoch = 0;
   async function reset(nextActor = null) {
     actor = nextActor;

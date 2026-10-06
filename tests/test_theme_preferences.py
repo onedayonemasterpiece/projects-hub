@@ -221,7 +221,7 @@ def test_api_read_and_ack_origin_identity_binding(context, tmp_path):
         assert client.get('/api/preferences').status_code == 401
         client.cookies.set(COOKIE_NAME, issue_session(boot['actor']['id'], settings.session_secret))
         assert client.get('/api/bootstrap').json()['preferences'] == {'theme': 'dark', 'revision': 0}
-        assert client.get('/api/preferences').json() == {'theme': 'dark', 'revision': 0}
+        assert client.get('/api/preferences').json() == {'actor_id': boot['actor']['id'], 'theme': 'dark', 'revision': 0}
         stored = store.set_theme(**request(session))
         adapter._preference_applications[session.id] = {**stored, 'event': asyncio.Event(), 'applied': False}
         url = f"/api/live/{session.state['conversation_id']}/sessions/{session.id}/preferences/theme-test/applied"
@@ -236,7 +236,7 @@ def test_api_read_and_ack_origin_identity_binding(context, tmp_path):
         other = store.ensure_external_workspace(provider='fixture', subject='other', display_name='Other')
         client.cookies.set(COOKIE_NAME, issue_session(other['actor']['id'], settings.session_secret))
         assert client.post(url, headers={'Origin': 'http://testserver'}, json=payload).status_code in (403, 404)
-        assert client.get('/api/preferences').json() == {'theme': 'dark', 'revision': 0}
+        assert client.get('/api/preferences').json() == {'actor_id': other['actor']['id'], 'theme': 'dark', 'revision': 0}
 
 @pytest.mark.asyncio
 async def test_real_shared_host_router_retains_turn_and_model(context):
@@ -327,3 +327,31 @@ async def test_ordinary_actor_cannot_activate_owner_and_buffered_retry_is_stable
                                                 'args':{'theme':'light','expected_revision':0}})
     assert retried['command_id'] == saved['command_id']
     assert retried['revision'] == 1
+
+
+def test_additive_migration_preserves_existing_sources_and_commands(context):
+    store, boot, _, session, _ = context
+    source_id = session.state['source_id']
+    store.db.execute("INSERT INTO commands VALUES(?,?,?,?,?,?,?,?)",
+                     ('legacy-command', source_id, 'fixture', 'digest', 'verified', '{}', 1, 1))
+    store.db.execute('DROP TABLE preference_receipts')
+    store.db.execute('DROP TABLE actor_preferences')
+    upgraded = DurableStore(store.data_dir)
+    try:
+        assert upgraded.get_preferences(boot['actor']['id']) == {'theme':'dark','revision':0}
+        assert upgraded.get_source(boot['actor']['id'], source_id)['id'] == source_id
+        assert upgraded.db.execute("SELECT status FROM commands WHERE id='legacy-command'").fetchone()[0] == 'verified'
+        assert upgraded.set_theme(**request(session))['revision'] == 1
+    finally:
+        upgraded.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('raw', ['not-json', '[]', False, {'actor_id':'other'}])
+async def test_preference_get_rejects_non_object_and_extra_fields(context, raw):
+    store, _, adapter, session, _ = context
+    activate(adapter, session, 'preferences')
+    with pytest.raises(StoreError) as error:
+        await adapter.execute_tool(session, {'name':'preferences_get', 'args':raw})
+    assert error.value.code == 'INVALID_ARGUMENT'
+    assert store.get_preferences(session.state['actor_id'])['revision'] == 0

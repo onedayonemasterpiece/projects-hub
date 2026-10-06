@@ -992,7 +992,8 @@ def create_app(
 
     @app.get("/api/preferences")
     async def preferences(request: Request) -> dict[str, Any]:
-        return store.get_preferences(actor_id_from_request(request))
+        actor_id = actor_id_from_request(request)
+        return {"actor_id": actor_id, **store.get_preferences(actor_id)}
 
     @app.post("/api/live/{conversation_id}/sessions/{session_id}/preferences/{command_id}/applied")
     async def preference_applied(conversation_id: str, session_id: str, command_id: str,

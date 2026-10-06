@@ -183,6 +183,10 @@ public final class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (webView != null && webOriginPolicy.isTrustedPageUrl(webView.getUrl())) {
+            // Fixed presentation notification, no reload or programmable native channel.
+            webView.evaluateJavascript("window.dispatchEvent(new Event('projects-hub-theme-resume'))", null);
+        }
         if (voiceFocusDesired && !voiceFocusHeld) {
             requestVoiceAudioFocus();
         }

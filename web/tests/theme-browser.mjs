@@ -21,7 +21,7 @@ try {
       let payload = {};
       if (path==='/api/auth/config') payload={mode:'loopback_dev'};
       else if (path==='/api/bootstrap') payload={actor:{id:'A',display_name:'Fixture'},workspace:{id:'W',name:'Projects'},role:'member',projects:[{id:'P',name:'Projects Hub',status:'active'}],preferences:saved};
-      else if (path==='/api/preferences') payload=saved;
+      else if (path==='/api/preferences') payload={actor_id:'A',...saved};
       else if (path.includes('event')) payload={event_cards:[]};
       else if (path.includes('task')) payload={tasks:[]};
       else if (path.includes('sources')) payload={sources:[]};

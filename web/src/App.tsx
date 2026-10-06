@@ -196,19 +196,6 @@ export default function App() {
     onStatus: (message: string) => setNotice(message),
   }));
   const clientRef = useRef<LiveClient | null>(null);
-  const reconcilePreferences = useCallback(() => {
-    const actor = themeRef.current.actor;
-    if (!actor) return;
-    void getPreferences().then(value => {
-      if (themeRef.current.actor === actor) return themeRef.current.apply(value);
-    }).catch(error => {
-      if (error instanceof ApiError && error.status === 401 && themeRef.current.actor === actor) {
-        clientRef.current?.stop({ reason: "authentication_expired" });
-        void themeRef.current.reset();
-        setBoot(null); setConversation(null); conversationRef.current = null;
-      }
-    });
-  }, []);
   const hydratePreferences = useCallback(async (value: Bootstrap) => {
     if (themeRef.current.actor !== value.actor.id) {
       clientRef.current?.stop({ reason: "actor_change" });
@@ -217,11 +204,37 @@ export default function App() {
     }
     await themeRef.current.apply(value.preferences);
   }, []);
+  const reconcilePreferences = useCallback(() => {
+    const actor = themeRef.current.actor;
+    if (!actor) return;
+    void getPreferences().then(async value => {
+      if (themeRef.current.actor !== actor) return;
+      if (value.actor_id !== actor) {
+        const authenticated = await bootstrap();
+        if (themeRef.current.actor !== actor) return;
+        await hydratePreferences(authenticated);
+        setBoot(authenticated);
+        return;
+      }
+      return themeRef.current.apply(value);
+    }).catch(error => {
+      if (error instanceof ApiError && error.status === 401 && themeRef.current.actor === actor) {
+        clientRef.current?.stop({ reason: "authentication_expired" });
+        void themeRef.current.reset();
+        setBoot(null); setConversation(null); conversationRef.current = null;
+      }
+    });
+  }, [hydratePreferences]);
   useEffect(() => {
     const resume = () => { if (document.visibilityState === "visible") reconcilePreferences(); };
     window.addEventListener("focus", resume);
     document.addEventListener("visibilitychange", resume);
-    return () => { window.removeEventListener("focus", resume); document.removeEventListener("visibilitychange", resume); };
+    window.addEventListener("projects-hub-theme-resume", resume);
+    return () => {
+      window.removeEventListener("focus", resume);
+      document.removeEventListener("visibilitychange", resume);
+      window.removeEventListener("projects-hub-theme-resume", resume);
+    };
   }, [reconcilePreferences]);
   const currentSourceIdRef = useRef<string | null>(null);
   const userTranscriptIndex = useRef(-1);
@@ -473,7 +486,9 @@ export default function App() {
 
   const applyPreferenceEvent = useCallback((event: LiveEvent, isCurrent: () => boolean) => {
     if (event.type !== "preferences_changed" || !isCurrent()) return;
-    void themeRef.current.apply(event, event, isCurrent).catch(() => {
+    void themeRef.current.apply(event, event, isCurrent).then(applied => {
+      if (!applied && isCurrent()) reconcilePreferences();
+    }).catch(() => {
       setNotice("Настройка сохранена, но применение на этом экране пока не подтверждено.");
       reconcilePreferences();
     });
