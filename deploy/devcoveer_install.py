@@ -468,6 +468,8 @@ def write_runtime_environment(sha: str) -> bytes | None:
                 "PROJECTS_HUB_DEVCOVEER_COMMAND": str(
                     CURRENT_LINK / "source/scripts/run_devcoveer_mcp.sh"
                 ),
+                "PROJECTS_HUB_SELF_REPOSITORY": REPOSITORY,
+                "PROJECTS_HUB_SELF_DEVCOVEER_PROJECT": "projects-hub-owner",
                 "PROJECTS_HUB_DEV_AUTH": "1",
                 "PROJECTS_HUB_COOKIE_SECURE": "1",
                 "PROJECTS_HUB_LIVE_MODEL": "gemini-3.8-live",

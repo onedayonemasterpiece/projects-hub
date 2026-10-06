@@ -119,6 +119,8 @@ def test_production_devcoveer_escapes_backend_mount_namespace_without_weakening_
     assert '"NoNewPrivileges=true"' in installer
     assert '"PROJECTS_HUB_DEVCOVEER_COMMAND"' in installer
     assert 'source/scripts/run_devcoveer_mcp.sh' in installer
+    assert '"PROJECTS_HUB_SELF_REPOSITORY": REPOSITORY' in installer
+    assert '"PROJECTS_HUB_SELF_DEVCOVEER_PROJECT": "projects-hub-owner"' in installer
 
     assert "/usr/bin/systemd-run --user --pipe --wait --collect --quiet" in bridge
     assert "/home/dev/.local/bin/codex-mcp-server" in bridge

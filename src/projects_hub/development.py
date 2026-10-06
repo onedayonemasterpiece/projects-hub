@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import logging
+import os
 import re
 import time
 import uuid
@@ -17,6 +20,11 @@ DEFAULT_CODEX_PROFILE = "gpt-6.1-medium"
 QUALITY_MODEL = "gpt-6-astra"
 QUALITY_EFFORT = "high"
 MAX_REWORK_CYCLES = 2
+BACKGROUND_SYNC_INTERVAL_SECONDS = 2.0
+SELF_REPOSITORY_ENV = "PROJECTS_HUB_SELF_REPOSITORY"
+SELF_DEVCOVEER_PROJECT_ENV = "PROJECTS_HUB_SELF_DEVCOVEER_PROJECT"
+
+log = logging.getLogger("projects_hub.development")
 
 
 def _now_ms() -> int:
@@ -36,6 +44,22 @@ class DevelopmentService:
         self.store = store
         self.readiness = readiness
         self.devcoveer = devcoveer or DevCoveerClient()
+        self._transition_lock: asyncio.Lock | None = None
+        self._transition_loop: asyncio.AbstractEventLoop | None = None
+        self._background_task: asyncio.Task[None] | None = None
+        self._background_stop: asyncio.Event | None = None
+        try:
+            configured_interval = float(
+                os.getenv(
+                    "PROJECTS_HUB_DEVELOPMENT_SYNC_SECONDS",
+                    str(BACKGROUND_SYNC_INTERVAL_SECONDS),
+                )
+            )
+        except ValueError:
+            configured_interval = BACKGROUND_SYNC_INTERVAL_SECONDS
+        self._background_interval_seconds = max(
+            0.5, min(configured_interval, 30.0)
+        )
         with self.store._lock:
             self.store.db.executescript(
                 """
@@ -254,6 +278,35 @@ class DevelopmentService:
                 ).fetchall()
         return [dict(row) for row in rows]
 
+    def backlog_overview(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        project_id: str | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        tasks = self.list_backlog(
+            actor_id=actor_id,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            limit=limit,
+        )
+        executions = self.list_executions(
+            actor_id=actor_id,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            limit=1,
+        )
+        return {
+            "tasks": tasks,
+            "latest_execution": executions[0] if executions else None,
+            "backlog_state_semantics": (
+                "Backlog state accepted means approved/eligible. "
+                "Execution state comes from latest_execution."
+            ),
+        }
+
     def _selected_tasks(
         self,
         *,
@@ -312,19 +365,30 @@ class DevelopmentService:
             and item.get("installation_state") == "active"
             and item.get("access_mode") == "app_managed_write"
         ]
+        self_repository = os.getenv(SELF_REPOSITORY_ENV, "").strip()
+        self_project = os.getenv(SELF_DEVCOVEER_PROJECT_ENV, "").strip()
+
+        def project_hint(item: dict[str, Any]) -> str:
+            full_name = str(item.get("full_name") or "").strip()
+            if self_repository and self_project and full_name == self_repository:
+                return self_project
+            return full_name.rsplit("/", 1)[-1]
+
         if len(connections) == 1:
-            return str(connections[0]["full_name"]).rsplit("/", 1)[-1]
+            return project_hint(connections[0])
         normalized = "".join(ch.lower() for ch in project_name if ch.isalnum())
         exact = [
-            item for item in connections
+            item
+            for item in connections
             if "".join(
                 ch.lower()
                 for ch in str(item.get("full_name") or "").rsplit("/", 1)[-1]
                 if ch.isalnum()
-            ) == normalized
+            )
+            == normalized
         ]
         if len(exact) == 1:
-            return str(exact[0]["full_name"]).rsplit("/", 1)[-1]
+            return project_hint(exact[0])
         return project_name
 
     @staticmethod
@@ -584,7 +648,32 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
             raise StoreError("DEVELOPMENT_EXECUTION_NOT_FOUND", "Development execution is unavailable")
         return row
 
+    def _transition_guard(self) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        if self._transition_lock is None or self._transition_loop is not loop:
+            self._transition_lock = asyncio.Lock()
+            self._transition_loop = loop
+        return self._transition_lock
+
     async def start(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        task_ids: list[str],
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+    ) -> dict[str, Any]:
+        async with self._transition_guard():
+            return await self._start_locked(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                task_ids=task_ids,
+                model=model,
+                reasoning_effort=reasoning_effort,
+            )
+
+    async def _start_locked(
         self,
         *,
         actor_id: str,
@@ -730,6 +819,7 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
                        SET status='running',phase='designing',
                            phase_detail='Сильная модель проектирует задачу',
                            quality_task_id=?,devcoveer_task_id=?,
+                           error_code=NULL,finished_at_ms=NULL,
                            started_at_ms=?,updated_at_ms=?
                        WHERE id=?""",
                     (quality_task_id, quality_task_id, now, now, execution_id),
@@ -813,6 +903,38 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
         execution_id: str | None = None,
         sync: bool = True,
     ) -> dict[str, Any]:
+        """Read durable execution state without advancing the workflow."""
+
+        self._authorize_owner(actor_id, workspace_id)
+        _ = sync
+        if execution_id is None:
+            with self.store._lock:
+                row = self.store.db.execute(
+                    """SELECT * FROM task_executions
+                       WHERE actor_id=? AND workspace_id=?
+                       ORDER BY created_at_ms DESC LIMIT 1""",
+                    (actor_id, workspace_id),
+                ).fetchone()
+            if not row:
+                return {"execution": None}
+        else:
+            row = self._execution_row(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                execution_id=execution_id,
+            )
+        public = self._execution_public(row)
+        public["update_check_recommended"] = public["status"] == "completed"
+        return {"execution": public}
+
+    async def _advance_execution_locked(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        execution_id: str | None = None,
+        sync: bool = True,
+    ) -> dict[str, Any]:
         self._authorize_owner(actor_id, workspace_id)
         if execution_id is None:
             with self.store._lock:
@@ -854,6 +976,109 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
                 actor_id=actor_id,
                 workspace_id=workspace_id,
                 execution_id=item["id"],
+            )
+            public = self._execution_public(row)
+            public["update_check_recommended"] = False
+            return {"execution": public}
+
+        project_name = self._project_name(
+            actor_id,
+            workspace_id,
+            str(item["project_id"]),
+        )
+        desired_project_hint = self._project_hint(
+            actor_id,
+            workspace_id,
+            str(item["project_id"]),
+            project_name,
+        )
+        stored_project_hint = str(item.get("project_hint") or "")
+        if desired_project_hint != stored_project_hint:
+            if (
+                str(stage.get("stage") or "") == "design"
+                and not str(item.get("implementation_task_id") or "").strip()
+            ):
+                remaining = await self._require_stage_capacity(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    model=QUALITY_MODEL,
+                    reasoning_effort=QUALITY_EFFORT,
+                )
+                restarted = await self.devcoveer.start_codex_task(
+                    project=desired_project_hint,
+                    prompt=str(item.get("prompt") or ""),
+                    model=QUALITY_MODEL,
+                    reasoning_effort=QUALITY_EFFORT,
+                )
+                restarted_task_id = str(
+                    restarted.get("taskId")
+                    or restarted.get("taskReference")
+                    or ""
+                ).strip()
+                if not restarted_task_id:
+                    raise StoreError(
+                        "DEVCOVEER_INVALID_RESPONSE",
+                        "DevCoveer did not return a recovery design task id",
+                    )
+                now = _now_ms()
+                self._finish_stage(
+                    stage_id=str(stage["id"]),
+                    status="superseded",
+                    summary=(
+                        "Design stage superseded because the exact DevCoveer "
+                        "project target changed."
+                    ),
+                )
+                self._record_stage(
+                    execution_id=str(item["id"]),
+                    stage="design",
+                    cycle=0,
+                    model=QUALITY_MODEL,
+                    reasoning_effort=QUALITY_EFFORT,
+                    devcoveer_task_id=restarted_task_id,
+                )
+                with self.store._lock:
+                    self.store.db.execute(
+                        """UPDATE task_executions
+                           SET project_hint=?,quality_task_id=?,devcoveer_task_id=?,
+                               status='running',phase='designing',
+                               phase_detail='Проектирование восстановлено в корректном рабочем checkout',
+                               quota_remaining_percent=?,error_code=NULL,
+                               finished_at_ms=NULL,updated_at_ms=?
+                           WHERE id=?""",
+                        (
+                            desired_project_hint,
+                            restarted_task_id,
+                            restarted_task_id,
+                            remaining,
+                            now,
+                            item["id"],
+                        ),
+                    )
+                row = self._execution_row(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    execution_id=str(item["id"]),
+                )
+                public = self._execution_public(row)
+                public["update_check_recommended"] = False
+                return {"execution": public}
+
+            now = _now_ms()
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE task_executions
+                       SET status='blocked',phase='needs_owner',
+                           phase_detail='Изменился точный рабочий checkout разработки',
+                           error_code='DEVELOPMENT_TARGET_CHANGED',
+                           finished_at_ms=?,updated_at_ms=?
+                       WHERE id=?""",
+                    (now, now, item["id"]),
+                )
+            row = self._execution_row(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                execution_id=str(item["id"]),
             )
             public = self._execution_public(row)
             public["update_check_recommended"] = False
@@ -904,6 +1129,7 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
                 self.store.db.execute(
                     """UPDATE task_executions
                        SET status='running',phase=?,phase_detail=?,
+                           error_code=NULL,finished_at_ms=NULL,
                            updated_at_ms=? WHERE id=?""",
                     (phase, detail, now, item["id"]),
                 )
@@ -1216,6 +1442,79 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
         public["update_check_recommended"] = public["status"] == "completed"
         return {"execution": public}
 
+    async def advance_active_once(self) -> int:
+        """Advance durable executions independently of any client/status read."""
+
+        with self.store._lock:
+            rows = self.store.db.execute(
+                """SELECT id,actor_id,workspace_id
+                   FROM task_executions
+                   WHERE status IN ('starting','running')
+                   ORDER BY created_at_ms ASC LIMIT 10"""
+            ).fetchall()
+        advanced = 0
+        for candidate in rows:
+            async with self._transition_guard():
+                with self.store._lock:
+                    fresh = self.store.db.execute(
+                        "SELECT status FROM task_executions WHERE id=?",
+                        (candidate["id"],),
+                    ).fetchone()
+                if not fresh or fresh["status"] not in ACTIVE_EXECUTION_STATES:
+                    continue
+                await self._advance_execution_locked(
+                    actor_id=str(candidate["actor_id"]),
+                    workspace_id=str(candidate["workspace_id"]),
+                    execution_id=str(candidate["id"]),
+                    sync=True,
+                )
+                advanced += 1
+        return advanced
+
+    async def _background_loop(self, stop_event: asyncio.Event) -> None:
+        while not stop_event.is_set():
+            try:
+                await self.advance_active_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.warning(
+                    "development background sync failed: %s",
+                    type(exc).__name__,
+                )
+            try:
+                await asyncio.wait_for(
+                    stop_event.wait(),
+                    timeout=self._background_interval_seconds,
+                )
+            except TimeoutError:
+                pass
+
+    async def start_background(self) -> None:
+        if self._background_task is not None and not self._background_task.done():
+            return
+        stop_event = asyncio.Event()
+        self._background_stop = stop_event
+        self._background_task = asyncio.create_task(
+            self._background_loop(stop_event),
+            name="projects-hub-development-worker",
+        )
+
+    async def stop_background(self) -> None:
+        task = self._background_task
+        stop_event = self._background_stop
+        self._background_task = None
+        self._background_stop = None
+        if stop_event is not None:
+            stop_event.set()
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
     def list_executions(
         self,
         *,
@@ -1245,4 +1544,5 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
 
 
     async def close(self) -> None:
+        await self.stop_background()
         await self.devcoveer.close()
