@@ -26,7 +26,7 @@ async def read_existing_task(task_id: str) -> dict:
         await bridge.close()
 
 
-async def run() -> dict:
+async def run(model: str = "council_free") -> dict:
     with tempfile.TemporaryDirectory(prefix="projects-hub-council-canary-") as tmp:
         store = DurableStore(Path(tmp))
         bridge = AnalyticsBridgeClient()
@@ -68,7 +68,7 @@ async def run() -> dict:
                 board_id=board_id,
                 object_ids=["obj_council_canary"],
                 command_id="analysis_council_live_canary",
-                model="council_free",
+                model=model,
                 purpose="edge_cases",
                 question=(
                     "Using only the supplied synthetic sticky, identify one concrete failure "
@@ -101,8 +101,18 @@ async def run() -> dict:
             usage = run_row["result"].get("usage")
             if isinstance(usage, dict):
                 actual = usage.get("actual")
-                if isinstance(actual, dict) and int(actual.get("nvidiaCalls") or 0) != 0:
+                if (
+                    model == "council_free"
+                    and isinstance(actual, dict)
+                    and int(actual.get("nvidiaCalls") or 0) != 0
+                ):
                     raise RuntimeError("Free council unexpectedly used NVIDIA")
+                if (
+                    model == "council_pro"
+                    and isinstance(actual, dict)
+                    and int(actual.get("nvidiaCalls") or 0) < 2
+                ):
+                    raise RuntimeError("NVIDIA council did not exercise both product participants")
 
             return {
                 "status": run_row["status"],
@@ -121,10 +131,15 @@ async def run() -> dict:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--read-task")
+    parser.add_argument(
+        "--model",
+        choices=("council_free", "council_pro"),
+        default="council_free",
+    )
     args = parser.parse_args()
     result = (
         asyncio.run(read_existing_task(args.read_task))
         if args.read_task
-        else asyncio.run(run())
+        else asyncio.run(run(args.model))
     )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
