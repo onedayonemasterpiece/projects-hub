@@ -188,3 +188,29 @@ Definition of Done for the implementation batch:
 - [ ] Handoff clearly distinguishes implemented/tested, deployed, signed-release and physically accepted status. If a concrete mandatory gate is unavailable, report a partial result and the exact remaining gate; do not call mocks product completion.
 
 No extra model tournament, broad cleanup, unrelated audit, onboarding implementation or new workflow engine is required to finish this task.
+
+
+## Owner rework instructions (cycles 1–2)
+
+The external owner rework instructions retain this development batch and its scope. Candidate `68999e2` restored the version/SHA wording; all other reviewed seams require corrections and fresh candidate evidence. Deployment and release remain prohibited in this implementation thread.
+
+- Preserve strict TypeScript checking and type the theme controller interface explicitly.
+- Dispose the complete private UI on account change or authentication expiry; old Live events and pending reads cannot populate the new account. Exercise another-tab A→B and login after 401.
+- Bind theme command receipts and retries to the accepted intent through capability transitions, including B beginning while A is finishing.
+- Buffered replay waits for completed transitions, a final provider boundary and authoritative terminal disposition within the existing timeout. Intermediate turn boundaries do not stop the session or resend PCM.
+- Native requests and timers correlate by request ID. Application ACKs report `web_status=applied` and `native_status` independently (`applied`, `not_required`, `unsupported`, `failed`); unsupported Android chrome is never full application success. Existing minimal ACKs remain compatible; native clients without native confirmation remain pending.
+- Browser coverage uses the mounted App and shared WebSocket client through the real application ACK endpoint, alongside continuity and identity isolation checks. Prepared fixtures remain distinct from actual provider/microphone acceptance.
+- Required backend, PWA, Android unit/build/emulator and candidate CI evidence remains required. Unavailable execution facilities must be reported explicitly; authored tests alone are not passing evidence or product completion.
+
+
+### Rework cycle 2 verification in the restricted implementation session
+
+The candidate is the commit containing this appendix on `chatgpt/voice-theme-devrun-fe82f497-20261006`, based on `68999e2`. It is a partial implementation checkpoint, not ready-for-review or product-completion evidence.
+
+- Full backend suite: `PYTHONPATH=src /home/dev/projects/projects-hub/.venv/bin/python -m pytest -q` — **198 passed** (27.66 seconds) after the final backend changes. Focused document/Live contract checks after this appendix's rework instructions: **15 passed**. Backend source did not change afterward.
+- Eight focused repository JavaScript tests executed successfully in the tool V8 runtime, using fixture DOM/bridge/UUID/URL/microtask surfaces and assertions. Includes overlap timeout/ACK correlation, unsupported native status, stale actor/generation, revision ordering and core→preferences→memory completion coordination. This is additional behavior evidence, **not** the required Node suite, TypeScript build, Chromium, microphone or provider acceptance.
+- `npm run test:live-framework`, `npm run build`, and `node tests/theme-browser.mjs` could not start: exit 127, executable not found. `/usr/local/bin/node` points to an unavailable `/opt/node-v22.22.3-linux-x64/bin/node`. Node download connectivity was checked once and failed DNS resolution.
+- `gradle -p android testDebugUnitTest assembleDebug --stacktrace` and `bash scripts/android_emulator_smoke.sh` could not start: exit 127, Gradle unavailable. Java/ADB are unavailable too. No emulator/device outcome is claimed.
+- The revised Chromium harness is authored but unexecuted. It drives shared WebSocket events into the mounted App, verifies HTTP preference ACKs, microphone/component continuity, another-tab A→B, a delayed old 401, login after current 401, and durable replay across two capability handoffs without repeated PCM or premature stop. Fixtures use loopback HTTP/WS; they do not establish production-equivalent TLS/WSS, real Live speech or audible confirmation.
+- Requirements SHA-256 remains `b18bda6de9f0a16935b37fba18e1c85362694e61eb59360d97190ab09a00c0f7`; whitespace checks pass. The unrelated untracked recovery script is preserved and excluded.
+- Required PWA, Android build/emulator, exact-candidate CI and real browser/Live acceptance remain outstanding. Missing installed Android/voice/artifact skills were not treated as acceptance evidence. No merge, deployment, signing, release or production action is authorized or performed. The existing caption-sidecar architecture discrepancy remains disclosed above and outside theme routing.

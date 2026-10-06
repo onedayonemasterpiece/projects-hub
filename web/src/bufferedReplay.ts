@@ -10,6 +10,8 @@ import {
   type LocalVoiceSource,
 } from "./offlineSources";
 
+import { createReplayCompletion } from "./replayCompletion.js";
+
 const TERMINAL = new Set(["archived", "ephemeral_processed"]);
 
 async function serverSource(
@@ -28,6 +30,7 @@ export type ReplayCallbacks = {
   onEvent?: (event: LiveEvent) => void;
   onPreferenceEvent?: (event: LiveEvent, isCurrent: () => boolean) => void;
   onNotice?: (message: string) => void;
+  signal?: AbortSignal;
 };
 
 export type ReplayResult = {
@@ -62,10 +65,16 @@ export async function replayLocalVoiceSource(
   let completeResolve: (() => void) | null = null;
   let completeReject: ((reason?: unknown) => void) | null = null;
   let completed = false;
+  const completion = createReplayCompletion();
+  let confirmedReceipt: SourceReceipt | null = null;
+  let readingDisposition = false;
+  let disposed = false;
   const complete = new Promise<void>((resolve, reject) => {
     completeResolve = resolve;
     completeReject = reject;
   });
+  // Observe failures immediately even while bootstrap/backpressure is awaiting.
+  void complete.catch(() => {});
   const timeout = window.setTimeout(() => {
     if (!completed) completeReject?.(new Error("Live не завершила сохранённую запись вовремя."));
   }, 120_000);
@@ -82,15 +91,31 @@ export async function replayLocalVoiceSource(
     onEvent: (event, generation) => {
       callbacks.onPreferenceEvent?.(event, () => client.generation === generation && client.sessionId === event.session_id && source.conversation_id === event.conversation_id);
       callbacks.onEvent?.(event);
-      if (event.type === "turn_complete" && !completed) {
-        completed = true;
-        completeResolve?.();
-      }
+      if (client.generation === generation) completion.event(event);
     },
   });
 
+  const abort = () => {
+    client.stop({ reason: "actor_change" });
+    completeReject?.(new Error("Replay client identity changed."));
+  };
+  callbacks.signal?.addEventListener("abort", abort, { once: true });
+  const dispositionTimer = window.setInterval(() => {
+    if (disposed || completed || readingDisposition || !client.sessionId || !completion.canReadDisposition) return;
+    readingDisposition = true;
+    const epoch = completion.epoch;
+    void serverSource(source).then(receipt => {
+      if (!disposed && receipt && completion.confirmed(receipt.status, epoch)) {
+        confirmedReceipt = receipt;
+        completed = true;
+        completeResolve?.();
+      }
+    }).catch(error => completeReject?.(error)).finally(() => { readingDisposition = false; });
+  }, 100);
+
   try {
-    const started = await client.start({
+    if (callbacks.signal?.aborted) throw new Error("Replay client identity changed.");
+    const started = await Promise.race([client.start({
       url: `/api/live/${encodeURIComponent(source.conversation_id)}/sessions`,
       body: {
         audio_mode: "buffered",
@@ -98,7 +123,7 @@ export async function replayLocalVoiceSource(
       },
       microphone: false,
       authorize: async () => {},
-    });
+    }), complete.then(() => { throw new Error("Replay completed during startup."); })]);
     if (!client.sessionId) {
       throw new Error("Не удалось открыть Live для сохранённой записи.");
     }
@@ -130,7 +155,7 @@ export async function replayLocalVoiceSource(
       await new Promise(resolve => window.setTimeout(resolve, 50));
     }
 
-    const receipt = await serverSource(source);
+    const receipt = confirmedReceipt ?? await serverSource(source);
     if (receipt && TERMINAL.has(receipt.status)) {
       await acknowledgeDeliveredSource(source.id);
       return {
@@ -163,7 +188,10 @@ export async function replayLocalVoiceSource(
     );
     throw error;
   } finally {
+    disposed = true;
     window.clearTimeout(timeout);
+    window.clearInterval(dispositionTimer);
+    callbacks.signal?.removeEventListener("abort", abort);
     client.stop({ reason: "buffered_replay_complete", preservePlayback: true });
   }
 }

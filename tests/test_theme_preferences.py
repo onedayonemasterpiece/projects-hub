@@ -355,3 +355,56 @@ async def test_preference_get_rejects_non_object_and_extra_fields(context, raw):
         await adapter.execute_tool(session, {'name':'preferences_get', 'args':raw})
     assert error.value.code == 'INVALID_ARGUMENT'
     assert store.get_preferences(session.state['actor_id'])['revision'] == 0
+
+
+@pytest.mark.asyncio
+async def test_transition_binds_setter_to_a_even_when_b_has_started(context):
+    store, _, adapter, session, _ = context
+    activate(adapter, session, 'preferences')
+    turn_a = session.state['_capability_turn_id']
+    adapter.on_event(session, {'type': 'capability_ready'})
+    adapter.input(session, {'activity_start': True})
+    adapter.input(session, {'audio_base64': base64.b64encode(b'\x01\x00' * 320).decode()})
+    turn_b = session.state['_current_utterance']['id']
+    assert turn_a != turn_b
+    def emit(active, event):
+        adapter.acknowledge_preference(active, event['command_id'], event['theme'], event['revision'])
+    adapter.emit = emit
+    call = {'name': 'preferences_set_theme', 'args': {'theme': 'light', 'expected_revision': 0}}
+    result = await adapter.execute_tool(session, call)
+    assert store.preference_receipt(session.state['actor_id'], result['command_id'])['turn_id'] == turn_a
+    assert session.state['_current_utterance']['committed'] is False
+    adapter.on_event(session, {'type': 'turn_complete'})
+    assert '_capability_turn_id' not in session.state
+    assert await adapter.execute_tool(session, {**call, 'id': 'retry-after-b-started'}) == result
+    adapter.input(session, {'activity_end': True})
+    next_result = await adapter.execute_tool(session, {'name': 'preferences_set_theme',
+        'args': {'theme': 'dark', 'expected_revision': 1}})
+    assert store.preference_receipt(session.state['actor_id'], next_result['command_id'])['turn_id'] == turn_b
+    assert store.db.execute('SELECT count(*) FROM preference_receipts').fetchone()[0] == 2
+
+
+@pytest.mark.asyncio
+async def test_old_android_ack_reports_web_only_not_native_application(context):
+    _, _, adapter, session, _ = context
+    activate(adapter, session, 'preferences')
+    session.state['client_version'] = 'old-android'
+    def emit(active, event):
+        acknowledgement = adapter.acknowledge_preference(active, event['command_id'],
+            event['theme'], event['revision'], 'unsupported')
+        assert acknowledgement == {'application_status': 'pending', 'web_status': 'applied', 'native_status': 'unsupported'}
+    adapter.emit = emit
+    call = {'name': 'preferences_set_theme', 'args': {'theme': 'light', 'expected_revision': 0}}
+    result = await adapter.execute_tool(session, call)
+    assert result['persistence_status'] == 'verified'
+    assert result['application_status'] == 'pending'
+    assert result['web_status'] == 'applied' and result['native_status'] == 'unsupported'
+    assert await adapter.execute_tool(session, call) == result
+
+
+def test_assembled_core_prompt_preserves_runtime_provenance_guidance(context):
+    *_, initialized = context
+    prompt = initialized['configuration']['system_instruction']
+    assert 'backend_version' in prompt
+    assert 'backend_release_sha упоминай только' in prompt
+    assert 'пользователь явно спрашивает' in prompt

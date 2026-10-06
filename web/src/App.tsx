@@ -10,6 +10,7 @@ import {
 import {
   ApiError,
   bootstrap,
+  beginIdentityRequests,
   getPreferences,
   acknowledgePreference,
   bindGitHubRepository,
@@ -142,6 +143,15 @@ function friendlyStartError(error: unknown) {
 }
 
 export default function App() {
+  const [identityGeneration, setIdentityGeneration] = useState(0);
+  const resetIdentity = useCallback(() => setIdentityGeneration(value => value + 1), []);
+  // Disposing this subtree discards every private object and pending React update.
+  return <ActorApp key={identityGeneration} resetIdentity={resetIdentity} />;
+}
+
+function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
+  const activeIdentity = useRef(true);
+  const identityAbort = useRef(new AbortController());
   const isAndroidApp = navigator.userAgent.includes("ProjectsHubAndroid/");
   const nativeVersion = useMemo(() => {
     const queryVersion = new URLSearchParams(window.location.search).get("native_version");
@@ -196,35 +206,54 @@ export default function App() {
     onStatus: (message: string) => setNotice(message),
   }));
   const clientRef = useRef<LiveClient | null>(null);
+  const clearPrivateIdentity = useCallback((reason: string) => {
+    if (!activeIdentity.current) return;
+    activeIdentity.current = false;
+    identityAbort.current.abort();
+    clientRef.current?.stop({ reason });
+    setAndroidVoiceAudioFocus(false);
+    void themeRef.current.reset();
+    setBoot(null); setConversation(null); conversationRef.current = null;
+    resetIdentity();
+  }, [resetIdentity, setAndroidVoiceAudioFocus]);
+  useEffect(() => {
+    const requestGeneration = beginIdentityRequests();
+    const expired = (event: Event) => {
+      if (event instanceof CustomEvent && event.detail?.requestGeneration === requestGeneration
+          && themeRef.current.actor) clearPrivateIdentity("authentication_expired");
+    };
+    window.addEventListener("projects-hub-authentication-expired", expired);
+    return () => window.removeEventListener("projects-hub-authentication-expired", expired);
+  }, [clearPrivateIdentity]);
   const hydratePreferences = useCallback(async (value: Bootstrap) => {
+    if (!activeIdentity.current) return;
+    if (themeRef.current.actor && themeRef.current.actor !== value.actor.id) {
+      clearPrivateIdentity("actor_change");
+      return;
+    }
     if (themeRef.current.actor !== value.actor.id) {
       clientRef.current?.stop({ reason: "actor_change" });
       setConversation(null); conversationRef.current = null;
       await themeRef.current.reset(value.actor.id);
     }
-    await themeRef.current.apply(value.preferences);
-  }, []);
+    if (activeIdentity.current) await themeRef.current.apply(value.preferences);
+  }, [clearPrivateIdentity]);
   const reconcilePreferences = useCallback(() => {
     const actor = themeRef.current.actor;
     if (!actor) return;
     void getPreferences().then(async value => {
-      if (themeRef.current.actor !== actor) return;
+      if (!activeIdentity.current || themeRef.current.actor !== actor) return;
       if (value.actor_id !== actor) {
-        const authenticated = await bootstrap();
-        if (themeRef.current.actor !== actor) return;
-        await hydratePreferences(authenticated);
-        setBoot(authenticated);
+        clearPrivateIdentity("actor_change");
         return;
       }
       return themeRef.current.apply(value);
     }).catch(error => {
       if (error instanceof ApiError && error.status === 401 && themeRef.current.actor === actor) {
-        clientRef.current?.stop({ reason: "authentication_expired" });
-        void themeRef.current.reset();
-        setBoot(null); setConversation(null); conversationRef.current = null;
+        clearPrivateIdentity("authentication_expired");
       }
     });
-  }, [hydratePreferences]);
+  }, [clearPrivateIdentity]);
   useEffect(() => {
     const resume = () => { if (document.visibilityState === "visible") reconcilePreferences(); };
     window.addEventListener("focus", resume);
@@ -236,6 +265,16 @@ export default function App() {
       window.removeEventListener("projects-hub-theme-resume", resume);
     };
   }, [reconcilePreferences]);
+  useEffect(() => {
+    activeIdentity.current = true;
+    if (identityAbort.current.signal.aborted) identityAbort.current = new AbortController();
+    return () => {
+      activeIdentity.current = false;
+      identityAbort.current.abort();
+      // Seal captured audio instead of leaving capture alive across account changes.
+      if (offlineCaptureRef.current) void stopOfflineCapture();
+    };
+  }, []);
   const currentSourceIdRef = useRef<string | null>(null);
   const userTranscriptIndex = useRef(-1);
   const assistantTranscriptIndex = useRef(-1);
@@ -327,7 +366,8 @@ export default function App() {
 
   const refreshPendingSources = useCallback(async () => {
     if (!boot) return;
-    setPendingSources(await listPendingVoiceSources(boot.workspace.id));
+    const sources = await listPendingVoiceSources(boot.workspace.id);
+    setPendingSources(sources.filter(source => source.conversation_id === conversationRef.current?.id));
   }, [boot]);
 
   const refreshGitHub = useCallback(async () => {
@@ -485,16 +525,19 @@ export default function App() {
   }, []);
 
   const applyPreferenceEvent = useCallback((event: LiveEvent, isCurrent: () => boolean) => {
-    if (event.type !== "preferences_changed" || !isCurrent()) return;
-    void themeRef.current.apply(event, event, isCurrent).then(applied => {
+    if (event.type !== "preferences_changed" || !activeIdentity.current || !isCurrent()) return;
+    const current = () => activeIdentity.current && isCurrent();
+    void themeRef.current.apply(event, event, current).then(applied => {
       if (!applied && isCurrent()) reconcilePreferences();
     }).catch(() => {
+      if (!current()) return;
       setNotice("Настройка сохранена, но применение на этом экране пока не подтверждено.");
       reconcilePreferences();
     });
   }, [reconcilePreferences]);
 
   const applyLiveEvent = useCallback((event: LiveEvent) => {
+    if (!activeIdentity.current) return;
     if (event.type === "caption_interim_transcript" && typeof event.text === "string") {
       setInputTranscriptSeen(true);
       setInterimInputTranscript("");
@@ -591,7 +634,7 @@ export default function App() {
       try {
         const current = await getConversation(saved);
         if (cancelled) return;
-        if (current.workspace_id === value.workspace.id) setConversation(current);
+        if (current.workspace_id === value.workspace.id && current.actor_id === value.actor.id) setConversation(current);
         else localStorage.removeItem("projects-hub-conversation");
       } catch {
         localStorage.removeItem("projects-hub-conversation");
@@ -690,6 +733,7 @@ export default function App() {
       longSpeechEndSilenceMs: 2500,
       longSpeechAfterMs: 2500,
       onTiming: event => {
+        if (!activeIdentity.current) return;
         if (event === "speech_end") {
           setSpeechActive(false);
           setSpeechPending(true);
@@ -713,6 +757,7 @@ export default function App() {
         reserveUserVoiceBubble();
       },
       onState: (state, detail) => {
+        if (!activeIdentity.current) return;
         const terminalReason = resolveTerminalVoiceState(state, detail);
         setVoiceState(terminalReason || state);
         if (terminalReason || inactiveVoiceStates.has(state) || state === "budget_wait") {
@@ -750,6 +795,11 @@ export default function App() {
         }
       },
       onNotice: (kind, error) => {
+        if (!activeIdentity.current) return;
+        if (typeof error === "object" && error !== null && "status" in error && error.status === 401) {
+          clearPrivateIdentity("authentication_expired");
+          return;
+        }
         if (kind === "playback_error") {
           setPlaybackProblem("Не удалось включить звук. Ответ Миры можно прочитать в переписке. Остановите и снова начните разговор, чтобы повторно включить звук.");
         } else if (kind === "microphone_error") {
@@ -790,9 +840,9 @@ export default function App() {
         else if (kind === "event_gap") { reconcilePreferences(); setNotice("Интерфейс пропустил часть служебных событий. Источник на сервере сохраняется отдельно."); }
         else if (error) setNotice(friendlyStartError(error));
       },
-      onWait: value => setWait(value),
+      onWait: value => { if (activeIdentity.current) setWait(value); },
       onEvent: (event, generation) => {
-        const current = () => clientRef.current === client && client.generation === generation
+        const current = () => activeIdentity.current && clientRef.current === client && client.generation === generation
           && client.sessionId === event.session_id && conversationRef.current?.id === event.conversation_id;
         applyPreferenceEvent(event, current);
         if (clientRef.current === client && client.generation === generation) applyLiveEvent(event);
@@ -804,7 +854,7 @@ export default function App() {
       client.stop({ reason: "ui_unmount" });
       clientRef.current = null;
     };
-  }, [applyLiveEvent, applyPreferenceEvent, reconcilePreferences, boot, reserveUserVoiceBubble, setAndroidVoiceAudioFocus, settleCurrentVoiceBubble]);
+  }, [applyLiveEvent, applyPreferenceEvent, reconcilePreferences, clearPrivateIdentity, boot, reserveUserVoiceBubble, setAndroidVoiceAudioFocus, settleCurrentVoiceBubble]);
 
   async function signIn() {
     setBusy(true);
@@ -836,6 +886,7 @@ export default function App() {
     if (!boot) throw new Error("Нет workspace");
     if (conversationRef.current) return conversationRef.current;
     const created = await createConversation(boot.workspace.id, null);
+    if (!activeIdentity.current) throw new Error("Account changed.");
     setConversation(created);
     conversationRef.current = created;
     localStorage.setItem("projects-hub-conversation", created.id);
@@ -849,6 +900,7 @@ export default function App() {
       throw new Error("Для работы без сети сначала откройте Projects Hub один раз при подключении.");
     }
     const source = await createLocalVoiceSource(boot.workspace.id, current.id);
+    if (!activeIdentity.current) return;
     const sink = createLocalPersistSink(source.id);
     const capture = createDurableMicrophoneCapture({
       persist: sink.persist,
@@ -906,6 +958,7 @@ export default function App() {
     setNotice("Передаю сохранённую запись центральному Live‑агенту…");
     try {
       const result = await replayLocalVoiceSource(source, {
+        signal: identityAbort.current.signal,
         onState: state => {
           if (state !== "off") setVoiceState(state);
         },
@@ -976,6 +1029,7 @@ export default function App() {
         captureDuringStart: true,
         authorize: async () => {},
       });
+      if (!activeIdentity.current) return;
       if (typeof started?.source_id === "string") currentSourceIdRef.current = started.source_id;
       adoptPendingVoiceRecovery(started);
       if (client.sessionId) setNotice("Разговор восстановлен.");
@@ -1041,6 +1095,7 @@ export default function App() {
         return;
       }
       const current = await ensureConversation();
+      if (!activeIdentity.current) return;
       setAndroidVoiceAudioFocus(true);
       const started = await client.start({
         url: `/api/live/${current.id}/sessions`,
@@ -1049,6 +1104,7 @@ export default function App() {
         captureDuringStart: true,
         authorize: async () => {},
       });
+      if (!activeIdentity.current) return;
       if (typeof started?.source_id === "string") currentSourceIdRef.current = started.source_id;
       adoptPendingVoiceRecovery(started);
       if (!client.sessionId && !navigator.onLine) {

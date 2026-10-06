@@ -715,8 +715,12 @@ class ProjectsHubLiveAdapter:
         *,
         committed: bool = False,
         evidence: str,
+        utterance_id: str | None = None,
     ) -> None:
-        utterance = self._semantic_utterance(session)
+        utterance = (next((item for item in session.state.get("_utterances", [])
+                           if item.get("id") == utterance_id and item.get("pcm_accepted")
+                           and not item.get("committed")), None)
+                     if utterance_id is not None else self._semantic_utterance(session))
         if utterance is None:
             return
         utterance["semantic_observed"] = True
@@ -972,6 +976,7 @@ class ProjectsHubLiveAdapter:
             raise StoreError("TOOL_NOT_AVAILABLE", "Capability unavailable")
         turn_id = self._accepted_theme_turn(session)
         session.state["_capability_turn_id"] = turn_id
+        session.state.pop("_capability_ready", None)
         self._mark_semantic_observed(session, committed=True, evidence="capability_intent")
         declarations = _functions(expert_reviews=True, regional_knowledge=True, owner_development=True) + PREFERENCES
         configuration = {**session.state["_base_configuration"],
@@ -988,7 +993,7 @@ class ProjectsHubLiveAdapter:
                 "continuation": "Продолжи уже принятую просьбу, без нового разрешения: " + args["intent"],
                 "response": {"capability": capability, "status": "ready"}}
 
-    def acknowledge_preference(self, session: Any, command_id: str, theme: str, revision: int) -> dict[str, Any]:
+    def acknowledge_preference(self, session: Any, command_id: str, theme: str, revision: int, native_status: str = "not_required") -> dict[str, Any]:
         request = self._preference_applications.get(session.id)
         if getattr(session, "closed", False) or not request or request["command_id"] != command_id:
             raise StoreError("FORBIDDEN", "No matching application request")
@@ -997,14 +1002,25 @@ class ProjectsHubLiveAdapter:
             raise StoreError("FORBIDDEN", "Application receipt mismatch")
         if self.store.get_preferences(session.state["actor_id"]) != {"theme": theme, "revision": revision}:
             raise StoreError("REVISION_CONFLICT", "Preference superseded")
-        request["applied"] = True
+        if native_status not in {"applied", "not_required", "unsupported", "failed"}:
+            raise StoreError("INVALID_ARGUMENT", "Invalid native application status")
+        if session.state.get("client_version") and native_status == "not_required":
+            native_status = "unsupported"
+        request["native_status"] = native_status
+        request["web_status"] = "applied"
+        request["applied"] = native_status in {"applied", "not_required"}
         request["event"].set()
-        return {"application_status": "applied"}
+        return {"application_status": "applied" if request["applied"] else "pending",
+                "web_status": "applied", "native_status": native_status}
 
     async def _set_theme(self, session: Any, args: dict[str, Any]) -> dict[str, Any]:
         if set(args) != {"theme", "expected_revision"} or args.get("theme") not in ("light", "dark") or type(args.get("expected_revision")) is not int or args["expected_revision"] < 0:
             raise StoreError("INVALID_ARGUMENT", "Invalid theme preference")
-        turn_id = self._accepted_theme_turn(session)
+        prior = self._preference_applications.get(session.id)
+        # The accepted intent survives a provider reconfiguration, even when
+        # capture has already opened the next speech turn. Retries retain it too.
+        turn_id = (prior["turn_id"] if prior and prior.get("args") == args else
+                   session.state.get("_capability_turn_id") or self._accepted_theme_turn(session))
         payload = [session.state["actor_id"], session.state["conversation_id"], session.state["source_id"], turn_id,
                    "preferences_set_theme", args]
         command_id = "theme_" + hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -1013,10 +1029,11 @@ class ProjectsHubLiveAdapter:
         if result["application_status"] == "superseded":
             return result
         prior = self._preference_applications.get(session.id)
-        if prior and prior["command_id"] == command_id and prior["applied"]:
-            return {**result, "application_status": "applied"}
+        if prior and prior["command_id"] == command_id and prior["event"].is_set():
+            return {**result, "application_status": "applied" if prior["applied"] else "pending",
+                    **{key: prior[key] for key in ("web_status", "native_status") if key in prior}}
         request = {"command_id": command_id, "theme": result["theme"], "revision": result["revision"],
-                   "event": asyncio.Event(), "applied": False}
+                   "event": asyncio.Event(), "applied": False, "turn_id": turn_id, "args": dict(args)}
         self._preference_applications[session.id] = request
         if self.emit:
             self.emit(session, {"type": "preferences_changed", "version": 1, "command_id": command_id,
@@ -1029,7 +1046,8 @@ class ProjectsHubLiveAdapter:
                 pass
         current = self.store.get_preferences(session.state["actor_id"])
         status = "superseded" if current != result["current"] else "applied" if request["applied"] else "pending"
-        return {**result, "current": current, "application_status": status}
+        return {**result, "current": current, "application_status": status,
+                **{key: request[key] for key in ("web_status", "native_status") if key in request}}
 
     def input(self, session: Any, message: dict[str, Any]) -> None:
         state = session.state
@@ -1072,6 +1090,13 @@ class ProjectsHubLiveAdapter:
     def on_event(self, session: Any, event: dict[str, Any]) -> None:
         kind = str(event.get("type") or "")
         state = session.state
+        if kind == "capability_ready":
+            state["_capability_ready"] = True
+        elif kind == "turn_complete" and state.get("_capability_ready") and not (
+            getattr(session, "pending_transition", None) and not session.pending_transition.done()
+        ):
+            state.pop("_capability_turn_id", None)
+            state.pop("_capability_ready", None)
         provider_at = event.get("provider_at") if isinstance(event.get("provider_at"), int) else None
         diag = state.setdefault("_voice_diag", {})
         counts = diag.setdefault("counts", {})
@@ -1314,7 +1339,9 @@ class ProjectsHubLiveAdapter:
             return self.store.get_preferences(session.state["actor_id"])
         if name == "preferences_set_theme":
             result = await self._set_theme(session, args)
-            self._mark_semantic_observed(session, committed=True, evidence="theme_receipt")
+            receipt = self.store.preference_receipt(session.state["actor_id"], result["command_id"])
+            self._mark_semantic_observed(session, committed=True, evidence="theme_receipt",
+                                         utterance_id=receipt["turn_id"])
             return result
         self._mark_semantic_observed(session, committed=True, evidence=f"tool_call:{name}")
         state = session.state

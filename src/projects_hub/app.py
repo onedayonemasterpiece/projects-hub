@@ -37,6 +37,8 @@ class PreferenceApplication(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     theme: Literal["light", "dark"]
     revision: int = Field(ge=0)
+    web_status: Literal["applied"] = "applied"
+    native_status: Literal["applied", "not_required", "unsupported", "failed"] = "not_required"
 
 
 class InviteLogin(BaseModel):
@@ -1008,7 +1010,7 @@ def create_app(
         _conversation, resource_id, actor = live_context(actor_id, conversation_id)
         try:
             active = host()._get(session_id, resource_id, actor)
-            return host().adapter.acknowledge_preference(active, command_id, payload.theme, payload.revision)
+            return host().adapter.acknowledge_preference(active, command_id, payload.theme, payload.revision, payload.native_status)
         except Exception as exc:
             raise _error(exc) from exc
 
