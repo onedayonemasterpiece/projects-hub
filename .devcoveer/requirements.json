@@ -9,7 +9,8 @@
       "acceptance": [
         "Online speech reaches the configured Live model as audio in the same conversational session.",
         "Offline saved speech is deliberately replayed to that same central Live agent rather than summarized or transcribed by a second semantic pipeline.",
-        "Deterministic code is limited to transport, authentication, bounded orchestration, schemas, persistence, idempotency, telemetry, mechanical formatting and fail-closed checks."
+        "Deterministic code is limited to transport, authentication, bounded orchestration, schemas, persistence, idempotency, telemetry, mechanical formatting and fail-closed checks.",
+        "An explicit owner-authorized note-structuring capability may call Gemini on already accepted, Mira-selected text and server-derived authorship/roles. It is not a hidden pre-Live summarizer, second ASR or conversation router."
       ]
     },
     {
@@ -25,13 +26,14 @@
     },
     {
       "id": "CORE-MULTIUSER-ISOLATION",
-      "statement": "Several people may use Projects Hub concurrently without sharing conversations, Live sessions, tool permissions or results; every session and tool call remains bound to the authenticated issuer subject, workspace and conversation, with explicit bounded capacity.",
+      "statement": "Several people may use Projects Hub concurrently with isolated private conversations, Live sessions and tool permissions. Explicitly shared project objects/results are accessible only through current project grants; every session and tool call remains bound to the authenticated issuer subject, workspace and conversation, with explicit bounded capacity.",
       "critical": true,
       "acceptance": [
         "Conversation resource bindings include workspace, authenticated subject and conversation identity.",
         "A user cannot renew, attach to, read events from, stop or mutate another user's Live session by guessing identifiers.",
         "Global Live concurrency is bounded and configurable; overload fails visibly instead of creating unbounded queues or cross-session degradation.",
-        "Capacity and authorization remain correct under concurrent session starts."
+        "Capacity and authorization remain correct under concurrent session starts.",
+        "Publishing a project note, discussion entry, question or analysis shares only that authorized object; it never opens the author's full private transcript/source or unrelated project data."
       ]
     },
     {
@@ -127,7 +129,95 @@
         "Development requests are durable, reviewable and batchable; conversation alone never authorizes implementation.",
         "Starting implementation requires an explicit current owner command and produces durable batch status, tests/CI and deployment/readback evidence.",
         "Owner-only development tools are absent from ordinary users' Live tool surfaces and direct API calls are independently authorization-checked.",
-        "Android changes delivered through self-development end in the normal signed release/update-manifest path so installed apps can self-update."
+        "Android changes delivered through self-development end in the normal signed release/update-manifest path so installed apps can self-update.",
+        "A sufficient owner answer may resume an already explicitly authorized execution within its existing scope exactly once; a question, note, recommendation or answer alone does not authorize a new implementation goal. PR #87 remains owner-paused until a separate implementation instruction."
+      ]
+    },
+    {
+      "id": "CORE-BOARD-VOICE-LLM-FIRST",
+      "statement": "Project boards are voice-first and LLM-first: the user does not manually create, edit, drag, resize or type into board objects. Board mutations are performed only by the central Mira Live agent interpreting user speech and calling board tools. The board UI is primarily a read-only visual surface with camera/focus controlled via voice or minimal view controls.",
+      "critical": true,
+      "acceptance": [
+        "There is no primary user-facing text editor, drag-to-move, or toolbar for creating/editing stickies in the normal product path.",
+        "Board write tools are exposed to Mira (execution_origin=mira) and require authenticated Live session plus project editor rights.",
+        "Opening or closing the board does not break the ongoing voice session, microphone, transcript, or next turn admission.",
+        "Mira receives structural viewport/context (visible object ids, short texts, focus state) rather than relying on screenshots as the primary understanding path.",
+        "Guest share remains view-only; guests cannot mutate the board."
+      ]
+    },
+    {
+      "id": "CORE-BOARD-ANALYTICS-ISOLATION",
+      "statement": "Strong-model project analysis is an explicit, provided-context-only capability separate from owner self-development: it uses frozen authorized note, document, task, discussion or board evidence with consult_model/council_run, context_mode=provided_only, evidence_bundle and request_key, and cannot start development write tasks.",
+      "critical": true,
+      "acceptance": [
+        "Analytics client allowlist excludes start_task and other development write tools.",
+        "Analysis input is a frozen snapshot of selected authorized note, document, task, discussion or board source references/revisions plus an explicit question; no arbitrary project filesystem read for ordinary analysis.",
+        "Idempotent dispatch uses request_key; uncertain dispatch is represented as dispatch_unknown rather than blind retry.",
+        "Analysis results may be published back to the board as document cards; this does not grant development write access.",
+        "Analysis of an authorized note/document/task does not require board objects. Shared results use explicit project audiences, and typed addressed questions connect to the common answer/continuation path."
+      ]
+    },
+    {
+      "id": "CORE-PERSONAL-TIMELINE",
+      "statement": "Each user has one active personal conversation timeline across discussed projects; project focus and provider sessions do not create separate project chats or canvases.",
+      "critical": true,
+      "acceptance": [
+        "Durable message and turn IDs preserve text, voice references and typed widget blocks through reload/reconnect and late canonical transcription.",
+        "Shared project artifacts do not make the personal timeline readable by colleagues."
+      ]
+    },
+    {
+      "id": "CORE-INLINE-ONE-BOARD",
+      "statement": "Functional widget blocks are part of Mira's messages in the personal timeline; each project has one canonical board and the client mounts at most one board viewport, including optional expanded mode.",
+      "critical": true,
+      "acceptance": [
+        "Notes, questions, tasks and analysis expose useful content/actions inline; popup windows alone do not satisfy the requirement.",
+        "Switching/closing a board releases the prior renderer, large scene resources and subscriptions; historical board messages remain lightweight references.",
+        "Board content mutations remain Mira-only typed tools; pan/zoom/focus and explicit predefined actions are allowed without introducing a general text composer."
+      ]
+    },
+    {
+      "id": "CORE-PROJECT-NOTES",
+      "statement": "Basic project collaboration includes a durable shared note with repository Markdown, server-derived author identity and role list, in-app reading/listening/discussion and explicit project audience.",
+      "critical": true,
+      "acceptance": [
+        "A clear save-note command uses already accepted text, explicit Gemini structuring and a configured project repository write with receipt/readback; retries do not duplicate notes or files.",
+        "Reuse the existing my-data-hub text-summary schema/prompt/renderer through a narrow versioned capability/adaptation, without fake audio or a second transcription pipeline.",
+        "A second authorized participant can read in the app without a personal GitHub account and publish a related authored reply; full private conversation and source audio remain private.",
+        "Model-suggested tasks/decisions are labelled as proposals until an authorized user actually adopts them; author role snapshots do not grant permissions.",
+        "Repository visibility and access must match the configured note audience; a project-restricted note cannot be written to a public repository under the false protection of app ACL. Public notes require an explicitly public project binding."
+      ]
+    },
+    {
+      "id": "CORE-COLLABORATIVE-QUESTIONS",
+      "statement": "Questions are durable addressed collaboration objects shared by notes, discussion, tasks, readiness, analysis and owner-development; Mira uses common context naturally and supports individual or grouped answers.",
+      "critical": true,
+      "acceptance": [
+        "Questions bind current authorized recipients, source revisions, blocking/nonblocking dependencies and expected continuations; multiple roles per member are supported.",
+        "One utterance can answer several unambiguous questions; unknown, skip and defer are distinct valid outcomes and do not fabricate approval.",
+        "Viewing, swiping, notification delivery, noise and damaged turns do not constitute an answer; accepted typed answers are versioned and idempotent.",
+        "Sufficient partial answers allow unrelated nonblocking work to proceed while unresolved required dependencies remain visible."
+      ]
+    },
+    {
+      "id": "CORE-DURABLE-COLLABORATION",
+      "statement": "Accepted collaboration work and authorized question continuations progress on a bounded durable server worker independent of an open client or Live session; reading status never advances execution.",
+      "critical": true,
+      "acceptance": [
+        "Answer receipt and continuation intent are persisted together; lease/retry/restart and external readback prevent duplicate semantic effects.",
+        "A real note/analysis/task continuation and an explicitly authorized owner needs_owner continuation resume correctly after client close and service restart; acceptance may use a pre-existing execution or a reproducibly prepared bounded execution within the launched implementation.",
+        "Use the existing durable store and a small bounded queue/pump; no generic workflow engine or new broker is required for the prototype.",
+        "Owner-only development permissions and existing design/review/delivery gates remain enforced for every continuation."
+      ]
+    },
+    {
+      "id": "CORE-PERSONAL-FIRST-BRIEF",
+      "statement": "On generic opening communication Mira starts with important information addressed personally to the user; general project activity is offered afterward as an optional summary, and a concrete user request takes priority.",
+      "critical": true,
+      "acceptance": [
+        "App launch displays a quiet personal brief without unsolicited speech; a generic greeting may speak the personal priorities.",
+        "General activity can summarize authored changes with source links only after opt-in; declining or deferring does not trigger repeated offers on every reconnect.",
+        "Seen, answered and deferred states remain distinct; only authorized project information appears in the user's brief."
       ]
     }
   ]

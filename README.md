@@ -1,14 +1,17 @@
 # Projects Hub
 
+> **6 October 2026 design update:** [Basic collaboration and personal timeline](docs/product/20-basic-collaboration-and-personal-timeline.md) is the current owner contract. [Implementation task](docs/prompts/basic-collaboration-prototype-20261006.md) starts with a real shared project note between two people, then addressed questions/resume and a personal-first startup brief. [PR #87](https://github.com/onedayonemasterpiece/projects-hub/pull/87) remains paused; this documentation update does not implement or release that work. See the [source audit](docs/audits/collaboration-design-update-20261006.md) for the verified gaps.
+
 Voice-first project workspace built around **one central Live agent**. The current
 implementation follows the product specification in [docs/product](docs/product/README.md)
 and is the first working vertical, not the complete product.
 
 ## First vertical
 
-The PWA is dark-first and uses the floating-islands UI: a compact context island,
-an on-demand work island and a stable voice island. There is no chat-style transcript
-feed and no free-text composer.
+The PWA uses a compact context island and a stable voice island. The current
+collaboration contract requires one persistent personal timeline across projects,
+with functional inline widget messages and at most one mounted project-board viewport.
+A popup/expanded reader is optional. There is no general free-text composer.
 
 The backend is a small FastAPI modular monolith. A Live conversation is bound to
 actor + workspace + conversation, while each project tool checks its target again.
@@ -18,7 +21,9 @@ UI event projection.
 
 The central Gemini Live model owns semantic decisions and has typed deterministic tools
 for project catalogue/focus and durable memory. The backend does not contain another
-ASR, LLM router, classifier or summarizer.
+hidden ASR, LLM router or classifier. The owner-authorized note-structuring capability
+uses already accepted text with Gemini; it does not introduce a second audio pipeline
+or a second conversational orchestrator.
 
 Realtime microphone sessions keep provider automatic activity detection. Deliberate
 buffered/offline audio sessions use the shared `live-interaction` manual

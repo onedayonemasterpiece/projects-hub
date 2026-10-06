@@ -104,3 +104,20 @@ U02 — сообщение в текущем диалоге после перв�
 ## Материализация
 
 Этот пакет — owning product specification для Projects Hub. Исходные голоса и их исторические расшифровки остаются в IdeaHub без переписывания. Добавляется обратная ссылка из IdeaHub; закрытие registry/intake требует отдельной проверки полного маршрута и не подразумевается публикацией этих документов.
+
+## U06 / 6 октября: базовая коллаборация и личная лента
+
+Прямое уточнение владельца: одна личная действующая переписка через проекты; одна каноническая доска проекта и максимум одна доска в памяти/на экране; функциональные виджеты внутри переписки обязательны, popup дополнительный; лично адресованная информация прежде необязательных общих новостей; PR #87 приостановлен, требуется новая постановка `.md` и промпт. Это разрешение уточнить документацию и требования, не команда запустить приостановленную реализацию. Полный контракт — [20](20-basic-collaboration-and-personal-timeline.md).
+
+| ID | Голосовое | Требование |
+| --- | --- | --- |
+| V26 | [voice-20261005-130620-ffe0764d](https://github.com/onedayonemasterpiece/idea-hub/blob/369eafd1deb984a5307e4e441891c5db0b526be5/inbox/voice/2026/10/voice-20261005-130620-ffe0764d.md) | Доска проекта, карточки и сильные модели |
+| V27 | [voice-20261005-133011-41d66a29](https://github.com/onedayonemasterpiece/idea-hub/blob/369eafd1deb984a5307e4e441891c5db0b526be5/inbox/voice/2026/10/voice-20261005-133011-41d66a29.md) | Семидневный гостевой просмотр и sharing |
+| V28 | [voice-20261005-134623-9cf5bc26](https://github.com/onedayonemasterpiece/idea-hub/blob/369eafd1deb984a5307e4e441891c5db0b526be5/inbox/voice/2026/10/voice-20261005-134623-9cf5bc26.md) | Документы в разговоре и на доске |
+| V29 | [voice-20261005-135035-55f23d17](https://github.com/onedayonemasterpiece/idea-hub/blob/369eafd1deb984a5307e4e441891c5db0b526be5/inbox/voice/2026/10/voice-20261005-135035-55f23d17.md) | Суммаризация и sharing |
+| V30 | [voice-20261005-140450-2ca6ad24](https://github.com/onedayonemasterpiece/idea-hub/blob/369eafd1deb984a5307e4e441891c5db0b526be5/inbox/voice/2026/10/voice-20261005-140450-2ca6ad24.md) | Inline-превью и фокус на объекте |
+| V31 | [voice-20261006-135801-8cff983c](https://github.com/onedayonemasterpiece/idea-hub/blob/369eafd1deb984a5307e4e441891c5db0b526be5/inbox/voice/2026/10/voice-20261006-135801-8cff983c.md) | Асинхронные вопросы владельцу, участнику и роли |
+| V32 | [voice-20261006-160524-e27e95be](https://github.com/onedayonemasterpiece/idea-hub/blob/369eafd1deb984a5307e4e441891c5db0b526be5/inbox/voice/2026/10/voice-20261006-160524-e27e95be.md) | Заметки в Markdown, обработка готового текста, авторство/роли, reader и обсуждение |
+| V33 | [voice-20261006-164858-d13d5414](https://github.com/onedayonemasterpiece/idea-hub/blob/369eafd1deb984a5307e4e441891c5db0b526be5/inbox/voice/2026/10/voice-20261006-164858-d13d5414.md) | Контекстные пакеты вопросов, unknown/skip/later, принцип Оккама |
+
+После предыдущего source snapshot проверены две новые записи V32/V33. Полные расшифровки уточняют проектную заметку с Markdown/readback и author roles[], чтение внутри приложения, явное Gemini-структурирование готового текста, естественные контекстные пакеты вопросов, unknown/skip/later и приоритет работающего прототипа. Название репозитория приёма IdeaHub и автоматический заголовок не меняют owning project Projects Hub. Исходное состояние и проверенные reusable модули — [аудит](../audits/collaboration-design-update-20261006.md).

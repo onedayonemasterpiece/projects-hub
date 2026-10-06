@@ -1,6 +1,6 @@
 # Owner development: backlog-first orchestration
 
-Status: implementation contract for Projects Hub 0.1.20.
+Status: existing owner-development contract; collaboration continuation amendment added 2026-10-06. Earlier implementation/version evidence is historical. [Current collaboration design](20-basic-collaboration-and-personal-timeline.md) and [implementation task](../prompts/basic-collaboration-prototype-20261006.md) define the next slice. PR #87 remains paused.
 
 ## Product invariant
 
@@ -100,7 +100,7 @@ Rules:
 - unknown quota blocks new inference;
 - model and reasoning effort must exist in the live native catalogue;
 - no paid/API-key fallback;
-- one owner development execution is active at a time.
+- one owner development execution runs at a time; new accepted requests may wait durably in a bounded queue instead of being discarded because the worker is occupied.
 
 ## Usage accounting
 
@@ -131,3 +131,11 @@ For Projects Hub Android changes:
 - Android verifies the release manifest/APK and shows the normal visible update dialog when a newer signed versionCode exists.
 
 Backend/PWA-only changes do not manufacture an empty APK release.
+
+## 6 October amendment: questions and durable continuation
+
+An execution that needs a human decision emits typed addressed questions with the evidence/context, blocking dependency and allowed continuation. `needs_owner` must not be a dead-end Markdown status. The owner can answer, say unknown, skip or defer; these outcomes never fabricate an approval. A sufficient answer resumes the already authorized scope exactly once. A materially new implementation goal or changed authorization still requires an explicit owner command. Ordinary note discussion, accepting an analysis recommendation and creating a backlog item do not authorize implementation.
+
+Execution progress belongs to a bounded durable backend worker, independent of browser polling and Live session lifetime. `status` is read-only. Answer plus continuation intent are persisted together; retries/restarts use leases, idempotency keys and external receipt/readback. The MCP connection worker introduced in PR #114/#115 is transport lifecycle management and must be preserved; it does not replace durable product orchestration.
+
+Keep the existing design/implementation/review/rework/delivery path above and the reviewed model profiles. The separate Codex consultation ladder in [20](20-basic-collaboration-and-personal-timeline.md) does not silently replace the owner quality pipeline. The nearest prototype includes one actual resumed owner execution plus ordinary project collaboration; it does not build a generic workflow designer.
