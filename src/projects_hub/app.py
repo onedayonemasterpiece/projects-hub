@@ -244,14 +244,20 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        development_service = getattr(app.state, "development", None)
+        if development_service is not None and hasattr(
+            development_service, "start_background"
+        ):
+            await development_service.start_background()
         try:
             yield
         finally:
             host = getattr(app.state, "live_host", None)
             if host is not None and hasattr(host, "stop_all"):
                 await host.stop_all()
-            development_service = getattr(app.state, "development", None)
-            if development_service is not None and hasattr(development_service, "close"):
+            if development_service is not None and hasattr(
+                development_service, "close"
+            ):
                 await development_service.close()
             if owned_store:
                 store.close()

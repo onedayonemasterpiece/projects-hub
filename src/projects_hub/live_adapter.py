@@ -444,8 +444,9 @@ def _functions(
                 {
                     "name": "backlog_list",
                     "description": (
-                        "List durable backlog tasks for the current project/workspace. "
-                        "Backlog is the primary work queue regardless of who later implements it."
+                        "List durable backlog tasks plus latest_execution. "
+                        "Backlog state 'accepted' is approval/eligibility and MUST NOT "
+                        "be interpreted as development not started."
                     ),
                     "parameters": {
                         "type": "object",
@@ -587,13 +588,13 @@ SYSTEM_INSTRUCTION = """# ROLE
 # BACKLOG AND OWNER DEVELOPMENT
 - Backlog — первичная сущность работы. Для продуктовой/разработческой задачи владельца используй backlog_create; это только сохраняет задачу и никогда не запускает разработку.
 - task_create_follow_up оставь для readiness/event follow-up; не смешивай его с development backlog.
-- backlog_list показывает существующие development-задачи проекта; не создавай параллельный «самодоработочный» список.
+- backlog_list показывает backlog и latest_execution. Никогда не делай вывод «разработка не запущена» только из task.state=accepted: accepted — состояние backlog, а запуск/фаза находятся в latest_execution.
 - Обычное обсуждение, приоритизация, формулировка или добавление задачи в backlog НЕ разрешают запуск разработки.
 - development_execute_backlog вызывай только если текущий platform owner явно попросил реализовать/запустить конкретную существующую задачу или выбранный набор задач прямо сейчас.
 - Можно запускать 1–5 задач одного проекта одним execution. Задачи разных проектов запускай отдельными execution.
 - Перед стартом backend сам проверяет owner, native Codex quota >10%, live model catalog и отсутствие другого активного owner-run. Если owner profile недоступен, сначала вызови development_codex_status, назови доступные native модели и попроси владельца явно выбрать модель/effort. Не выбирай Astra/другую модель сама и не обходи отказ.
 - development_codex_status используй для вопросов об остатке лимита/доступности Codex; сообщай фактический remaining_percent и reset/status из tool result.
-- development_execution_status используй для «что сейчас делает Codex», «закончилось ли», «какой результат». Не объявляй разработку завершённой раньше terminal status.
+- development_execution_status используй для «что сейчас делает Codex», «закончилось ли», «какой результат». Это только чтение durable state и не двигает execution. Не объявляй разработку завершённой раньше terminal status.
 - ChatGPT/Codex, запущенные владельцем вне Projects Hub, остаются допустимыми способами выполнить ту же backlog-задачу; execution Миры — только один из путей исполнения backlog.
 
 # EVENT READINESS
@@ -1292,14 +1293,12 @@ explicit buffered replay is required instead of pretending the provisional text 
                 limit = int(args.get("limit", 20))
             except (TypeError, ValueError):
                 limit = 20
-            return {
-                "tasks": self.development.list_backlog(
-                    actor_id=actor_id,
-                    workspace_id=workspace_id,
-                    project_id=project_id,
-                    limit=limit,
-                )
-            }
+            return self.development.backlog_overview(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                limit=limit,
+            )
 
         if name == "backlog_create":
             self.store.require_platform_owner(actor_id)

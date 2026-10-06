@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -184,6 +185,32 @@ class FakeDevCoveer:
     async def close(self):
         self.closed = True
 
+
+class SlowStartDevCoveer(FakeDevCoveer):
+    def __init__(self) -> None:
+        super().__init__()
+        self.start_entered = asyncio.Event()
+        self.release_start = asyncio.Event()
+
+    async def start_codex_task(
+        self,
+        *,
+        project: str,
+        prompt: str,
+        model: str,
+        reasoning_effort: str,
+    ):
+        if model == "gpt-6-astra":
+            self.start_entered.set()
+            await self.release_start.wait()
+        return await super().start_codex_task(
+            project=project,
+            prompt=prompt,
+            model=model,
+            reasoning_effort=reasoning_effort,
+        )
+
+
 def setup(tmp_path: Path):
     store = DurableStore(tmp_path / "data")
     boot = store.ensure_platform_owner("Owner")
@@ -310,6 +337,7 @@ async def test_owner_runs_two_thread_quality_pipeline_to_delivery(tmp_path: Path
         assert starts[0]["model"] == "gpt-6-astra"
         assert starts[0]["reasoning_effort"] == "high"
 
+        await service.advance_active_once()
         implementation = await service.status(
             actor_id=boot["actor"]["id"],
             workspace_id=boot["workspace"]["id"],
@@ -322,6 +350,7 @@ async def test_owner_runs_two_thread_quality_pipeline_to_delivery(tmp_path: Path
         assert starts[1]["model"] == "gpt-6.1-sol"
         assert starts[1]["reasoning_effort"] == "medium"
 
+        await service.advance_active_once()
         review = await service.status(
             actor_id=boot["actor"]["id"],
             workspace_id=boot["workspace"]["id"],
@@ -336,6 +365,7 @@ async def test_owner_runs_two_thread_quality_pipeline_to_delivery(tmp_path: Path
         assert len(quality_continuations) == 1
         assert quality_continuations[0]["access"] == "read"
 
+        await service.advance_active_once()
         delivery = await service.status(
             actor_id=boot["actor"]["id"],
             workspace_id=boot["workspace"]["id"],
@@ -349,6 +379,7 @@ async def test_owner_runs_two_thread_quality_pipeline_to_delivery(tmp_path: Path
         ]
         assert len(implementation_continuations) == 1
 
+        await service.advance_active_once()
         done = await service.status(
             actor_id=boot["actor"]["id"],
             workspace_id=boot["workspace"]["id"],
@@ -388,12 +419,14 @@ async def test_running_implementation_exposes_testing_phase(tmp_path: Path):
         )
         run_id = execution["execution"]["id"]
 
+        await service.advance_active_once()
         await service.status(
             actor_id=boot["actor"]["id"],
             workspace_id=boot["workspace"]["id"],
             execution_id=run_id,
             sync=True,
         )
+        await service.advance_active_once()
         testing = await service.status(
             actor_id=boot["actor"]["id"],
             workspace_id=boot["workspace"]["id"],
@@ -424,6 +457,7 @@ async def test_review_reuses_two_threads_and_reworks_before_delivery(tmp_path: P
 
         phases = []
         for _ in range(6):
+            await service.advance_active_once()
             current = await service.status(
                 actor_id=boot["actor"]["id"],
                 workspace_id=boot["workspace"]["id"],
@@ -495,6 +529,226 @@ async def test_non_platform_owner_cannot_read_or_start_development(tmp_path: Pat
         assert error.value.code == "FORBIDDEN"
         assert owner != member
     finally:
+        store.close()
+
+
+
+@pytest.mark.asyncio
+async def test_status_read_does_not_advance_running_execution(tmp_path: Path):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = FakeDevCoveer()
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+
+        before_reads = len([1 for name, _ in fake.calls if name == "read"])
+        first = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+            sync=True,
+        )
+        second = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+            sync=True,
+        )
+
+        assert first["execution"]["phase"] == "designing"
+        assert second["execution"]["phase"] == "designing"
+        assert len([1 for name, _ in fake.calls if name == "read"]) == before_reads
+        assert len([1 for name, _ in fake.calls if name == "start"]) == 1
+
+        await service.advance_active_once()
+        after = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+        assert after["execution"]["phase"] == "implementing"
+        assert len([1 for name, _ in fake.calls if name == "start"]) == 2
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_status_poll_during_start_never_creates_missing_stage(tmp_path: Path):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = SlowStartDevCoveer()
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        launch = asyncio.create_task(
+            service.start(
+                actor_id=boot["actor"]["id"],
+                workspace_id=boot["workspace"]["id"],
+                task_ids=[task["id"]],
+            )
+        )
+        await asyncio.wait_for(fake.start_entered.wait(), timeout=1)
+
+        with store._lock:
+            row = store.db.execute(
+                "SELECT id FROM task_executions ORDER BY created_at_ms DESC LIMIT 1"
+            ).fetchone()
+        assert row is not None
+        snapshot = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=str(row["id"]),
+            sync=True,
+        )
+        assert snapshot["execution"]["status"] == "starting"
+        assert snapshot["execution"]["error_code"] is None
+        assert snapshot["execution"]["finished_at_ms"] is None
+        assert snapshot["execution"]["stages"] == []
+
+        fake.release_start.set()
+        started = await asyncio.wait_for(launch, timeout=1)
+        execution = started["execution"]
+        assert execution["status"] == "running"
+        assert execution["phase"] == "designing"
+        assert execution["error_code"] is None
+        assert execution["finished_at_ms"] is None
+        assert len(execution["stages"]) == 1
+    finally:
+        fake.release_start.set()
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_background_worker_progresses_without_status_reads(tmp_path: Path):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = FakeDevCoveer()
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service._background_interval_seconds = 0.01
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+        await service.start_background()
+
+        deadline = asyncio.get_running_loop().time() + 2.0
+        while True:
+            snapshot = await service.status(
+                actor_id=boot["actor"]["id"],
+                workspace_id=boot["workspace"]["id"],
+                execution_id=execution_id,
+            )
+            if snapshot["execution"]["status"] == "completed":
+                break
+            if asyncio.get_running_loop().time() >= deadline:
+                raise AssertionError(snapshot)
+            await asyncio.sleep(0.01)
+
+        assert snapshot["execution"]["phase"] == "ready"
+        assert [
+            stage["stage"] for stage in snapshot["execution"]["stages"]
+        ] == ["design", "implementation", "review", "delivery"]
+        assert service.list_backlog(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            project_id=project["id"],
+        )[0]["state"] == "done"
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_backlog_overview_keeps_running_execution_visible_after_reopen(
+    tmp_path: Path,
+):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = FakeDevCoveer()
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+
+        overview = service.backlog_overview(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            project_id=project["id"],
+        )
+
+        assert overview["tasks"][0]["state"] == "accepted"
+        assert overview["latest_execution"]["id"] == started["execution"]["id"]
+        assert overview["latest_execution"]["status"] == "running"
+        assert overview["latest_execution"]["phase"] == "designing"
+        assert "accepted" in overview["backlog_state_semantics"]
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_self_development_retargets_design_before_implementation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = FakeDevCoveer()
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+        assert started["execution"]["project_hint"] == "projects-hub"
+
+        monkeypatch.setenv(
+            "PROJECTS_HUB_SELF_REPOSITORY",
+            "onedayonemasterpiece/projects-hub",
+        )
+        monkeypatch.setenv(
+            "PROJECTS_HUB_SELF_DEVCOVEER_PROJECT",
+            "projects-hub-owner",
+        )
+
+        await service.advance_active_once()
+        recovered = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+
+        assert recovered["execution"]["project_hint"] == "projects-hub-owner"
+        assert recovered["execution"]["status"] == "running"
+        assert recovered["execution"]["phase"] == "designing"
+        assert recovered["execution"]["error_code"] is None
+        assert recovered["execution"]["finished_at_ms"] is None
+        assert [stage["status"] for stage in recovered["execution"]["stages"]] == [
+            "superseded",
+            "running",
+        ]
+        starts = [arguments for name, arguments in fake.calls if name == "start"]
+        assert [item["project"] for item in starts] == [
+            "projects-hub",
+            "projects-hub-owner",
+        ]
+        assert all(item["model"] == "gpt-6-astra" for item in starts)
+    finally:
+        await service.close()
         store.close()
 
 
