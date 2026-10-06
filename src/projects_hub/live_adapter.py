@@ -8,7 +8,13 @@ from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any, Callable
 
-from .analytics import AnalyticsService
+from .analytics import (
+    ANALYSIS_MODEL_OPTIONS,
+    CODEX_ANALYSIS_LADDER,
+    CODEX_COUNCIL_DEFAULT_MODEL,
+    DEFAULT_ANALYSIS_MODEL,
+    AnalyticsService,
+)
 from .board import BoardService
 from .board_view_context import BoardViewContextStore
 from .device_commands import DeviceCommandService
@@ -33,6 +39,7 @@ from .sharing import SharingService
 from .store import DurableStore, StoreError
 
 log = logging.getLogger("projects_hub.live")
+assert CODEX_ANALYSIS_LADDER[0] == CODEX_COUNCIL_DEFAULT_MODEL == DEFAULT_ANALYSIS_MODEL
 
 
 def _functions(
@@ -560,7 +567,7 @@ def _functions(
                         "run_id": {"type": "string"},
                         "model": {
                             "type": "string",
-                            "enum": ["kimi_k3", "deepseek", "council_free", "council_pro"],
+                            "enum": list(ANALYSIS_MODEL_OPTIONS),
                         },
                         "purpose": {
                             "type": "string",
@@ -753,6 +760,10 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Для содержательного анализа конкретных стикеров используй board_analysis action=start только с явным списком object_ids из текущей доски. Модель получает замороженные ревизии этих объектов, а не произвольный project checkout.
 - Не объявляй анализ завершённым, пока board_analysis status не вернул completed. dispatch_unknown означает «исход запуска уточняется», а не разрешение запустить второй анализ.
 - Готовый отчёт остаётся Markdown-документом. action=publish добавляет на доску только ссылочную document-card; полный текст не копируется в объект доски.
+- Для обычной сильной консультации при доступном native Codex лимите (>10% после reserve gate) используй лестницу точности строго по порядку: gpt_6_luna_medium → gpt_6_luna_high → gpt_6_1_sol_low → gpt_6_1_sol_medium → gpt_6_1_sol_high → gpt_6_astra_low → gpt_6_astra_medium.
+- Один analysis run выбирает ровно одну модель. Не запускай всю лестницу параллельно и не делай скрытый fan-out. Начинай с Luna Medium; переходи на следующую ступень только после terminal результата, если он действительно недостаточен для цели пользователя: остались существенные противоречия, пограничные случаи, слабые требования/вопросы или нерешённый системный риск.
+- Если конкретную модель явно выбрал пользователь, не подменяй её молча. Если native Codex вернул quota/reserve unavailable, не пробуй следующую Codex-ступень: у неё тот же лимит. Kimi K3, DeepSeek, council_free и council_pro остаются отдельными доступными альтернативами.
+- Если более широкий консилиум собирается из нескольких независимых консультаций и нужен Codex-участник, по умолчанию используй gpt_6_luna_medium; повышай его только по конкретной причине. Это не меняет семантику существующих council_free/council_pro.
 - Бесплатный model=council_free остаётся fail-closed: если OpenCode free tier недоступен при безопасных deny read/shell, назови режим временно недоступным и не ослабляй изоляцию.
 - Для рабочего NVIDIA-консилиума используй model=council_pro: Kimi K3 + DeepSeek запускаются автоматически через два независимых credential/project slot.
 - Пользовательское подтверждение бюджета для NVIDIA не требуется. Если оба NVIDIA-слота заняты, честно сообщи, что консилиум ждёт capacity, и не запускай второй дубликат с новым request_key.
@@ -1414,7 +1425,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                 board_id=board["id"],
                 object_ids=[str(item) for item in raw_object_ids],
                 command_id=command_id,
-                model=str(args.get("model") or "kimi_k3"),
+                model=str(args.get("model") or DEFAULT_ANALYSIS_MODEL),
                 purpose=str(args.get("purpose") or "edge_cases"),
                 question=str(args.get("question") or ""),
             )
