@@ -489,7 +489,7 @@ Read the updated specification and fix all material findings. Re-run the require
         return f"""Independent quality review ACCEPTED the implementation of:
 {spec_path}
 
-Now finish delivery using the repository's normal path. Merge/publish only the accepted implementation, run required CI, deploy and verify production when applicable. If native Android changed, produce the normal signed Android release/update manifest and verify the release; if only backend/PWA changed, deploy and verify that path instead. Do not broaden scope. Report the actual delivered version/release, production verification and any genuine blocker."""
+Now finish delivery using the repository's normal path. Merge/publish only the accepted implementation and wait for the required CI. Never deploy a branch-only/worktree-only commit. For Projects Hub production, refresh origin/main after merge and deploy only the exact merged SHA from fresh origin/main history through the canonical installer. Verify that the running service, static assets and release metadata all resolve to that same immutable release. If native Android changed, produce the normal signed Android release/update manifest and verify the release; if only backend/PWA changed, deploy and verify that path instead. Do not broaden scope. Report the actual delivered version/release, production verification and any genuine blocker."""
 
     @staticmethod
     def _review_verdict(summary: str) -> str | None:
