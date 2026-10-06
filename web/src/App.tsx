@@ -38,6 +38,7 @@ import {
 import { replayLocalVoiceSource } from "./bufferedReplay";
 import CollaborationTimeline from "./CollaborationTimeline";
 import CollaborationQuestions from "./CollaborationQuestions";
+import InlineBoard, { type BoardUiCommand } from "./InlineBoard";
 import { recoverServerVoiceSource } from "./serverRecovery";
 import { mergeTranscript, resolveTerminalVoiceState, selectProvisionalCaption, speechStartsNewUserBubble } from "./voiceUiContract.js";
 import {
@@ -173,6 +174,8 @@ export default function App() {
   const [voiceState, setVoiceState] = useState("off");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [collaborationRefresh, setCollaborationRefresh] = useState(0);
+  const [boardProjectId, setBoardProjectId] = useState<string | null>(null);
+  const [boardCommand, setBoardCommand] = useState<BoardUiCommand | null>(null);
   const [interimInputTranscript, setInterimInputTranscript] = useState("");
   const [inputTranscriptSeen, setInputTranscriptSeen] = useState(false);
   const [speechActive, setSpeechActive] = useState(false);
@@ -488,6 +491,25 @@ export default function App() {
       turnHasInput.current = false;
       assistantTranscriptIndex.current = -1;
     } else if (event.type === "tool_result" && event.status === "ok") {
+      const toolResult = (
+        event.result && typeof event.result === "object"
+          ? event.result
+          : null
+      ) as { ui_command?: unknown } | null;
+      const uiCommand = (
+        toolResult?.ui_command && typeof toolResult.ui_command === "object"
+          ? toolResult.ui_command
+          : null
+      ) as BoardUiCommand | null;
+      if (uiCommand?.kind === "board") {
+        if (uiCommand.action === "close") {
+          setBoardProjectId(null);
+          setBoardCommand(null);
+        } else if (uiCommand.project_id) {
+          setBoardProjectId(uiCommand.project_id);
+          setBoardCommand(uiCommand);
+        }
+      }
       if ([
         "project_note_create",
         "project_note_reply",
@@ -1397,6 +1419,19 @@ export default function App() {
                     refreshKey={collaborationRefresh}
                     onChanged={() => setCollaborationRefresh(value => value + 1)}
                   />
+                  {conversation && boardProjectId && (
+                    <InlineBoard
+                      workspaceId={boot.workspace.id}
+                      conversationId={conversation.id}
+                      projectId={boardProjectId}
+                      clientInstanceId={clientInstanceId}
+                      command={boardCommand}
+                      onClose={() => {
+                        setBoardProjectId(null);
+                        setBoardCommand(null);
+                      }}
+                    />
+                  )}
                 </>
               )}
               {interimInputTranscript && (
