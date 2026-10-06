@@ -13,7 +13,6 @@ import {
   analysisReportUrl,
   boardHistory,
   cancelAnalysisRun,
-  confirmAnalysisRun,
   createBoardShare,
   getAnalysisMaterialization,
   getAnalysisRun,
@@ -879,24 +878,6 @@ export function BoardShell({
     }
   };
 
-  const confirmCurrentAnalysis = async () => {
-    if (!analysisRun || analysisRun.status !== "confirmation_required" || analysisBusy) return;
-    setAnalysisBusy(true);
-    try {
-      const run = await confirmAnalysisRun(workspaceId, analysisRun.id);
-      setAnalysisRun(run);
-      setStatus(
-        run.status === "confirmation_required"
-          ? "План изменился — требуется новое подтверждение."
-          : "Платный консилиум подтверждён.",
-      );
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Не удалось подтвердить консилиум");
-    } finally {
-      setAnalysisBusy(false);
-    }
-  };
-
   const cancelCurrentAnalysis = async () => {
     if (!analysisRun || analysisBusy) return;
     setAnalysisBusy(true);
@@ -1218,7 +1199,7 @@ export function BoardShell({
                     <option value="kimi_k3">Kimi K3</option>
                     <option value="deepseek">DeepSeek</option>
                     <option value="council_free">Консилиум · free (может быть недоступен)</option>
-                    <option value="council_pro">Консилиум · Kimi + DeepSeek · paid</option>
+                    <option value="council_pro">Консилиум · Kimi + DeepSeek · NVIDIA</option>
                   </select>
                 </label>
                 <label>
@@ -1251,6 +1232,12 @@ export function BoardShell({
               <span className="board-analysis-note">
                 Модель получает только замороженную версию выбранного объекта, без доступа к проектным файлам.
               </span>
+              {analysisModel === "council_pro" && (
+                <span className="board-analysis-note">
+                  NVIDIA-консилиум запускается автоматически: Kimi K3 + DeepSeek, максимум два
+                  параллельных NVIDIA inference-вызова на двух независимых credential/project slot.
+                </span>
+              )}
             </>
           )}
 
@@ -1267,51 +1254,16 @@ export function BoardShell({
                 <pre className="board-analysis-report">{analysisRun.result_markdown}</pre>
               ) : (
                 <p className="board-analysis-wait">
-                  {analysisRun.status === "confirmation_required"
-                    ? "Платный консилиум подготовлен и ещё не запущен."
-                    : analysisRun.status === "confirming"
-                      ? "Подтверждение отправляется; повторно не запускаю."
-                      : analysisRun.status === "dispatch_unknown"
-                        ? "Уточняю исход запуска без повторной отправки…"
-                        : analysisRun.status === "failed"
+                  {analysisRun.status === "waiting_capacity"
+                    ? "Два NVIDIA-слота заняты. Консилиум ждёт свободный слот…"
+                    : analysisRun.status === "dispatch_unknown"
+                      ? "Уточняю исход запуска без повторной отправки…"
+                      : analysisRun.status === "failed"
                           ? "Анализ завершился ошибкой."
                           : analysisRun.status === "cancelled"
                             ? "Анализ отменён."
                             : "Анализ выполняется…"}
                 </p>
-              )}
-              {analysisRun.status === "confirmation_required" && analysisRun.confirmation_plan && (
-                <div className="board-analysis-confirmation">
-                  <strong>Платный план требует отдельного подтверждения</strong>
-                  <span>
-                    Участники: {(analysisRun.confirmation_plan.participants ?? [])
-                      .map((item) => item.model ?? item.provider ?? "model")
-                      .join(" · ")}
-                  </span>
-                  <span>
-                    План вызовов: {analysisRun.confirmation_plan.usagePlan?.totalCalls ?? "?"}
-                    {" · NVIDIA: "}
-                    {analysisRun.confirmation_plan.usagePlan?.nvidiaCalls ?? "?"}
-                    {" · максимум NVIDIA-попыток: "}
-                    {analysisRun.confirmation_plan.usagePlan?.maxNvidiaAttempts ?? "?"}
-                  </span>
-                  <span>
-                    Денежная стоимость провайдером здесь не опубликована; подтверждается именно
-                    показанный модельный/attempt budget.
-                  </span>
-                  {analysisRun.confirmation_plan.confirmationExpiresAt && (
-                    <span>
-                      Подтверждение действует до{" "}
-                      {new Date(analysisRun.confirmation_plan.confirmationExpiresAt).toLocaleString()}
-                    </span>
-                  )}
-                  <button
-                    onClick={() => void confirmCurrentAnalysis()}
-                    disabled={analysisBusy}
-                  >
-                    Явно подтвердить платный консилиум
-                  </button>
-                </div>
               )}
               {analysisRun.status === "completed" && (
                 <div className="board-analysis-materialization">
@@ -1405,7 +1357,7 @@ export function BoardShell({
                 </div>
               )}
               <div className="board-analysis-actions">
-                {!["completed", "failed", "cancelled", "blocked", "confirmation_required"].includes(analysisRun.status) && (
+                {!["completed", "failed", "cancelled", "blocked"].includes(analysisRun.status) && (
                   <button onClick={() => void cancelCurrentAnalysis()} disabled={analysisBusy}>
                     Отменить
                   </button>
