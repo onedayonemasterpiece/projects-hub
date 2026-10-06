@@ -280,6 +280,33 @@ class CollaborationAnalysisService:
                 )
                 created += 1
 
+            # A confirmed owner-resume may have been reconciled by the
+            # development worker after a lost HTTP/MCP response. Preserve the
+            # accepted answer on the common question object before the generic
+            # "resolved elsewhere" cleanup below.
+            applied_resumes = self.store.db.execute(
+                """SELECT q.id AS question_id,r.answer_text,r.created_at_ms
+                   FROM owner_development_questions q
+                   JOIN development_owner_resumes r
+                     ON r.execution_id=q.execution_id
+                   WHERE q.state IN ('open','deferred')
+                     AND r.status='applied'
+                   ORDER BY r.created_at_ms DESC"""
+            ).fetchall()
+            seen_questions: set[str] = set()
+            for applied in applied_resumes:
+                question_id = str(applied["question_id"])
+                if question_id in seen_questions:
+                    continue
+                seen_questions.add(question_id)
+                self.store.db.execute(
+                    """UPDATE owner_development_questions
+                       SET state='resolved',disposition='answer',answer_text=?,
+                           deferred_until_ms=NULL,updated_at_ms=?
+                       WHERE id=? AND state IN ('open','deferred')""",
+                    (applied["answer_text"], now, question_id),
+                )
+
             # If the execution was resumed by another authorized surface, the old
             # question stops being actionable without inventing an answer.
             self.store.db.execute(
@@ -980,6 +1007,29 @@ class CollaborationAnalysisService:
                     raise StoreError("COLLABORATION_COMMAND_CONFLICT", "answer command_id conflict")
                 return json.loads(existing["receipt_json"])
             if row["state"] not in {"open", "deferred"}:
+                if (
+                    disposition == "answer"
+                    and row["state"] == "resolved"
+                    and row["disposition"] == "answer"
+                    and str(row["answer_text"] or "").strip() == clean_body
+                ):
+                    execution_row = self.store.db.execute(
+                        "SELECT * FROM task_executions WHERE id=?",
+                        (row["execution_id"],),
+                    ).fetchone()
+                    execution = (
+                        self.development._execution_public(execution_row)
+                        if execution_row is not None
+                        else None
+                    )
+                    return {
+                        "question_id": question_id,
+                        "execution_id": row["execution_id"],
+                        "state": "resolved",
+                        "disposition": "answer",
+                        "continuation": "resumed",
+                        "execution": execution,
+                    }
                 raise StoreError("QUESTION_ALREADY_ANSWERED", "Question already has a disposition")
             snapshot = dict(row)
 
