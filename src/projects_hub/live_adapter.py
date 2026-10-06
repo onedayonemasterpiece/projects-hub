@@ -446,6 +446,27 @@ def _functions(
                 },
             },
             {
+                "name": "collaboration_question_respond",
+                "description": (
+                    "Respond to one non-analysis collaboration question, currently including "
+                    "owner-development needs_owner questions. Use answer, unknown, skip or later. "
+                    "Backend preserves the existing authorized execution and never starts a new one."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "question_id": {"type": "string"},
+                        "disposition": {
+                            "type": "string",
+                            "enum": ["answer", "unknown", "skip", "later"],
+                        },
+                        "body": {"type": "string", "maxLength": 12000},
+                        "deferred_until_ms": {"type": "integer"},
+                    },
+                    "required": ["question_id", "disposition"],
+                },
+            },
+            {
                 "name": "collaboration_continuation_status",
                 "description": (
                     "Read one durable collaboration continuation. This is read-only and never "
@@ -736,6 +757,7 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Когда вопросы адресованы текущему человеку, collaboration_questions_inbox даёт их общий контекст. Пользователь может одной репликой ответить на несколько; передай их одним collaboration_questions_answer.
 - answer, unknown, skip и later — разные состояния. Blocking continuation запускается только когда все blocking questions получили disposition=answer. later сохраняет отложенную зависимость; unknown/skip не выдумывают решение и не снимают blocker.
 - Простое чтение статуса/вопроса никогда не продвигает worker.
+- Если collaboration_questions_inbox возвращает source_kind=owner_development, отвечай через collaboration_question_respond. Только platform owner сможет реально resume; backend продолжит тот же execution/thread и не создаст новую разработку.
 
 # MEMORY
 - Для явного «запомни/сохрани» и явно долговечной информации используй memory_commit_voice_source.
@@ -1475,6 +1497,7 @@ explicit buffered replay is required instead of pretending the provisional text 
             "project_note_analyze",
             "collaboration_questions_inbox",
             "collaboration_questions_answer",
+            "collaboration_question_respond",
             "collaboration_continuation_status",
         }:
             if self.collaboration is None or self.collaboration_analysis is None:
@@ -1523,6 +1546,22 @@ explicit buffered replay is required instead of pretending the provisional text 
                     analysis_id=str(args.get("analysis_id") or ""),
                     command_id=command_id,
                     responses=[dict(item) for item in raw if isinstance(item, dict)],
+                )
+            if name == "collaboration_question_respond":
+                command_id, _args_sha = self._command_id(session, name, args)
+                deferred = args.get("deferred_until_ms")
+                try:
+                    deferred_value = int(deferred) if deferred is not None else None
+                except (TypeError, ValueError):
+                    raise StoreError("INVALID_ARGUMENT", "deferred_until_ms is invalid") from None
+                return await self.collaboration_analysis.answer_owner_development_question(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    question_id=str(args.get("question_id") or ""),
+                    command_id=command_id,
+                    disposition=str(args.get("disposition") or ""),
+                    body=str(args.get("body") or ""),
+                    deferred_until_ms=deferred_value,
                 )
             if name == "collaboration_continuation_status":
                 return self.collaboration_analysis.job_status(
