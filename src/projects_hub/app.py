@@ -14,6 +14,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .auth import COOKIE_NAME, SESSION_TTL_SECONDS, issue_session, parse_session
+from .collaboration import CollaborationService
+from .collaboration_api import attach_collaboration_routes
 from .github_app import GitHubAppError
 from .github_connections import GitHubConnections
 from .device_commands import DeviceCommandService
@@ -128,6 +130,7 @@ def _http_for_code(code: str) -> int:
         "GITHUB_WRITE_POLICY_DENIED",
         "GITHUB_WRITE_PERMISSION_MISSING",
         "GITHUB_WEBHOOK_INVALID",
+        "PROJECT_FORBIDDEN",
         "DEVICE_COMMAND_CLAIM_INVALID",
     }:
         return 403
@@ -154,6 +157,10 @@ def _http_for_code(code: str) -> int:
         "DEVICE_READBACK_REQUIRED",
         "LIVE_TRANSPORT_MISMATCH",
         "LIVE_SOCKET_BUSY",
+        "GITHUB_PROJECT_DOCS_REQUIRED",
+        "GITHUB_WRITE_CONFLICT",
+        "COLLABORATION_COMMAND_CONFLICT",
+        "GITHUB_READBACK_MISMATCH",
     }:
         return 409
     if code.startswith("INVALID") or code in {"SOURCE_TRANSCRIPT_PENDING"}:
@@ -235,6 +242,7 @@ def create_app(
     device_commands: DeviceCommandService | None = None,
     readiness: ReadinessService | None = None,
     development: DevelopmentService | None = None,
+    collaboration: CollaborationService | None = None,
     regional_knowledge_factory: Any | None = None,
 ) -> FastAPI:
     configure_logging()
@@ -264,6 +272,9 @@ def create_app(
     app.state.device_commands = device_commands or DeviceCommandService(store)
     app.state.readiness = readiness or ReadinessService(store)
     app.state.development = development or DevelopmentService(store, app.state.readiness)
+    app.state.collaboration = collaboration or CollaborationService(
+        store, app.state.github_connections
+    )
     def host() -> Any:
         if app.state.live_host is None:
             app.state.live_host = build_live_host(
@@ -272,6 +283,7 @@ def create_app(
                 readiness=app.state.readiness,
                 development=app.state.development,
                 github_connections=app.state.github_connections,
+                collaboration=app.state.collaboration,
                 regional_knowledge_factory=regional_knowledge_factory,
             )
         return app.state.live_host
@@ -334,6 +346,12 @@ def create_app(
         except StoreError as exc:
             raise _error(exc) from exc
         return actor_id
+
+    attach_collaboration_routes(
+        app,
+        service=app.state.collaboration,
+        actor_id_from_request=actor_id_from_request,
+    )
 
     @app.exception_handler(StoreError)
     async def store_error(_request: Request, exc: StoreError):
