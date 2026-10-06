@@ -56,5 +56,9 @@ test("board publishes bounded structural viewport context without client semanti
   assert.match(shell, /visible_object_ids: visibleObjectIds/);
   assert.match(shell, /selected_object_ids: selectedId \? \[selectedId\] : \[\]/);
   assert.match(shell, /focused_object_id: focusedId/);
-  assert.doesNotMatch(shell, /text:\s*object\.text/);
+  const contextStart = shell.indexOf("updateBoardViewContext(conversationId");
+  const contextEnd = shell.indexOf("}).catch", contextStart);
+  assert.ok(contextStart >= 0 && contextEnd > contextStart);
+  const contextPayload = shell.slice(contextStart, contextEnd);
+  assert.doesNotMatch(contextPayload, /text\s*:/);
 });
