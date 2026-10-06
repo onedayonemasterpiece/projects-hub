@@ -86,6 +86,7 @@ class CollaborationService:
                     kind TEXT NOT NULL,
                     object_kind TEXT NOT NULL,
                     object_id TEXT NOT NULL,
+                    parent_object_id TEXT,
                     addressed_to_actor_id TEXT REFERENCES actors(id),
                     summary TEXT NOT NULL,
                     created_at_ms INTEGER NOT NULL
@@ -297,11 +298,11 @@ class CollaborationService:
                 self.store.db.execute(
                     """INSERT INTO collaboration_events(
                            workspace_id,project_id,actor_id,kind,object_kind,object_id,
-                           addressed_to_actor_id,summary,created_at_ms)
-                       VALUES(?,?,?,?,?,?,?,?,?)""",
+                           parent_object_id,addressed_to_actor_id,summary,created_at_ms)
+                       VALUES(?,?,?,?,?,?,?,?,?,?)""",
                     (
                         workspace_id, project_id, actor_id, "note_created", "note",
-                        note_id, None, clean_title, now,
+                        note_id, None, None, clean_title, now,
                     ),
                 )
                 row = self.store.db.execute(
@@ -441,11 +442,11 @@ class CollaborationService:
                 self.store.db.execute(
                     """INSERT INTO collaboration_events(
                            workspace_id,project_id,actor_id,kind,object_kind,object_id,
-                           addressed_to_actor_id,summary,created_at_ms)
-                       VALUES(?,?,?,?,?,?,?,?,?)""",
+                           parent_object_id,addressed_to_actor_id,summary,created_at_ms)
+                       VALUES(?,?,?,?,?,?,?,?,?,?)""",
                     (
                         workspace_id, note["project_id"], actor_id, "note_replied", "reply",
-                        reply_id, note["author"]["id"], clean_body[:240], now,
+                        reply_id, note_id, note["author"]["id"], clean_body[:240], now,
                     ),
                 )
                 row = self.store.db.execute(
@@ -486,6 +487,7 @@ class CollaborationService:
                 "kind": row["kind"],
                 "object_kind": row["object_kind"],
                 "object_id": row["object_id"],
+                "parent_object_id": row["parent_object_id"],
                 "addressed_to_actor_id": row["addressed_to_actor_id"],
                 "summary": row["summary"],
                 "created_at_ms": int(row["created_at_ms"]),
