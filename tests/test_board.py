@@ -74,12 +74,14 @@ def test_different_objects_do_not_conflict_same_object_does(tmp_path: Path):
             command_id="cmd_create_a", operation="create", object_id="obj_a01",
             expected_object_revision=None,
             payload={"type": "sticky", "text": "A", "style": {"color": "yellow"}},
+            execution_origin="mira",
         )
         b = board.apply_command(
             actor_id=actor, workspace_id=workspace, board_id=board_id,
             command_id="cmd_create_b", operation="create", object_id="obj_b01",
             expected_object_revision=None,
             payload={"type": "sticky", "text": "B", "style": {"color": "blue"}},
+            execution_origin="mira",
         )
         assert (a["board_seq"], b["board_seq"]) == (1, 2)
 
@@ -88,12 +90,14 @@ def test_different_objects_do_not_conflict_same_object_does(tmp_path: Path):
             command_id="cmd_move_a01", operation="move", object_id="obj_a01",
             expected_object_revision=1,
             payload={"geometry": {"x": 100, "y": 20}},
+            execution_origin="mira",
         )
         edited = board.apply_command(
             actor_id=actor, workspace_id=workspace, board_id=board_id,
             command_id="cmd_edit_b01", operation="update", object_id="obj_b01",
             expected_object_revision=1,
             payload={"text": "B2"},
+            execution_origin="mira",
         )
         assert moved["object_revision"] == edited["object_revision"] == 2
 
@@ -102,6 +106,7 @@ def test_different_objects_do_not_conflict_same_object_does(tmp_path: Path):
                 actor_id=actor, workspace_id=workspace, board_id=board_id,
                 command_id="cmd_stale_a1", operation="update", object_id="obj_a01",
                 expected_object_revision=1, payload={"text": "stale"},
+                execution_origin="mira",
             )
         assert exc.value.code == "OBJECT_CONFLICT"
         assert board.snapshot(actor, workspace, board_id)["objects"][0]["text"] == "A"
@@ -119,6 +124,7 @@ def test_command_idempotency_tail_search_history_and_ticket(tmp_path: Path):
             command_id="cmd_idem_001", operation="create", object_id="obj_note1",
             expected_object_revision=None,
             payload={"text": "Критический риск API", "style": {"color": "pink"}},
+            execution_origin="mira",
         )
         first = board.apply_command(**kwargs)
         again = board.apply_command(**kwargs)
