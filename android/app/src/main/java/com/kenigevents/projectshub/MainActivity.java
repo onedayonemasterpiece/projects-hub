@@ -68,6 +68,12 @@ public final class MainActivity extends Activity {
         }
     };
 
+    private final Runnable pendingUpdateResume = () -> {
+        if (updater != null) {
+            updater.resumePendingInstall();
+        }
+    };
+
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -154,6 +160,9 @@ public final class MainActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         handleGitHubReturn(intent);
+        if (updater != null) {
+            updater.resumePendingInstall();
+        }
     }
 
     @Override
@@ -161,14 +170,18 @@ public final class MainActivity extends Activity {
         super.onResume();
         main.removeCallbacks(pairingProbe);
         main.post(pairingProbe);
+        main.removeCallbacks(pendingUpdateResume);
         if (updater != null) {
             updater.resumePendingInstall();
+            main.postDelayed(pendingUpdateResume, 500L);
+            main.postDelayed(pendingUpdateResume, 1500L);
             updater.checkForUpdate();
         }
     }
 
     @Override
     protected void onPause() {
+        main.removeCallbacks(pendingUpdateResume);
         main.removeCallbacks(pairingProbe);
         super.onPause();
     }
