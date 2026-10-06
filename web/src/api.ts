@@ -419,7 +419,9 @@ export const postProjectNoteReply = (
 
 export type CollaborationQuestion = {
   id: string;
+  source_kind: "analysis" | "owner_development";
   analysis_id: string;
+  execution_id?: string;
   project_id: string;
   asked_by_actor_id: string;
   addressed_to_actor_id: string;
@@ -465,6 +467,33 @@ export const answerCollaborationQuestions = (
       workspace_id: workspaceId,
       command_id: `ui.questions.${Date.now()}.${crypto.randomUUID().slice(0, 8)}`,
       responses,
+    }),
+  },
+);
+
+
+export const answerSingleCollaborationQuestion = (
+  workspaceId: string,
+  questionId: string,
+  disposition: "answer" | "unknown" | "skip" | "later",
+  body = "",
+  deferredUntilMs?: number,
+) => api<{
+  question_id: string;
+  execution_id: string;
+  state: string;
+  disposition: string;
+  continuation: "resumed" | "deferred" | "blocked";
+}>(
+  `/api/collaboration/questions/${encodeURIComponent(questionId)}/respond`,
+  {
+    method: "POST",
+    body: JSON.stringify({
+      workspace_id: workspaceId,
+      command_id: `ui.question.${Date.now()}.${crypto.randomUUID().slice(0, 8)}`,
+      disposition,
+      body,
+      deferred_until_ms: deferredUntilMs,
     }),
   },
 );
