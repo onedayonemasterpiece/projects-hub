@@ -26,6 +26,14 @@ class QuestionResponse(BaseModel):
     deferred_until_ms: int | None = None
 
 
+class SingleQuestionResponse(BaseModel):
+    workspace_id: str
+    command_id: str = Field(min_length=8, max_length=128)
+    disposition: Literal["answer", "skip", "unknown", "later"]
+    body: str = Field(default="", max_length=12000)
+    deferred_until_ms: int | None = None
+
+
 class QuestionAnswers(BaseModel):
     workspace_id: str
     command_id: str = Field(min_length=8, max_length=128)
@@ -103,6 +111,22 @@ def attach_collaboration_analysis_routes(
             analysis_id=analysis_id,
             command_id=payload.command_id,
             responses=[item.model_dump() for item in payload.responses],
+        )
+
+    @app.post("/api/collaboration/questions/{question_id}/respond")
+    async def answer_owner_question(
+        question_id: str,
+        payload: SingleQuestionResponse,
+        request: Request,
+    ) -> dict[str, Any]:
+        return await service.answer_owner_development_question(
+            actor_id=actor_id_from_request(request),
+            workspace_id=payload.workspace_id,
+            question_id=question_id,
+            command_id=payload.command_id,
+            disposition=payload.disposition,
+            body=payload.body,
+            deferred_until_ms=payload.deferred_until_ms,
         )
 
     @app.get("/api/collaboration/jobs/{job_id}")
