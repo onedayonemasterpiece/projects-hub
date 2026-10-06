@@ -527,6 +527,16 @@ def create_app(
         actor_id = actor_id_from_request(request)
         return app.state.github_connections.status(actor_id, workspace_id)
 
+    @app.post("/api/github/refresh")
+    async def github_refresh(
+        request: Request,
+        workspace_id: str,
+    ) -> dict[str, Any]:
+        return await app.state.github_connections.refresh(
+            actor_id=actor_id_from_request(request),
+            workspace_id=workspace_id,
+        )
+
     @app.post("/api/github/app-manifest/start")
     async def github_app_manifest_start(
         payload: GitHubInstallStart,
