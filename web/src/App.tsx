@@ -37,6 +37,7 @@ import {
 } from "./api";
 import { replayLocalVoiceSource } from "./bufferedReplay";
 import CollaborationTimeline from "./CollaborationTimeline";
+import CollaborationQuestions from "./CollaborationQuestions";
 import { recoverServerVoiceSource } from "./serverRecovery";
 import { mergeTranscript, resolveTerminalVoiceState, selectProvisionalCaption, speechStartsNewUserBubble } from "./voiceUiContract.js";
 import {
@@ -1376,11 +1377,18 @@ export default function App() {
                 </div>
               ))}
               {boot && (
-                <CollaborationTimeline
-                  workspaceId={boot.workspace.id}
-                  actorId={boot.actor.id}
-                  refreshKey={collaborationRefresh}
-                />
+                <>
+                  <CollaborationTimeline
+                    workspaceId={boot.workspace.id}
+                    actorId={boot.actor.id}
+                    refreshKey={collaborationRefresh}
+                  />
+                  <CollaborationQuestions
+                    workspaceId={boot.workspace.id}
+                    refreshKey={collaborationRefresh}
+                    onChanged={() => setCollaborationRefresh(value => value + 1)}
+                  />
+                </>
               )}
               {interimInputTranscript && (
                 <div className="chat-row user interim" aria-live="polite">
