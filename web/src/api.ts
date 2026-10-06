@@ -415,3 +415,56 @@ export const postProjectNoteReply = (
     }),
   },
 );
+
+
+export type CollaborationQuestion = {
+  id: string;
+  analysis_id: string;
+  project_id: string;
+  asked_by_actor_id: string;
+  addressed_to_actor_id: string;
+  addressed_role: string;
+  prompt: string;
+  shared_context: string;
+  blocking: boolean;
+  alternatives: Array<"answer" | "unknown" | "skip" | "later">;
+  state: "open" | "resolved" | "skipped" | "unknown" | "deferred";
+  disposition: "answer" | "unknown" | "skip" | "later" | null;
+  answer_text: string | null;
+  answered_by_actor_id: string | null;
+  deferred_until_ms: number | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+};
+
+export const getCollaborationQuestions = (workspaceId: string) => {
+  const params = new URLSearchParams({ workspace_id: workspaceId, limit: "50" });
+  return api<{ items: CollaborationQuestion[] }>(
+    `/api/collaboration/questions/inbox?${params}`,
+  );
+};
+
+export const answerCollaborationQuestions = (
+  workspaceId: string,
+  analysisId: string,
+  responses: Array<{
+    question_id: string;
+    disposition: "answer" | "unknown" | "skip" | "later";
+    body?: string;
+    deferred_until_ms?: number;
+  }>,
+) => api<{
+  analysis_id: string;
+  questions: CollaborationQuestion[];
+  continuation: "queued" | "deferred" | "blocked" | "not_required";
+}>(
+  `/api/collaboration/analyses/${encodeURIComponent(analysisId)}/answers`,
+  {
+    method: "POST",
+    body: JSON.stringify({
+      workspace_id: workspaceId,
+      command_id: `ui.questions.${Date.now()}.${crypto.randomUUID().slice(0, 8)}`,
+      responses,
+    }),
+  },
+);
