@@ -16,6 +16,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from .auth import COOKIE_NAME, SESSION_TTL_SECONDS, issue_session, parse_session
 from .collaboration import CollaborationService
 from .collaboration_api import attach_collaboration_routes
+from .collaboration_analysis import CollaborationAnalysisService
+from .collaboration_analysis_api import attach_collaboration_analysis_routes
 from .github_app import GitHubAppError
 from .github_connections import GitHubConnections
 from .device_commands import DeviceCommandService
@@ -243,6 +245,7 @@ def create_app(
     readiness: ReadinessService | None = None,
     development: DevelopmentService | None = None,
     collaboration: CollaborationService | None = None,
+    collaboration_analysis: CollaborationAnalysisService | None = None,
     regional_knowledge_factory: Any | None = None,
 ) -> FastAPI:
     configure_logging()
@@ -257,12 +260,17 @@ def create_app(
             development_service, "start_background"
         ):
             await development_service.start_background()
+        collaboration_analysis_service = getattr(app.state, "collaboration_analysis", None)
+        if collaboration_analysis_service is not None:
+            await collaboration_analysis_service.start_background()
         try:
             yield
         finally:
             host = getattr(app.state, "live_host", None)
             if host is not None and hasattr(host, "stop_all"):
                 await host.stop_all()
+            if collaboration_analysis_service is not None:
+                await collaboration_analysis_service.close()
             if development_service is not None and hasattr(
                 development_service, "close"
             ):
@@ -281,6 +289,11 @@ def create_app(
     app.state.collaboration = collaboration or CollaborationService(
         store, app.state.github_connections
     )
+    app.state.collaboration_analysis = collaboration_analysis or CollaborationAnalysisService(
+        store,
+        app.state.collaboration,
+        development=app.state.development,
+    )
     def host() -> Any:
         if app.state.live_host is None:
             app.state.live_host = build_live_host(
@@ -290,6 +303,7 @@ def create_app(
                 development=app.state.development,
                 github_connections=app.state.github_connections,
                 collaboration=app.state.collaboration,
+                collaboration_analysis=app.state.collaboration_analysis,
                 regional_knowledge_factory=regional_knowledge_factory,
             )
         return app.state.live_host
@@ -356,6 +370,11 @@ def create_app(
     attach_collaboration_routes(
         app,
         service=app.state.collaboration,
+        actor_id_from_request=actor_id_from_request,
+    )
+    attach_collaboration_analysis_routes(
+        app,
+        service=app.state.collaboration_analysis,
         actor_id_from_request=actor_id_from_request,
     )
 
