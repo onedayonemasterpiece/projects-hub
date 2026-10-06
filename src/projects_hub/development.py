@@ -122,7 +122,11 @@ class DevelopmentService:
                     answer_sha256 TEXT NOT NULL,
                     answer_text TEXT NOT NULL,
                     status TEXT NOT NULL DEFAULT 'dispatching',
+                    provider_baseline_json TEXT,
+                    provider_receipt_json TEXT,
+                    quota_remaining_percent REAL,
                     created_at_ms INTEGER NOT NULL,
+                    updated_at_ms INTEGER,
                     PRIMARY KEY(execution_id, command_id)
                 );
                 """
@@ -172,6 +176,32 @@ class DevelopmentService:
                 self.store.db.execute(
                     "ALTER TABLE task_execution_stages "
                     "ADD COLUMN recovery_last_at_ms INTEGER"
+                )
+            resume_columns = {
+                str(row["name"])
+                for row in self.store.db.execute(
+                    "PRAGMA table_info(development_owner_resumes)"
+                ).fetchall()
+            }
+            if "provider_baseline_json" not in resume_columns:
+                self.store.db.execute(
+                    "ALTER TABLE development_owner_resumes "
+                    "ADD COLUMN provider_baseline_json TEXT"
+                )
+            if "provider_receipt_json" not in resume_columns:
+                self.store.db.execute(
+                    "ALTER TABLE development_owner_resumes "
+                    "ADD COLUMN provider_receipt_json TEXT"
+                )
+            if "quota_remaining_percent" not in resume_columns:
+                self.store.db.execute(
+                    "ALTER TABLE development_owner_resumes "
+                    "ADD COLUMN quota_remaining_percent REAL"
+                )
+            if "updated_at_ms" not in resume_columns:
+                self.store.db.execute(
+                    "ALTER TABLE development_owner_resumes "
+                    "ADD COLUMN updated_at_ms INTEGER"
                 )
 
     def _authorize_owner(self, actor_id: str, workspace_id: str) -> None:
@@ -1981,6 +2011,139 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
             )
         return True
 
+    @staticmethod
+    def _owner_resume_marker(payload: dict[str, Any]) -> dict[str, Any]:
+        task = payload.get("task") if isinstance(payload.get("task"), dict) else {}
+        latest = (
+            payload.get("latestTurn")
+            if isinstance(payload.get("latestTurn"), dict)
+            else {}
+        )
+        return {
+            "task_id": str(
+                task.get("taskId")
+                or task.get("taskReference")
+                or payload.get("taskId")
+                or payload.get("taskReference")
+                or ""
+            ),
+            "task_updated_at": task.get("updatedAt"),
+            "turn_id": str(
+                latest.get("turnId")
+                or latest.get("messageId")
+                or payload.get("turnId")
+                or ""
+            ),
+            "turn_status": str(latest.get("status") or payload.get("status") or ""),
+        }
+
+    @staticmethod
+    def _owner_resume_provider_advanced(
+        baseline: dict[str, Any],
+        current: dict[str, Any],
+    ) -> bool:
+        before_turn = str(baseline.get("turn_id") or "")
+        after_turn = str(current.get("turn_id") or "")
+        return bool(after_turn and after_turn != before_turn)
+
+    async def _apply_owner_resume_locked(
+        self,
+        *,
+        row: Any,
+        resume_row: Any,
+        provider_receipt: dict[str, Any],
+    ) -> dict[str, Any]:
+        execution_id = str(row["id"])
+        quality_task_id = str(row["quality_task_id"] or "").strip()
+        cycle = int(row["review_cycle"] or 0)
+        active_stage = self._active_stage(execution_id)
+        if (
+            active_stage is None
+            or active_stage.get("stage") != "review"
+            or str(active_stage.get("devcoveer_task_id") or "") != quality_task_id
+        ):
+            self._record_stage(
+                execution_id=execution_id,
+                stage="review",
+                cycle=cycle,
+                model=QUALITY_MODEL,
+                reasoning_effort=QUALITY_EFFORT,
+                devcoveer_task_id=quality_task_id,
+            )
+        now = _now_ms()
+        remaining = resume_row["quota_remaining_percent"]
+        if remaining is None:
+            remaining = row["quota_remaining_percent"]
+        with self.store._lock:
+            self.store.db.execute("BEGIN IMMEDIATE")
+            try:
+                self.store.db.execute(
+                    """UPDATE development_owner_resumes
+                       SET status='applied',provider_receipt_json=?,updated_at_ms=?
+                       WHERE execution_id=? AND command_id=?""",
+                    (
+                        json.dumps(
+                            provider_receipt,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ),
+                        now,
+                        execution_id,
+                        resume_row["command_id"],
+                    ),
+                )
+                self.store.db.execute(
+                    """UPDATE task_executions SET
+                           status='running',phase='reviewing',
+                           phase_detail='Ответ владельца принят; сильная модель повторяет ревью',
+                           devcoveer_task_id=?,quota_remaining_percent=?,
+                           error_code=NULL,finished_at_ms=NULL,updated_at_ms=?
+                       WHERE id=?""",
+                    (quality_task_id, remaining, now, execution_id),
+                )
+                self.store.db.execute("COMMIT")
+            except Exception:
+                self.store.db.execute("ROLLBACK")
+                raise
+        current = self._execution_row(
+            actor_id=str(row["actor_id"]),
+            workspace_id=str(row["workspace_id"]),
+            execution_id=execution_id,
+        )
+        public = self._execution_public(current)
+        public["update_check_recommended"] = False
+        return {"execution": public, "resumed": True}
+
+    async def _reconcile_owner_resume_locked(
+        self,
+        *,
+        row: Any,
+        resume_row: Any,
+    ) -> dict[str, Any] | None:
+        baseline_raw = str(resume_row["provider_baseline_json"] or "").strip()
+        if not baseline_raw:
+            return None
+        try:
+            baseline = json.loads(baseline_raw)
+        except ValueError:
+            return None
+        try:
+            payload = await self.devcoveer.read_task(
+                str(row["quality_task_id"]),
+                project=str(row["project_hint"]),
+                detail="summary",
+            )
+        except Exception:
+            return None
+        current_marker = self._owner_resume_marker(payload)
+        if not self._owner_resume_provider_advanced(baseline, current_marker):
+            return None
+        return await self._apply_owner_resume_locked(
+            row=row,
+            resume_row=resume_row,
+            provider_receipt=current_marker,
+        )
+
     async def resume_needs_owner(
         self,
         *,
@@ -2009,7 +2172,7 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
             )
             with self.store._lock:
                 existing = self.store.db.execute(
-                    """SELECT answer_sha256,status FROM development_owner_resumes
+                    """SELECT * FROM development_owner_resumes
                        WHERE execution_id=? AND command_id=?""",
                     (execution_id, clean_command),
                 ).fetchone()
@@ -2019,14 +2182,48 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
                         "DEVELOPMENT_RESUME_CONFLICT",
                         "Owner resume command was already used with another answer",
                     )
-                if existing["status"] != "applied":
+                if existing["status"] == "applied":
+                    public = self._execution_public(row)
+                    public["update_check_recommended"] = public["status"] == "completed"
+                    return {"execution": public, "resumed": row["status"] == "running"}
+                reconciled = await self._reconcile_owner_resume_locked(
+                    row=row,
+                    resume_row=existing,
+                )
+                if reconciled is not None:
+                    return reconciled
+                raise StoreError(
+                    "DEVELOPMENT_RESUME_OUTCOME_UNKNOWN",
+                    "The prior owner resume outcome is not confirmed; do not repeat it blindly",
+                )
+
+            # A lost response remains the same semantic mutation even if the UI
+            # generates a fresh command id. Reconcile it before considering any
+            # new dispatch, otherwise one owner answer can create two review turns.
+            with self.store._lock:
+                pending = self.store.db.execute(
+                    """SELECT * FROM development_owner_resumes
+                       WHERE execution_id=?
+                         AND status IN ('dispatching','dispatch_unknown')
+                       ORDER BY created_at_ms DESC LIMIT 1""",
+                    (execution_id,),
+                ).fetchone()
+            if pending:
+                reconciled = await self._reconcile_owner_resume_locked(
+                    row=row,
+                    resume_row=pending,
+                )
+                if reconciled is not None:
+                    if pending["answer_sha256"] == answer_sha:
+                        return reconciled
                     raise StoreError(
-                        "DEVELOPMENT_RESUME_OUTCOME_UNKNOWN",
-                        "The prior owner resume outcome is not confirmed; do not repeat it blindly",
+                        "DEVELOPMENT_NOT_WAITING_FOR_OWNER",
+                        "A prior owner answer already resumed this execution",
                     )
-                public = self._execution_public(row)
-                public["update_check_recommended"] = public["status"] == "completed"
-                return {"execution": public, "resumed": row["status"] == "running"}
+                raise StoreError(
+                    "DEVELOPMENT_RESUME_OUTCOME_UNKNOWN",
+                    "A prior owner resume outcome is still unknown; refusing a second dispatch",
+                )
 
             if row["status"] != "blocked" or row["phase"] != "needs_owner":
                 raise StoreError(
@@ -2061,17 +2258,44 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
                 model=QUALITY_MODEL,
                 reasoning_effort=QUALITY_EFFORT,
             )
-            cycle = int(row["review_cycle"] or 0)
+            try:
+                before_payload = await self.devcoveer.read_task(
+                    quality_task_id,
+                    project=str(row["project_hint"]),
+                    detail="summary",
+                )
+            except Exception as exc:
+                raise StoreError(
+                    "DEVELOPMENT_RESUME_RECONCILIATION_UNAVAILABLE",
+                    "Quality thread cannot be read before owner resume dispatch",
+                ) from exc
+            baseline = self._owner_resume_marker(before_payload)
             now = _now_ms()
             with self.store._lock:
                 self.store.db.execute(
                     """INSERT INTO development_owner_resumes(
-                           execution_id,command_id,answer_sha256,answer_text,status,created_at_ms)
-                       VALUES(?,?,?,?,?,?)""",
-                    (execution_id, clean_command, answer_sha, clean_answer, "dispatching", now),
+                           execution_id,command_id,answer_sha256,answer_text,status,
+                           provider_baseline_json,quota_remaining_percent,
+                           created_at_ms,updated_at_ms)
+                       VALUES(?,?,?,?,?,?,?,?,?)""",
+                    (
+                        execution_id,
+                        clean_command,
+                        answer_sha,
+                        clean_answer,
+                        "dispatching",
+                        json.dumps(
+                            baseline,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ),
+                        remaining,
+                        now,
+                        now,
+                    ),
                 )
             try:
-                await self.devcoveer.continue_codex_task(
+                provider_response = await self.devcoveer.continue_codex_task(
                     quality_task_id,
                     project=str(row["project_hint"]),
                     prompt=f"""The platform owner answered a durable needs-owner question for the
@@ -2096,57 +2320,76 @@ Before the verdict give concise findings.""",
                     model=QUALITY_MODEL,
                     reasoning_effort=QUALITY_EFFORT,
                 )
-            except Exception:
+            except Exception as exc:
                 with self.store._lock:
                     self.store.db.execute(
                         """UPDATE development_owner_resumes
-                           SET status='dispatch_unknown'
+                           SET status='dispatch_unknown',updated_at_ms=?
+                           WHERE execution_id=? AND command_id=?""",
+                        (_now_ms(), execution_id, clean_command),
+                    )
+                    resume_row = self.store.db.execute(
+                        """SELECT * FROM development_owner_resumes
                            WHERE execution_id=? AND command_id=?""",
                         (execution_id, clean_command),
-                    )
-                raise
-            self._record_stage(
-                execution_id=execution_id,
-                stage="review",
-                cycle=cycle,
-                model=QUALITY_MODEL,
-                reasoning_effort=QUALITY_EFFORT,
-                devcoveer_task_id=quality_task_id,
-            )
-            now = _now_ms()
+                    ).fetchone()
+                reconciled = await self._reconcile_owner_resume_locked(
+                    row=row,
+                    resume_row=resume_row,
+                )
+                if reconciled is not None:
+                    return reconciled
+                raise StoreError(
+                    "DEVELOPMENT_RESUME_OUTCOME_UNKNOWN",
+                    "Owner resume dispatch outcome is unknown; reconciliation is required",
+                ) from exc
+
             with self.store._lock:
-                self.store.db.execute("BEGIN IMMEDIATE")
-                try:
-                    self.store.db.execute(
-                        """UPDATE development_owner_resumes
-                           SET status='applied'
-                           WHERE execution_id=? AND command_id=?""",
-                        (execution_id, clean_command),
-                    )
-                    self.store.db.execute(
-                        """UPDATE task_executions SET
-                               status='running',phase='reviewing',
-                               phase_detail='Ответ владельца принят; сильная модель повторяет ревью',
-                               devcoveer_task_id=?,quota_remaining_percent=?,
-                               error_code=NULL,finished_at_ms=NULL,updated_at_ms=?
-                           WHERE id=?""",
-                        (quality_task_id, remaining, now, execution_id),
-                    )
-                    self.store.db.execute("COMMIT")
-                except Exception:
-                    self.store.db.execute("ROLLBACK")
-                    raise
-            current = self._execution_row(
-                actor_id=actor_id,
-                workspace_id=workspace_id,
-                execution_id=execution_id,
+                resume_row = self.store.db.execute(
+                    """SELECT * FROM development_owner_resumes
+                       WHERE execution_id=? AND command_id=?""",
+                    (execution_id, clean_command),
+                ).fetchone()
+            return await self._apply_owner_resume_locked(
+                row=row,
+                resume_row=resume_row,
+                provider_receipt=self._owner_resume_marker(provider_response),
             )
-            public = self._execution_public(current)
-            public["update_check_recommended"] = False
-            return {"execution": public, "resumed": True}
 
     async def advance_active_once(self) -> int:
         """Advance durable executions independently of any client/status read."""
+
+        advanced = 0
+        with self.store._lock:
+            pending_resumes = self.store.db.execute(
+                """SELECT r.execution_id,r.command_id,e.actor_id,e.workspace_id
+                   FROM development_owner_resumes r
+                   JOIN task_executions e ON e.id=r.execution_id
+                   WHERE r.status IN ('dispatching','dispatch_unknown')
+                     AND e.status='blocked' AND e.phase='needs_owner'
+                   ORDER BY r.created_at_ms ASC LIMIT 8"""
+            ).fetchall()
+        for candidate in pending_resumes:
+            async with self._transition_guard():
+                row = self._execution_row(
+                    actor_id=str(candidate["actor_id"]),
+                    workspace_id=str(candidate["workspace_id"]),
+                    execution_id=str(candidate["execution_id"]),
+                )
+                with self.store._lock:
+                    resume_row = self.store.db.execute(
+                        """SELECT * FROM development_owner_resumes
+                           WHERE execution_id=? AND command_id=?""",
+                        (candidate["execution_id"], candidate["command_id"]),
+                    ).fetchone()
+                if resume_row is None or resume_row["status"] == "applied":
+                    continue
+                reconciled = await self._reconcile_owner_resume_locked(
+                    row=row,
+                    resume_row=resume_row,
+                )
+                if reconciled is not None:
+                    advanced += 1
 
         with self.store._lock:
             rows = self.store.db.execute(
@@ -2161,7 +2404,6 @@ Before the verdict give concise findings.""",
                    ORDER BY created_at_ms ASC LIMIT 10""",
                 (MAX_REWORK_CYCLES,),
             ).fetchall()
-        advanced = 0
         for candidate in rows:
             async with self._transition_guard():
                 with self.store._lock:
