@@ -2360,6 +2360,7 @@ Before the verdict give concise findings.""",
         """Advance durable executions independently of any client/status read."""
 
         advanced = 0
+        reconciled_execution_ids: set[str] = set()
         with self.store._lock:
             pending_resumes = self.store.db.execute(
                 """SELECT r.execution_id,r.command_id,e.actor_id,e.workspace_id
@@ -2390,6 +2391,7 @@ Before the verdict give concise findings.""",
                 )
                 if reconciled is not None:
                     advanced += 1
+                    reconciled_execution_ids.add(str(candidate["execution_id"]))
 
         with self.store._lock:
             rows = self.store.db.execute(
@@ -2405,6 +2407,10 @@ Before the verdict give concise findings.""",
                 (MAX_REWORK_CYCLES,),
             ).fetchall()
         for candidate in rows:
+            if str(candidate["id"]) in reconciled_execution_ids:
+                # Reconciliation itself is one durable transition. The next
+                # worker tick owns provider-result advancement.
+                continue
             async with self._transition_guard():
                 with self.store._lock:
                     fresh = self.store.db.execute(
