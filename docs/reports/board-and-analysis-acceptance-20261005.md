@@ -6,9 +6,11 @@ Acceptance source SHA: `b7999b9df320a1cdb0cf330b9558d8b79ac5e291`
 Merged voice baseline: `c2ee3ed6ec20753c73670d80954adf711e2f0903` (Projects Hub 0.1.36)  
 Tracking: issue #86, draft PR #87.
 
+> **Контракт обновлён 06.10.2026.** Этот файл сохраняет evidence конкретного checkpoint `b7999b9…`; он не является текущей финальной приёмкой после закрепления `CORE-BOARD-VOICE-LLM-FIRST`. Ручной create/edit/drag/resize на доске больше не считается функцией продукта и не может использоваться как положительное acceptance evidence. Нормальный writer — только Mira Live tool path. Также устарела старая формулировка про пользовательское подтверждение «бюджета» NVIDIA: `council_pro` должен запускаться автоматически под bounded dual-slot admission (Kimi K3 + DeepSeek V4.1 Flash), а третий concurrent NVIDIA inference ждёт capacity.
+
 ## Decision
 
-The source candidate is **not declared fully accepted/releasable yet**. The collaborative board, isolated single-model analysis path, report storage/materialization, seven-day guest/share path, Android share capability and combined current voice baseline are implemented and pass the automated/CI gates below. PR #87 remains draft because several mandatory evidence gates cannot honestly be marked passed from this execution window.
+The source candidate is **not declared fully accepted/releasable yet**. It is historical evidence for the server-authoritative shared board, isolated analysis path, report storage/materialization, seven-day guest/share path, Android share capability and the then-current voice baseline. It does **not** prove the later voice-first/Mira-only UI contract, and PR #87 must remain draft until that contract and the remaining real gates are accepted.
 
 No voice-owned R2–R7/current fixes were rolled back: the candidate contains the current main baseline through `c2ee3ed6…` as a merge parent, including adaptive endpointing / detached-WSS cleanup, while retaining board/analytics/share integration.
 
@@ -16,14 +18,14 @@ No voice-owned R2–R7/current fixes were rolled back: the candidate contains th
 
 Implemented in the candidate:
 
-- one project board with Pixi/WebGL renderer, grid, pan/zoom/pinch, colored sticky notes, edit/move/resize/delete, server revisions and history;
+- one project board with Pixi/WebGL renderer, grid, pan/zoom/pinch, colored sticky notes, server revisions and history; the checkpoint still exposed manual edit/move/resize/delete UI, which is now a **known contract mismatch to remove**, not a retained product feature;
 - same Mira Live session exposes typed `board_navigate`, `board_edit`, `board_analysis` and `board_share`; UI commands are scoped to project and per-browsing-context client instance;
 - search/focus uses server search and a client-local camera/focus ACK; two tabs do not share one clientInstanceId;
 - board WSS has one-use ticket/origin checks, snapshot/event sequencing, bounded peers and deterministic command IDs/revision conflicts;
 - AnalysisRun stores frozen board-object revisions, durable request key/provider task id, Markdown, structured result, cancellation/error/source-change state;
 - single-model Kimi/DeepSeek uses DevCoveer `provided_only` evidence mode with no ambient project context and durable dispatch/readback;
 - free council uses the live OpenCode catalog and exactly two current free participants; it fails closed with no NVIDIA fallback when OpenCode rejects the execution mode;
-- paid council path is a two-step confirmation lifecycle; preflight does not perform NVIDIA inference and confirmed execution is explicitly Kimi K3 + DeepSeek;
+- the old two-step NVIDIA confirmation path in this checkpoint is superseded: current policy is automatic bounded `council_pro` with Kimi K3 + DeepSeek V4.1 Flash, no user budget-confirmation, two distinct NVIDIA credential slots and capacity waiting for a third concurrent inference;
 - Markdown is rendered as text (`<pre>`), never arbitrary HTML;
 - optional GitHub materialization is explicit and deterministic at `docs/analysis/<run-id>.md`; only same-project `generated_artifacts` + `app_managed_write` bindings and allowed paths qualify; duplicate content is reused without a commit; public repos require a separate owner confirmation; GitHub failure never removes the internal Markdown;
 - seven-day guest links use a fragment bearer token exchanged for HttpOnly guest session; stored bearer material is hashed; guest WSS is read-only and revalidates expiry/revoke; private document cards are projected as closed documents without reference/body/author leakage;
@@ -75,7 +77,7 @@ A real free council task on the current isolation line still returned provider H
 
 Therefore free council is correctly **fail-closed / unavailable**, not accepted as a working council.
 
-The paid `council_pro` route has source/tests for an explicit confirmation plan, but this window did **not** perform a paid NVIDIA council because the product contract requires a fresh explicit owner approval of that plan/token. A paid inference is not inferred from permission to develop the feature.
+The `council_pro` contract was subsequently changed by explicit owner instruction: NVIDIA is a slow bounded-capacity resource, not a user-confirmed budget. A current acceptance run must therefore test automatic Kimi K3 + DeepSeek V4.1 Flash dispatch under two-slot admission; no confirmation token is expected. This historical checkpoint did not contain that transport and cannot be used as evidence that the new council path works.
 
 The original saved Kimi K3 consultation from the task inputs was not repeated, per the owner's instruction not to start a new consultation from scratch.
 
@@ -106,7 +108,7 @@ Temporary browser sessions and the local acceptance server were closed after the
 | T18 | PASS automated: durable request keys, duplicate command/run protection, dispatch_unknown/no blind retry. |
 | T19 | PASS automated: cancel/late-result/access checks; no automatic late board publication. |
 | T20 | PASS fail-closed behavior: invalid/unavailable model/provider is visible and no hidden native/paid fallback is used. |
-| T21 | **BLOCKED for full acceptance**: free live council is rejected by OpenCode free tier; paid council requires a fresh explicit owner confirmation before NVIDIA inference. Attribution/dissent/budget contracts are implemented/tested. |
+| T21 | **BLOCKED for this historical checkpoint**: free live council was rejected by OpenCode free tier. Current target is automatic dual-slot NVIDIA `council_pro` (Kimi+DeepSeek), no user budget-confirmation; it requires a fresh live provider acceptance on the current runtime. |
 | T22 | PASS source/automated policy: canonical internal Markdown survives GitHub failure; deterministic/idempotent materialization and public-repo confirmation implemented. **Live GitHub binding/materialization was not exercised against a real configured target.** |
 | T23 | PASS backend WebSocket/API integration; **anonymous real-browser guest walkthrough remains blocked by the authenticated-browser setup above.** |
 | T24 | PASS backend integration: expiry/revoke terminates new and already-open guest access/event flow. |
@@ -119,8 +121,8 @@ Temporary browser sessions and the local acceptance server were closed after the
 
 PR #87 should remain draft until the relevant owner/operator evidence is added:
 
-1. **Authenticated browser acceptance:** two independent authenticated browser contexts on the candidate; edit in one, observe WSS update in the other, force reconnect mid-drag/reload, verify no duplicate/stale focus.
-2. **Council acceptance:** either an OpenCode free transport that preserves T17 and actually works, or explicit owner approval of the displayed paid council plan followed by one bounded Kimi+DeepSeek run. Do not silently fall back to paid NVIDIA.
+1. **Authenticated browser acceptance:** two independent authenticated browser contexts on the candidate; in context A issue a board mutation **through Mira**, observe the authoritative WSS event in B, force reconnect around receipt/tail recovery, and verify no duplicate mutation or stale focus. No human drag/edit acceptance path.
+2. **Council acceptance:** run one current automatic dual-slot NVIDIA `council_pro` with Kimi K3 + DeepSeek V4.1 Flash and verify provided-only evidence, attribution, dissent, request-key/readback and capacity behavior. No user budget-confirmation and no hidden fallback from free OpenCode.
 3. **Provider single-model product-path evidence:** do not repeat the saved Kimi consultation merely to manufacture evidence; run only when a new explicit product acceptance call is desired/approved.
 4. **Real GitHub materialization:** with a configured same-project `generated_artifacts` binding, verify create → exact duplicate reuse → guarded update; for public repo verify the second explicit publication confirmation.
 5. **Physical Android:** microphone/long-speech/barge-in with board open, native share chooser cancel/success semantics, and signed in-app update.
@@ -135,4 +137,4 @@ PR #87 should remain draft until the relevant owner/operator evidence is added:
 
 ## Release posture
 
-Source candidate `b7999b9…` is a strong combined implementation/CI checkpoint and retains current voice 0.1.36. It is **not yet a fully accepted release** because the mandatory provider/browser/physical/performance gates above remain open. Do not merge PR #87 or claim production acceptance solely from the automated green suite.
+Source candidate `b7999b9…` remains useful historical source/CI evidence, but it predates the normative Mira-only writer amendment and later voice/council work. It is **not a current release candidate**. Do not merge PR #87 or claim production acceptance from this checkpoint; current acceptance must be rerun against the latest branch with voice-first UI, automatic dual-slot NVIDIA council, browser Mira→board WSS scenarios, physical Android and measured performance gates.
