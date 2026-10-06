@@ -19,6 +19,8 @@ from .analytics_materialization import AnalysisMaterializer
 from .analytics_api import attach_analytics_routes
 from .board import BoardService
 from .board_api import attach_board_routes
+from .board_view_context import BoardViewContextStore
+from .board_view_context_api import attach_board_view_context_routes
 from .github_app import GitHubAppError
 from .github_connections import GitHubConnections
 from .device_commands import DeviceCommandService
@@ -74,6 +76,11 @@ class LiveStart(BaseModel):
         default=None,
         pattern=r"^[A-Za-z0-9._+/-]{1,100}$",
         max_length=100,
+    )
+    client_instance_id: str | None = Field(
+        default=None,
+        pattern=r"^[0-9A-Za-z._:-]{8,128}$",
+        max_length=128,
     )
     attempt_id: str | None = Field(
         default=None,
@@ -272,6 +279,10 @@ def create_app(
     app.state.settings = settings
     app.state.store = store
     app.state.board = BoardService(store)
+    app.state.board_view_context = BoardViewContextStore(
+        store,
+        app.state.board,
+    )
     app.state.analytics = analytics or AnalyticsService(store, app.state.board)
     app.state.sharing = SharingService(
         store,
@@ -294,6 +305,7 @@ def create_app(
                 store,
                 board=app.state.board,
                 board_hub=app.state.board_hub,
+                board_view_context=app.state.board_view_context,
                 analytics=app.state.analytics,
                 sharing=app.state.sharing,
                 device_commands=app.state.device_commands,
@@ -374,6 +386,12 @@ def create_app(
         actor_id_from_request=actor_id_from_request,
         session_secret=settings.session_secret,
         cookie_name=COOKIE_NAME,
+    )
+
+    attach_board_view_context_routes(
+        app,
+        service=app.state.board_view_context,
+        actor_id_from_request=actor_id_from_request,
     )
 
     attach_analytics_routes(
@@ -954,6 +972,7 @@ def create_app(
                 client_source_id=payload.client_source_id,
                 client_version=payload.client_version,
                 client_timezone=payload.client_timezone,
+                client_instance_id=payload.client_instance_id,
                 backend_version=__version__,
                 backend_release_sha=settings.release_sha,
                 attempt_id=payload.attempt_id,
