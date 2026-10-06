@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import AsyncExitStack
 import json
 from pathlib import Path
 from typing import Any
@@ -15,44 +14,29 @@ class DevCoveerError(RuntimeError):
 
 
 class DevCoveerClient:
-    """Small allowlisted client for the local DevCoveer MCP control plane."""
+    """Allowlisted local DevCoveer client with one task-owned MCP session.
+
+    A dedicated worker task owns the stdio subprocess and all AnyIO/MCP async
+    contexts for their entire lifetime. FastAPI request tasks communicate with
+    that worker through a queue. Application shutdown therefore never attempts
+    to unwind a cancel scope from a different task, while native Codex turns keep
+    the persistent bridge process they require between start/read/continue calls.
+    """
+
+    _ALLOWED = {"codex_status", "list_models", "start_task", "continue_task", "read_task"}
+    _REQUIRED = {"codex_status", "list_models", "start_task", "continue_task", "read_task"}
 
     def __init__(
         self,
         command: str = "/home/dev/.local/bin/codex-mcp-server",
     ) -> None:
         self.command = command
-        self._lock = asyncio.Lock()
-        self._stack: AsyncExitStack | None = None
-        self._session: ClientSession | None = None
-
-    async def _connect(self) -> ClientSession:
-        if self._session is not None:
-            return self._session
-        if not Path(self.command).is_file():
-            raise DevCoveerError("DevCoveer MCP entrypoint is unavailable")
-        stack = AsyncExitStack()
-        try:
-            read_stream, write_stream = await stack.enter_async_context(
-                stdio_client(StdioServerParameters(command=self.command, args=[]))
-            )
-            session = await stack.enter_async_context(
-                ClientSession(read_stream, write_stream)
-            )
-            await asyncio.wait_for(session.initialize(), timeout=20)
-            listed = await asyncio.wait_for(session.list_tools(), timeout=20)
-            names = {tool.name for tool in listed.tools}
-            required = {"codex_status", "list_models", "start_task", "continue_task", "read_task"}
-            if not required.issubset(names):
-                raise DevCoveerError(
-                    "DevCoveer runtime is missing owner execution capabilities"
-                )
-        except BaseException:
-            await stack.aclose()
-            raise
-        self._stack = stack
-        self._session = session
-        return session
+        self._queue: asyncio.Queue[
+            tuple[str, dict[str, Any], asyncio.Future[dict[str, Any]]] | None
+        ] = asyncio.Queue()
+        self._state_lock = asyncio.Lock()
+        self._worker: asyncio.Task[None] | None = None
+        self._closed = False
 
     @staticmethod
     def _payload(result: Any) -> dict[str, Any]:
@@ -73,23 +57,102 @@ class DevCoveerClient:
                 return parsed
         raise DevCoveerError("DevCoveer returned no structured result")
 
-    async def _call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        if name not in {"codex_status", "list_models", "start_task", "continue_task", "read_task"}:
-            raise DevCoveerError("DevCoveer operation is not allowlisted")
-        async with self._lock:
+    @staticmethod
+    def _connection_error() -> DevCoveerError:
+        return DevCoveerError("DevCoveer connection was interrupted or timed out")
+
+    def _fail_pending(self, error: DevCoveerError) -> None:
+        while True:
             try:
-                session = await self._connect()
-                result = await asyncio.wait_for(
-                    session.call_tool(name, arguments),
-                    timeout=35,
+                item = self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            if item is None:
+                continue
+            _name, _arguments, future = item
+            if not future.done():
+                future.set_exception(DevCoveerError(str(error)))
+
+    async def _worker_loop(self) -> None:
+        try:
+            async with stdio_client(
+                StdioServerParameters(command=self.command, args=[])
+            ) as (read_stream, write_stream):
+                async with ClientSession(read_stream, write_stream) as session:
+                    await asyncio.wait_for(session.initialize(), timeout=20)
+                    listed = await asyncio.wait_for(session.list_tools(), timeout=20)
+                    names = {tool.name for tool in listed.tools}
+                    if not self._REQUIRED.issubset(names):
+                        raise DevCoveerError(
+                            "DevCoveer runtime is missing owner execution capabilities"
+                        )
+
+                    while True:
+                        item = await self._queue.get()
+                        if item is None:
+                            return
+                        name, arguments, future = item
+                        if future.cancelled():
+                            continue
+                        try:
+                            result = await asyncio.wait_for(
+                                session.call_tool(name, arguments),
+                                timeout=35,
+                            )
+                            payload = self._payload(result)
+                        except DevCoveerError as exc:
+                            if not future.done():
+                                future.set_exception(exc)
+                            continue
+                        except (
+                            ConnectionError,
+                            BrokenPipeError,
+                            EOFError,
+                            OSError,
+                            TimeoutError,
+                        ):
+                            error = self._connection_error()
+                            if not future.done():
+                                future.set_exception(error)
+                            self._fail_pending(error)
+                            return
+                        if not future.done():
+                            future.set_result(payload)
+        except DevCoveerError as exc:
+            self._fail_pending(exc)
+        except (
+            ConnectionError,
+            BrokenPipeError,
+            EOFError,
+            OSError,
+            TimeoutError,
+        ):
+            self._fail_pending(self._connection_error())
+        finally:
+            async with self._state_lock:
+                if self._worker is asyncio.current_task():
+                    self._worker = None
+
+    async def _ensure_worker(self) -> None:
+        async with self._state_lock:
+            if self._closed:
+                raise DevCoveerError("DevCoveer client is closed")
+            if self._worker is None or self._worker.done():
+                if not Path(self.command).is_file():
+                    raise DevCoveerError("DevCoveer MCP entrypoint is unavailable")
+                self._worker = asyncio.create_task(
+                    self._worker_loop(),
+                    name="projects-hub-devcoveer-client",
                 )
-                return self._payload(result)
-            except (ConnectionError, BrokenPipeError, EOFError):
-                stack, self._stack = self._stack, None
-                self._session = None
-                if stack is not None:
-                    await stack.aclose()
-                raise DevCoveerError("DevCoveer connection was interrupted") from None
+
+    async def _call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if name not in self._ALLOWED:
+            raise DevCoveerError("DevCoveer operation is not allowlisted")
+        await self._ensure_worker()
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[dict[str, Any]] = loop.create_future()
+        self._queue.put_nowait((name, arguments, future))
+        return await future
 
     async def status(self) -> dict[str, Any]:
         quota = await self._call("codex_status", {})
@@ -158,8 +221,13 @@ class DevCoveerClient:
         return await self._call("read_task", args)
 
     async def close(self) -> None:
-        async with self._lock:
-            stack, self._stack = self._stack, None
-            self._session = None
-        if stack is not None:
-            await stack.aclose()
+        async with self._state_lock:
+            if self._closed:
+                worker = self._worker
+            else:
+                self._closed = True
+                worker = self._worker
+                if worker is not None and not worker.done():
+                    self._queue.put_nowait(None)
+        if worker is not None:
+            await worker
