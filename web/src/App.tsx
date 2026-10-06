@@ -37,7 +37,7 @@ import {
 } from "./api";
 import { replayLocalVoiceSource } from "./bufferedReplay";
 import { recoverServerVoiceSource } from "./serverRecovery";
-import { mergeTranscript, resolveTerminalVoiceState, speechStartsNewUserBubble } from "./voiceUiContract.js";
+import { mergeTranscript, resolveTerminalVoiceState, selectProvisionalCaption, speechStartsNewUserBubble } from "./voiceUiContract.js";
 import {
   acknowledgeDeliveredSource,
   createLocalPersistSink,
@@ -150,6 +150,12 @@ export default function App() {
     () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     [],
   );
+  const setAndroidVoiceAudioFocus = useCallback((enabled: boolean) => {
+    if (!isAndroidApp) return;
+    window.location.href = enabled
+      ? "projectshub://audio/focus/acquire"
+      : "projectshub://audio/focus/release";
+  }, [isAndroidApp]);
   const [boot, setBoot] = useState<Bootstrap | null>(null);
   const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -417,10 +423,12 @@ export default function App() {
       }
       // Google interim transcription is a dynamically updated hypothesis, so
       // replace it rather than appending fragments. The main Mira transcript
-      // later replaces this entire provisional/final caption.
+      // later replaces this entire provisional/final caption. A shorter
+      // sidecar final must not roll back text that was already visible.
+      const text = selectProvisionalCaption(messages[index].text, clean, _final);
       messages[index] = {
         ...messages[index],
-        text: clean,
+        text,
         awaitingTranscript: true,
         provisionalCaption: true,
       };
@@ -642,6 +650,9 @@ export default function App() {
       onState: (state, detail) => {
         const terminalReason = resolveTerminalVoiceState(state, detail);
         setVoiceState(terminalReason || state);
+        if (terminalReason || inactiveVoiceStates.has(state) || state === "budget_wait") {
+          setAndroidVoiceAudioFocus(false);
+        }
         if (terminalReason || inactiveVoiceStates.has(state) || state === "reconnecting" || state === "budget_wait") {
           setSpeechActive(false);
           setSpeechPending(false);
@@ -666,6 +677,7 @@ export default function App() {
         }
         if (state === "starting") setInputTranscriptSeen(false);
         if (state === "listening") {
+          setAndroidVoiceAudioFocus(true);
           setSpeechPending(false);
           setNotice(null);
           setMicrophoneSettingsAvailable(false);
@@ -717,10 +729,11 @@ export default function App() {
     });
     clientRef.current = client;
     return () => {
+      setAndroidVoiceAudioFocus(false);
       client.stop({ reason: "ui_unmount" });
       clientRef.current = null;
     };
-  }, [applyLiveEvent, boot, reserveUserVoiceBubble, settleCurrentVoiceBubble]);
+  }, [applyLiveEvent, boot, reserveUserVoiceBubble, setAndroidVoiceAudioFocus, settleCurrentVoiceBubble]);
 
   async function signIn() {
     setBusy(true);
@@ -766,6 +779,7 @@ export default function App() {
     const capture = createDurableMicrophoneCapture({
       persist: sink.persist,
       onError: error => {
+        setAndroidVoiceAudioFocus(false);
         setNotice(error instanceof Error ? error.message : "Локальная запись остановлена.");
         setVoiceState("off");
       },
@@ -773,6 +787,7 @@ export default function App() {
     offlineSourceRef.current = { source, sink };
     offlineCaptureRef.current = capture;
     try {
+      setAndroidVoiceAudioFocus(true);
       await capture.start();
       setVoiceState("offline_recording");
       setNotice("Связи нет. Речь сохраняется на этом устройстве и никуда не отправляется.");
@@ -780,6 +795,7 @@ export default function App() {
       offlineCaptureRef.current = null;
       offlineSourceRef.current = null;
       await acknowledgeDeliveredSource(source.id);
+      setAndroidVoiceAudioFocus(false);
       throw error;
     }
   }
@@ -802,6 +818,7 @@ export default function App() {
       offlineCaptureRef.current = null;
       offlineSourceRef.current = null;
       setVoiceState("off");
+      setAndroidVoiceAudioFocus(false);
       setBusy(false);
       await refreshPendingSources();
     }
@@ -876,6 +893,7 @@ export default function App() {
       return;
     }
     try {
+      setAndroidVoiceAudioFocus(true);
       const started = await client.start({
         url: `/api/live/${current.id}/sessions`,
         body: liveStartBody(),
@@ -887,6 +905,7 @@ export default function App() {
       adoptPendingVoiceRecovery(started);
       if (client.sessionId) setNotice("Разговор восстановлен.");
     } catch {
+      setAndroidVoiceAudioFocus(false);
       setNotice("Не удалось автоматически восстановить Live. Нажмите микрофон, чтобы продолжить.");
     }
   }
@@ -932,6 +951,7 @@ export default function App() {
     const active = !inactiveVoiceStates.has(voiceState);
     if (active || client.sessionId || client.starting) {
       userStoppedVoiceRef.current = true;
+      setAndroidVoiceAudioFocus(false);
       client.stop({ reason: "user_stop" });
       setWait(null);
       return;
@@ -946,6 +966,7 @@ export default function App() {
         return;
       }
       const current = await ensureConversation();
+      setAndroidVoiceAudioFocus(true);
       const started = await client.start({
         url: `/api/live/${current.id}/sessions`,
         body: liveStartBody(),
@@ -960,6 +981,7 @@ export default function App() {
       }
     } catch (error) {
       client.stop({ reason: "start_error" });
+      setAndroidVoiceAudioFocus(false);
       setNotice(friendlyStartError(error));
       setVoiceState("off");
     } finally {

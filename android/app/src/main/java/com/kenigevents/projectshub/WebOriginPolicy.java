@@ -123,6 +123,32 @@ final class WebOriginPolicy {
                 && "/microphone".equals(target.getPath());
     }
 
+    boolean isTrustedVoiceAudioFocusAcquireAction(String currentPageUrl, String targetUrl) {
+        return isTrustedVoiceAudioFocusAction(currentPageUrl, targetUrl, "/focus/acquire");
+    }
+
+    boolean isTrustedVoiceAudioFocusReleaseAction(String currentPageUrl, String targetUrl) {
+        return isTrustedVoiceAudioFocusAction(currentPageUrl, targetUrl, "/focus/release");
+    }
+
+    private boolean isTrustedVoiceAudioFocusAction(
+            String currentPageUrl,
+            String targetUrl,
+            String path
+    ) {
+        if (!isTrustedPageUrl(currentPageUrl)) return false;
+        URI target = parseOrNull(targetUrl);
+        if (target == null
+                || target.getUserInfo() != null
+                || target.getQuery() != null
+                || target.getFragment() != null) {
+            return false;
+        }
+        return "projectshub".equalsIgnoreCase(target.getScheme())
+                && "audio".equalsIgnoreCase(target.getHost())
+                && path.equals(target.getPath());
+    }
+
     private boolean sameOrigin(URI candidate) {
         return candidate.getScheme() != null
                 && candidate.getHost() != null

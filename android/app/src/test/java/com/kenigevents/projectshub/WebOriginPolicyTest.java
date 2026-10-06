@@ -74,6 +74,38 @@ public class WebOriginPolicyTest {
 
 
     @Test
+    public void voiceAudioFocusRequiresTrustedPageAndExactBoundedAction() {
+        assertTrue(policy.isTrustedVoiceAudioFocusAcquireAction(
+                "https://projects-hub.kenigevents.ru/work",
+                "projectshub://audio/focus/acquire"
+        ));
+        assertTrue(policy.isTrustedVoiceAudioFocusReleaseAction(
+                "https://projects-hub.kenigevents.ru/work",
+                "projectshub://audio/focus/release"
+        ));
+        assertFalse(policy.isTrustedVoiceAudioFocusAcquireAction(
+                "https://evil.example/",
+                "projectshub://audio/focus/acquire"
+        ));
+        assertFalse(policy.isTrustedVoiceAudioFocusAcquireAction(
+                "https://projects-hub.kenigevents.ru/work",
+                "projectshub://audio/focus/release"
+        ));
+        assertFalse(policy.isTrustedVoiceAudioFocusReleaseAction(
+                "https://projects-hub.kenigevents.ru/work",
+                "projectshub://audio/focus/acquire"
+        ));
+        assertFalse(policy.isTrustedVoiceAudioFocusAcquireAction(
+                "https://projects-hub.kenigevents.ru/work",
+                "projectshub://audio/focus/acquire?next=https://evil.example"
+        ));
+        assertFalse(policy.isTrustedVoiceAudioFocusReleaseAction(
+                "https://projects-hub.kenigevents.ru/work",
+                "projectshub://audio/focus/release#fragment"
+        ));
+    }
+
+    @Test
     public void githubNavigationLeavesWebViewOnlyFromTrustedProjectsHubPage() {
         assertTrue(policy.isTrustedExternalGitHubNavigation(
                 "https://projects-hub.kenigevents.ru/",
