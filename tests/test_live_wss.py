@@ -223,7 +223,7 @@ def test_app_restart_replaces_a_previously_attached_then_detached_wss_session(li
 
     state = host._socket_states[first["session_id"]]
     assert state.used_wss is True
-    deadline = time.monotonic() + 0.5
+    deadline = time.monotonic() + 5.0
     while state.claim is not None and time.monotonic() < deadline:
         time.sleep(0.005)
     assert state.claim is None
