@@ -302,6 +302,132 @@ def wait_text_bounds(target_text: str, timeout_seconds: int = 45) -> tuple[int, 
     )
 
 
+def _node_bounds(node: ET.Element) -> tuple[int, int, int, int] | None:
+    match = re.fullmatch(
+        r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]",
+        str(node.attrib.get("bounds") or ""),
+    )
+    if not match:
+        return None
+    left, top, right, bottom = map(int, match.groups())
+    if right <= left or bottom <= top:
+        return None
+    return left, top, right, bottom
+
+
+def unknown_sources_control(
+    xml_text: str,
+) -> tuple[tuple[int, int, int, int], bool | None] | None:
+    """Find the Android unknown-sources switch/control in Settings UI."""
+
+    root = ET.fromstring(xml_text)
+    candidates: list[tuple[int, ET.Element, tuple[int, int, int, int]]] = []
+    fallback: tuple[tuple[int, int, int, int], bool | None] | None = None
+    for node in root.iter("node"):
+        bounds = _node_bounds(node)
+        if bounds is None:
+            continue
+        resource_id = str(node.attrib.get("resource-id") or "")
+        class_name = str(node.attrib.get("class") or "")
+        checkable = str(node.attrib.get("checkable") or "").lower() == "true"
+        text_value = str(node.attrib.get("text") or "").strip().casefold()
+        score = 0
+        if resource_id.endswith("switch_widget"):
+            score += 5
+        if class_name.endswith("Switch") or class_name.endswith("SwitchCompat"):
+            score += 4
+        if checkable:
+            score += 3
+        if score:
+            candidates.append((score, node, bounds))
+        if text_value == "allow from this source":
+            fallback = (bounds, None)
+
+    if candidates:
+        _, node, bounds = max(candidates, key=lambda item: item[0])
+        checked_raw = str(node.attrib.get("checked") or "").lower()
+        checked = (
+            True
+            if checked_raw == "true"
+            else False
+            if checked_raw == "false"
+            else None
+        )
+        return bounds, checked
+    return fallback
+
+
+def enable_unknown_sources_via_settings(timeout_seconds: int = 45) -> None:
+    """Toggle the real Settings control and verify Android's resulting app-op."""
+
+    deadline = time.time() + timeout_seconds
+    last_xml = ""
+    last_appop = ""
+    tapped_fallback = False
+    while time.time() < deadline:
+        run(
+            "adb",
+            "shell",
+            "uiautomator",
+            "dump",
+            "--compressed",
+            "/sdcard/projects-hub-window.xml",
+            check=False,
+            timeout=20,
+            retries=1,
+        )
+        last_xml = run(
+            "adb",
+            "exec-out",
+            "cat",
+            "/sdcard/projects-hub-window.xml",
+            check=False,
+            timeout=20,
+            retries=1,
+        )
+        try:
+            control = unknown_sources_control(last_xml)
+        except ET.ParseError:
+            control = None
+
+        last_appop = run(
+            "adb",
+            "shell",
+            "appops",
+            "get",
+            PACKAGE,
+            "REQUEST_INSTALL_PACKAGES",
+            check=False,
+            timeout=20,
+            retries=1,
+        ).lower()
+        if "allow" in last_appop:
+            return
+
+        if control is not None:
+            (left, top, right, bottom), checked = control
+            should_tap = checked is False or (checked is None and not tapped_fallback)
+            if should_tap:
+                run(
+                    "adb",
+                    "shell",
+                    "input",
+                    "tap",
+                    str((left + right) // 2),
+                    str((top + bottom) // 2),
+                    timeout=15,
+                    retries=3,
+                )
+                if checked is None:
+                    tapped_fallback = True
+        time.sleep(1)
+
+    raise RuntimeError(
+        "Unknown-sources permission did not become allowed through Settings UI; "
+        + f"appop={last_appop[-400:]!r}; ui={last_xml[-1200:]!r}"
+    )
+
+
 def wait_log(pattern: str, timeout_seconds: int = 120) -> re.Match[str]:
     compiled = re.compile(pattern)
     deadline = time.time() + timeout_seconds
@@ -435,32 +561,8 @@ def main() -> None:
                 + repr(last_focus)
             )
 
-        run(
-            "adb",
-            "shell",
-            "appops",
-            "set",
-            PACKAGE,
-            "REQUEST_INSTALL_PACKAGES",
-            "allow",
-            timeout=20,
-            retries=3,
-        )
-        appop = run(
-            "adb",
-            "shell",
-            "appops",
-            "get",
-            PACKAGE,
-            "REQUEST_INSTALL_PACKAGES",
-            timeout=20,
-            retries=3,
-        ).lower()
-        if "allow" not in appop:
-            raise RuntimeError(
-                "REQUEST_INSTALL_PACKAGES app-op did not become allowed: "
-                + repr(appop[-500:])
-            )
+        enable_unknown_sources_via_settings(timeout_seconds=45)
+        print("install permission granted through Settings UI")
 
         run(
             "adb",
