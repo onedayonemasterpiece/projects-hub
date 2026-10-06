@@ -3,12 +3,14 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from fastapi import FastAPI, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .board_view_context import BoardViewContextStore
 
 
 class CameraPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     x: float
     y: float
     zoom: float
@@ -17,6 +19,8 @@ class CameraPayload(BaseModel):
 
 
 class BoardViewContextPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     workspace_id: str
     project_id: str
     board_id: str
