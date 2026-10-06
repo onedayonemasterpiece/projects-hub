@@ -174,6 +174,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
   const [authReady, setAuthReady] = useState(false);
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [voiceState, setVoiceState] = useState("off");
+  const [voiceClientReady, setVoiceClientReady] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [interimInputTranscript, setInterimInputTranscript] = useState("");
   const [inputTranscriptSeen, setInputTranscriptSeen] = useState(false);
@@ -736,7 +737,11 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
   }, [boot, refreshGitHub]);
 
   useEffect(() => {
-    if (!boot) return;
+    if (!boot) {
+      setVoiceClientReady(false);
+      return;
+    }
+    setVoiceClientReady(false);
     const client = createLiveClient({
       transport: "wss",
       voiceControl: null,
@@ -872,10 +877,12 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
       },
     });
     clientRef.current = client;
+    setVoiceClientReady(true);
     return () => {
       setAndroidVoiceAudioFocus(false);
       client.stop({ reason: "ui_unmount" });
-      clientRef.current = null;
+      if (clientRef.current === client) clientRef.current = null;
+      setVoiceClientReady(false);
     };
   }, [applyLiveEvent, applyPreferenceEvent, reconcilePreferences, clearPrivateIdentity, boot, reserveUserVoiceBubble, setAndroidVoiceAudioFocus, settleCurrentVoiceBubble]);
 
@@ -1794,7 +1801,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
           <button
             className={"voice-orb" + (voiceActive ? " active" : "")}
             onClick={toggleVoice}
-            disabled={busy}
+            disabled={busy || !voiceClientReady}
             aria-label={voiceActive ? "Остановить разговор" : "Начать голосовой разговор"}
           >
             <span className="pulse pulse-one" />
