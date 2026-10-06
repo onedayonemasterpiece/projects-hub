@@ -30,8 +30,39 @@ export async function recoverServerVoiceSource(
     callbacks?: ServerRecoveryCallbacks;
   } = {},
 ): Promise<ServerRecoveryResult> {
+  const metadataResponse = await fetch(
+    `/api/sources/${encodeURIComponent(sourceId)}`,
+    { credentials: "same-origin", cache: "no-store" },
+  );
+  if (!metadataResponse.ok) {
+    throw new Error("Сохранённая реплика недоступна для восстановления.");
+  }
+  const metadata = await metadataResponse.json() as {
+    source?: {
+      utterance_verdict?: unknown;
+      utterance_audio_start_bytes?: unknown;
+      utterance_audio_end_bytes?: unknown;
+    };
+  };
+  const verdict = String(metadata.source?.utterance_verdict ?? "");
+  if (verdict === "turn_committed") {
+    throw new Error("Эта реплика уже была подтверждена Мирой и не должна повторяться.");
+  }
+  const start = metadata.source?.utterance_audio_start_bytes;
+  const end = metadata.source?.utterance_audio_end_bytes;
+  const params = new URLSearchParams();
+  if (
+    (verdict === "no_turn_closed" || verdict === "turn_closed_no_transcript")
+    && typeof start === "number"
+    && typeof end === "number"
+    && end > start
+  ) {
+    params.set("start_bytes", String(start));
+    params.set("end_bytes", String(end));
+  }
   const response = await fetch(
-    `/api/conversations/${encodeURIComponent(conversationId)}/sources/${encodeURIComponent(sourceId)}/audio`,
+    `/api/sources/${encodeURIComponent(sourceId)}/audio`
+      + (params.size ? `?${params.toString()}` : ""),
     { credentials: "same-origin", cache: "no-store" },
   );
   if (!response.ok) {

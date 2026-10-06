@@ -6,6 +6,9 @@ import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
+import android.media.AudioManager;
 import android.net.Uri;
 import android.provider.Settings;
 import android.graphics.Color;
@@ -46,6 +49,10 @@ public final class MainActivity extends Activity {
     private Button updateButton;
     private WebOriginPolicy webOriginPolicy;
     private SecureStore secureStore;
+    private AudioManager audioManager;
+    private AudioFocusRequest voiceFocusRequest;
+    private boolean voiceFocusDesired;
+    private boolean voiceFocusHeld;
     private ApiClient api;
     private CalendarExecutor calendar;
     private Notifier notifier;
@@ -68,6 +75,12 @@ public final class MainActivity extends Activity {
         }
     };
 
+    private final Runnable pendingUpdateResume = () -> {
+        if (updater != null) {
+            updater.resumePendingInstall();
+        }
+    };
+
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -76,6 +89,7 @@ public final class MainActivity extends Activity {
 
         secureStore = new SecureStore(this);
         webOriginPolicy = new WebOriginPolicy(BuildConfig.HUB_URL);
+        audioManager = getSystemService(AudioManager.class);
         api = new ApiClient(BuildConfig.HUB_URL);
         calendar = new CalendarExecutor(this);
         notifier = new Notifier(this);
@@ -154,27 +168,39 @@ public final class MainActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         handleGitHubReturn(intent);
+        if (updater != null) {
+            updater.resumePendingInstall();
+        }
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        if (voiceFocusDesired && !voiceFocusHeld) {
+            requestVoiceAudioFocus();
+        }
         main.removeCallbacks(pairingProbe);
         main.post(pairingProbe);
+        main.removeCallbacks(pendingUpdateResume);
         if (updater != null) {
             updater.resumePendingInstall();
+            main.postDelayed(pendingUpdateResume, 500L);
+            main.postDelayed(pendingUpdateResume, 1500L);
             updater.checkForUpdate();
         }
     }
 
     @Override
     protected void onPause() {
+        main.removeCallbacks(pendingUpdateResume);
         main.removeCallbacks(pairingProbe);
+        abandonVoiceAudioFocus(false);
         super.onPause();
     }
 
     @Override
     protected void onDestroy() {
+        abandonVoiceAudioFocus(true);
         main.removeCallbacksAndMessages(null);
         PermissionRequest pendingPermission = pendingWebPermission;
         pendingWebPermission = null;
@@ -224,6 +250,14 @@ public final class MainActivity extends Activity {
                 }
                 if (webOriginPolicy.isTrustedMicrophoneSettingsAction(currentUrl, targetUrl)) {
                     openMicrophoneSettings();
+                    return true;
+                }
+                if (webOriginPolicy.isTrustedVoiceAudioFocusAcquireAction(currentUrl, targetUrl)) {
+                    acquireVoiceAudioFocus();
+                    return true;
+                }
+                if (webOriginPolicy.isTrustedVoiceAudioFocusReleaseAction(currentUrl, targetUrl)) {
+                    releaseVoiceAudioFocus();
                     return true;
                 }
                 if (webOriginPolicy.isTrustedGitHubBrowserAction(currentUrl, targetUrl)) {
@@ -386,6 +420,63 @@ public final class MainActivity extends Activity {
         Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
         intent.setData(Uri.parse("package:" + getPackageName()));
         startActivity(intent);
+    }
+
+    private final AudioManager.OnAudioFocusChangeListener voiceAudioFocusListener =
+            focusChange -> {
+                if (focusChange == AudioManager.AUDIOFOCUS_GAIN) {
+                    voiceFocusHeld = true;
+                } else if (focusChange == AudioManager.AUDIOFOCUS_LOSS
+                        || focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
+                        || focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK) {
+                    voiceFocusHeld = false;
+                }
+                Log.i(
+                        "ProjectsHubVoice",
+                        "audio_focus_change=" + focusChange
+                                + " desired=" + voiceFocusDesired
+                                + " held=" + voiceFocusHeld
+                );
+            };
+
+    private void acquireVoiceAudioFocus() {
+        voiceFocusDesired = true;
+        requestVoiceAudioFocus();
+    }
+
+    private void requestVoiceAudioFocus() {
+        if (voiceFocusHeld || audioManager == null) return;
+        if (voiceFocusRequest == null) {
+            AudioAttributes attributes = new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build();
+            voiceFocusRequest = new AudioFocusRequest.Builder(
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
+            )
+                    .setAudioAttributes(attributes)
+                    .setOnAudioFocusChangeListener(voiceAudioFocusListener, main)
+                    .build();
+        }
+        int result = audioManager.requestAudioFocus(voiceFocusRequest);
+        voiceFocusHeld = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        Log.i(
+                "ProjectsHubVoice",
+                "audio_focus_request result=" + result + " held=" + voiceFocusHeld
+        );
+    }
+
+    private void releaseVoiceAudioFocus() {
+        abandonVoiceAudioFocus(true);
+    }
+
+    private void abandonVoiceAudioFocus(boolean clearDesired) {
+        if (clearDesired) voiceFocusDesired = false;
+        if (audioManager != null && voiceFocusRequest != null) {
+            int result = audioManager.abandonAudioFocusRequest(voiceFocusRequest);
+            Log.i("ProjectsHubVoice", "audio_focus_abandon result=" + result);
+        }
+        voiceFocusHeld = false;
     }
 
     private void showMicrophoneSettingsDialog() {

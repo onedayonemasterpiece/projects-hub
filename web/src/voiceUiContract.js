@@ -18,6 +18,24 @@ export function mergeTranscript(current, fragment) {
   return overlap >= 3 ? current + clean.slice(overlap) : current + " " + clean;
 }
 
+/**
+ * Sidecar captions are provisional UI only. Interim hypotheses may revise in
+ * either direction, but a final sidecar result must never visibly truncate a
+ * longer hypothesis that the user has already seen. Mira's canonical
+ * input_transcript remains authoritative and may replace the whole caption.
+ * @param {string} current
+ * @param {string} fragment
+ * @param {boolean} final
+ * @returns {string}
+ */
+export function selectProvisionalCaption(current, fragment, final = false) {
+  const clean = String(fragment ?? "").trim();
+  if (!clean) return current;
+  const visible = String(current ?? "").trim();
+  if (final && visible.length > clean.length) return current;
+  return clean;
+}
+
 export const TERMINAL_VOICE_REASONS = Object.freeze([
   "resource_denial",
   "provider_failure",

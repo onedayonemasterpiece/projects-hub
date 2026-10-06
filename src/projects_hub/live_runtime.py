@@ -15,6 +15,7 @@ from .regional_knowledge import RegionalKnowledgeAdapter
 from .live_adapter import ProjectsHubLiveAdapter
 from .live_admission import ProjectsHubAdmissionMixin
 from .live_resources import live_resource_environment
+from .live_transcription import CaptionSidecar
 from .readiness import ReadinessService
 from .sharing import SharingService
 from .store import DurableStore
@@ -77,6 +78,7 @@ def build_live_host(
     try:
         from live_interaction import LiveSocketSessionHost
         from live_interaction.provider import run as provider_run
+        from live_interaction.transcribe import run as transcribe_run
     except ImportError as exc:
         raise RuntimeError("LIVE_INTERACTION_PACKAGE_MISSING") from exc
 
@@ -87,6 +89,7 @@ def build_live_host(
     board_view_context = board_view_context or BoardViewContextStore(store, board)
     analytics = analytics or AnalyticsService(store, board)
     sharing = sharing or SharingService(store, board)
+    resource_environment = live_resource_environment(env)
     device_commands = device_commands or DeviceCommandService(store)
     readiness = readiness or ReadinessService(store)
     development = development or DevelopmentService(store, readiness)
@@ -98,7 +101,7 @@ def build_live_host(
             raise RuntimeError("RESOURCE_PACKAGE_MISSING") from exc
         await run_guarded(
             consumer="projects-hub",
-            environment=live_resource_environment(env),
+            environment=resource_environment,
             reader=reader,
             on_event=on_event,
             provider_run=provider_run,
@@ -109,7 +112,79 @@ def build_live_host(
         ProjectsHubAdmissionMixin,
         LiveSocketSessionHost,
     ):
-        pass
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self._caption_sidecars: dict[str, CaptionSidecar] = {}
+            super().__init__(*args, **kwargs)
+
+        def _caption_emit(self, session: Any, event: dict[str, Any]) -> None:
+            if session.closed or self.sessions.get(session.id) is not session:
+                return
+            kind = str(event.get("type") or "")
+            text = event.get("text") if isinstance(event.get("text"), str) else None
+            log.info(
+                "live caption event",
+                extra={
+                    "event": "live_caption_event",
+                    "session_id": session.id,
+                    "conversation_id": session.state.get("conversation_id"),
+                    "source_id": session.state.get("source_id"),
+                    "kind": kind,
+                    "code": str(event.get("code") or "")[:80] or None,
+                    "text_length": len(text) if text is not None else 0,
+                },
+            )
+            self._emit(session, event)
+
+        async def start(self, *, resource_id: str, actor: Any, **kwargs: Any) -> dict[str, Any]:
+            result = await super().start(resource_id=resource_id, actor=actor, **kwargs)
+            session = self._get(result["session_id"], resource_id, actor)
+            if (
+                session.state.get("audio_mode") == "realtime"
+                and not session.state.get("recovery_only")
+            ):
+                sidecar = CaptionSidecar(
+                    environment=resource_environment,
+                    binding=f"{resource_id}:caption:{session.id}",
+                    vocabulary=list(session.state.get("caption_vocabulary") or []),
+                    emit=lambda event, active=session: self._caption_emit(active, event),
+                    provider_run=transcribe_run,
+                )
+                self._caption_sidecars[session.id] = sidecar
+                sidecar.start()
+            return {
+                **result,
+                "caption_enabled": session.id in self._caption_sidecars,
+                "caption_model": "gemini-3.5-transcribe-live"
+                if session.id in self._caption_sidecars
+                else None,
+            }
+
+        async def input(
+            self,
+            *,
+            session_id: str,
+            resource_id: str,
+            message: dict[str, Any],
+            actor: Any = None,
+            **kwargs: Any,
+        ) -> dict[str, Any]:
+            result = await super().input(
+                session_id=session_id,
+                resource_id=resource_id,
+                message=message,
+                actor=actor,
+                **kwargs,
+            )
+            sidecar = self._caption_sidecars.get(session_id)
+            if sidecar is not None:
+                sidecar.feed(message)
+            return result
+
+        async def _discard(self, session: Any, graceful: bool = False) -> None:
+            sidecar = self._caption_sidecars.pop(session.id, None)
+            if sidecar is not None:
+                await sidecar.stop()
+            await super()._discard(session, graceful=graceful)
 
     def live_diagnostic(record: dict[str, Any]) -> None:
         safe = {
@@ -129,6 +204,25 @@ def build_live_host(
             }
             and isinstance(value, (str, int, float, bool))
         }
+        if str(safe.get("event") or "") == "socket_audio_accepted":
+            safe["latency_stage"] = "capture_to_server"
+            capture_age = safe.get("capture_age_ms")
+            duration = safe.get("duration_ms")
+            latency_alert = (
+                isinstance(capture_age, (int, float))
+                and not isinstance(capture_age, bool)
+                and capture_age >= 1000
+            ) or (
+                isinstance(duration, (int, float))
+                and not isinstance(duration, bool)
+                and duration >= 250
+            )
+            safe["latency_alert"] = latency_alert
+            (log.warning if latency_alert else log.info)(
+                "live socket diagnostic",
+                extra=safe,
+            )
+            return
         log.info("live socket diagnostic", extra=safe)
 
     return ProjectsHubLiveSocketSessionHost(

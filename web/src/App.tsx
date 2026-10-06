@@ -37,7 +37,7 @@ import {
 } from "./api";
 import { replayLocalVoiceSource } from "./bufferedReplay";
 import { recoverServerVoiceSource } from "./serverRecovery";
-import { mergeTranscript, resolveTerminalVoiceState, speechStartsNewUserBubble } from "./voiceUiContract.js";
+import { mergeTranscript, resolveTerminalVoiceState, selectProvisionalCaption, speechStartsNewUserBubble } from "./voiceUiContract.js";
 import { BoardShell, type BoardFocusRequest, type BoardShareRequest } from "./BoardShell";
 import { ackBoardUi, openBoard, type BoardGeometry } from "./boardApi";
 import {
@@ -52,7 +52,15 @@ import {
 
 type WaitState = null | { elapsed_ms: number; stage: string; can_restart: boolean };
 type ChatRole = "user" | "assistant";
-type ChatMessage = { role: ChatRole; text: string };
+type ChatMessage = {
+  role: ChatRole;
+  text: string;
+  awaitingTranscript?: boolean;
+  provisionalCaption?: boolean;
+  deliveryNote?: string;
+};
+
+const VOICE_TURN_PLACEHOLDER = "";
 
 const developmentStageLabel: Record<string, string> = {
   design: "Проектирование",
@@ -144,6 +152,12 @@ export default function App() {
     () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     [],
   );
+  const setAndroidVoiceAudioFocus = useCallback((enabled: boolean) => {
+    if (!isAndroidApp) return;
+    window.location.href = enabled
+      ? "projectshub://audio/focus/acquire"
+      : "projectshub://audio/focus/release";
+  }, [isAndroidApp]);
   const [boot, setBoot] = useState<Bootstrap | null>(null);
   const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -196,6 +210,7 @@ export default function App() {
   const replayingRef = useRef(false);
   const turnHasInput = useRef(false);
   const userTurnBoundaryPendingRef = useRef(false);
+  const userTurnAwaitingFinalRef = useRef(false);
   const conversationRef = useRef<Conversation | null>(null);
   const boardProjectRef = useRef<string | null>(null);
   const lastDevelopmentUpdateCheckRef = useRef(
@@ -356,6 +371,18 @@ export default function App() {
         preferred.current = messages.length - 1;
         return messages;
       }
+      if (role === "user" && messages[index].awaitingTranscript) {
+        // The primary conversational Live model is authoritative. Its final
+        // input transcript replaces any speculative/final sidecar caption and
+        // clears a transport/recovery note that may have been shown meanwhile.
+        messages[index] = {
+          role,
+          text: clean,
+          awaitingTranscript: false,
+          deliveryNote: undefined,
+        };
+        return messages;
+      }
       messages[index] = {
         ...messages[index],
         text: mergeTranscript(messages[index].text, clean),
@@ -364,18 +391,104 @@ export default function App() {
     });
   }, []);
 
+  const settleCurrentVoiceBubble = useCallback((
+    note?: string,
+    keepAwaiting = false,
+  ) => {
+    setChatMessages(previous => {
+      const index = userTranscriptIndex.current;
+      if (
+        index < 0
+        || index >= previous.length
+        || previous[index]?.role !== "user"
+        || !previous[index]?.awaitingTranscript
+      ) {
+        return previous;
+      }
+      const messages = [...previous];
+      const current = messages[index];
+      const hasVisibleCaption = Boolean(current.provisionalCaption && current.text);
+      messages[index] = {
+        ...current,
+        awaitingTranscript: keepAwaiting,
+        deliveryNote: note
+          ?? current.deliveryNote
+          ?? (hasVisibleCaption ? undefined : "Текст не удалось отобразить"),
+      };
+      return messages;
+    });
+    if (!keepAwaiting) userTurnAwaitingFinalRef.current = false;
+  }, []);
+
+  const reserveUserVoiceBubble = useCallback(() => {
+    userTurnAwaitingFinalRef.current = true;
+    setChatMessages(previous => {
+      const messages = [...previous];
+      messages.push({ role: "user", text: VOICE_TURN_PLACEHOLDER, awaitingTranscript: true });
+      if (messages.length > 48) messages.splice(0, messages.length - 48);
+      userTranscriptIndex.current = messages.length - 1;
+      return messages;
+    });
+  }, []);
+
+  const applyCaptionToUserBubble = useCallback((fragment: string, _final: boolean) => {
+    const clean = fragment.trim();
+    if (!clean) return;
+    setChatMessages(previous => {
+      const messages = [...previous];
+      const index = userTranscriptIndex.current;
+      if (
+        index < 0
+        || index >= messages.length
+        || messages[index]?.role !== "user"
+        || !messages[index]?.awaitingTranscript
+      ) {
+        return previous;
+      }
+      // Google interim transcription is a dynamically updated hypothesis, so
+      // replace it rather than appending fragments. The main Mira transcript
+      // later replaces this entire provisional/final caption. A shorter
+      // sidecar final must not roll back text that was already visible.
+      const text = selectProvisionalCaption(messages[index].text, clean, _final);
+      messages[index] = {
+        ...messages[index],
+        text,
+        awaitingTranscript: true,
+        provisionalCaption: true,
+      };
+      return messages;
+    });
+  }, []);
+
   const applyLiveEvent = useCallback((event: LiveEvent) => {
-    if (event.type === "interim_input_transcript" && typeof event.text === "string") {
+    if (event.type === "caption_interim_transcript" && typeof event.text === "string") {
+      setInputTranscriptSeen(true);
+      setInterimInputTranscript("");
+      applyCaptionToUserBubble(event.text, false);
+    } else if (event.type === "caption_final_transcript" && typeof event.text === "string") {
+      setInputTranscriptSeen(true);
+      setInterimInputTranscript("");
+      applyCaptionToUserBubble(event.text, true);
+    } else if (event.type === "caption_unavailable") {
+      // Captions are deliberately fail-open. Mira voice/semantics stay active
+      // and the reserved user bubble remains visible if no main transcript arrives.
+    } else if (event.type === "interim_input_transcript" && typeof event.text === "string") {
       if (userTurnBoundaryPendingRef.current) {
         userTurnBoundaryPendingRef.current = false;
         userTranscriptIndex.current = -1;
         turnHasInput.current = false;
       }
       setInputTranscriptSeen(true);
-      setInterimInputTranscript(event.text.trim());
+      if (userTranscriptIndex.current >= 0) {
+        setInterimInputTranscript("");
+        applyCaptionToUserBubble(event.text, false);
+      } else {
+        setInterimInputTranscript(event.text.trim());
+      }
     } else if (event.type === "input_transcript" && typeof event.text === "string") {
       setInputTranscriptSeen(true);
       setInterimInputTranscript("");
+      userTurnAwaitingFinalRef.current = false;
       if (!turnHasInput.current) turnHasInput.current = true;
       mergeChatMessage("user", event.text, userTranscriptIndex);
     } else if (event.type === "output_transcript" && typeof event.text === "string") {
@@ -507,7 +620,7 @@ export default function App() {
     } else if (event.type === "capability_unavailable" && event.code !== "NOT_CONFIGURED") {
       setNotice("Одна из дополнительных возможностей сейчас недоступна.");
     }
-  }, [loadBacklog, loadEventCards, loadMemories, mergeChatMessage]);
+  }, [applyCaptionToUserBubble, loadBacklog, loadEventCards, loadMemories, mergeChatMessage]);
 
   useEffect(() => {
     let cancelled = false;
@@ -630,26 +743,39 @@ export default function App() {
         if (!speechStartsNewUserBubble(event)) return;
         setSpeechActive(true);
         setSpeechPending(false);
-        // A real microphone/VAD speech start is the user-turn boundary. Gemini
-        // conversational Live may emit only a final input_transcript, so waiting
-        // for provider interim text can incorrectly append a later utterance to
-        // the previous user bubble.
+        // A real microphone/VAD speech start is the user-turn boundary. If a
+        // prior turn never received Mira's canonical transcript, keep whatever
+        // the user already saw and settle it instead of silently reusing or
+        // deleting that bubble.
+        if (userTurnAwaitingFinalRef.current) settleCurrentVoiceBubble();
         userTurnBoundaryPendingRef.current = false;
         userTranscriptIndex.current = -1;
         turnHasInput.current = false;
         setInterimInputTranscript("");
         setInputTranscriptSeen(false);
+        reserveUserVoiceBubble();
       },
       onState: (state, detail) => {
         const terminalReason = resolveTerminalVoiceState(state, detail);
         setVoiceState(terminalReason || state);
+        if (terminalReason || inactiveVoiceStates.has(state) || state === "budget_wait") {
+          setAndroidVoiceAudioFocus(false);
+        }
         if (terminalReason || inactiveVoiceStates.has(state) || state === "reconnecting" || state === "budget_wait") {
           setSpeechActive(false);
           setSpeechPending(false);
         }
         if (state === "starting") setPlaybackProblem(null);
-        if (terminalReason && currentSourceIdRef.current) {
-          setRecoverableSourceId(currentSourceIdRef.current);
+        if (terminalReason) {
+          if (userTurnAwaitingFinalRef.current) {
+            settleCurrentVoiceBubble(
+              terminalReason === "connection_failure"
+                ? "Связь прервалась до подтверждения фразы"
+                : undefined,
+              true,
+            );
+          }
+          if (currentSourceIdRef.current) setRecoverableSourceId(currentSourceIdRef.current);
         }
         if (
           ["start_error", "connection_error", "microphone_unavailable"].includes(state)
@@ -659,6 +785,7 @@ export default function App() {
         }
         if (state === "starting") setInputTranscriptSeen(false);
         if (state === "listening") {
+          setAndroidVoiceAudioFocus(true);
           setSpeechPending(false);
           setNotice(null);
           setMicrophoneSettingsAvailable(false);
@@ -672,6 +799,10 @@ export default function App() {
           setMicrophoneSettingsAvailable(isAndroidApp);
           setNotice("Android/WebView не получил микрофон. Откройте настройки приложения и разрешите микрофон; если он уже разрешён, проверьте системный переключатель доступа к микрофону.");
         } else if (kind === "transport_error") {
+          if (userTurnAwaitingFinalRef.current) {
+            settleCurrentVoiceBubble("Связь прервалась до подтверждения фразы", true);
+            if (currentSourceIdRef.current) setRecoverableSourceId(currentSourceIdRef.current);
+          }
           setNotice("Связь с Live прервалась. Восстанавливаю разговор…");
           const now = Date.now();
           if (
@@ -683,12 +814,19 @@ export default function App() {
             window.setTimeout(() => void recoverLiveConversation(), 1200);
           }
         } else if (kind === "connection_error") {
+          if (userTurnAwaitingFinalRef.current) {
+            settleCurrentVoiceBubble("Связь прервалась до подтверждения фразы", true);
+            if (currentSourceIdRef.current) setRecoverableSourceId(currentSourceIdRef.current);
+          }
           setNotice("Связь с Live нестабильна. Пытаюсь переподключиться…");
         } else if (kind === "resource_denial") {
+          if (userTurnAwaitingFinalRef.current) settleCurrentVoiceBubble(undefined, true);
           setNotice("Live остановилась из-за ресурсного лимита. Уже принятый голосовой источник сохранён и доступен для восстановления.");
         } else if (kind === "provider_failure") {
+          if (userTurnAwaitingFinalRef.current) settleCurrentVoiceBubble(undefined, true);
           setNotice("Live-провайдер завершил сессию с ошибкой. Уже принятый голосовой источник сохранён.");
         } else if (kind === "capture_error") {
+          if (userTurnAwaitingFinalRef.current) settleCurrentVoiceBubble(undefined, true);
           setNotice("Запись с микрофона прервалась. Уже подтверждённая часть источника сохранена.");
         }
         else if (kind === "event_gap") setNotice("Интерфейс пропустил часть служебных событий. Источник на сервере сохраняется отдельно.");
@@ -699,10 +837,11 @@ export default function App() {
     });
     clientRef.current = client;
     return () => {
+      setAndroidVoiceAudioFocus(false);
       client.stop({ reason: "ui_unmount" });
       clientRef.current = null;
     };
-  }, [applyLiveEvent, boot]);
+  }, [applyLiveEvent, boot, reserveUserVoiceBubble, setAndroidVoiceAudioFocus, settleCurrentVoiceBubble]);
 
   async function signIn() {
     setBusy(true);
@@ -748,6 +887,7 @@ export default function App() {
     const capture = createDurableMicrophoneCapture({
       persist: sink.persist,
       onError: error => {
+        setAndroidVoiceAudioFocus(false);
         setNotice(error instanceof Error ? error.message : "Локальная запись остановлена.");
         setVoiceState("off");
       },
@@ -755,6 +895,7 @@ export default function App() {
     offlineSourceRef.current = { source, sink };
     offlineCaptureRef.current = capture;
     try {
+      setAndroidVoiceAudioFocus(true);
       await capture.start();
       setVoiceState("offline_recording");
       setNotice("Связи нет. Речь сохраняется на этом устройстве и никуда не отправляется.");
@@ -762,6 +903,7 @@ export default function App() {
       offlineCaptureRef.current = null;
       offlineSourceRef.current = null;
       await acknowledgeDeliveredSource(source.id);
+      setAndroidVoiceAudioFocus(false);
       throw error;
     }
   }
@@ -784,11 +926,11 @@ export default function App() {
       offlineCaptureRef.current = null;
       offlineSourceRef.current = null;
       setVoiceState("off");
+      setAndroidVoiceAudioFocus(false);
       setBusy(false);
       await refreshPendingSources();
     }
   }
-
   async function deliverSavedSource() {
     if (!networkOnline || !pendingSources.length || replayingRef.current) return;
     const source = pendingSources[0];
@@ -832,6 +974,20 @@ export default function App() {
     };
   }
 
+  function adoptPendingVoiceRecovery(started: any): boolean {
+    const pending = Array.isArray(started?.pending_voice_sources)
+      ? started.pending_voice_sources
+      : [];
+    const recoverable = pending.find((item: any) => {
+      const verdict = String(item?.utterance_verdict ?? "");
+      return verdict === "no_turn_closed" || verdict === "turn_closed_no_transcript";
+    });
+    const sourceId = typeof recoverable?.id === "string" ? recoverable.id : "";
+    if (!sourceId) return false;
+    setRecoverableSourceId(sourceId);
+    return true;
+  }
+
   async function recoverLiveConversation() {
     const client = clientRef.current;
     const current = conversationRef.current;
@@ -846,6 +1002,7 @@ export default function App() {
       return;
     }
     try {
+      setAndroidVoiceAudioFocus(true);
       const started = await client.start({
         url: `/api/live/${current.id}/sessions`,
         body: liveStartBody(),
@@ -854,8 +1011,10 @@ export default function App() {
         authorize: async () => {},
       });
       if (typeof started?.source_id === "string") currentSourceIdRef.current = started.source_id;
+      adoptPendingVoiceRecovery(started);
       if (client.sessionId) setNotice("Разговор восстановлен.");
     } catch {
+      setAndroidVoiceAudioFocus(false);
       setNotice("Не удалось автоматически восстановить Live. Нажмите микрофон, чтобы продолжить.");
     }
   }
@@ -901,6 +1060,7 @@ export default function App() {
     const active = !inactiveVoiceStates.has(voiceState);
     if (active || client.sessionId || client.starting) {
       userStoppedVoiceRef.current = true;
+      setAndroidVoiceAudioFocus(false);
       client.stop({ reason: "user_stop" });
       setWait(null);
       return;
@@ -915,6 +1075,7 @@ export default function App() {
         return;
       }
       const current = await ensureConversation();
+      setAndroidVoiceAudioFocus(true);
       const started = await client.start({
         url: `/api/live/${current.id}/sessions`,
         body: liveStartBody(),
@@ -923,11 +1084,13 @@ export default function App() {
         authorize: async () => {},
       });
       if (typeof started?.source_id === "string") currentSourceIdRef.current = started.source_id;
+      adoptPendingVoiceRecovery(started);
       if (!client.sessionId && !navigator.onLine) {
         await startOfflineCapture();
       }
     } catch (error) {
       client.stop({ reason: "start_error" });
+      setAndroidVoiceAudioFocus(false);
       setNotice(friendlyStartError(error));
       setVoiceState("off");
     } finally {
@@ -1177,7 +1340,6 @@ export default function App() {
               ))}
             </div>
             <p className="sheet-footnote">Сменить проект можно голосом. Live‑агент сам уточнит контекст, если он неоднозначен.</p>
-
             {boot.role === "owner" && (
               <div className="integration-card" aria-label="GitHub integration">
                 <div className="integration-heading">
@@ -1275,11 +1437,24 @@ export default function App() {
             <div className="chat-stack">
               {chatMessages.map((message, index) => (
                 <div className={"chat-row " + message.role} key={index}>
-                  <div
-                    className={"chat-bubble " + message.role}
-                    aria-label={(message.role === "user" ? "Вы" : "Мира") + ": " + message.text}
-                  >
-                    {message.text}
+                  <div className={"chat-message " + message.role}>
+                    {message.text && (
+                      <div
+                        className={
+                          "chat-bubble " + message.role
+                          + (message.awaitingTranscript ? " awaiting-transcript" : "")
+                          + (message.provisionalCaption ? " sidecar-caption" : "")
+                        }
+                        aria-label={
+                          (message.role === "user" ? "Вы" : "Мира") + ": " + message.text
+                        }
+                      >
+                        {message.text}
+                      </div>
+                    )}
+                    {message.deliveryNote && (
+                      <span className="message-delivery-note">{message.deliveryNote}</span>
+                    )}
                   </div>
                 </div>
               ))}
@@ -1289,20 +1464,13 @@ export default function App() {
                     className="chat-bubble user interim"
                     aria-label={"Вы, сейчас: " + interimInputTranscript}
                   >
-                    <span className="interim-label">Слышу сейчас</span>
                     {interimInputTranscript}
                   </div>
                 </div>
               )}
-              {voiceActive && !interimInputTranscript && !notice && (
-                speechActive || speechPending || (voiceState === "listening" && !inputTranscriptSeen)
-              ) && (
+              {voiceActive && speechPending && !notice && (
                 <div className="chat-status" aria-live="polite">
-                  {speechActive
-                    ? "Слышу речь. Распознанный текст появится после завершения реплики."
-                    : speechPending
-                      ? "Реплика завершена. Жду текст и ответ Миры…"
-                      : "Микрофон работает; текст ещё не получен."}
+                  Жду ответ Миры…
                 </div>
               )}
               {playbackProblem && (
@@ -1551,7 +1719,7 @@ export default function App() {
                 <p>{notice}</p>
                 {recoverableSourceId && networkOnline && (
                   <button className="mini-action" onClick={recoverFailedVoiceSource} disabled={busy}>
-                    Восстановить запись
+                    Восстановить фразу
                   </button>
                 )}
                 {microphoneSettingsAvailable && (
@@ -1633,6 +1801,7 @@ export default function App() {
           }}
         />
       )}
+
 
       <section className="voice-dock">
         <div className={"island voice-island state-" + voiceState}>

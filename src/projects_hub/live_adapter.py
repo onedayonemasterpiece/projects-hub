@@ -41,6 +41,23 @@ from .store import DurableStore, StoreError
 log = logging.getLogger("projects_hub.live")
 assert CODEX_ANALYSIS_LADDER[0] == CODEX_COUNCIL_DEFAULT_MODEL == DEFAULT_ANALYSIS_MODEL
 
+_BASE_TRANSCRIPTION_VOCABULARY = ["Мира", "Projects Hub", "Codex", "DevCoveer", "Калининград"]
+
+
+def _transcription_vocabulary(projects: list[dict[str, Any]]) -> list[str]:
+    terms: list[str] = []
+    seen: set[str] = set()
+    for raw in [*_BASE_TRANSCRIPTION_VOCABULARY, *(p.get("name") for p in projects)]:
+        value = str(raw or "").strip()
+        key = value.casefold()
+        if not value or key in seen or len(value) > 120:
+            continue
+        seen.add(key)
+        terms.append(value)
+        if len(terms) >= 100:
+            break
+    return terms
+
 
 def _functions(
     *,
@@ -812,6 +829,158 @@ class ProjectsHubLiveAdapter:
         self.expert_reviews_factory = expert_reviews_factory
         self.regional_knowledge_factory = regional_knowledge_factory
 
+    @staticmethod
+    def _utterance_payload(utterance: dict[str, Any], **extra: Any) -> str:
+        payload = {
+            "utterance_id": utterance["id"],
+            "sequence": utterance["sequence"],
+            "audio_start_bytes": utterance["audio_start_bytes"],
+            "audio_end_bytes": utterance["audio_end_bytes"],
+        }
+        payload.update(extra)
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    def _utterance_event(
+        self,
+        session: Any,
+        kind: str,
+        utterance: dict[str, Any],
+        **extra: Any,
+    ) -> None:
+        state = session.state
+        self.store.append_source_event(
+            state["actor_id"],
+            state["source_id"],
+            kind,
+            text=self._utterance_payload(utterance, **extra),
+        )
+
+    @staticmethod
+    def _current_utterance(session: Any) -> dict[str, Any] | None:
+        current = session.state.get("_current_utterance")
+        return current if isinstance(current, dict) else None
+
+    def _finalize_utterance(
+        self,
+        session: Any,
+        utterance: dict[str, Any],
+        *,
+        reason: str,
+    ) -> str:
+        if utterance.get("committed"):
+            verdict = "turn_committed"
+        elif utterance.get("activity_end") or utterance.get("semantic_observed"):
+            verdict = "turn_closed_no_transcript"
+        elif utterance.get("pcm_accepted"):
+            # Provider automatic activity detection is explicitly disabled for
+            # Projects Hub realtime sessions. Without activity_end or any model
+            # event, this audio is durable but no semantic turn was closed.
+            verdict = "no_turn_closed"
+        else:
+            verdict = "no_audio"
+        if utterance.get("verdict") == verdict:
+            return verdict
+        utterance["verdict"] = verdict
+        self._utterance_event(
+            session,
+            "utterance_verdict",
+            utterance,
+            verdict=verdict,
+            reason=reason,
+            activity_end=bool(utterance.get("activity_end")),
+            semantic_observed=bool(utterance.get("semantic_observed")),
+            committed=bool(utterance.get("committed")),
+        )
+        state = session.state
+        log.info(
+            "live utterance verdict",
+            extra={
+                "event": "live_utterance_verdict",
+                "conversation_id": state["conversation_id"],
+                "source_id": state["source_id"],
+                "session_id": getattr(session, "id", None),
+                "utterance_id": utterance["id"],
+                "utterance_sequence": utterance["sequence"],
+                "verdict": verdict,
+                "reason": reason,
+                "audio_start_bytes": utterance["audio_start_bytes"],
+                "audio_end_bytes": utterance["audio_end_bytes"],
+            },
+        )
+        return verdict
+
+    def _start_utterance(self, session: Any) -> dict[str, Any]:
+        state = session.state
+        prior = self._current_utterance(session)
+        if prior is not None:
+            self._finalize_utterance(session, prior, reason="next_speech_start")
+        sequence = int(state.get("_utterance_sequence", 0)) + 1
+        state["_utterance_sequence"] = sequence
+        source = self.store.get_source(state["actor_id"], state["source_id"])
+        audio_start = int(source["audio_bytes"])
+        utterance = {
+            "id": f"utt_{state['source_id'][4:20]}_{sequence}",
+            "sequence": sequence,
+            "audio_start_bytes": audio_start,
+            "audio_end_bytes": audio_start,
+            "pcm_accepted": False,
+            "activity_end": False,
+            "semantic_observed": False,
+            "committed": False,
+            "verdict": None,
+        }
+        state.setdefault("_utterances", []).append(utterance)
+        state["_current_utterance"] = utterance
+        self._utterance_event(session, "utterance_started", utterance)
+        return utterance
+
+    def _semantic_utterance(self, session: Any) -> dict[str, Any] | None:
+        current = self._current_utterance(session)
+        if not current or not current.get("pcm_accepted") or current.get("committed"):
+            return None
+        if current.get("activity_end"):
+            # Once the current activity boundary is closed, provider events
+            # belong to this newest turn. Do not let an older unknown turn
+            # steal the next canonical transcript.
+            return current
+        # While a newer turn is still open, a late provider event may still
+        # belong to the most recent ended-but-uncommitted turn. Prefer that
+        # prior turn until the current activity_end establishes a new boundary.
+        utterances = session.state.get("_utterances")
+        if isinstance(utterances, list):
+            for utterance in reversed(utterances):
+                if utterance is current:
+                    continue
+                if (
+                    isinstance(utterance, dict)
+                    and utterance.get("pcm_accepted")
+                    and utterance.get("activity_end")
+                    and not utterance.get("committed")
+                ):
+                    return utterance
+        return current
+
+    def _mark_semantic_observed(
+        self,
+        session: Any,
+        *,
+        committed: bool = False,
+        evidence: str,
+    ) -> None:
+        utterance = self._semantic_utterance(session)
+        if utterance is None:
+            return
+        utterance["semantic_observed"] = True
+        if committed:
+            utterance["committed"] = True
+            self._utterance_event(
+                session,
+                "utterance_committed",
+                utterance,
+                evidence=evidence,
+            )
+            self._finalize_utterance(session, utterance, reason=evidence)
+
     def _expert_reviews(
         self,
         actor_id: str,
@@ -893,6 +1062,7 @@ class ProjectsHubLiveAdapter:
             limit=8,
         )
         projects = self.store.list_projects(actor_id, conversation["workspace_id"])
+        transcription_vocabulary = _transcription_vocabulary(projects)
         expert_reviews = self._expert_reviews(
             actor_id,
             conversation["workspace_id"],
@@ -961,6 +1131,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "backend_version": backend_version,
                 "backend_release_sha": backend_release_sha,
                 "attempt_id": attempt_id,
+                "caption_vocabulary": transcription_vocabulary,
             },
             "context": {
                 "workspace_id": conversation["workspace_id"],
@@ -996,7 +1167,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "voice": "Aoede",
                 "input_audio_transcription": {
                     "languageCodes": ["ru-RU", "en-US"],
-                    "customVocabulary": ["Мира", "Projects Hub", "Codex", "DevCoveer", "Калининград"],
+                    "customVocabulary": transcription_vocabulary,
                     "mode": "VERBATIM",
                 },
                 "search_enabled": False,
@@ -1024,6 +1195,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "analysis_enabled": analysis_enabled,
                 "sharing_enabled": sharing_enabled,
                 "source_terminal": source["status"] in {"archived", "ephemeral_processed"},
+                "pending_voice_sources": pending_voice_sources,
             },
         }
 
@@ -1031,6 +1203,8 @@ explicit buffered replay is required instead of pretending the provisional text 
         state = session.state
         actor_id = state["actor_id"]
         source_id = state["source_id"]
+        if message.get("activity_start"):
+            self._start_utterance(session)
         if "audio_base64" in message:
             raw = message.get("audio_base64")
             if not isinstance(raw, str):
@@ -1041,8 +1215,27 @@ explicit buffered replay is required instead of pretending the provisional text 
                 pcm = base64.b64decode(raw, validate=True)
             except Exception as exc:
                 raise StoreError("INVALID_ARGUMENT", "Audio chunk is not valid base64") from exc
+            utterance = self._current_utterance(session) or self._start_utterance(session)
             # Durable fsync completes before LiveSessionHost queues this chunk to provider.
-            self.store.append_audio(actor_id, source_id, pcm)
+            receipt = self.store.append_audio(actor_id, source_id, pcm)
+            utterance["audio_end_bytes"] = int(receipt["audio_bytes"])
+            if pcm and not utterance["pcm_accepted"]:
+                utterance["pcm_accepted"] = True
+                self._utterance_event(
+                    session,
+                    "utterance_pcm_accepted",
+                    utterance,
+                    audio_chunks=int(receipt["audio_chunks"]),
+                )
+        if message.get("activity_end"):
+            utterance = self._current_utterance(session)
+            if utterance is not None and not utterance["activity_end"]:
+                utterance["activity_end"] = True
+                self._utterance_event(
+                    session,
+                    "utterance_activity_end",
+                    utterance,
+                )
 
     def on_event(self, session: Any, event: dict[str, Any]) -> None:
         kind = str(event.get("type") or "")
@@ -1050,6 +1243,21 @@ explicit buffered replay is required instead of pretending the provisional text 
         provider_at = event.get("provider_at") if isinstance(event.get("provider_at"), int) else None
         diag = state.setdefault("_voice_diag", {})
         counts = diag.setdefault("counts", {})
+        if kind == "input_transcript":
+            self._mark_semantic_observed(
+                session,
+                committed=True,
+                evidence="canonical_input_transcript",
+            )
+        elif kind in {"audio", "output_transcript", "turn_complete", "interrupted"}:
+            # Any model-derived output proves that the semantic turn was
+            # consumed. Treat it as committed even if input transcription is
+            # missing, otherwise recovery could duplicate an accepted action.
+            self._mark_semantic_observed(
+                session,
+                committed=True,
+                evidence=f"provider_{kind}",
+            )
         if kind == "audio":
             counts["audio"] = int(counts.get("audio", 0)) + 1
             raw = event.get("data") if isinstance(event.get("data"), str) else ""
@@ -1134,7 +1342,26 @@ explicit buffered replay is required instead of pretending the provisional text 
             value = event.get(key)
             if isinstance(value, (str, int, float, bool)):
                 extra[key] = value
-        log.info("live provider event", extra=extra)
+        if kind == "input_timing":
+            extra["latency_stage"] = "server_to_provider"
+            stdin_delay = event.get("max_stdin_delay_ms")
+            ws_send = event.get("max_ws_send_ms")
+            latency_alert = (
+                isinstance(stdin_delay, (int, float))
+                and not isinstance(stdin_delay, bool)
+                and stdin_delay >= 1000
+            ) or (
+                isinstance(ws_send, (int, float))
+                and not isinstance(ws_send, bool)
+                and ws_send >= 500
+            )
+            extra["latency_alert"] = latency_alert
+            (log.warning if latency_alert else log.info)(
+                "live provider event",
+                extra=extra,
+            )
+        else:
+            log.info("live provider event", extra=extra)
         if kind == "turn_complete":
             diag["turn_output_audio_events"] = 0
             diag["turn_output_audio_bytes"] = 0
@@ -1142,8 +1369,14 @@ explicit buffered replay is required instead of pretending the provisional text 
 
     def on_stopped(self, session: Any) -> None:
         state = session.state
+        utterances = state.get("_utterances")
+        if isinstance(utterances, list):
+            for utterance in utterances:
+                if isinstance(utterance, dict):
+                    self._finalize_utterance(session, utterance, reason="session_stopped")
         self.store.mark_source_stopped(state["actor_id"], state["source_id"])
         diag = state.get("_voice_diag") if isinstance(state.get("_voice_diag"), dict) else {}
+        current = self._current_utterance(session)
         log.info(
             "live source stopped",
             extra={
@@ -1154,6 +1387,8 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "last_text_length": diag.get("last_text_length", 0),
                 "first_transcript_provider_at": diag.get("first_transcript_provider_at"),
                 "last_transcript_provider_at": diag.get("last_transcript_provider_at"),
+                "utterance_verdict": current.get("verdict") if current else None,
+                "utterance_id": current.get("id") if current else None,
             },
         )
 
@@ -1227,6 +1462,11 @@ explicit buffered replay is required instead of pretending the provisional text 
     async def execute_tool(self, session: Any, call: dict[str, Any]) -> dict[str, Any]:
         name = str(call.get("name") or "")
         args = self._args(call)
+        self._mark_semantic_observed(
+            session,
+            committed=True,
+            evidence=f"tool_call:{name or 'unknown'}",
+        )
         state = session.state
         actor_id = state["actor_id"]
         workspace_id = state["workspace_id"]
