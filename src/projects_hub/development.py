@@ -2038,6 +2038,19 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
                     "DEVELOPMENT_OWNER_RESUME_UNSUPPORTED",
                     "This owner blocker cannot be safely resumed from a conversation answer",
                 )
+            with self.store._lock:
+                active = self.store.db.execute(
+                    """SELECT id FROM task_executions
+                       WHERE actor_id=? AND id<>?
+                         AND status IN ('starting','running')
+                       ORDER BY created_at_ms DESC LIMIT 1""",
+                    (actor_id, execution_id),
+                ).fetchone()
+            if active:
+                raise StoreError(
+                    "DEVELOPMENT_EXECUTION_ACTIVE",
+                    "Another owner development execution is already active",
+                )
 
             quality_task_id = str(row["quality_task_id"] or "").strip()
             if not quality_task_id:
