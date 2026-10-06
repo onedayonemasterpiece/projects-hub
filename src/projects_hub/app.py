@@ -76,6 +76,11 @@ class LiveStart(BaseModel):
         pattern=r"^[A-Za-z0-9._+/-]{1,100}$",
         max_length=100,
     )
+    client_instance_id: str | None = Field(
+        default=None,
+        pattern=r"^[0-9A-Za-z._:-]{8,128}$",
+        max_length=128,
+    )
     attempt_id: str | None = Field(
         default=None,
         pattern=r"^[A-Za-z0-9._:-]{1,96}$",
@@ -1003,6 +1008,7 @@ def create_app(
                 client_source_id=payload.client_source_id,
                 client_version=payload.client_version,
                 client_timezone=payload.client_timezone,
+                client_instance_id=payload.client_instance_id,
                 backend_version=__version__,
                 backend_release_sha=settings.release_sha,
                 attempt_id=payload.attempt_id,
