@@ -78,6 +78,7 @@ def setup(tmp_path: Path):
         object_id="obj_analysis_seed",
         expected_object_revision=None,
         payload={"text": "Risk: provider timeout", "style": {"color": "yellow"}},
+        execution_origin="mira",
     )
     bridge = FakeBridge()
     analytics = AnalyticsService(store, board, bridge=bridge)
