@@ -717,6 +717,29 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
             self._transition_loop = loop
         return self._transition_lock
 
+    def _owner_resume_effect_in_flight(
+        self,
+        actor_id: str,
+        *,
+        exclude_execution_id: str | None = None,
+    ) -> Any | None:
+        params: list[Any] = [actor_id]
+        exclude = ""
+        if exclude_execution_id is not None:
+            exclude = " AND e.id<>?"
+            params.append(exclude_execution_id)
+        with self.store._lock:
+            return self.store.db.execute(
+                """SELECT e.id,r.command_id,r.status
+                   FROM task_executions e
+                   JOIN development_owner_resumes r ON r.execution_id=e.id
+                   WHERE e.actor_id=?
+                     AND r.status IN ('dispatching','dispatch_unknown')"""
+                + exclude
+                + """ ORDER BY r.created_at_ms DESC LIMIT 1""",
+                tuple(params),
+            ).fetchone()
+
     async def start(
         self,
         *,
@@ -757,10 +780,11 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
                    ORDER BY created_at_ms DESC LIMIT 1""",
                 (actor_id,),
             ).fetchone()
-        if active:
+        pending_resume = self._owner_resume_effect_in_flight(actor_id)
+        if active or pending_resume:
             raise StoreError(
                 "DEVELOPMENT_EXECUTION_ACTIVE",
-                "Another owner development execution is already active",
+                "Another owner development execution or unresolved external resume is already active",
             )
 
         status = await self.codex_status(actor_id=actor_id, workspace_id=workspace_id)
@@ -2243,10 +2267,14 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
                        ORDER BY created_at_ms DESC LIMIT 1""",
                     (actor_id, execution_id),
                 ).fetchone()
-            if active:
+            pending_other_resume = self._owner_resume_effect_in_flight(
+                actor_id,
+                exclude_execution_id=execution_id,
+            )
+            if active or pending_other_resume:
                 raise StoreError(
                     "DEVELOPMENT_EXECUTION_ACTIVE",
-                    "Another owner development execution is already active",
+                    "Another owner development execution or unresolved external resume is already active",
                 )
 
             quality_task_id = str(row["quality_task_id"] or "").strip()
