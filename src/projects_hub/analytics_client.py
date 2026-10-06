@@ -197,30 +197,9 @@ class AnalyticsBridgeClient:
         ]
 
     async def _pro_council_participants(self) -> list[dict[str, str]]:
-        catalog = await self._call(
-            "list_models",
-            {"provider": "nvidia", "verified_only": False},
-        )
-        raw_models = catalog.get("models")
-        if not isinstance(raw_models, list):
-            raw_models = catalog.get("items")
-        if not isinstance(raw_models, list):
-            raise AnalyticsBridgeError("NVIDIA model catalog is unavailable")
-        available = {
-            str(item.get("selection") or item.get("id") or "")
-            for item in raw_models
-            if isinstance(item, dict)
-            and item.get("provider") == "nvidia"
-            and item.get("routingRecommended") is not False
-        }
-        missing = [
-            selection for selection in self.PRO_COUNCIL_MODELS
-            if selection not in available
-        ]
-        if missing:
-            raise AnalyticsBridgeError(
-                "Required paid council models are unavailable: " + ", ".join(missing)
-            )
+        # Direct provided-only NVIDIA council is deliberately independent of the
+        # OpenCode model catalog. DevCoveer validates these exact product models
+        # and the two distinct credential/project slots before inference.
         return [
             {"provider": "nvidia", "model": selection}
             for selection in self.PRO_COUNCIL_MODELS
@@ -233,19 +212,20 @@ class AnalyticsBridgeClient:
         evidence_bundle: str,
         request_key: str,
         tier: str = "free",
-        paid_confirmation_token: str | None = None,
     ) -> dict[str, Any]:
         if not await self.safe_council_available():
             raise AnalyticsBridgeError(
                 "Tenant-safe council capability is unavailable"
             )
+        schema = self._tool_schemas.get("council_run")
+        properties = schema.get("properties") if isinstance(schema, dict) else None
         if tier == "free":
-            if paid_confirmation_token is not None:
-                raise AnalyticsBridgeError(
-                    "Paid confirmation token cannot be used with free council"
-                )
             participants = await self._free_council_participants()
         elif tier == "pro":
+            if not isinstance(properties, dict) or "paid_confirmation_token" in properties:
+                raise AnalyticsBridgeError(
+                    "Automatic dual-slot NVIDIA council runtime is unavailable"
+                )
             participants = await self._pro_council_participants()
         else:
             raise AnalyticsBridgeError("Unsupported council tier")
@@ -261,8 +241,6 @@ class AnalyticsBridgeClient:
             "rounds": 2,
             "mode": "debate",
         }
-        if paid_confirmation_token is not None:
-            arguments["paid_confirmation_token"] = paid_confirmation_token
         return await self._call("council_run", arguments)
 
     async def read_task(self, task_id: str) -> dict[str, Any]:
