@@ -1,5 +1,14 @@
 # Projects Hub — спецификация живой совместной работы
 
+> **Уточнение владельца · 6 октября 2026:** [20. Базовая коллаборация и одна личная лента](20-basic-collaboration-and-personal-timeline.md) — текущая постановка для реализации. Одна личная переписка across projects, функциональные виджет-блоки прямо в ней, одна видимая доска; общие заметки в Markdown с авторством/ролями, обсуждение, адресованные вопросы и продолжение, сначала лично важное и только затем необязательные новости. [Полное задание](../prompts/basic-collaboration-prototype-20261006.md) и [проверенный аудит](../audits/collaboration-design-update-20261006.md). PR #87 приостановлен; коллаборационный прототип ещё не принят. Датированные runtime-отчёты ниже остаются историческими свидетельствами своих версий, а не статусом этой новой функции.
+
+| Текущий документ | Назначение |
+| --- | --- |
+| [13. UI и inline-блоки](13-ui-floating-islands.md) | Личная лента, один BoardViewport, popup как дополнительный режим |
+| [19. Доска и сильный анализ](19-board-and-strong-analysis.md) | Общие объекты, provided-only анализ, граница с разработкой |
+| [20. Базовая коллаборация](20-basic-collaboration-and-personal-timeline.md) | Нормативные решения, связи функций, приёмка C01–C12 |
+| [Задание разработчику](../prompts/basic-collaboration-prototype-20261006.md) | Порядок P1–P3 и практическая проверка |
+
 > **Обновление 3 октября 2026:** WSS/multi-user source candidate реализован поверх shared `live-interaction v0.3.8` release: same-origin one-use tickets, binary PCM/ACK, pushed events, no silent HTTP fallback, bounded global/per-actor admission и duplicate buffered-source exclusion. WSS integration tests и полный backend regression suite (107) проходят; clean `npm ci` + PWA production build проходит. Direct public DNS/TLS/HTTPS/WSS ingress теперь принят на реальном сервере; полный production acceptance всё ещё требует 3+ independent-user real-provider soak и physical Android gates. Канонический design/status: [WSS и многопользовательская надёжность](16-wss-multi-user-reliability.md).
 
 **Ревизия 8 от 3 октября 2026. Статус: central Live/PWA и foreground Android WebView работают через единый WSS consumer `live-interaction v0.3.8`; Android device-command/calendar, signed GitHub Releases, event-readiness и expert-review слой реализованы; полный production acceptance не объявлен из-за незакрытых physical-device/GitHub-App/multi-user/Regional-Knowledge gates.** Имя «Содей / Sodey» остаётся предложением; технический идентификатор `projects-hub` не меняется.
@@ -38,7 +47,8 @@ Backend не содержит второго смыслового агента. 
 - Live-agent сам через function call принимает semantic disposition: сохранить source, связать с проектом, обновить документ, создать задачу и т. п.;
 - проект выбирает/уточняет agent, а backend лишь проверяет доступ;
 - словарь пополняет agent, читая разрешённые документы через tools;
-- tools не имеют права скрыто запускать второй LLM для routing/classification/summarization.
+- tools не имеют права скрыто запускать второй LLM для routing/classification/summarization;
+- явно запрошенная обработка проектной заметки по V32 отдельно вызывает Gemini на выбранном готовом тексте; это разрешённая предметная capability, а не скрытая предварительная обработка речи.
 
 ## Два приложения, один продукт
 
@@ -58,7 +68,7 @@ Stop, «Новый разговор» и delete — разные действи�
 
 Не каждый turn обязан становиться отдельным Markdown. Решение принимает Live-agent по смыслу разговора.
 
-При сохранении agent вызывает memory function, которая материализует уже накопленный provider transcript/source journal в Markdown с provenance и project links. Backend не переписывает смысл отдельной моделью.
+При сохранении agent вызывает memory function, которая материализует уже накопленный provider transcript/source journal в Markdown с provenance и project links. Backend не переписывает исходный source отдельной моделью. Общая проектная заметка — другой объект с отдельной публикацией и явно разрешённым текстовым структурированием; см. [20](20-basic-collaboration-and-personal-timeline.md).
 
 Если agent не успел принять disposition, source остаётся pending и не очищается.
 

@@ -1,5 +1,7 @@
 # Платформы, архитектура и связность проектов
 
+> **Дополнение 6 октября 2026:** текущая спецификация коллаборации — [20](20-basic-collaboration-and-personal-timeline.md). Она задаёт одну личную ленту, один mounted BoardViewport, общие Note/Discussion/Question/Task с независимой от private transcript областью доступа и минимальное durable server continuation. Старые схемы source capture ниже сохраняются; новая проектная заметка использует отдельно разрешённое текстовое структурирование.
+
 > **U04 / 2 октября 2026:** network transport, multi-user identity, shared OAuth/resource isolation, Regional Knowledge capability и POI ownership уточнены в [16-wss-multi-user-reliability.md](16-wss-multi-user-reliability.md). Центральный one-agent backend boundary не меняется.
 
 [Индекс](README.md) · [Центральный Live-агент](12-central-live-agent.md) · [UX](03-product-and-ux.md) · [Память](10-conversation-memory.md) · [Маршрутизация и словари](11-routing-and-vocabulary.md).
@@ -79,7 +81,7 @@ GitHub работает по той же границе: install/callback metada
 
 Телефон не становится вторым agent/backend и не получает GitHub/provider credentials. Backend не «симулирует» локальный Android Calendar API.
 
-Нельзя добавлять скрытые LLM calls внутри tools для предварительной классификации, суммаризации, маршрутизации или переписывания ответа Live.
+Нельзя добавлять скрытые LLM calls внутри tools для предварительной классификации, суммаризации, маршрутизации или переписывания ответа Live. Разрешённая владельцем операция V32 «структурировать проектную заметку» получает выбранный Мирой готовый текст и возвращает предметный результат; она не входит в путь ASR/Live-routing.
 
 ## ADR-03: offline — сохранённый аудио-turn того же агента
 
@@ -198,3 +200,10 @@ Agent сам читает разрешённые проектные докуме
 - agent сам решает, что они означают и что делать.
 
 Нельзя строить отдельный LLM retrieval-router, который переписывает запрос, принимает project decision и передаёт Live только свой summary, если это не отдельное утверждённое продуктовое решение.
+## ADR-10: базовая коллаборация без отдельной workflow-платформы
+
+Одна durable личная лента actor+workspace содержит сообщения с устойчивыми message/turn IDs и типизированными блоками. Project focus, provider session и выбранная доска не создают новые ленты. В клиенте один BoardViewport; общая очередь входящих вопросов загружается независимо от открытой доски.
+
+Проектные Note/Discussion/Question/Answer/Task — явно разделяемые ресурсы с author, recipient, revision и ACL. Note публикуется в подключённый GitHub repo как Markdown, store хранит индекс/состояние/receipt; карточка и reader читают тот же объект. Memory/source остаётся личным, пока выбранный фрагмент явно не опубликован. Список ролей автора не заменяет текущие grants.
+
+Принятый ответ и намерение продолжения фиксируются транзакционно. Использовать существующий durable store и один bounded backend pump с lease/retry/readback; очередь переживает рестарт, status read только читает. Существующая MCP transport queue не является durable job queue продукта. Новые Redis/BPM/broker и универсальный event-sourcing слой для этого среза не требуются. Полный контракт и границы реализации — [20](20-basic-collaboration-and-personal-timeline.md).

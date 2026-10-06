@@ -1,5 +1,7 @@
 # Центральный Live-агент: единственное когнитивное звено
 
+> **Дополнение 6 октября 2026:** [20. Базовая коллаборация](20-basic-collaboration-and-personal-timeline.md) сохраняет одну центральную Миру и отдельно разрешает предметный вызов Gemini для структурирования готового текста проектной заметки (V32). Это явная capability по команде Миры; прежний запрет скрытого ASR/router/pre-Live summarizer не отменён.
+
 > **U04 / 2 октября 2026:** WSS меняет транспорт, но не когнитивную архитектуру. Мира остаётся единственным semantic orchestrator; Regional Knowledge подключается как узкая evidence capability, а не второй агент. См. [16-wss-multi-user-reliability.md](16-wss-multi-user-reliability.md).
 
 [Индекс](README.md) · [UX](03-product-and-ux.md) · [Память](10-conversation-memory.md) · [Проекты/словарь](11-routing-and-vocabulary.md).
@@ -198,3 +200,10 @@ Thin tools не генерируют semantic aliases отдельной мод�
 Tool может содержать сложную прикладную транзакцию, retries, idempotency и reconciliation. Это не делает его “интеллектом”.
 
 ### Запрещено по умолчанию
+## 9. Явные способности коллаборации
+
+Мира выбирает проект/фрагмент/аудиторию заметки, запускает явно доступный text-structuring tool и получает сохранённый результат. Gemini-процессор не разговаривает вместо Миры и не выбирает, кому раскрывать исходную речь. Приватный memory/source путь выше остаётся без второго semantic pass; проектная заметка имеет отдельный контракт публикации.
+
+Сильный анализ также вызывается явно на конкретном evidence bundle. Его вопросы становятся адресованными объектами общей коллаборации, а не скрытым новым интервьюером. Мира ведёт разговор по контекстному пакету, связывает ответы с вопросами и вызывает typed answer/continuation tools. Она допускает несколько ответов в одной реплике, unknown/skip/later; код проверяет grants, revisions и целостность turn.
+
+Shared [Live agent architecture](https://github.com/onedayonemasterpiece/live-interaction/blob/main/docs/live-agent-architecture.md) остаётся нормой: небольшой стабильный core, один основной capability bundle обычно 3–6 tools, progressive disclosure. Личная очередь доступна без загруженных досок. Durable jobs и delivery receipts принадлежат backend; чтение статуса не оркестрирует процесс. Новые blocks/renderers не создают второй управляющий LLM и не подменяют существующие Stop/transcript/capture правила.

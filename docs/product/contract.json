@@ -1,17 +1,17 @@
 {
   "schema_version": 2,
-  "as_of": "2026-10-03",
+  "as_of": "2026-10-06",
   "product_id": "projects-hub",
   "brand": {
     "recommended": "Содей",
     "latin": "Sodey",
     "status": "proposed_not_cleared"
   },
-  "specification_status": "wss_versioned_shared_components_candidate",
+  "specification_status": "basic_collaboration_personal_timeline_specified_not_implemented",
   "production_product_accepted": false,
   "source_repository": "onedayonemasterpiece/idea-hub",
-  "source_snapshot": "c346ac7a526870501350c0277678276429224e0a",
-  "runtime_baseline": "d4f740df85f7c79e687a88b95e5f86bcee11e8bf",
+  "source_snapshot": "369eafd1deb984a5307e4e441891c5db0b526be5",
+  "runtime_baseline": "32a4f750e63afc36b347e445e3d9f43611c4cc4e",
   "sources": [
     {
       "id": "V01",
@@ -187,14 +187,81 @@
       "group": "core",
       "theme": "Версионированное переиспользование общих компонентов, semantic discovery и incident routing",
       "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/c346ac7a526870501350c0277678276429224e0a/inbox/voice/2026/10/voice-20261003-083638-766e61b7.md"
+    },
+    {
+      "id": "V26",
+      "voice_id": "voice-20261005-130620-ffe0764d",
+      "group": "core",
+      "theme": "Доска проекта, карточки и сильные модели",
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/369eafd1deb984a5307e4e441891c5db0b526be5/inbox/voice/2026/10/voice-20261005-130620-ffe0764d.md"
+    },
+    {
+      "id": "V27",
+      "voice_id": "voice-20261005-133011-41d66a29",
+      "group": "core",
+      "theme": "Семидневный гостевой просмотр и sharing",
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/369eafd1deb984a5307e4e441891c5db0b526be5/inbox/voice/2026/10/voice-20261005-133011-41d66a29.md"
+    },
+    {
+      "id": "V28",
+      "voice_id": "voice-20261005-134623-9cf5bc26",
+      "group": "core",
+      "theme": "Документы в разговоре и на доске",
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/369eafd1deb984a5307e4e441891c5db0b526be5/inbox/voice/2026/10/voice-20261005-134623-9cf5bc26.md"
+    },
+    {
+      "id": "V29",
+      "voice_id": "voice-20261005-135035-55f23d17",
+      "group": "core",
+      "theme": "Суммаризация и sharing",
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/369eafd1deb984a5307e4e441891c5db0b526be5/inbox/voice/2026/10/voice-20261005-135035-55f23d17.md"
+    },
+    {
+      "id": "V30",
+      "voice_id": "voice-20261005-140450-2ca6ad24",
+      "group": "core",
+      "theme": "Inline-превью и фокус на объекте",
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/369eafd1deb984a5307e4e441891c5db0b526be5/inbox/voice/2026/10/voice-20261005-140450-2ca6ad24.md"
+    },
+    {
+      "id": "V31",
+      "voice_id": "voice-20261006-135801-8cff983c",
+      "group": "core",
+      "theme": "Асинхронные вопросы владельцу, участнику и роли",
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/369eafd1deb984a5307e4e441891c5db0b526be5/inbox/voice/2026/10/voice-20261006-135801-8cff983c.md"
+    },
+    {
+      "id": "V32",
+      "voice_id": "voice-20261006-160524-e27e95be",
+      "group": "core",
+      "theme": "Заметки в Markdown, обработка готового текста, авторство/роли, reader и обсуждение",
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/369eafd1deb984a5307e4e441891c5db0b526be5/inbox/voice/2026/10/voice-20261006-160524-e27e95be.md"
+    },
+    {
+      "id": "V33",
+      "voice_id": "voice-20261006-164858-d13d5414",
+      "group": "core",
+      "theme": "Контекстные пакеты вопросов, unknown/skip/later, принцип Оккама",
+      "url": "https://github.com/onedayonemasterpiece/idea-hub/blob/369eafd1deb984a5307e4e441891c5db0b526be5/inbox/voice/2026/10/voice-20261006-164858-d13d5414.md"
     }
   ],
   "experience_contract": "live-contract.json",
   "owner_revision": {
-    "id": "U05",
-    "kind": "owner_voice_cross_project_versioned_component_reuse",
-    "date": "2026-10-03",
-    "spec_revision": 5
+    "id": "U06",
+    "kind": "owner_voice_and_direct_collaboration_clarification",
+    "date": "2026-10-06",
+    "spec_revision": 6,
+    "source_ids": [
+      "V26",
+      "V27",
+      "V28",
+      "V29",
+      "V30",
+      "V31",
+      "V32",
+      "V33"
+    ],
+    "authorization_ref": "20-basic-collaboration-and-personal-timeline.md#owner-authorization-20261006"
   },
   "platform_decision": {
     "status": "owner_clarified_for_implementation",
@@ -485,7 +552,7 @@
       "evidence": []
     }
   ],
-  "spec_revision": 5,
+  "spec_revision": 6,
   "central_agent_contract": "12-central-live-agent.md",
   "implementation_status": {
     "phase": "first_party_invite_auth_correction_candidate_physical_android_acceptance_pending",
@@ -561,9 +628,43 @@
     "browser_live_0_3_11_acceptance": "clean_npm_ci_long_speech_regression_pwa_production_build_pass_deployed_public_wss_roundtrip_pass",
     "real_provider_calendar_device_chain": "pass_live_tool_call_durable_device_command_simulated_device_applied_readback_event_readiness_card_final_live_transcript_and_audio_physical_android_calendar_api_pending",
     "android_auth": "same_origin_first_party_single_use_invite_no_supabase_auth_no_required_external_idp",
-    "android_launcher_icon": "adaptive_icon_from_existing_projects_hub_microphone_mark"
+    "android_launcher_icon": "adaptive_icon_from_existing_projects_hub_microphone_mark",
+    "basic_collaboration_prototype": "specified_not_implemented"
   },
   "current_execution_focus": {
+    "as_of": "2026-10-06",
+    "slice": "Design and project-documentation update only; nearest prototype starts with a real shared note A to B",
+    "specification": "20-basic-collaboration-and-personal-timeline.md",
+    "implementation_task": "../prompts/basic-collaboration-prototype-20261006.md",
+    "implementation_state": "not_started_by_this_documentation_change",
+    "paused_pr": {
+      "number": 87,
+      "head_sha": "d4885c9494a0e66db3319113dedd4bb06eea103a",
+      "status": "owner_paused_do_not_resume_or_merge"
+    },
+    "implementation_baseline": "fresh_main_preserve_voice_and_MCP_lifecycle_fixes_in_PR114_PR115",
+    "delivery_sequence": [
+      "P1_shared_note_repository_readback_second_actor_discussion",
+      "P2_context_questions_answers_durable_continuation",
+      "P3_personal_first_start_optional_project_digest"
+    ],
+    "explicitly_deferred": [
+      "multiple_live_canvas_registry",
+      "generic_workflow_engine_or_new_broker",
+      "guest_share_7day_until_after_basic_collaboration",
+      "rich_group_quorum_engine",
+      "notification_quick_actions_until_core_flow",
+      "model_tournaments_as_a_prototype_gate"
+    ],
+    "preserve_existing_release_gates": true
+  },
+  "previous_owner_revision": {
+    "id": "U05",
+    "kind": "owner_voice_cross_project_versioned_component_reuse",
+    "date": "2026-10-03",
+    "spec_revision": 5
+  },
+  "previous_execution_focus": {
     "as_of": "2026-10-04",
     "slice": "owner physical Android v8 retest: native microphone permission -> PWA capture -> public WSS -> Mira; calendar follows after microphone PASS",
     "android_update": "android-v7_to_android-v8 real published self-update PASS; v8 fixes native microphone permission bridge and adds launcher icon",
@@ -588,5 +689,40 @@
     "external_edge_allowed": false,
     "public_ingress_status": "accepted_dns_tls_https_public_wss_roundtrip_real_provider_calendar_chain",
     "android_auth": "first_party_invite_owner_bootstrap_no_supabase_auth_external_idp_optional_future_link"
+  },
+  "implementation_status_evidence_note": "Existing implementation_status fields are historical evidence for their referenced versions, not acceptance of U06. The 2026-10-06 source audit at runtime_baseline defines current collaboration gaps.",
+  "collaboration_contract": {
+    "document": "20-basic-collaboration-and-personal-timeline.md",
+    "personal_timeline": "one_active_per_actor_workspace_across_projects",
+    "project_board": "one_canonical_per_project",
+    "max_mounted_board_viewports_per_client": 1,
+    "default_widget_surface": "functional_inline_message",
+    "popup_mode": "optional_reader_or_expansion_of_same_view",
+    "project_note": "repository_markdown_with_author_roles_and_in_app_reader",
+    "private_transcript_shared_by_note": false,
+    "note_structuring": "explicit_gemini_capability_on_selected_text_no_second_asr",
+    "questions": "addressed_shared_context_natural_multi_answer_unknown_skip_defer",
+    "continuation": "durable_bounded_server_worker_status_read_only",
+    "startup": "personally_addressed_first_on_generic_opening_specific_request_priority",
+    "project_digest": "optional_offer_after_personal_information",
+    "prototype_acceptance": {
+      "status": "pending",
+      "criteria": [
+        "C01",
+        "C02",
+        "C03",
+        "C04",
+        "C05",
+        "C06",
+        "C07",
+        "C08",
+        "C09",
+        "C10",
+        "C11",
+        "C12"
+      ],
+      "document": "20-basic-collaboration-and-personal-timeline.md"
+    },
+    "production_accepted": false
   }
 }

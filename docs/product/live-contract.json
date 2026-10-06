@@ -1,13 +1,19 @@
 {
   "schema_version": 2,
-  "spec_revision": 5,
-  "as_of": "2026-10-03",
-  "status": "wss_versioned_shared_component_candidate",
+  "spec_revision": 6,
+  "as_of": "2026-10-06",
+  "status": "live_contract_with_collaboration_extension_specified_not_implemented",
   "owner_input": {
-    "id": "U05",
-    "kind": "owner_voice_cross_project_versioned_component_reuse",
-    "date": "2026-10-03",
-    "summary": "Shared Live and other cross-project infrastructure must be discovered/reused as versioned capabilities with runtime and incident history visible to consumers; consumer dependencies use stable releases/versions rather than raw SHA pins, while SHA/digests remain verification evidence."
+    "id": "U06",
+    "kind": "owner_voice_and_direct_collaboration_clarification",
+    "date": "2026-10-06",
+    "summary": "One personal timeline across projects with functional inline widget messages; at most one mounted project board; explicit Gemini structuring of accepted note text; shared project objects and contextual questions; personally addressed opening before optional project news.",
+    "source_ids": [
+      "V31",
+      "V32",
+      "V33"
+    ],
+    "authorization_ref": "20-basic-collaboration-and-personal-timeline.md#owner-authorization-20261006"
   },
   "applications": {
     "pwa": "full_application",
@@ -36,7 +42,30 @@
     "multi_project_conversation": true,
     "manual_project_selection_required": false,
     "confirmation": "consequence_specific_voice_or_button",
-    "new_conversation_deletes_previous": false
+    "new_conversation_deletes_previous": false,
+    "personal_timeline": "one_active_per_actor_workspace_across_projects",
+    "project_switch_creates_conversation": false,
+    "provider_session_creates_personal_timeline": false,
+    "persistent_typed_message_blocks": true,
+    "message_identity": "stable_message_id_and_turn_id",
+    "board_count_per_project": 1,
+    "max_mounted_board_viewports_per_client": 1,
+    "default_board_surface": "inline_message",
+    "popup_required_for_core_widget_actions": false,
+    "manual_board_content_editing": false,
+    "question_context": "shared_context_group_with_authorized_source_revisions",
+    "multiple_questions_answered_in_one_turn": true,
+    "question_outcomes": [
+      "answer",
+      "unknown",
+      "skip",
+      "defer",
+      "cancel_if_authorized"
+    ],
+    "question_view_or_swipe_is_answer": false,
+    "startup_brief": "personally_addressed_first_for_generic_greeting_specific_request_first",
+    "project_news": "optional_offer_after_personal_brief",
+    "app_launch_auto_speech": false
   },
   "capture": {
     "source_audio_pipeline_count": 1,
@@ -89,7 +118,8 @@
       "conversation_links_durable",
       "retention_policy_satisfied"
     ],
-    "physical_loss_of_only_offline_copy_recoverable_claim": false
+    "physical_loss_of_only_offline_copy_recoverable_claim": false,
+    "new_conversation_policy": "new_context_episode_within_single_personal_history_preserve_prior_source_no_stale_audio_reply"
   },
   "vocabulary": {
     "scopes": [
@@ -158,7 +188,22 @@
     "archive_disposition_owner": "live_agent_function_call",
     "vocabulary_semantic_owner": "live_agent",
     "clarification_owner": "live_agent",
-    "hidden_semantic_llm_inside_tools_allowed": false
+    "hidden_semantic_llm_inside_tools_allowed": false,
+    "explicit_semantic_capabilities": {
+      "note_structuring": {
+        "authorized_by": "U06_V32",
+        "input": "Mira_selected_already_accepted_note_text_and_server_author_roles",
+        "processor": "versioned_reuse_of_my_data_hub_text_summary",
+        "audio_transcription": false,
+        "project_audience_decision_owner": "central_Mira_with_server_acl",
+        "publishes_full_private_source": false
+      },
+      "strong_analysis": {
+        "input": "authorized_frozen_note_document_task_discussion_or_board_evidence",
+        "context_mode": "provided_only",
+        "development_launch_allowed": false
+      }
+    }
   },
   "deterministic_layer": {
     "allowed_roles": [
@@ -331,5 +376,30 @@
     "street_story_owns": "canonical_regional_poi_identity_claims_contradictions_and_arbitration",
     "projects_hub_owns": "conversation_and_expert_review_work_surface",
     "expert_write_success_requires": "owning_service_receipt_and_readback"
+  },
+  "previous_owner_input": {
+    "id": "U05",
+    "kind": "owner_voice_cross_project_versioned_component_reuse",
+    "date": "2026-10-03",
+    "summary": "Shared Live and other cross-project infrastructure must be discovered/reused as versioned capabilities with runtime and incident history visible to consumers; consumer dependencies use stable releases/versions rather than raw SHA pins, while SHA/digests remain verification evidence."
+  },
+  "collaboration": {
+    "specification": "20-basic-collaboration-and-personal-timeline.md",
+    "state": "specified_not_implemented",
+    "shared_objects": [
+      "note",
+      "discussion_entry",
+      "question",
+      "answer",
+      "task",
+      "analysis"
+    ],
+    "private_conversation_access_inherited_by_shared_object": false,
+    "author_roles": "array_snapshot_from_project_membership_current_acl_rechecked",
+    "note_ready_requires": "repository_receipt_and_readback",
+    "reader_requires_github_account": false,
+    "durable_continuation": true,
+    "status_reads_advance_jobs": false,
+    "project_digest_requires_opt_in": true
   }
 }
