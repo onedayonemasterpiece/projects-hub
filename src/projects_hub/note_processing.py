@@ -309,6 +309,7 @@ class GeminiNoteProcessor:
         *,
         params: dict[str, str] | None = None,
         body: dict[str, Any] | None = None,
+        allow_empty: bool = False,
     ) -> Any:
         origin = self._limiter_origin()
         key = self._limiter_key()
@@ -343,16 +344,31 @@ class GeminiNoteProcessor:
                 "Shared Google AI limiter rejected the request",
                 retryable=response.status_code >= 500,
             )
+        if allow_empty and not response.content:
+            return None
         try:
             return response.json()
         except ValueError as exc:
+            if allow_empty and not response.text.strip():
+                return None
             raise NoteProcessingError(
                 "NOTE_LIMITER_INVALID_RESPONSE",
                 "Shared Google AI limiter returned invalid JSON",
             ) from exc
 
-    async def _rpc(self, name: str, body: dict[str, Any]) -> Any:
-        return await self._supabase("POST", "rpc/" + name, body=body)
+    async def _rpc(
+        self,
+        name: str,
+        body: dict[str, Any],
+        *,
+        allow_empty: bool = False,
+    ) -> Any:
+        return await self._supabase(
+            "POST",
+            "rpc/" + name,
+            body=body,
+            allow_empty=allow_empty,
+        )
 
     async def _preflight(self) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         capabilities = await self._rpc("google_ai_limiter_capabilities", {})
@@ -499,6 +515,7 @@ class GeminiNoteProcessor:
                     "p_attempt_no": int(attempt_no),
                     "p_reason": reason[:120],
                 },
+                allow_empty=True,
             )
         except Exception:
             pass
@@ -526,6 +543,7 @@ class GeminiNoteProcessor:
                 "p_error_code": error_code,
                 "p_error_message": error_code,
             },
+            allow_empty=True,
         )
 
     @staticmethod
@@ -592,6 +610,7 @@ class GeminiNoteProcessor:
             await self._rpc(
                 "google_ai_mark_sent",
                 {"p_request_uid": request_uid, "p_attempt_no": int(attempt_no)},
+                allow_empty=True,
             )
         except Exception as exc:
             await self._release_unsent(request_uid, attempt_no, "note_mark_sent_failed")
@@ -666,6 +685,7 @@ class GeminiNoteProcessor:
                         "p_attempt_no": int(attempt_no),
                         "p_retry_after_ms": None,
                     },
+                    allow_empty=True,
                 )
             finally:
                 await self._finalize(
