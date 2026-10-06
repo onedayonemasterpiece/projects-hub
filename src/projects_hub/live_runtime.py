@@ -9,6 +9,7 @@ from .development import DevelopmentService
 from .expert_reviews import ExpertReviewAdapter
 from .github_connections import GitHubConnections
 from .collaboration import CollaborationService
+from .collaboration_analysis import CollaborationAnalysisService
 from .regional_knowledge import RegionalKnowledgeAdapter
 from .live_adapter import ProjectsHubLiveAdapter
 from .live_admission import ProjectsHubAdmissionMixin
@@ -59,6 +60,7 @@ def build_live_host(
     development: DevelopmentService | None = None,
     github_connections: GitHubConnections | None = None,
     collaboration: CollaborationService | None = None,
+    collaboration_analysis: CollaborationAnalysisService | None = None,
     expert_reviews_factory: (
         Callable[[str, str], ExpertReviewAdapter | None] | None
     ) = None,
@@ -223,6 +225,7 @@ def build_live_host(
             development=development,
             github_connections=github_connections,
             collaboration=collaboration,
+            collaboration_analysis=collaboration_analysis,
             expert_reviews_factory=expert_reviews_factory,
             regional_knowledge_factory=regional_knowledge_factory,
             **shared,
