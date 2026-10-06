@@ -194,3 +194,26 @@ def test_project_grants_filter_bootstrap_and_revoke(tmp_path: Path):
         assert exc.value.code == "PROJECT_FORBIDDEN"
     finally:
         store.close()
+
+
+def test_direct_ui_origin_is_rejected(tmp_path: Path):
+    store, actor, workspace, project = _owner(tmp_path)
+    try:
+        board = BoardService(store)
+        board_id = board.open_board(actor, workspace, project)["id"]
+        with pytest.raises(StoreError) as exc:
+            board.apply_command(
+                actor_id=actor,
+                workspace_id=workspace,
+                board_id=board_id,
+                command_id="cmd_direct_ui_denied",
+                operation="create",
+                object_id="obj_direct_ui_denied",
+                expected_object_revision=None,
+                payload={"text": "must not be created"},
+                execution_origin="direct_ui",
+            )
+        assert exc.value.code == "BOARD_VOICE_ONLY"
+        assert board.snapshot(actor, workspace, board_id)["objects"] == []
+    finally:
+        store.close()
