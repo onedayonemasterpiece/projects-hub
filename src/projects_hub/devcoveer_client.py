@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -28,9 +29,13 @@ class DevCoveerClient:
 
     def __init__(
         self,
-        command: str = "/home/dev/.local/bin/codex-mcp-server",
+        command: str | None = None,
     ) -> None:
-        self.command = command
+        self.command = (
+            command
+            or os.getenv("PROJECTS_HUB_DEVCOVEER_COMMAND")
+            or "/home/dev/.local/bin/codex-mcp-server"
+        )
         self._queue: asyncio.Queue[
             tuple[str, dict[str, Any], asyncio.Future[dict[str, Any]]] | None
         ] = asyncio.Queue()

@@ -103,3 +103,20 @@ def test_release_retention_keeps_newest_rollback_when_previous_missing(
     assert result["preserved"] == sorted([current, newest])
     assert result["removed"] == [older]
     assert sorted(path.name for path in releases.iterdir()) == sorted([current, newest])
+
+
+def test_production_devcoveer_escapes_backend_mount_namespace_without_weakening_it():
+    installer = Path("deploy/devcoveer_install.py").read_text(encoding="utf-8")
+    bridge = Path("scripts/run_devcoveer_mcp.sh").read_text(encoding="utf-8")
+
+    assert '"PrivateTmp=true"' in installer
+    assert '"ProtectSystem=strict"' in installer
+    assert '"ProtectHome=read-only"' in installer
+    assert '"NoNewPrivileges=true"' in installer
+    assert '"PROJECTS_HUB_DEVCOVEER_COMMAND"' in installer
+    assert 'source/scripts/run_devcoveer_mcp.sh' in installer
+
+    assert "/usr/bin/systemd-run --user --pipe --wait --collect --quiet" in bridge
+    assert "/home/dev/.local/bin/codex-mcp-server" in bridge
+    assert "ProtectSystem" not in bridge
+    assert "ProtectHome" not in bridge

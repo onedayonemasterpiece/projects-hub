@@ -419,6 +419,9 @@ def write_runtime_environment(sha: str) -> bytes | None:
                 "PROJECTS_HUB_DATA_DIR": str(DATA_ROOT),
                 "PROJECTS_HUB_STATIC_DIR": str(CURRENT_LINK / "source/web/dist"),
                 "PROJECTS_HUB_SESSION_SECRET_FILE": str(SESSION_SECRET_FILE),
+                "PROJECTS_HUB_DEVCOVEER_COMMAND": str(
+                    CURRENT_LINK / "source/scripts/run_devcoveer_mcp.sh"
+                ),
                 "PROJECTS_HUB_DEV_AUTH": "1",
                 "PROJECTS_HUB_COOKIE_SECURE": "1",
                 "PROJECTS_HUB_LIVE_MODEL": "gemini-3.8-live",

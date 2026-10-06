@@ -136,3 +136,17 @@ async def test_start_task_remains_explicit_native_codex_write(
             },
         )
     ]
+
+
+def test_command_uses_production_env_without_overriding_explicit_command(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv(
+        "PROJECTS_HUB_DEVCOVEER_COMMAND",
+        "/opt/projects-hub/run-devcoveer-mcp",
+    )
+    assert DevCoveerClient().command == "/opt/projects-hub/run-devcoveer-mcp"
+    assert (
+        DevCoveerClient(command="/tmp/direct-codex-mcp").command
+        == "/tmp/direct-codex-mcp"
+    )
