@@ -4,6 +4,7 @@ import App from "./App";
 import "./styles.css";
 import "./collaboration.css";
 import "./collaboration-questions.css";
+import "./inline-board.css";
 
 if ("serviceWorker" in navigator && import.meta.env.PROD) {
   let reloadingForWorker = false;
