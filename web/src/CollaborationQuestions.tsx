@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   answerCollaborationQuestions,
+  answerSingleCollaborationQuestion,
   getCollaborationQuestions,
   type CollaborationQuestion,
 } from "./api";
@@ -57,15 +58,24 @@ export default function CollaborationQuestions({ workspaceId, refreshKey, onChan
     setBusyId(question.id);
     setNotice(null);
     try {
-      await answerCollaborationQuestions(
-        workspaceId,
-        question.analysis_id,
-        [{
-          question_id: question.id,
+      if (question.source_kind === "owner_development") {
+        await answerSingleCollaborationQuestion(
+          workspaceId,
+          question.id,
           disposition,
           body,
-        }],
-      );
+        );
+      } else {
+        await answerCollaborationQuestions(
+          workspaceId,
+          question.analysis_id,
+          [{
+            question_id: question.id,
+            disposition,
+            body,
+          }],
+        );
+      }
       setAnswers(previous => ({ ...previous, [question.id]: "" }));
       await load();
       onChanged?.();
@@ -86,7 +96,11 @@ export default function CollaborationQuestions({ workspaceId, refreshKey, onChan
           key={question.id}
         >
           <div className="collaboration-widget-head">
-            <span>{question.blocking ? "Нужен ответ" : "Можно уточнить позже"}</span>
+            <span>
+              {question.source_kind === "owner_development"
+                ? "Нужно решение владельца"
+                : question.blocking ? "Нужен ответ" : "Можно уточнить позже"}
+            </span>
             <small>{question.addressed_role}</small>
           </div>
           {question.shared_context && <p className="question-context">{question.shared_context}</p>}
