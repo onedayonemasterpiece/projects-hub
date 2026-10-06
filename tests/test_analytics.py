@@ -33,34 +33,18 @@ class FakeAnalyticsBridge:
 
     async def council(self, **kwargs):
         self.council_calls.append(dict(kwargs))
-        if kwargs.get("tier") == "pro" and not kwargs.get("paid_confirmation_token"):
-            return {
-                "status": "confirmation_required",
-                "councilLevel": "pro",
-                "requiresExplicitUserConfirmation": True,
-                "paidConfirmationToken": "pcf_" + "a" * 32,
-                "confirmationExpiresAt": 9_999_999_999_999,
-                "costPolicy": "nvidia_full_debate_with_bounded_transient_retries",
-                "usagePlan": {
-                    "freeCalls": 0,
-                    "nvidiaCalls": 6,
-                    "totalCalls": 6,
-                    "maxNvidiaAttempts": 30,
-                },
-                "participants": [
-                    {"provider": "nvidia", "model": "nvidia/moonshotai/kimi-k3"},
-                    {
-                        "provider": "nvidia",
-                        "model": "nvidia/deepseek-ai/deepseek-v4.1-flash",
-                    },
-                ],
-                "content": "No council or NVIDIA inference was started.",
-            }
         return {
             "status": "running",
             "taskId": "dvt_" + "3" * 32,
             "backend": "council",
             "councilLevel": kwargs.get("tier", "free"),
+            "resourcePolicy": (
+                "nvidia_dual_slot_kimi_deepseek_full_debate"
+                if kwargs.get("tier") == "pro"
+                else "free_only_no_nvidia"
+            ),
+            "nvidiaSlotCapacity": 2,
+            "requiresExplicitUserConfirmation": False,
         }
 
     async def read_task(self, task_id: str):
@@ -499,7 +483,8 @@ def test_free_council_uses_frozen_evidence_and_preserves_attribution(tmp_path: P
         store.close()
 
 
-def test_paid_council_requires_explicit_confirmation_before_dispatch(tmp_path: Path):
+
+def test_pro_council_auto_dispatches_without_user_confirmation(tmp_path: Path):
     store, board, actor, workspace, project, board_id = _owner(tmp_path)
     bridge = FakeAnalyticsBridge()
     try:
@@ -508,8 +493,8 @@ def test_paid_council_requires_explicit_confirmation_before_dispatch(tmp_path: P
             actor=actor,
             workspace=workspace,
             board_id=board_id,
-            object_id="obj_paid_council",
-            text="Synthetic paid council evidence.",
+            object_id="obj_nvidia_council",
+            text="Synthetic NVIDIA council evidence.",
         )
         service = AnalyticsService(store, board, bridge=bridge)
         run = asyncio.run(
@@ -518,109 +503,36 @@ def test_paid_council_requires_explicit_confirmation_before_dispatch(tmp_path: P
                 workspace_id=workspace,
                 project_id=project,
                 board_id=board_id,
-                object_ids=["obj_paid_council"],
-                command_id="analysis_paid_council_001",
+                object_ids=["obj_nvidia_council"],
+                command_id="analysis_nvidia_council_001",
                 model="council_pro",
                 purpose="architecture",
-                question="Compare two implementation risks.",
+                question="Compare two risks.",
             )
         )
-        assert run["status"] == "confirmation_required"
+        assert run["status"] == "running"
         assert run["model"] == "council_pro"
-        assert run["council_tier"] == "pro"
-        assert run["provider_task_id"] is None
-        assert run["confirmation_plan"]["usagePlan"]["nvidiaCalls"] == 6
-        assert run["confirmation_plan"]["participants"][0]["model"] == "nvidia/moonshotai/kimi-k3"
-        assert "confirmation_token" not in run
         assert len(bridge.council_calls) == 1
-        first = bridge.council_calls[0]
-        assert first["tier"] == "pro"
-        assert "paid_confirmation_token" not in first
+        dispatched = bridge.council_calls[0]
+        assert dispatched["tier"] == "pro"
+        assert set(dispatched) == {"prompt", "evidence_bundle", "request_key", "tier"}
+        assert dispatched["request_key"] == f"analysis:{run['id']}"
 
-        same = asyncio.run(
-            service.refresh(
-                actor_id=actor,
-                workspace_id=workspace,
-                run_id=run["id"],
-            )
-        )
-        assert same["status"] == "confirmation_required"
-        assert len(bridge.council_calls) == 1
-
-        confirmed = asyncio.run(
-            service.confirm_paid(
-                actor_id=actor,
-                workspace_id=workspace,
-                run_id=run["id"],
-            )
-        )
-        assert confirmed["status"] == "running"
-        assert len(bridge.council_calls) == 2
-        second = bridge.council_calls[1]
-        assert second["tier"] == "pro"
-        assert second["request_key"] == first["request_key"]
-        assert second["evidence_bundle"] == first["evidence_bundle"]
-        assert second["paid_confirmation_token"] == "pcf_" + "a" * 32
-
-        duplicate_confirm = asyncio.run(
-            service.confirm_paid(
-                actor_id=actor,
-                workspace_id=workspace,
-                run_id=run["id"],
-            )
-        )
-        assert duplicate_confirm["status"] == "running"
-        assert len(bridge.council_calls) == 2
-    finally:
-        store.close()
-
-
-def test_paid_council_confirmation_token_is_server_only_and_expiry_fails_closed(tmp_path: Path):
-    store, board, actor, workspace, project, board_id = _owner(tmp_path)
-    bridge = FakeAnalyticsBridge()
-    try:
-        _sticky(
-            board,
-            actor=actor,
-            workspace=workspace,
-            board_id=board_id,
-            object_id="obj_paid_expiry",
-            text="Synthetic confirmation expiry evidence.",
-        )
-        service = AnalyticsService(store, board, bridge=bridge)
-        run = asyncio.run(
+        duplicate = asyncio.run(
             service.start_single(
                 actor_id=actor,
                 workspace_id=workspace,
                 project_id=project,
                 board_id=board_id,
-                object_ids=["obj_paid_expiry"],
-                command_id="analysis_paid_expiry_001",
+                object_ids=["obj_nvidia_council"],
+                command_id="analysis_nvidia_council_001",
                 model="council_pro",
-                purpose="edge_cases",
-                question="Check expiry.",
+                purpose="architecture",
+                question="Compare two risks.",
             )
         )
-        with store._lock:
-            row = store.db.execute(
-                "SELECT confirmation_token FROM analysis_runs WHERE id=?",
-                (run["id"],),
-            ).fetchone()
-            assert row["confirmation_token"] == "pcf_" + "a" * 32
-            store.db.execute(
-                "UPDATE analysis_runs SET confirmation_expires_at_ms=1 WHERE id=?",
-                (run["id"],),
-            )
-
-        expired = asyncio.run(
-            service.confirm_paid(
-                actor_id=actor,
-                workspace_id=workspace,
-                run_id=run["id"],
-            )
-        )
-        assert expired["status"] == "failed"
-        assert expired["error_code"] == "ANALYTICS_CONFIRMATION_EXPIRED"
+        assert duplicate["id"] == run["id"]
         assert len(bridge.council_calls) == 1
     finally:
         store.close()
+
