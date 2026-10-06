@@ -13,6 +13,8 @@ from .development import DevelopmentService
 from .github_connections import GitHubConnections
 from .collaboration import CollaborationService
 from .collaboration_analysis import CollaborationAnalysisService
+from .board import BoardService
+from .board_view_context import BoardViewContextStore
 from .expert_reviews import (
     ExpertReviewAccessError,
     ExpertReviewAdapter,
@@ -61,6 +63,70 @@ def _functions(
             "name": "projects_list_accessible",
             "description": "List projects the current actor may use in this workspace. Use when project context is unclear.",
             "parameters": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "board_navigate",
+            "description": (
+                "Open/close the current project board, show all objects, or focus one known "
+                "object. This controls only the visual surface and never starts another Live session."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["open", "close", "view_all", "focus"]},
+                    "project_id": {"type": "string"},
+                    "object_id": {"type": "string"},
+                },
+                "required": ["action"],
+            },
+        },
+        {
+            "name": "board_query",
+            "description": (
+                "Read authorized board structure. view_context resolves the current browser tab's "
+                "visible/selected/focused objects; search scans the whole board."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["search", "view_context"]},
+                    "project_id": {"type": "string"},
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                },
+                "required": ["action"],
+            },
+        },
+        {
+            "name": "board_edit",
+            "description": (
+                "Create/update/move/delete one board object through Mira. Human UI remains read-only. "
+                "Updates/moves/deletes require expected_object_revision from fresh board state."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "operation": {"type": "string", "enum": ["create", "update", "move", "delete"]},
+                    "object_id": {"type": "string"},
+                    "expected_object_revision": {"type": "integer", "minimum": 1},
+                    "payload": {"type": "object"},
+                },
+                "required": ["operation"],
+            },
+        },
+        {
+            "name": "board_history",
+            "description": "Read bounded durable history for one board object.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "object_id": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                },
+                "required": ["object_id"],
+            },
         },
         {
             "name": "runtime_versions_get",
@@ -745,6 +811,14 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Не зачитывай названия function tools и не делай длинный технический список. Объясняй человеческими сценариями: поговорить и переключаться между проектами, помнить важное, работать с подключёнными репозиториями, календарём/подготовкой к событиям и только теми дополнительными источниками/экспертными функциями, которые реально доступны в этой сессии.
 - Если capability недоступна, можно кратко сказать, что её можно подключить, но не обещай, что она уже работает.
 
+# BOARD
+- Доска — inline visual surface той же personal timeline и той же Live-сессии. Она не создаёт второй разговор и не трогает микрофон.
+- На «открой доску проекта» вызывай board_navigate action=open; на «закрой доску» — action=close.
+- Для «этот/здесь/видимые/выбранный» сначала board_query action=view_context. Если viewport context недоступен или устарел, не угадывай: search или уточнение.
+- Пользователь не редактирует объекты вручную. Создание/изменение/перемещение/удаление идёт только через board_edit; успех объявляй только по receipt status=saved.
+- Для update/move/delete используй свежий expected_object_revision; конфликт не перезаписывай вслепую.
+- board_navigate focus/view_all управляет только камерой текущего единственного renderer.
+
 # PROJECT COLLABORATION
 - Общая проектная заметка — first-class project object, а не копия личной переписки. Создавай её через project_note_create только по намерению пользователя сохранить/поделиться заметкой.
 - Успех project_note_create означает, что backend уже записал Markdown в привязанный project_docs repository и сделал authoritative readback. Не говори «сохранено» раньше tool result.
@@ -825,6 +899,9 @@ class ProjectsHubLiveAdapter:
         github_connections: GitHubConnections | None = None,
         collaboration: CollaborationService | None = None,
         collaboration_analysis: CollaborationAnalysisService | None = None,
+        board: BoardService | None = None,
+        board_hub: Any | None = None,
+        board_view_context: BoardViewContextStore | None = None,
         expert_reviews_factory: (
             Callable[[str, str], ExpertReviewAdapter | None] | None
         ) = None,
@@ -840,6 +917,9 @@ class ProjectsHubLiveAdapter:
         self.github_connections = github_connections
         self.collaboration = collaboration
         self.collaboration_analysis = collaboration_analysis
+        self.board = board or BoardService(store)
+        self.board_hub = board_hub
+        self.board_view_context = board_view_context or BoardViewContextStore(store, self.board)
         self.expert_reviews_factory = expert_reviews_factory
         self.regional_knowledge_factory = regional_knowledge_factory
 
@@ -1491,6 +1571,158 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "backend_version": state.get("backend_version"),
                 "backend_release_sha": state.get("backend_release_sha"),
             }
+
+        if name.startswith("board_"):
+            conversation = self.store.get_conversation(actor_id, conversation_id)
+            project_id = str(args.get("project_id") or "") or conversation.get("focus_project_id")
+            if not project_id:
+                raise StoreError("BOARD_PROJECT_REQUIRED", "Choose a project before using its board")
+            project_id = str(project_id)
+            access = self.store.project_access(actor_id, workspace_id, project_id)
+
+            if name == "board_navigate":
+                action = str(args.get("action") or "")
+                if action not in {"open", "close", "view_all", "focus"}:
+                    raise StoreError("INVALID_ARGUMENT", "Unknown board navigation action")
+                command_id, _args_sha = self._command_id(session, name, args)
+                token = "uif_" + command_id[-24:]
+                if action == "close":
+                    return {
+                        "project_id": project_id,
+                        "ui_command": {
+                            "kind": "board", "action": "close",
+                            "project_id": project_id, "token": token,
+                        },
+                    }
+                board = self.board.open_board(
+                    actor_id, workspace_id, project_id,
+                    create_if_allowed=(action == "open" and access["role"] != "viewer"),
+                )
+                ui_command: dict[str, Any] = {
+                    "kind": "board", "action": action,
+                    "project_id": project_id, "board_id": board["id"], "token": token,
+                }
+                if action == "focus":
+                    object_id = str(args.get("object_id") or "")
+                    if not object_id:
+                        raise StoreError("INVALID_ARGUMENT", "object_id is required for focus")
+                    snapshot = self.board.snapshot(actor_id, workspace_id, board["id"])
+                    item = next((v for v in snapshot["objects"] if v["id"] == object_id), None)
+                    if item is None:
+                        raise StoreError("OBJECT_NOT_FOUND", "Board object is not available")
+                    ui_command["object_id"] = object_id
+                    ui_command["bbox"] = item["geometry"]
+                    ui_command["board_seq"] = snapshot["board"]["seq"]
+                return {
+                    "project_id": project_id,
+                    "board_id": board["id"],
+                    "ui_command": ui_command,
+                    "ui_ack_required": action in {"focus", "view_all"},
+                }
+
+            board = self.board.open_board(
+                actor_id, workspace_id, project_id, create_if_allowed=False
+            )
+            if name == "board_query":
+                action = str(args.get("action") or "")
+                if action == "view_context":
+                    client_instance_id = str(state.get("client_instance_id") or "")
+                    if not client_instance_id:
+                        return {
+                            "status": "unavailable",
+                            "reason": "live_client_instance_unavailable",
+                            "project_id": project_id,
+                            "board_id": board["id"],
+                        }
+                    return self.board_view_context.resolve(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        conversation_id=conversation_id,
+                        project_id=project_id,
+                        client_instance_id=client_instance_id,
+                    )
+                if action != "search":
+                    raise StoreError("INVALID_ARGUMENT", "Unknown board query action")
+                query = str(args.get("query") or "").strip()
+                if not query:
+                    raise StoreError("INVALID_ARGUMENT", "query is required for board search")
+                try:
+                    limit = int(args.get("limit", 12))
+                except (TypeError, ValueError):
+                    limit = 12
+                return {
+                    "project_id": project_id,
+                    "board_id": board["id"],
+                    "items": self.board.search(
+                        actor_id, workspace_id, board["id"], query, limit=limit
+                    ),
+                }
+
+            if name == "board_history":
+                object_id = str(args.get("object_id") or "")
+                if not object_id:
+                    raise StoreError("INVALID_ARGUMENT", "object_id is required")
+                try:
+                    limit = int(args.get("limit", 20))
+                except (TypeError, ValueError):
+                    limit = 20
+                return {
+                    "project_id": project_id,
+                    "board_id": board["id"],
+                    "items": self.board.history(
+                        actor_id, workspace_id, board["id"], object_id, limit=limit
+                    ),
+                }
+
+            if name == "board_edit":
+                operation = str(args.get("operation") or "")
+                if operation not in {"create", "update", "move", "delete"}:
+                    raise StoreError("INVALID_ARGUMENT", "Unknown board edit operation")
+                command_id, _args_sha = self._command_id(session, name, args)
+                object_id = str(args.get("object_id") or "")
+                if not object_id:
+                    if operation != "create":
+                        raise StoreError("INVALID_ARGUMENT", "object_id is required")
+                    object_id = "obj_mira_" + hashlib.sha256(
+                        command_id.encode("utf-8")
+                    ).hexdigest()[:24]
+                expected_raw = args.get("expected_object_revision")
+                expected_revision = None
+                if expected_raw is not None:
+                    try:
+                        expected_revision = int(expected_raw)
+                    except (TypeError, ValueError):
+                        raise StoreError(
+                            "INVALID_ARGUMENT",
+                            "expected_object_revision must be an integer",
+                        ) from None
+                payload = args.get("payload") or {}
+                if not isinstance(payload, dict):
+                    raise StoreError("INVALID_ARGUMENT", "payload must be an object")
+                receipt = self.board.apply_command(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    board_id=board["id"],
+                    command_id=command_id,
+                    operation=operation,
+                    object_id=object_id,
+                    expected_object_revision=expected_revision,
+                    payload=payload,
+                    execution_origin="mira",
+                )
+                if self.board_hub is not None:
+                    await self.board_hub.publish(
+                        board["id"], {"type": "event", "event": receipt["event"]}
+                    )
+                return {
+                    **receipt,
+                    "project_id": project_id,
+                    "ui_command": {
+                        "kind": "board", "action": "open",
+                        "project_id": project_id, "board_id": board["id"],
+                        "token": "uif_" + command_id[-24:],
+                    },
+                }
 
         if name in {
             "project_participants_list",
