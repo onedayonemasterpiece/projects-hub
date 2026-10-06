@@ -847,16 +847,50 @@ def create_app(
     @app.get("/api/sources/{source_id}")
     async def source(source_id: str, request: Request) -> dict[str, Any]:
         actor_id = actor_id_from_request(request)
-        return {"source": public_source(store.get_source(actor_id, source_id))}
+        item = public_source(store.get_source(actor_id, source_id))
+        item.update(store.voice_source_recovery_verdict(actor_id, source_id))
+        return {"source": item}
 
     @app.get("/api/sources/{source_id}/audio")
-    async def source_audio(source_id: str, request: Request) -> FileResponse:
+    async def source_audio(
+        source_id: str,
+        request: Request,
+        start_bytes: int | None = None,
+        end_bytes: int | None = None,
+    ) -> Response:
         actor_id = actor_id_from_request(request)
+        source_item = store.get_source(actor_id, source_id)
         path = store.voice_source_audio_path(actor_id, source_id)
-        return FileResponse(
-            path,
+        headers = {"Cache-Control": "no-store, private"}
+        if start_bytes is None and end_bytes is None:
+            return FileResponse(
+                path,
+                media_type="audio/L16;rate=16000",
+                headers=headers,
+            )
+        total = int(source_item["audio_bytes"])
+        start = 0 if start_bytes is None else int(start_bytes)
+        end = total if end_bytes is None else int(end_bytes)
+        if (
+            start < 0
+            or end <= start
+            or end > total
+            or start % 2
+            or end % 2
+            or end - start > 32 * 1024 * 1024
+        ):
+            raise HTTPException(status_code=400, detail={"code": "INVALID_AUDIO_RANGE"})
+        with path.open("rb") as handle:
+            handle.seek(start)
+            payload = handle.read(end - start)
+        if len(payload) != end - start:
+            raise HTTPException(status_code=409, detail={"code": "AUDIO_RANGE_INCOMPLETE"})
+        headers["X-Projects-Hub-Audio-Start"] = str(start)
+        headers["X-Projects-Hub-Audio-End"] = str(end)
+        return Response(
+            content=payload,
             media_type="audio/L16;rate=16000",
-            headers={"Cache-Control": "no-store, private"},
+            headers=headers,
         )
 
     @app.get("/api/conversations/{conversation_id}/sources/by-client/{client_source_id}")

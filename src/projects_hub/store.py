@@ -2285,6 +2285,42 @@ class DurableStore:
                 raise StoreError("FORBIDDEN", "Source workspace mismatch")
             return dict(row)
 
+    def voice_source_recovery_verdict(
+        self,
+        actor_id: str,
+        source_id: str,
+    ) -> dict[str, Any]:
+        with self._lock:
+            self.get_source(actor_id, source_id)
+            row = self.db.execute(
+                """SELECT text FROM source_events
+                   WHERE source_id=? AND kind='utterance_verdict'
+                     AND text IS NOT NULL
+                   ORDER BY id DESC LIMIT 1""",
+                (source_id,),
+            ).fetchone()
+            if not row:
+                return {
+                    "utterance_id": None,
+                    "utterance_verdict": None,
+                    "utterance_audio_start_bytes": None,
+                    "utterance_audio_end_bytes": None,
+                }
+            try:
+                parsed = json.loads(str(row["text"] or ""))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                parsed = {}
+            if not isinstance(parsed, dict):
+                parsed = {}
+            start = parsed.get("audio_start_bytes")
+            end = parsed.get("audio_end_bytes")
+            return {
+                "utterance_id": parsed.get("utterance_id"),
+                "utterance_verdict": parsed.get("verdict"),
+                "utterance_audio_start_bytes": int(start) if isinstance(start, int) else None,
+                "utterance_audio_end_bytes": int(end) if isinstance(end, int) else None,
+            }
+
     def list_pending_voice_sources(
         self,
         actor_id: str,
@@ -2321,6 +2357,7 @@ class DurableStore:
                        ORDER BY id DESC LIMIT 1""",
                     (row["id"],),
                 ).fetchone()
+                verdict = self.voice_source_recovery_verdict(actor_id, row["id"])
                 result.append(
                     {
                         "id": row["id"],
@@ -2329,6 +2366,7 @@ class DurableStore:
                         "audio_chunks": int(row["audio_chunks"]),
                         "transcript_revision": int(row["transcript_revision"]),
                         "provisional_chars": len(str(interim["text"])) if interim else 0,
+                        **verdict,
                         "captured_at_ms": int(row["captured_at_ms"]),
                         "updated_at_ms": int(row["updated_at_ms"]),
                     }

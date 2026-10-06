@@ -90,6 +90,8 @@ class CaptionSidecar:
         self.available = True
         self._unavailable_emitted = False
         self._pcm_buffer = bytearray()
+        self._stop_lock = asyncio.Lock()
+        self._stopped = False
 
     def start(self) -> None:
         if self.task is not None:
@@ -214,17 +216,22 @@ class CaptionSidecar:
         return True
 
     async def stop(self) -> None:
-        task = self.task
-        if task is None:
+        async with self._stop_lock:
+            if self._stopped:
+                return
+            task = self.task
+            if task is None:
+                self.reader.close()
+                self._stopped = True
+                return
+            if not task.done():
+                self.reader.feed({"type": "stop"})
+                try:
+                    await asyncio.wait_for(asyncio.shield(task), timeout=0.25)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    pass
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
             self.reader.close()
-            return
-        if not task.done():
-            self.reader.feed({"type": "stop"})
-            try:
-                await asyncio.wait_for(asyncio.shield(task), timeout=0.25)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                pass
-        if not task.done():
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-        self.reader.close()
+            self._stopped = True

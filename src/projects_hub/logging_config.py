@@ -48,6 +48,8 @@ class JsonFormatter(logging.Formatter):
             "frame_seq",
             "pcm_bytes",
             "capture_age_ms",
+            "latency_stage",
+            "latency_alert",
             "turn_output_audio_events",
             "turn_output_audio_bytes",
             "turn_first_output_audio_provider_at",
