@@ -69,10 +69,6 @@ const palette: Record<BoardStyle["color"], number> = {
   violet: 0xd8c2ff,
 };
 
-function commandId(prefix: string) {
-  return prefix + "_" + crypto.randomUUID();
-}
-
 function normalizedObjects(items: BoardObject[]) {
   return new Map(
     items
