@@ -50,7 +50,7 @@ import {
 
 type WaitState = null | { elapsed_ms: number; stage: string; can_restart: boolean };
 type ChatRole = "user" | "assistant";
-type ChatMessage = { role: ChatRole; text: string; awaitingTranscript?: boolean };
+type ChatMessage = { role: ChatRole; text: string; awaitingTranscript?: boolean; provisionalCaption?: boolean; captionFinal?: boolean };
 
 const VOICE_TURN_PLACEHOLDER = "Голосовая реплика";
 
@@ -335,6 +335,8 @@ export default function App() {
         return messages;
       }
       if (role === "user" && messages[index].awaitingTranscript) {
+        // The primary conversational Live model is authoritative. Its final
+        // input transcript replaces any speculative/final sidecar caption.
         messages[index] = { role, text: clean, awaitingTranscript: false };
         return messages;
       }
@@ -356,8 +358,47 @@ export default function App() {
     });
   }, []);
 
+  const applyCaptionToUserBubble = useCallback((fragment: string, final: boolean) => {
+    const clean = fragment.trim();
+    if (!clean) return;
+    setChatMessages(previous => {
+      const messages = [...previous];
+      const index = userTranscriptIndex.current;
+      if (
+        index < 0
+        || index >= messages.length
+        || messages[index]?.role !== "user"
+        || !messages[index]?.awaitingTranscript
+      ) {
+        return previous;
+      }
+      // Google interim transcription is a dynamically updated hypothesis, so
+      // replace it rather than appending fragments. The main Mira transcript
+      // later replaces this entire provisional/final caption.
+      messages[index] = {
+        ...messages[index],
+        text: clean,
+        awaitingTranscript: true,
+        provisionalCaption: true,
+        captionFinal: final,
+      };
+      return messages;
+    });
+  }, []);
+
   const applyLiveEvent = useCallback((event: LiveEvent) => {
-    if (event.type === "interim_input_transcript" && typeof event.text === "string") {
+    if (event.type === "caption_interim_transcript" && typeof event.text === "string") {
+      setInputTranscriptSeen(true);
+      setInterimInputTranscript("");
+      applyCaptionToUserBubble(event.text, false);
+    } else if (event.type === "caption_final_transcript" && typeof event.text === "string") {
+      setInputTranscriptSeen(true);
+      setInterimInputTranscript("");
+      applyCaptionToUserBubble(event.text, true);
+    } else if (event.type === "caption_unavailable") {
+      // Captions are deliberately fail-open. Mira voice/semantics stay active
+      // and the reserved user bubble remains visible if no main transcript arrives.
+    } else if (event.type === "interim_input_transcript" && typeof event.text === "string") {
       if (userTurnBoundaryPendingRef.current) {
         userTurnBoundaryPendingRef.current = false;
         userTranscriptIndex.current = -1;
@@ -416,7 +457,7 @@ export default function App() {
     } else if (event.type === "capability_unavailable" && event.code !== "NOT_CONFIGURED") {
       setNotice("Одна из дополнительных возможностей сейчас недоступна.");
     }
-  }, [loadBacklog, loadEventCards, loadMemories, mergeChatMessage]);
+  }, [applyCaptionToUserBubble, loadBacklog, loadEventCards, loadMemories, mergeChatMessage]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1173,14 +1214,27 @@ export default function App() {
               {chatMessages.map((message, index) => (
                 <div className={"chat-row " + message.role} key={index}>
                   <div
-                    className={"chat-bubble " + message.role + (message.awaitingTranscript ? " awaiting-transcript" : "")}
+                    className={
+                      "chat-bubble " + message.role
+                      + (message.awaitingTranscript ? " awaiting-transcript" : "")
+                      + (message.provisionalCaption ? " sidecar-caption" : "")
+                    }
                     aria-label={
-                      message.awaitingTranscript
-                        ? "Вы: голосовая реплика; текст распознавания не получен"
-                        : (message.role === "user" ? "Вы" : "Мира") + ": " + message.text
+                      message.provisionalCaption
+                        ? "Вы, транскрипция: " + message.text
+                        : message.awaitingTranscript
+                          ? "Вы: голосовая реплика; текст распознавания не получен"
+                          : (message.role === "user" ? "Вы" : "Мира") + ": " + message.text
                     }
                   >
-                    {message.awaitingTranscript && <span className="interim-label">Текст не получен</span>}
+                    {message.provisionalCaption && (
+                      <span className="interim-label">
+                        {message.captionFinal ? "Транскрипция" : "Распознаю"}
+                      </span>
+                    )}
+                    {message.awaitingTranscript && !message.provisionalCaption && (
+                      <span className="interim-label">Текст не получен</span>
+                    )}
                     {message.text}
                   </div>
                 </div>
@@ -1201,9 +1255,9 @@ export default function App() {
               ) && (
                 <div className="chat-status" aria-live="polite">
                   {speechActive
-                    ? "Слышу речь. Распознанный текст появится после завершения реплики."
+                    ? "Слышу речь. Текст появляется по мере распознавания."
                     : speechPending
-                      ? "Реплика завершена. Жду текст и ответ Миры…"
+                      ? "Реплика завершена. Жду финальный текст Миры и ответ…"
                       : "Микрофон работает; текст ещё не получен."}
                 </div>
               )}

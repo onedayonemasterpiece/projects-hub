@@ -29,7 +29,7 @@ test('real App timing callback distinguishes admitted speech, queued end and out
 
 test('live feedback is mounted before the first user transcript',()=>{
   assert.match(source,/\(voiceActive \|\| chatMessages.length > 0 \|\| interimInputTranscript \|\| playbackProblem\)/);
-  assert.match(source,/Распознанный текст появится после завершения реплики/);
+  assert.match(source,/Текст появляется по мере распознавания/);
   assert.match(source,/className="chat-status" role="alert">\{playbackProblem\}/);
 });
 

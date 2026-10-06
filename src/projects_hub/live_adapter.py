@@ -30,6 +30,23 @@ from .store import DurableStore, StoreError
 
 log = logging.getLogger("projects_hub.live")
 
+_BASE_TRANSCRIPTION_VOCABULARY = ["Мира", "Projects Hub", "Codex", "DevCoveer", "Калининград"]
+
+
+def _transcription_vocabulary(projects: list[dict[str, Any]]) -> list[str]:
+    terms: list[str] = []
+    seen: set[str] = set()
+    for raw in [*_BASE_TRANSCRIPTION_VOCABULARY, *(p.get("name") for p in projects)]:
+        value = str(raw or "").strip()
+        key = value.casefold()
+        if not value or key in seen or len(value) > 120:
+            continue
+        seen.add(key)
+        terms.append(value)
+        if len(terms) >= 100:
+            break
+    return terms
+
 
 def _functions(
     *,
@@ -693,6 +710,7 @@ class ProjectsHubLiveAdapter:
             limit=8,
         )
         projects = self.store.list_projects(actor_id, conversation["workspace_id"])
+        transcription_vocabulary = _transcription_vocabulary(projects)
         expert_reviews = self._expert_reviews(
             actor_id,
             conversation["workspace_id"],
@@ -758,6 +776,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "backend_version": backend_version,
                 "backend_release_sha": backend_release_sha,
                 "attempt_id": attempt_id,
+                "caption_vocabulary": transcription_vocabulary,
             },
             "context": {
                 "workspace_id": conversation["workspace_id"],
@@ -790,7 +809,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "voice": "Aoede",
                 "input_audio_transcription": {
                     "languageCodes": ["ru-RU", "en-US"],
-                    "customVocabulary": ["Мира", "Projects Hub", "Codex", "DevCoveer", "Калининград"],
+                    "customVocabulary": transcription_vocabulary,
                     "mode": "VERBATIM",
                 },
                 "search_enabled": False,
