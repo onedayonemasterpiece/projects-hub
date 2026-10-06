@@ -278,3 +278,15 @@ test("accepted microphone turns remain visible when Gemini omits input transcrip
   assert.match(source, /role === "user" && messages\[index\]\.awaitingTranscript[\s\S]*awaitingTranscript: false/);
   assert.match(source, /текст распознавания не получен/);
 });
+
+
+test("Transcribe Live captions update the reserved user bubble and main Mira final wins", async () => {
+  const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  assert.match(source, /event\.type === "caption_interim_transcript"[\s\S]*applyCaptionToUserBubble\(event\.text, false\)/);
+  assert.match(source, /event\.type === "caption_final_transcript"[\s\S]*applyCaptionToUserBubble\(event\.text, true\)/);
+  assert.match(source, /const applyCaptionToUserBubble = useCallback/);
+  assert.match(source, /text: clean,[\s\S]*awaitingTranscript: true,[\s\S]*provisionalCaption: true,[\s\S]*captionFinal: final/);
+  assert.match(source, /role === "user" && messages\[index\]\.awaitingTranscript[\s\S]*messages\[index\] = \{ role, text: clean, awaitingTranscript: false \}/);
+  assert.match(source, /message\.captionFinal \? "Транскрипция" : "Распознаю"/);
+  assert.match(source, /event\.type === "caption_unavailable"[\s\S]*Captions are deliberately fail-open/);
+});
