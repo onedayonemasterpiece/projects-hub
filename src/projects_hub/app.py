@@ -270,6 +270,7 @@ def create_app(
         ):
             await development_service.start_background()
         collaboration_analysis_service = getattr(app.state, "collaboration_analysis", None)
+        collaboration_service = getattr(app.state, "collaboration", None)
         if collaboration_analysis_service is not None:
             await collaboration_analysis_service.start_background()
         try:
@@ -280,6 +281,8 @@ def create_app(
                 await host.stop_all()
             if collaboration_analysis_service is not None:
                 await collaboration_analysis_service.close()
+            if collaboration_service is not None and hasattr(collaboration_service, "close"):
+                await collaboration_service.close()
             if development_service is not None and hasattr(
                 development_service, "close"
             ):
