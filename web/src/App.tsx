@@ -36,6 +36,7 @@ import {
   type CodexStatus,
 } from "./api";
 import { replayLocalVoiceSource } from "./bufferedReplay";
+import CollaborationTimeline from "./CollaborationTimeline";
 import { recoverServerVoiceSource } from "./serverRecovery";
 import { mergeTranscript, resolveTerminalVoiceState, selectProvisionalCaption, speechStartsNewUserBubble } from "./voiceUiContract.js";
 import {
@@ -162,6 +163,7 @@ export default function App() {
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [voiceState, setVoiceState] = useState("off");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [collaborationRefresh, setCollaborationRefresh] = useState(0);
   const [interimInputTranscript, setInterimInputTranscript] = useState("");
   const [inputTranscriptSeen, setInputTranscriptSeen] = useState(false);
   const [speechActive, setSpeechActive] = useState(false);
@@ -477,6 +479,12 @@ export default function App() {
       turnHasInput.current = false;
       assistantTranscriptIndex.current = -1;
     } else if (event.type === "tool_result" && event.status === "ok") {
+      if ([
+        "project_note_create",
+        "project_note_reply",
+      ].includes(event.name ?? "")) {
+        setCollaborationRefresh(value => value + 1);
+      }
       if (event.name === "memory_commit_voice_source") {
         void loadMemories().then(() => setMemoryOpen(true));
       }
@@ -514,6 +522,35 @@ export default function App() {
       setNotice("Одна из дополнительных возможностей сейчас недоступна.");
     }
   }, [applyCaptionToUserBubble, loadBacklog, loadEventCards, loadMemories, mergeChatMessage]);
+
+  useEffect(() => {
+    if (!boot) return;
+    const key = `projects-hub-personal-timeline:${boot.actor.id}`;
+    const raw = localStorage.getItem(key);
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setChatMessages(parsed.filter(item =>
+          item && (item.role === "user" || item.role === "assistant")
+          && typeof item.text === "string"
+        ).slice(-48));
+      }
+    } catch {
+      localStorage.removeItem(key);
+    }
+  }, [boot?.actor.id]);
+
+  useEffect(() => {
+    if (!boot) return;
+    const stable = chatMessages.filter(item =>
+      !item.awaitingTranscript && item.text.trim()
+    ).slice(-48);
+    localStorage.setItem(
+      `projects-hub-personal-timeline:${boot.actor.id}`,
+      JSON.stringify(stable),
+    );
+  }, [boot?.actor.id, chatMessages]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1303,7 +1340,7 @@ export default function App() {
         )}
       </header>
 
-      {(voiceActive || chatMessages.length > 0 || interimInputTranscript || playbackProblem) && (
+      {(boot || voiceActive || chatMessages.length > 0 || interimInputTranscript || playbackProblem) && (
         <section className="chat-canvas" aria-label="Диалог с Мирой">
           <div
             className="chat-thread"
@@ -1338,6 +1375,13 @@ export default function App() {
                   </div>
                 </div>
               ))}
+              {boot && (
+                <CollaborationTimeline
+                  workspaceId={boot.workspace.id}
+                  actorId={boot.actor.id}
+                  refreshKey={collaborationRefresh}
+                />
+              )}
               {interimInputTranscript && (
                 <div className="chat-row user interim" aria-live="polite">
                   <div
