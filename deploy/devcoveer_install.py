@@ -47,6 +47,7 @@ HOST_ENV = Path("/home/dev/.env")
 UNIT_ROOT = Path.home() / ".config/systemd/user"
 UNIT_FILE = UNIT_ROOT / SERVICE
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+RELEASE_RETENTION_COUNT = 2
 ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 
 PROVIDER_KEYS = (
@@ -220,6 +221,82 @@ def _safe_release_dir(sha: str) -> Path:
     if path.parent != RELEASES_ROOT or not SHA_RE.fullmatch(path.name):
         raise DeployError("unsafe release path")
     return path
+
+
+def _release_sha_from_link_target(target: str | None) -> str | None:
+    if not target:
+        return None
+    candidate = Path(target)
+    if not candidate.is_absolute():
+        candidate = CURRENT_LINK.parent / candidate
+    try:
+        relative = candidate.resolve(strict=False).relative_to(
+            RELEASES_ROOT.resolve(strict=False)
+        )
+    except (OSError, ValueError):
+        return None
+    if len(relative.parts) != 1 or not SHA_RE.fullmatch(relative.name):
+        return None
+    return relative.name
+
+
+def prune_old_releases(
+    current_sha: str,
+    previous_target: str | None,
+    *,
+    keep_count: int = RELEASE_RETENTION_COUNT,
+) -> dict[str, list[str]]:
+    """Best-effort release retention after successful production readback.
+
+    Only exact 40-hex directories directly under RELEASES_ROOT are candidates.
+    The current release and previous symlink target are always preserved. When
+    there is no distinct previous target, the newest other release is kept as a
+    rollback candidate.
+    """
+
+    if not SHA_RE.fullmatch(current_sha):
+        raise DeployError("current release SHA is invalid for retention")
+    keep_count = max(2, int(keep_count))
+    if not RELEASES_ROOT.is_dir():
+        return {"removed": [], "skipped": [], "preserved": [current_sha]}
+
+    entries = [
+        entry
+        for entry in RELEASES_ROOT.iterdir()
+        if not entry.is_symlink()
+        and entry.is_dir()
+        and SHA_RE.fullmatch(entry.name)
+    ]
+    preserve = {current_sha}
+    previous_sha = _release_sha_from_link_target(previous_target)
+    if previous_sha:
+        preserve.add(previous_sha)
+
+    if len(preserve) < keep_count:
+        extras = sorted(
+            (entry for entry in entries if entry.name not in preserve),
+            key=lambda entry: entry.stat().st_mtime_ns,
+            reverse=True,
+        )
+        for entry in extras[: keep_count - len(preserve)]:
+            preserve.add(entry.name)
+
+    removed: list[str] = []
+    skipped: list[str] = []
+    for entry in entries:
+        if entry.name in preserve:
+            continue
+        try:
+            shutil.rmtree(entry)
+        except OSError:
+            skipped.append(entry.name)
+        else:
+            removed.append(entry.name)
+    return {
+        "removed": sorted(removed),
+        "skipped": sorted(skipped),
+        "preserved": sorted(preserve),
+    }
 
 
 def _archive_source(sha: str, destination: Path) -> None:
@@ -487,6 +564,15 @@ def deploy(sha: str) -> dict[str, Any]:
     status = service_status()
     if status["active"] != "active" or status["substate"] != "running":
         raise DeployError(f"service state is {status['active']}/{status['substate']}")
+    try:
+        release_retention = prune_old_releases(sha, previous)
+    except Exception as exc:
+        release_retention = {
+            "removed": [],
+            "skipped": [],
+            "preserved": [sha],
+            "warning": [type(exc).__name__],
+        }
     return {
         "repository": REPOSITORY,
         "release_sha": sha,
@@ -497,6 +583,7 @@ def deploy(sha: str) -> dict[str, Any]:
         "log_file": str(BACKEND_LOG),
         "public_origin": PUBLIC_ORIGIN,
         "public_auth": "first_party_invite",
+        "release_retention": release_retention,
         "provider_environment_keys": sorted(select_provider_environment(_parse_env(HOST_ENV))),
         "provider_environment_values_exposed": False,
     }
