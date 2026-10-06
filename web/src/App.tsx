@@ -152,6 +152,14 @@ export default function App() {
     () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     [],
   );
+  const clientInstanceId = useMemo(() => {
+    const key = "projects-hub-client-instance";
+    const current = sessionStorage.getItem(key);
+    if (current && /^[0-9A-Za-z._:-]{8,128}$/.test(current)) return current;
+    const created = "web_" + crypto.randomUUID().replaceAll("-", "");
+    sessionStorage.setItem(key, created);
+    return created;
+  }, []);
   const setAndroidVoiceAudioFocus = useCallback((enabled: boolean) => {
     if (!isAndroidApp) return;
     window.location.href = enabled
@@ -900,6 +908,7 @@ export default function App() {
     return {
       ...(nativeVersion ? { client_version: nativeVersion } : {}),
       client_timezone: clientTimezone,
+      client_instance_id: clientInstanceId,
     };
   }
 
