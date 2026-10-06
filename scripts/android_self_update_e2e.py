@@ -446,6 +446,22 @@ def main() -> None:
             timeout=20,
             retries=3,
         )
+        appop = run(
+            "adb",
+            "shell",
+            "appops",
+            "get",
+            PACKAGE,
+            "REQUEST_INSTALL_PACKAGES",
+            timeout=20,
+            retries=3,
+        ).lower()
+        if "allow" not in appop:
+            raise RuntimeError(
+                "REQUEST_INSTALL_PACKAGES app-op did not become allowed: "
+                + repr(appop[-500:])
+            )
+
         run(
             "adb",
             "shell",
@@ -455,10 +471,33 @@ def main() -> None:
             timeout=15,
             retries=3,
         )
-        # Do not require Projects Hub to remain foreground here. onResume()
-        # may immediately resume the pending update and launch PackageInstaller
-        # before a polling loop ever observes the app window again. The durable
-        # product receipts below are the authoritative transition evidence.
+
+        # Android 15 hosted emulators occasionally return from Settings without
+        # promptly delivering Activity.onResume(). Give the normal lifecycle a
+        # short chance first; if download has not started, foreground the same
+        # running activity once so production onResume()->resumePendingInstall()
+        # gets the lifecycle callback. This does not bypass the permission gate.
+        download_pattern = re.compile(
+            rf"update_download_start versionCode={new_code}\b"
+        )
+        resume_deadline = time.time() + 10
+        while time.time() < resume_deadline:
+            if download_pattern.search(update_logs()):
+                break
+            time.sleep(1)
+        else:
+            print("install permission granted; nudging MainActivity onResume")
+            run(
+                "adb",
+                "shell",
+                "am",
+                "start",
+                "-W",
+                "-n",
+                ACTIVITY,
+                timeout=30,
+                retries=3,
+            )
 
     wait_log(rf"update_download_start versionCode={new_code}\b", timeout_seconds=60)
     wait_log(rf"update_verified versionCode={new_code}\b", timeout_seconds=180)
