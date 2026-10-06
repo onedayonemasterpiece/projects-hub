@@ -191,6 +191,25 @@ def build_live_host(
             }
             and isinstance(value, (str, int, float, bool))
         }
+        if str(safe.get("event") or "") == "socket_audio_accepted":
+            safe["latency_stage"] = "capture_to_server"
+            capture_age = safe.get("capture_age_ms")
+            duration = safe.get("duration_ms")
+            latency_alert = (
+                isinstance(capture_age, (int, float))
+                and not isinstance(capture_age, bool)
+                and capture_age >= 1000
+            ) or (
+                isinstance(duration, (int, float))
+                and not isinstance(duration, bool)
+                and duration >= 250
+            )
+            safe["latency_alert"] = latency_alert
+            (log.warning if latency_alert else log.info)(
+                "live socket diagnostic",
+                extra=safe,
+            )
+            return
         log.info("live socket diagnostic", extra=safe)
 
     return ProjectsHubLiveSocketSessionHost(

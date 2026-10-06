@@ -7,15 +7,17 @@ const source=fs.readFileSync(new URL('../src/App.tsx',import.meta.url),'utf8');
 test('real App timing callback distinguishes admitted speech, queued end and output without inventing transcript',()=>{
   const calls=[];
   const setters=['setSpeechActive','setSpeechPending','setPlaybackProblem','setInterimInputTranscript','setInputTranscriptSeen'];
-  const names=[...setters,'speechStartsNewUserBubble','reserveUserVoiceBubble','userTurnBoundaryPendingRef','userTranscriptIndex','turnHasInput'];
-  const refs=[{current:true},{current:2},{current:true}];
+  const names=[...setters,'speechStartsNewUserBubble','reserveUserVoiceBubble','settleCurrentVoiceBubble','userTurnBoundaryPendingRef','userTranscriptIndex','turnHasInput','userTurnAwaitingFinalRef'];
+  const refs=[{current:true},{current:2},{current:true},{current:true}];
   const reserveUserVoiceBubble=()=>calls.push(['reserveUserVoiceBubble',true]);
-  const values=[...setters.map(name=>value=>calls.push([name,value])),speechStartsNewUserBubble,reserveUserVoiceBubble,...refs];
+  const settleCurrentVoiceBubble=()=>calls.push(['settleCurrentVoiceBubble',true]);
+  const values=[...setters.map(name=>value=>calls.push([name,value])),speechStartsNewUserBubble,reserveUserVoiceBubble,settleCurrentVoiceBubble,...refs];
   const body=source.match(/onTiming: event => \{([\s\S]*?)\n      \},\n      onState:/)?.[1];
   assert.ok(body,'must exercise the actual App callback');
   const callback=new Function(...names,`return event=>{${body}}`)(...values);
   callback('speech_start');
   assert.ok(calls.some(([name,value])=>name==='setSpeechActive'&&value===true));
+  assert.ok(calls.some(([name,value])=>name==='settleCurrentVoiceBubble'&&value===true));
   assert.ok(calls.some(([name,value])=>name==='reserveUserVoiceBubble'&&value===true));
   assert.equal(refs[1].current,-1);
   calls.length=0;callback('speech_end');
@@ -29,7 +31,8 @@ test('real App timing callback distinguishes admitted speech, queued end and out
 
 test('live feedback is mounted before the first user transcript',()=>{
   assert.match(source,/\(voiceActive \|\| chatMessages.length > 0 \|\| interimInputTranscript \|\| playbackProblem\)/);
-  assert.match(source,/Текст появляется по мере распознавания/);
+  assert.doesNotMatch(source,/Слышу сейчас|Текст появляется по мере распознавания|текст ещё не получен/);
+  assert.match(source,/Жду ответ Миры…/);
   assert.match(source,/className="chat-status" role="alert">\{playbackProblem\}/);
 });
 

@@ -40,7 +40,7 @@ test("Projects Hub renders provider interim speech without committing it to chat
   );
   assert.match(source, /event\.type === "interim_input_transcript"[\s\S]*setInterimInputTranscript/);
   assert.match(source, /event\.type === "input_transcript"[\s\S]*setInterimInputTranscript\(""/);
-  assert.match(source, /Слышу сейчас/);
+  assert.doesNotMatch(source, /Слышу сейчас/);
   assert.match(source, /chat-bubble user interim/);
   assert.doesNotMatch(
     backend,
@@ -246,7 +246,8 @@ test("Projects Hub keeps long provider transcript intact and exposes terminal vo
   assert.match(source, /onState:\s*\(state, detail\)/);
   assert.match(source, /resource_denial/);
   assert.match(source, /provider_failure/);
-  assert.match(source, /Микрофон работает; текст ещё не получен/);
+  assert.doesNotMatch(source, /Микрофон работает; текст ещё не получен/);
+  assert.match(source, /Жду ответ Миры…/);
   assert.match(source, /suppressCaptureDuringPlayback:\s*"adaptive"/);
 });
 
@@ -269,24 +270,46 @@ test("Projects Hub opts into shared adaptive duplex echo rejection", async () =>
 });
 
 
-test("accepted microphone turns remain visible when Gemini omits input transcription", async () => {
+test("accepted microphone turns stay visible without premature transcription errors", async () => {
   const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(source, /VOICE_TURN_PLACEHOLDER = "Голосовая реплика"/);
   assert.match(source, /const reserveUserVoiceBubble = useCallback/);
   assert.match(source, /messages\.push\(\{ role: "user", text: VOICE_TURN_PLACEHOLDER, awaitingTranscript: true \}\)/);
-  assert.match(source, /speechStartsNewUserBubble\(event\)[\s\S]*reserveUserVoiceBubble\(\)/);
-  assert.match(source, /role === "user" && messages\[index\]\.awaitingTranscript[\s\S]*awaitingTranscript: false/);
-  assert.match(source, /текст распознавания не получен/);
+  assert.match(source, /speechStartsNewUserBubble\(event\)[\s\S]*settleCurrentVoiceBubble\(\)[\s\S]*reserveUserVoiceBubble\(\)/);
+  assert.match(source, /Текст не удалось отобразить/);
+  assert.doesNotMatch(source, /Текст не получен/);
+  assert.doesNotMatch(source, /текст распознавания не получен/);
+  assert.doesNotMatch(source, /Слышу сейчас|текст ещё не получен/);
 });
 
 
-test("Transcribe Live captions update the reserved user bubble and main Mira final wins", async () => {
+test("Transcribe Live captions update silently and main Mira final wins", async () => {
   const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(source, /event\.type === "caption_interim_transcript"[\s\S]*applyCaptionToUserBubble\(event\.text, false\)/);
   assert.match(source, /event\.type === "caption_final_transcript"[\s\S]*applyCaptionToUserBubble\(event\.text, true\)/);
   assert.match(source, /const applyCaptionToUserBubble = useCallback/);
-  assert.match(source, /text: clean,[\s\S]*awaitingTranscript: true,[\s\S]*provisionalCaption: true,[\s\S]*captionFinal: final/);
-  assert.match(source, /role === "user" && messages\[index\]\.awaitingTranscript[\s\S]*messages\[index\] = \{ role, text: clean, awaitingTranscript: false \}/);
-  assert.match(source, /message\.captionFinal \? "Транскрипция" : "Распознаю"/);
+  assert.match(source, /text: clean,[\s\S]*awaitingTranscript: true,[\s\S]*provisionalCaption: true/);
+  assert.match(source, /role === "user" && messages\[index\]\.awaitingTranscript[\s\S]*deliveryNote: undefined/);
+  assert.doesNotMatch(source, /"Распознаю"/);
+  assert.doesNotMatch(source, /"Транскрипция"/);
   assert.match(source, /event\.type === "caption_unavailable"[\s\S]*Captions are deliberately fail-open/);
+});
+
+
+test("transport loss preserves visible provisional text and exposes recovery", async () => {
+  const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  assert.match(source, /kind === "transport_error"[\s\S]*Связь прервалась до подтверждения фразы/);
+  assert.match(source, /kind === "transport_error"[\s\S]*setRecoverableSourceId\(currentSourceIdRef\.current\)/);
+  assert.match(source, /settleCurrentVoiceBubble\("Связь прервалась до подтверждения фразы", true\)/);
+  assert.match(source, /message\.deliveryNote[\s\S]*message-delivery-note/);
+});
+
+
+test("restart adopts only unresolved server utterance verdicts", async () => {
+  const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  assert.match(source, /function adoptPendingVoiceRecovery/);
+  assert.match(source, /verdict === "no_turn_closed" \|\| verdict === "turn_closed_no_transcript"/);
+  assert.match(source, /adoptPendingVoiceRecovery\(started\)/);
+  assert.doesNotMatch(source, /verdict === "turn_committed"[\s\S]*setRecoverableSourceId/);
+  assert.match(source, /Восстановить фразу/);
 });
