@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  getCollaborationBrief,
   getCollaborationTimeline,
+  markCollaborationBriefSeen,
+  setCollaborationGeneralNews,
   getProjectNote,
   getProjectNoteReplies,
   postProjectNoteReply,
+  type CollaborationBrief,
   type CollaborationEvent,
   type ProjectNote,
   type ProjectReply,
@@ -23,6 +27,7 @@ function noteIdFor(event: CollaborationEvent) {
 
 export default function CollaborationTimeline({ workspaceId, actorId, refreshKey }: Props) {
   const [events, setEvents] = useState<CollaborationEvent[]>([]);
+  const [brief, setBrief] = useState<CollaborationBrief | null>(null);
   const [showGeneral, setShowGeneral] = useState(false);
   const [opened, setOpened] = useState<ProjectNote | null>(null);
   const [replies, setReplies] = useState<ProjectReply[]>([]);
@@ -31,16 +36,26 @@ export default function CollaborationTimeline({ workspaceId, actorId, refreshKey
   const [notice, setNotice] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const value = await getCollaborationTimeline(workspaceId);
+    const [value, nextBrief] = await Promise.all([
+      getCollaborationTimeline(workspaceId),
+      getCollaborationBrief(workspaceId),
+    ]);
     setEvents(value.items);
+    setBrief(nextBrief);
   }, [workspaceId]);
 
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
       try {
-        const value = await getCollaborationTimeline(workspaceId);
-        if (!cancelled) setEvents(value.items);
+        const [value, nextBrief] = await Promise.all([
+          getCollaborationTimeline(workspaceId),
+          getCollaborationBrief(workspaceId),
+        ]);
+        if (!cancelled) {
+          setEvents(value.items);
+          setBrief(nextBrief);
+        }
       } catch {
         // Main conversation remains usable when collaboration refresh is unavailable.
       }
@@ -104,10 +119,46 @@ export default function CollaborationTimeline({ workspaceId, actorId, refreshKey
     }
   }, [opened, refresh, replyText, workspaceId]);
 
+  const markPersonalSeen = useCallback(async () => {
+    if (!brief?.personal_through_id) return;
+    await markCollaborationBriefSeen(
+      workspaceId,
+      brief.personal_through_id,
+      undefined,
+    );
+    await refresh();
+  }, [brief?.personal_through_id, refresh, workspaceId]);
+
+  const revealGeneral = useCallback(async () => {
+    setShowGeneral(true);
+    if (brief?.general_through_id) {
+      await markCollaborationBriefSeen(
+        workspaceId,
+        undefined,
+        brief.general_through_id,
+      );
+      await refresh();
+    }
+  }, [brief?.general_through_id, refresh, workspaceId]);
+
+  const setGeneralNews = useCallback(async (enabled: boolean) => {
+    await setCollaborationGeneralNews(workspaceId, enabled);
+    setShowGeneral(false);
+    await refresh();
+  }, [refresh, workspaceId]);
+
   if (!events.length) return null;
 
   return (
     <div className="collaboration-inline" aria-label="Совместная работа">
+      {brief && brief.personal_unread_count > 0 && (
+        <div className="collaboration-attention">
+          <strong>Для вас · {brief.personal_unread_count}</strong>
+          <button className="mini-action" onClick={() => void markPersonalSeen()}>
+            Просмотрено
+          </button>
+        </div>
+      )}
       {visible.map(event => (
         <article
           className={"collaboration-widget " + (
@@ -131,15 +182,28 @@ export default function CollaborationTimeline({ workspaceId, actorId, refreshKey
           )}
         </article>
       ))}
-      {!showGeneral && general.length > 0 && (
-        <button className="collaboration-general-toggle" onClick={() => setShowGeneral(true)}>
-          Общие новости · {general.length}
+      {!showGeneral && brief?.general_news_enabled && general.length > 0 && (
+        <button className="collaboration-general-toggle" onClick={() => void revealGeneral()}>
+          Общие новости · {brief.general_count || general.length}
         </button>
       )}
       {showGeneral && general.length > 0 && (
-        <button className="collaboration-general-toggle" onClick={() => setShowGeneral(false)}>
-          Скрыть общие новости
-        </button>
+        <div className="collaboration-general-controls">
+          <button className="collaboration-general-toggle" onClick={() => setShowGeneral(false)}>
+            Скрыть общие новости
+          </button>
+          <button className="quiet-button" onClick={() => void setGeneralNews(false)}>
+            Не показывать общие новости
+          </button>
+        </div>
+      )}
+      {brief && !brief.general_news_enabled && (
+        <div className="collaboration-general-controls">
+          <small>Общие новости скрыты. Лично адресованное остаётся включено.</small>
+          <button className="quiet-button" onClick={() => void setGeneralNews(true)}>
+            Включить общие новости
+          </button>
+        </div>
       )}
       {opened && (
         <article className="collaboration-thread">
