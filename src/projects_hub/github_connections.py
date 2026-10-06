@@ -587,8 +587,9 @@ class GitHubConnections:
                 raise StoreError(exc.code, str(exc)) from exc
 
         write_error: GitHubAppError | None = None
+        write_receipt: dict[str, Any] | None = None
         try:
-            await client.put_repository_content(
+            write_receipt = await client.put_repository_content(
                 token=token,
                 full_name=str(connection["full_name"]),
                 path=clean_path,
@@ -625,6 +626,11 @@ class GitHubConnections:
             "project_id": connection["project_id"],
             "default_branch": connection["default_branch"],
             **readback,
+            "commit_sha": (
+                str(write_receipt.get("commit_sha") or "")
+                if isinstance(write_receipt, dict)
+                else ""
+            ),
             "write_recovered": write_error is not None,
         }
 
