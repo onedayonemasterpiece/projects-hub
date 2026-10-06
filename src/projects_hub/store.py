@@ -108,6 +108,18 @@ class DurableStore:
             created_at_ms INTEGER NOT NULL,
             UNIQUE(workspace_id, name)
         );
+        CREATE TABLE IF NOT EXISTS project_grants(
+            actor_id TEXT NOT NULL REFERENCES actors(id),
+            project_id TEXT NOT NULL REFERENCES projects(id),
+            role TEXT NOT NULL CHECK(role IN ('viewer','editor','owner')),
+            can_analyze INTEGER NOT NULL DEFAULT 0 CHECK(can_analyze IN (0,1)),
+            can_manage_share INTEGER NOT NULL DEFAULT 0 CHECK(can_manage_share IN (0,1)),
+            created_at_ms INTEGER NOT NULL,
+            revoked_at_ms INTEGER,
+            PRIMARY KEY(actor_id, project_id)
+        );
+        CREATE INDEX IF NOT EXISTS project_grants_project_idx
+            ON project_grants(project_id, revoked_at_ms, role);
         CREATE TABLE IF NOT EXISTS conversations(
             id TEXT PRIMARY KEY,
             workspace_id TEXT NOT NULL REFERENCES workspaces(id),
@@ -289,6 +301,15 @@ class DurableStore:
             self.db.execute(
                 """CREATE INDEX IF NOT EXISTS memories_project_idx
                    ON memories(workspace_id, project_id, updated_at_ms DESC)"""
+            )
+            self.db.execute(
+                """INSERT OR IGNORE INTO project_grants(
+                       actor_id,project_id,role,can_analyze,can_manage_share,
+                       created_at_ms,revoked_at_ms)
+                   SELECT m.actor_id,p.id,'owner',1,1,p.created_at_ms,NULL
+                   FROM memberships m
+                   JOIN projects p ON p.workspace_id=m.workspace_id
+                   WHERE m.role='owner'"""
             )
 
     @staticmethod
@@ -511,9 +532,17 @@ class DurableStore:
                     (actor_id, workspace_id, "owner"),
                 )
                 for project_name in ("Projects Hub", "Wonderful Lections", "KenigEvents"):
+                    project_id = _id("prj")
                     self.db.execute(
                         "INSERT INTO projects(id,workspace_id,name,status,created_at_ms) VALUES(?,?,?,?,?)",
-                        (_id("prj"), workspace_id, project_name, "active", now),
+                        (project_id, workspace_id, project_name, "active", now),
+                    )
+                    self.db.execute(
+                        """INSERT INTO project_grants(
+                               actor_id,project_id,role,can_analyze,can_manage_share,
+                               created_at_ms,revoked_at_ms)
+                           VALUES(?,?,?,?,?,?,NULL)""",
+                        (actor_id, project_id, "owner", 1, 1, now),
                     )
                 self.db.execute("COMMIT")
             except Exception:
@@ -555,9 +584,17 @@ class DurableStore:
                     (actor_id, workspace_id, "owner"),
                 )
                 for project_name in ("Projects Hub", "Wonderful Lections", "KenigEvents"):
+                    project_id = _id("prj")
                     self.db.execute(
                         "INSERT INTO projects(id,workspace_id,name,status,created_at_ms) VALUES(?,?,?,?,?)",
-                        (_id("prj"), workspace_id, project_name, "active", now),
+                        (project_id, workspace_id, project_name, "active", now),
+                    )
+                    self.db.execute(
+                        """INSERT INTO project_grants(
+                               actor_id,project_id,role,can_analyze,can_manage_share,
+                               created_at_ms,revoked_at_ms)
+                           VALUES(?,?,?,?,?,?,NULL)""",
+                        (actor_id, project_id, "owner", 1, 1, now),
                     )
                 self.db.execute(
                     "INSERT INTO platform_owner(slot,actor_id,created_at_ms) VALUES(1,?,?)",
@@ -701,9 +738,17 @@ class DurableStore:
                     (actor_id, workspace_id, "owner"),
                 )
                 for project_name in ("Projects Hub", "Wonderful Lections", "KenigEvents"):
+                    project_id = _id("prj")
                     self.db.execute(
                         "INSERT INTO projects(id,workspace_id,name,status,created_at_ms) VALUES(?,?,?,?,?)",
-                        (_id("prj"), workspace_id, project_name, "active", now),
+                        (project_id, workspace_id, project_name, "active", now),
+                    )
+                    self.db.execute(
+                        """INSERT INTO project_grants(
+                               actor_id,project_id,role,can_analyze,can_manage_share,
+                               created_at_ms,revoked_at_ms)
+                           VALUES(?,?,?,?,?,?,NULL)""",
+                        (actor_id, project_id, "owner", 1, 1, now),
                     )
                 self.db.execute("COMMIT")
             except Exception:
@@ -2113,15 +2158,117 @@ class DurableStore:
             (project_id, workspace_id),
         ).fetchone()
 
+    def project_access(
+        self,
+        actor_id: str,
+        workspace_id: str,
+        project_id: str,
+        *,
+        require_role: str | None = None,
+        require_analyze: bool = False,
+        require_manage_share: bool = False,
+    ) -> dict[str, Any]:
+        rank = {"viewer": 1, "editor": 2, "owner": 3}
+        with self._lock:
+            self._membership(actor_id, workspace_id)
+            row = self.db.execute(
+                """SELECT g.actor_id,g.project_id,g.role,g.can_analyze,g.can_manage_share,
+                          p.name AS project_name,p.status
+                   FROM project_grants g
+                   JOIN projects p ON p.id=g.project_id
+                   WHERE g.actor_id=? AND g.project_id=? AND p.workspace_id=?
+                     AND g.revoked_at_ms IS NULL""",
+                (actor_id, project_id, workspace_id),
+            ).fetchone()
+            if not row or row["status"] != "active":
+                raise StoreError("PROJECT_FORBIDDEN", "Project is not available to this actor")
+            result = dict(row)
+            result["can_analyze"] = bool(result["can_analyze"])
+            result["can_manage_share"] = bool(result["can_manage_share"])
+            if require_role and rank.get(str(result["role"]), 0) < rank.get(require_role, 99):
+                raise StoreError("PROJECT_FORBIDDEN", "Project role does not permit this action")
+            if require_analyze and not result["can_analyze"]:
+                raise StoreError("PROJECT_FORBIDDEN", "Project analysis is not granted")
+            if require_manage_share and not result["can_manage_share"]:
+                raise StoreError("PROJECT_FORBIDDEN", "Project sharing is not granted")
+            return result
+
+    def grant_project_access(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        project_id: str,
+        target_actor_id: str,
+        role: str,
+        can_analyze: bool = False,
+        can_manage_share: bool = False,
+    ) -> dict[str, Any]:
+        if role not in {"viewer", "editor", "owner"}:
+            raise StoreError("INVALID_ARGUMENT", "Project role is invalid")
+        self.require_workspace_owner(actor_id, workspace_id)
+        self.project_access(actor_id, workspace_id, project_id, require_role="owner")
+        with self._lock:
+            target = self.db.execute(
+                "SELECT role FROM memberships WHERE actor_id=? AND workspace_id=?",
+                (target_actor_id, workspace_id),
+            ).fetchone()
+            if not target:
+                raise StoreError("FORBIDDEN", "Target actor is not a workspace participant")
+            now = _now_ms()
+            self.db.execute(
+                """INSERT INTO project_grants(
+                       actor_id,project_id,role,can_analyze,can_manage_share,
+                       created_at_ms,revoked_at_ms)
+                   VALUES(?,?,?,?,?,?,NULL)
+                   ON CONFLICT(actor_id,project_id) DO UPDATE SET
+                       role=excluded.role,
+                       can_analyze=excluded.can_analyze,
+                       can_manage_share=excluded.can_manage_share,
+                       revoked_at_ms=NULL""",
+                (
+                    target_actor_id, project_id, role,
+                    int(bool(can_analyze)), int(bool(can_manage_share)), now,
+                ),
+            )
+        return self.project_access(target_actor_id, workspace_id, project_id)
+
+    def revoke_project_access(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        project_id: str,
+        target_actor_id: str,
+    ) -> None:
+        self.require_workspace_owner(actor_id, workspace_id)
+        self.project_access(actor_id, workspace_id, project_id, require_role="owner")
+        if target_actor_id == actor_id:
+            raise StoreError("INVALID_ARGUMENT", "Owner cannot revoke own active project access")
+        with self._lock:
+            self.db.execute(
+                "UPDATE project_grants SET revoked_at_ms=? WHERE actor_id=? AND project_id=?",
+                (_now_ms(), target_actor_id, project_id),
+            )
+
     def list_projects(self, actor_id: str, workspace_id: str) -> list[dict[str, Any]]:
         with self._lock:
             self._membership(actor_id, workspace_id)
+            rows = self.db.execute(
+                """SELECT p.id,p.name,p.status,g.role,g.can_analyze,g.can_manage_share
+                   FROM projects p
+                   JOIN project_grants g ON g.project_id=p.id AND g.actor_id=?
+                   WHERE p.workspace_id=? AND g.revoked_at_ms IS NULL
+                   ORDER BY p.created_at_ms,p.id""",
+                (actor_id, workspace_id),
+            ).fetchall()
             return [
-                dict(row)
-                for row in self.db.execute(
-                    "SELECT id,name,status FROM projects WHERE workspace_id=? ORDER BY created_at_ms,id",
-                    (workspace_id,),
-                ).fetchall()
+                {
+                    **dict(row),
+                    "can_analyze": bool(row["can_analyze"]),
+                    "can_manage_share": bool(row["can_manage_share"]),
+                }
+                for row in rows
             ]
 
     def set_focus(self, actor_id: str, conversation_id: str, project_id: str) -> dict[str, Any]:
@@ -2131,6 +2278,7 @@ class DurableStore:
             project = self._project_row(conversation["workspace_id"], project_id)
             if not project or project["status"] != "active":
                 raise StoreError("PROJECT_NOT_FOUND", "Project is not available")
+            self.project_access(actor_id, conversation["workspace_id"], project_id)
             self.db.execute(
                 "UPDATE conversations SET focus_project_id=?,updated_at_ms=? WHERE id=?",
                 (project_id, now, conversation_id),
