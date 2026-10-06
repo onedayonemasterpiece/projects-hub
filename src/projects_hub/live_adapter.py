@@ -11,6 +11,7 @@ from typing import Any, Callable
 from .device_commands import DeviceCommandService
 from .development import DevelopmentService
 from .github_connections import GitHubConnections
+from .collaboration import CollaborationService
 from .expert_reviews import (
     ExpertReviewAccessError,
     ExpertReviewAdapter,
@@ -614,6 +615,7 @@ class ProjectsHubLiveAdapter:
         readiness: ReadinessService | None = None,
         development: DevelopmentService | None = None,
         github_connections: GitHubConnections | None = None,
+        collaboration: CollaborationService | None = None,
         expert_reviews_factory: (
             Callable[[str, str], ExpertReviewAdapter | None] | None
         ) = None,
@@ -627,6 +629,7 @@ class ProjectsHubLiveAdapter:
         self.readiness = readiness or ReadinessService(store)
         self.development = development or DevelopmentService(store, self.readiness)
         self.github_connections = github_connections
+        self.collaboration = collaboration
         self.expert_reviews_factory = expert_reviews_factory
         self.regional_knowledge_factory = regional_knowledge_factory
 
