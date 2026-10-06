@@ -452,3 +452,107 @@ async def test_question_cannot_be_answered_by_another_project_actor(tmp_path: Pa
     assert exc.value.code == "PROJECT_FORBIDDEN"
     await service.close()
     store.close()
+
+
+@pytest.mark.asyncio
+async def test_durable_worker_materializes_initial_analysis_without_status_refresh(tmp_path: Path):
+    (
+        store, collaboration, service, bridge,
+        actor_a, actor_b, workspace_id, project_id,
+    ) = setup(tmp_path)
+    try:
+        note = await collaboration.create_note(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            command_id="cmd.note.worker-analysis",
+            title="Worker analysis",
+            body="Анализ должен завершаться без открытого клиента.",
+        )
+        started = await service.start_analysis(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            note_id=note["id"],
+            addressed_to_actor_id=actor_b,
+            command_id="cmd.analysis.worker1",
+            model="kimi_k3",
+            purpose="requirements",
+            question="Сформируй минимальные вопросы.",
+        )
+        assert started["status"] == "running"
+        assert bridge.reads == []
+
+        advanced = await service.advance_jobs_once()
+        assert advanced >= 1
+        completed = service.get_analysis(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            analysis_id=started["id"],
+        )
+        assert completed["status"] == "completed"
+        assert bridge.reads == ["provider-analysis-1"]
+        inbox = service.inbox(actor_id=actor_b, workspace_id=workspace_id)
+        assert any(item["analysis_id"] == started["id"] for item in inbox)
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_revoked_project_grant_hides_addressed_questions_and_denies_answer(tmp_path: Path):
+    (
+        store, collaboration, service, _bridge,
+        actor_a, actor_b, workspace_id, project_id,
+    ) = setup(tmp_path)
+    try:
+        note = await collaboration.create_note(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            command_id="cmd.note.revoke-question",
+            title="Revoke question",
+            body="Вопрос не должен пережить отзыв доступа как читаемый объект.",
+        )
+        started = await service.start_analysis(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            note_id=note["id"],
+            addressed_to_actor_id=actor_b,
+            command_id="cmd.analysis.revoke1",
+            model="kimi_k3",
+            purpose="requirements",
+            question="Задай вопрос участнику.",
+        )
+        await service.advance_jobs_once()
+        before = service.inbox(actor_id=actor_b, workspace_id=workspace_id)
+        question = next(item for item in before if item["analysis_id"] == started["id"])
+
+        store.revoke_project_access(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            target_actor_id=actor_b,
+        )
+        after = service.inbox(actor_id=actor_b, workspace_id=workspace_id)
+        assert all(item["project_id"] != project_id for item in after)
+
+        with pytest.raises(StoreError) as exc:
+            service.answer_questions(
+                actor_id=actor_b,
+                workspace_id=workspace_id,
+                analysis_id=started["id"],
+                command_id="cmd.answer.revoked1",
+                responses=[
+                    {
+                        "question_id": question["id"],
+                        "disposition": "answer",
+                        "body": "Этот ответ уже не должен приниматься.",
+                    }
+                ],
+            )
+        assert exc.value.code == "PROJECT_FORBIDDEN"
+    finally:
+        await service.close()
+        store.close()
