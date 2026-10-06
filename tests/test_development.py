@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+import projects_hub.development as development_module
+from projects_hub.devcoveer_client import DevCoveerError
 from projects_hub.development import DevelopmentService
 from projects_hub.live_adapter import _functions
 from projects_hub.readiness import ReadinessService
@@ -84,6 +86,7 @@ class FakeDevCoveer:
         prompt: str,
         model: str,
         reasoning_effort: str,
+        access: str = "write",
     ):
         task_id = self._quality_task if model == "gpt-6-astra" else self._implementation_task
         self.calls.append(
@@ -94,6 +97,7 @@ class FakeDevCoveer:
                     "prompt": prompt,
                     "model": model,
                     "reasoning_effort": reasoning_effort,
+                    "access": access,
                     "task": task_id,
                 },
             )
@@ -184,6 +188,153 @@ class FakeDevCoveer:
 
     async def close(self):
         self.closed = True
+
+
+class InterruptedStageDevCoveer(FakeDevCoveer):
+    def __init__(
+        self,
+        stage: str,
+        *,
+        resume_success: bool = False,
+        cwd: Path | None = None,
+    ) -> None:
+        super().__init__()
+        self.interrupted_stage = stage
+        self.resume_success = resume_success
+        self.cwd = cwd
+        self._quality_start_count = 0
+        self._recovery_quality_task = "dvt_" + "r" * 32
+
+    @staticmethod
+    def _interrupted(cwd: Path | None = None):
+        task = {"status": "interrupted"}
+        if cwd is not None:
+            task["cwd"] = str(cwd)
+        return {
+            "status": "interrupted",
+            "executionStatus": "interrupted",
+            "progressPhase": "cancelled",
+            "latestTurn": {
+                "status": "interrupted",
+                "progressPhase": "cancelled",
+                "finalResponse": "",
+            },
+            "task": task,
+        }
+
+    async def start_codex_task(
+        self,
+        *,
+        project: str,
+        prompt: str,
+        model: str,
+        reasoning_effort: str,
+        access: str = "write",
+    ):
+        if model == "gpt-6-astra":
+            self._quality_start_count += 1
+            if self._quality_start_count >= 2:
+                self.calls.append(
+                    (
+                        "start",
+                        {
+                            "project": project,
+                            "prompt": prompt,
+                            "model": model,
+                            "reasoning_effort": reasoning_effort,
+                            "access": access,
+                            "task": self._recovery_quality_task,
+                        },
+                    )
+                )
+                return {
+                    "status": "running",
+                    "taskId": self._recovery_quality_task,
+                    "provider": "codex",
+                    "model": model,
+                }
+        return await super().start_codex_task(
+            project=project,
+            prompt=prompt,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            access=access,
+        )
+
+    async def continue_codex_task(
+        self,
+        task_id: str,
+        *,
+        project: str,
+        prompt: str,
+        access: str = "write",
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+    ):
+        if prompt.startswith("Resume the same already-authorized"):
+            self.calls.append(
+                (
+                    "continue",
+                    {
+                        "task": task_id,
+                        "project": project,
+                        "prompt": prompt,
+                        "access": access,
+                        "model": model,
+                        "reasoning_effort": reasoning_effort,
+                    },
+                )
+            )
+            if self.resume_success:
+                return {"status": "running", "taskId": task_id}
+            raise DevCoveerError("resume failed")
+        return await super().continue_codex_task(
+            task_id,
+            project=project,
+            prompt=prompt,
+            access=access,
+            model=model,
+            reasoning_effort=reasoning_effort,
+        )
+
+    async def read_task(
+        self,
+        task_id: str,
+        *,
+        project: str | None = None,
+        detail: str = "summary",
+    ):
+        self.calls.append(
+            ("read", {"task": task_id, "project": project, "detail": detail})
+        )
+        if task_id == self._recovery_quality_task:
+            return self._completed(
+                "Recovery review passed.\nREVIEW_VERDICT: ACCEPTED",
+                40,
+            )
+        if task_id == self._quality_task:
+            self._quality_reads += 1
+            if self.interrupted_stage == "design" and self._quality_reads == 1:
+                return self._interrupted(self.cwd)
+            if self._quality_reads == 1:
+                return self._completed(
+                    "Design complete. Spec: docs/prompts/owner-development-test.md",
+                    100,
+                )
+            if self.interrupted_stage == "review" and self._quality_reads == 2:
+                return self._interrupted(self.cwd)
+            return self._completed(
+                "Review passed.\nREVIEW_VERDICT: ACCEPTED",
+                50,
+            )
+
+        self._implementation_reads += 1
+        if (
+            self.interrupted_stage == "implementation"
+            and self._implementation_reads == 1
+        ):
+            return self._interrupted(self.cwd)
+        return self._completed("Implemented and tested; ready for review.", 200)
 
 
 class SlowStartDevCoveer(FakeDevCoveer):
@@ -747,6 +898,205 @@ async def test_self_development_retargets_design_before_implementation(
             "projects-hub-owner",
         ]
         assert all(item["model"] == "gpt-6-astra" for item in starts)
+    finally:
+        await service.close()
+        store.close()
+
+
+
+@pytest.mark.asyncio
+async def test_interrupted_design_uses_verified_brief_readback_without_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project_root = tmp_path / "projects"
+    cwd = project_root / "projects-hub-owner"
+    cwd.mkdir(parents=True)
+    monkeypatch.setattr(development_module, "PROJECTS_ROOT", project_root.resolve())
+
+    store, readiness, boot, project = setup(tmp_path)
+    fake = InterruptedStageDevCoveer("design", cwd=cwd)
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution = started["execution"]
+        spec_path = cwd / execution["spec_path"]
+        spec_path.parent.mkdir(parents=True)
+        spec_path.write_text(
+            (
+                "# Implementation brief\n\n"
+                f"Execution: {execution['id']}\n"
+                f"Task: {task['id']}\n\n"
+                "## Definition of Done\n"
+                + ("Verified bounded design evidence.\n" * 80)
+            ),
+            encoding="utf-8",
+        )
+
+        await service.advance_active_once()
+        current = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution["id"],
+        )
+
+        assert current["execution"]["phase"] == "implementing"
+        assert current["execution"]["status"] == "running"
+        assert current["execution"]["stages"][0]["status"] == "completed"
+        starts = [args for name, args in fake.calls if name == "start"]
+        assert len(starts) == 2
+        assert [entry["model"] for entry in starts] == [
+            "gpt-6-astra",
+            "gpt-6.1-sol",
+        ]
+        assert not any(
+            name == "continue"
+            and args["prompt"].startswith("Resume the same already-authorized")
+            for name, args in fake.calls
+        )
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_interrupted_review_resumes_same_quality_thread_once(tmp_path: Path):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = InterruptedStageDevCoveer("review", resume_success=True)
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+
+        await service.advance_active_once()
+        await service.advance_active_once()
+        await service.advance_active_once()
+        current = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+
+        assert current["execution"]["status"] == "running"
+        assert current["execution"]["phase"] == "reviewing"
+        review = current["execution"]["stages"][-1]
+        assert review["stage"] == "review"
+        assert review["status"] == "running"
+        assert review["recovery_attempts"] == 1
+        quality_starts = [
+            args
+            for name, args in fake.calls
+            if name == "start" and args["model"] == "gpt-6-astra"
+        ]
+        assert len(quality_starts) == 1
+        resume_calls = [
+            args
+            for name, args in fake.calls
+            if name == "continue"
+            and args["prompt"].startswith("Resume the same already-authorized")
+        ]
+        assert len(resume_calls) == 1
+        assert resume_calls[0]["task"] == fake._quality_task
+        assert resume_calls[0]["access"] == "read"
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_interrupted_review_falls_back_to_one_read_only_review(tmp_path: Path):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = InterruptedStageDevCoveer("review", resume_success=False)
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+
+        await service.advance_active_once()
+        await service.advance_active_once()
+        await service.advance_active_once()
+        current = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+
+        assert current["execution"]["status"] == "running"
+        assert current["execution"]["phase"] == "reviewing"
+        review_stages = [
+            stage
+            for stage in current["execution"]["stages"]
+            if stage["stage"] == "review"
+        ]
+        assert [stage["status"] for stage in review_stages] == [
+            "superseded",
+            "running",
+        ]
+        starts = [args for name, args in fake.calls if name == "start"]
+        assert starts[-1]["task"] == fake._recovery_quality_task
+        assert starts[-1]["model"] == "gpt-6-astra"
+        assert starts[-1]["access"] == "read"
+        assert current["execution"]["quality_task_id"] == fake._recovery_quality_task
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_interrupted_implementation_never_starts_second_write_task(tmp_path: Path):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = InterruptedStageDevCoveer("implementation", resume_success=False)
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+
+        await service.advance_active_once()
+        starts_before = len([1 for name, _ in fake.calls if name == "start"])
+        await service.advance_active_once()
+        current = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+
+        assert current["execution"]["status"] == "blocked"
+        assert current["execution"]["phase"] == "needs_owner"
+        assert (
+            current["execution"]["error_code"]
+            == "DEVELOPMENT_STAGE_INTERRUPTED"
+        )
+        starts_after = len([1 for name, _ in fake.calls if name == "start"])
+        assert starts_after == starts_before
+        resume_calls = [
+            args
+            for name, args in fake.calls
+            if name == "continue"
+            and args["prompt"].startswith("Resume the same already-authorized")
+        ]
+        assert len(resume_calls) == 1
+        assert resume_calls[0]["task"] == fake._implementation_task
+        assert resume_calls[0]["access"] == "write"
     finally:
         await service.close()
         store.close()
