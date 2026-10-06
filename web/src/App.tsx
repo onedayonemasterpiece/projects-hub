@@ -501,7 +501,7 @@ export default function App() {
           ? toolResult.ui_command
           : null
       ) as BoardUiCommand | null;
-      if (uiCommand?.kind === "board") {
+      if (uiCommand && uiCommand.kind === "board") {
         if (uiCommand.action === "close") {
           setBoardProjectId(null);
           setBoardCommand(null);
