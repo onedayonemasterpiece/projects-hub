@@ -235,8 +235,8 @@ async def test_mira_board_tools_share_same_live_surface_and_viewport_context(tmp
             session,
             {"name": "board_query", "args": {"action": "view_context"}},
         )
-        assert resolved["status"] == "ok"
-        assert resolved["visible_objects"][0]["id"] == created["object_id"]
-        assert resolved["visible_objects"][0]["text"] == "Голосовой стикер"
+        assert resolved["status"] == "current"
+        assert resolved["objects"][0]["id"] == created["object_id"]
+        assert resolved["objects"][0]["text"] == "Голосовой стикер"
     finally:
         store.close()
