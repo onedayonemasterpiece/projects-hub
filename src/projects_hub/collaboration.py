@@ -8,6 +8,13 @@ import time
 from typing import Any
 
 from .github_connections import GitHubConnections
+from .note_processing import (
+    GeminiNoteProcessor,
+    NoteProcessingError,
+    NoteSummary,
+    ProcessedNote,
+    render_note_markdown,
+)
 from .store import DurableStore, StoreError
 
 
@@ -30,9 +37,16 @@ def _sha(value: Any) -> str:
 class CollaborationService:
     """Shared project notes/discussion over Projects Hub ACL + bound repository."""
 
-    def __init__(self, store: DurableStore, github: GitHubConnections) -> None:
+    def __init__(
+        self,
+        store: DurableStore,
+        github: GitHubConnections,
+        *,
+        note_processor: GeminiNoteProcessor | None = None,
+    ) -> None:
         self.store = store
         self.github = github
+        self.note_processor = note_processor or GeminiNoteProcessor()
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -46,13 +60,23 @@ class CollaborationService:
                     author_actor_id TEXT NOT NULL REFERENCES actors(id),
                     title TEXT NOT NULL,
                     body TEXT NOT NULL,
-                    markdown TEXT NOT NULL,
+                    source_text TEXT NOT NULL,
+                    structured_json TEXT,
+                    markdown TEXT NOT NULL DEFAULT '',
                     author_roles_json TEXT NOT NULL,
-                    audience TEXT NOT NULL DEFAULT 'project',
+                    audience TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'accepted',
+                    processing_model TEXT,
+                    processing_prompt_version TEXT,
+                    processing_request_uid TEXT,
+                    processing_limiter_json TEXT,
+                    processing_attempts INTEGER NOT NULL DEFAULT 0,
+                    processing_error TEXT,
                     repository_id INTEGER NOT NULL,
                     repository_full_name TEXT NOT NULL,
                     repository_path TEXT NOT NULL,
-                    repository_sha TEXT NOT NULL,
+                    repository_sha TEXT NOT NULL DEFAULT '',
+                    repository_commit_sha TEXT,
                     command_id TEXT NOT NULL,
                     request_sha256 TEXT NOT NULL,
                     revision INTEGER NOT NULL DEFAULT 1,
@@ -147,30 +171,6 @@ class CollaborationService:
         ).hexdigest()
         return "note_" + digest[:32], f"docs/notes/{digest[:2]}/note-{digest[:24]}.md"
 
-    @staticmethod
-    def _markdown(
-        *,
-        note_id: str,
-        project_id: str,
-        title: str,
-        body: str,
-        author: dict[str, Any],
-        roles: list[str],
-        created_at_ms: int,
-    ) -> str:
-        return (
-            "---\n"
-            f"note_id: {note_id}\n"
-            f"project_id: {project_id}\n"
-            f"author_actor_id: {author['id']}\n"
-            f"author_display_name: {json.dumps(author['display_name'], ensure_ascii=False)}\n"
-            f"author_roles: {json.dumps(roles, ensure_ascii=False)}\n"
-            "audience: project\n"
-            f"created_at_ms: {created_at_ms}\n"
-            "---\n\n"
-            f"# {title}\n\n{body.rstrip()}\n"
-        )
-
     def _public_note(self, actor_id: str, workspace_id: str, row: Any) -> dict[str, Any]:
         self.store.project_access(actor_id, workspace_id, row["project_id"])
         author = self._actor(str(row["author_actor_id"]))
@@ -181,12 +181,27 @@ class CollaborationService:
             "author_roles": json.loads(row["author_roles_json"]),
             "title": row["title"],
             "body": row["body"],
+            "source_text": row["source_text"],
+            "structured": (
+                json.loads(row["structured_json"])
+                if row["structured_json"]
+                else None
+            ),
             "audience": row["audience"],
+            "status": row["status"],
+            "processing": {
+                "model": row["processing_model"],
+                "prompt_version": row["processing_prompt_version"],
+                "request_uid": row["processing_request_uid"],
+                "attempts": int(row["processing_attempts"]),
+                "error": row["processing_error"],
+            },
             "repository": {
                 "repository_id": int(row["repository_id"]),
                 "full_name": row["repository_full_name"],
                 "path": row["repository_path"],
                 "sha": row["repository_sha"],
+                "commit_sha": row["repository_commit_sha"],
             },
             "revision": int(row["revision"]),
             "created_at_ms": int(row["created_at_ms"]),
@@ -203,6 +218,233 @@ class CollaborationService:
             "body": row["body"],
             "created_at_ms": int(row["created_at_ms"]),
         }
+
+    @staticmethod
+    def _repository_audience(repository: dict[str, Any]) -> str:
+        # Repository binding is the one-time audience choice. Never claim
+        # project-private visibility for content committed to a public repo.
+        return "project" if bool(repository.get("private")) else "public"
+
+    def _note_row(self, note_id: str) -> Any:
+        row = self.store.db.execute(
+            "SELECT * FROM project_notes WHERE id=?", (note_id,)
+        ).fetchone()
+        if not row:
+            raise StoreError("NOTE_NOT_FOUND", "Project note is not available")
+        return row
+
+    async def _process_and_publish(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        note_id: str,
+    ) -> dict[str, Any]:
+        with self.store._lock:
+            row = self._note_row(note_id)
+            if row["author_actor_id"] != actor_id or row["workspace_id"] != workspace_id:
+                raise StoreError("NOTE_NOT_FOUND", "Project note is not available")
+            if row["status"] == "ready":
+                return self._public_note(actor_id, workspace_id, row)
+            snapshot = dict(row)
+
+        access = self.store.project_access(
+            actor_id,
+            workspace_id,
+            str(snapshot["project_id"]),
+            require_role="editor",
+        )
+        actor = self._actor(actor_id)
+        project_name = str(access["project_name"])
+        roles = json.loads(snapshot["author_roles_json"])
+        processed: ProcessedNote
+
+        if snapshot.get("structured_json"):
+            try:
+                summary = NoteSummary.model_validate(
+                    json.loads(str(snapshot["structured_json"]))
+                )
+            except (ValueError, TypeError) as exc:
+                raise StoreError(
+                    "NOTE_PROCESSING_STATE_INVALID",
+                    "Saved note structure is invalid",
+                ) from exc
+            processed = ProcessedNote(
+                summary=summary,
+                model=str(snapshot.get("processing_model") or ""),
+                prompt_version=str(snapshot.get("processing_prompt_version") or ""),
+                request_uid=str(snapshot.get("processing_request_uid") or ""),
+                limiter=(
+                    json.loads(str(snapshot["processing_limiter_json"]))
+                    if snapshot.get("processing_limiter_json")
+                    else {}
+                ),
+            )
+        else:
+            attempt_no = int(snapshot["processing_attempts"] or 0) + 1
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE project_notes
+                       SET status='processing',processing_attempts=?,
+                           processing_error=NULL,updated_at_ms=?
+                       WHERE id=?""",
+                    (attempt_no, _now_ms(), note_id),
+                )
+            try:
+                processed = await self.note_processor.summarize(
+                    note_id=note_id,
+                    project_name=project_name,
+                    author_display_name=str(actor["display_name"]),
+                    author_roles=[str(item) for item in roles],
+                    source_text=str(snapshot["source_text"]),
+                    suggested_title=str(snapshot["title"]),
+                    attempt_no=attempt_no,
+                )
+            except NoteProcessingError as exc:
+                with self.store._lock:
+                    self.store.db.execute(
+                        """UPDATE project_notes
+                           SET status='blocked',processing_error=?,updated_at_ms=?
+                           WHERE id=?""",
+                        (exc.code, _now_ms(), note_id),
+                    )
+                raise StoreError(exc.code, str(exc)) from exc
+
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE project_notes
+                       SET structured_json=?,processing_model=?,
+                           processing_prompt_version=?,processing_request_uid=?,
+                           processing_limiter_json=?,processing_error=NULL,
+                           status='waiting_repository',updated_at_ms=?
+                       WHERE id=?""",
+                    (
+                        processed.summary.model_dump_json(),
+                        processed.model,
+                        processed.prompt_version,
+                        processed.request_uid,
+                        json.dumps(
+                            processed.limiter,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ),
+                        _now_ms(),
+                        note_id,
+                    ),
+                )
+                snapshot = dict(self._note_row(note_id))
+
+        markdown = render_note_markdown(
+            note_id=note_id,
+            project_id=str(snapshot["project_id"]),
+            project_name=project_name,
+            author_id=actor_id,
+            author_display_name=str(actor["display_name"]),
+            author_roles=[str(item) for item in roles],
+            audience=str(snapshot["audience"]),
+            created_at_ms=int(snapshot["created_at_ms"]),
+            revision=int(snapshot["revision"]),
+            source_text=str(snapshot["source_text"]),
+            processed=processed,
+        )
+        with self.store._lock:
+            self.store.db.execute(
+                """UPDATE project_notes
+                   SET markdown=?,status='waiting_repository',
+                       title=?,body=?,updated_at_ms=?
+                   WHERE id=?""",
+                (
+                    markdown,
+                    processed.summary.title,
+                    processed.summary.detailed_summary,
+                    _now_ms(),
+                    note_id,
+                ),
+            )
+
+        try:
+            verified = await self.github.write_repository_text(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                repository_id=int(snapshot["repository_id"]),
+                project_id=str(snapshot["project_id"]),
+                path=str(snapshot["repository_path"]),
+                text=markdown,
+                message=f"docs: add project note {note_id}",
+            )
+        except StoreError as exc:
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE project_notes
+                       SET status='blocked',processing_error=?,updated_at_ms=?
+                       WHERE id=?""",
+                    (exc.code, _now_ms(), note_id),
+                )
+            raise
+
+        repository_sha = str(verified.get("sha") or "")
+        if verified.get("text") != markdown or not repository_sha:
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE project_notes
+                       SET status='blocked',
+                           processing_error='GITHUB_READBACK_MISMATCH',
+                           updated_at_ms=? WHERE id=?""",
+                    (_now_ms(), note_id),
+                )
+            raise StoreError(
+                "GITHUB_READBACK_MISMATCH",
+                "Repository readback does not match project note Markdown",
+            )
+
+        now = _now_ms()
+        with self.store._lock:
+            self.store.db.execute("BEGIN IMMEDIATE")
+            try:
+                self.store.db.execute(
+                    """UPDATE project_notes
+                       SET status='ready',repository_sha=?,
+                           repository_commit_sha=?,processing_error=NULL,
+                           updated_at_ms=? WHERE id=?""",
+                    (
+                        repository_sha,
+                        str(verified.get("commit_sha") or "") or None,
+                        now,
+                        note_id,
+                    ),
+                )
+                exists = self.store.db.execute(
+                    """SELECT 1 FROM collaboration_events
+                       WHERE kind='note_created' AND object_kind='note'
+                         AND object_id=? LIMIT 1""",
+                    (note_id,),
+                ).fetchone()
+                if not exists:
+                    self.store.db.execute(
+                        """INSERT INTO collaboration_events(
+                               workspace_id,project_id,actor_id,kind,object_kind,
+                               object_id,parent_object_id,addressed_to_actor_id,
+                               summary,created_at_ms)
+                           VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            workspace_id,
+                            snapshot["project_id"],
+                            actor_id,
+                            "note_created",
+                            "note",
+                            note_id,
+                            None,
+                            None,
+                            processed.summary.title[:240],
+                            now,
+                        ),
+                    )
+                row = self._note_row(note_id)
+                self.store.db.execute("COMMIT")
+            except Exception:
+                self.store.db.execute("ROLLBACK")
+                raise
+        return self._public_note(actor_id, workspace_id, row)
 
     async def create_note(
         self,
@@ -225,6 +467,7 @@ class CollaborationService:
         if not clean_body or len(clean_body) > MAX_BODY:
             raise StoreError("INVALID_ARGUMENT", "note body is invalid")
         request_sha = _sha({"title": clean_title, "body": clean_body})
+
         with self.store._lock:
             existing = self.store.db.execute(
                 """SELECT * FROM project_notes
@@ -237,7 +480,16 @@ class CollaborationService:
                         "COLLABORATION_COMMAND_CONFLICT",
                         "command_id was already used with another note payload",
                     )
-                return self._public_note(actor_id, workspace_id, existing)
+                existing_id = str(existing["id"])
+            else:
+                existing_id = ""
+
+        if existing_id:
+            return await self._process_and_publish(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                note_id=existing_id,
+            )
 
         actor = self._actor(actor_id)
         roles = [str(access["role"])]
@@ -245,35 +497,11 @@ class CollaborationService:
         if workspace_role not in roles:
             roles.append(workspace_role)
         note_id, path = self._note_identity(actor_id, project_id, command_id)
-        now = _now_ms()
-        markdown = self._markdown(
-            note_id=note_id,
-            project_id=project_id,
-            title=clean_title,
-            body=clean_body,
-            author=actor,
-            roles=roles,
-            created_at_ms=now,
-        )
         repository = self._project_docs_repository(actor_id, workspace_id, project_id)
-        verified = await self.github.write_repository_text(
-            actor_id=actor_id,
-            workspace_id=workspace_id,
-            repository_id=int(repository["repository_id"]),
-            project_id=project_id,
-            path=path,
-            text=markdown,
-            message=f"docs: add project note {note_id}",
-        )
-        if verified.get("text") != markdown:
-            raise StoreError(
-                "GITHUB_READBACK_MISMATCH",
-                "Repository readback does not match project note Markdown",
-            )
-        repository_sha = str(verified.get("sha") or "")
-        if not repository_sha:
-            raise StoreError("GITHUB_READBACK_MISMATCH", "Repository readback SHA is absent")
+        audience = self._repository_audience(repository)
+        now = _now_ms()
 
+        # Persist the exact intended shared source before any model/provider call.
         with self.store._lock:
             self.store.db.execute("BEGIN IMMEDIATE")
             try:
@@ -288,40 +516,51 @@ class CollaborationService:
                             "COLLABORATION_COMMAND_CONFLICT",
                             "command_id was already used with another note payload",
                         )
-                    self.store.db.execute("COMMIT")
-                    return self._public_note(actor_id, workspace_id, existing)
-                self.store.db.execute(
-                    """INSERT INTO project_notes(
-                           id,workspace_id,project_id,author_actor_id,title,body,markdown,
-                           author_roles_json,audience,repository_id,repository_full_name,
-                           repository_path,repository_sha,command_id,request_sha256,
-                           revision,created_at_ms,updated_at_ms)
-                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (
-                        note_id, workspace_id, project_id, actor_id, clean_title, clean_body,
-                        markdown, json.dumps(roles, ensure_ascii=False), "project",
-                        int(repository["repository_id"]), str(repository["full_name"]),
-                        path, repository_sha, command_id, request_sha, 1, now, now,
-                    ),
-                )
-                self.store.db.execute(
-                    """INSERT INTO collaboration_events(
-                           workspace_id,project_id,actor_id,kind,object_kind,object_id,
-                           parent_object_id,addressed_to_actor_id,summary,created_at_ms)
-                       VALUES(?,?,?,?,?,?,?,?,?,?)""",
-                    (
-                        workspace_id, project_id, actor_id, "note_created", "note",
-                        note_id, None, None, clean_title, now,
-                    ),
-                )
-                row = self.store.db.execute(
-                    "SELECT * FROM project_notes WHERE id=?", (note_id,)
-                ).fetchone()
+                    note_id = str(existing["id"])
+                else:
+                    self.store.db.execute(
+                        """INSERT INTO project_notes(
+                               id,workspace_id,project_id,author_actor_id,title,body,
+                               source_text,structured_json,markdown,author_roles_json,
+                               audience,status,repository_id,repository_full_name,
+                               repository_path,repository_sha,repository_commit_sha,
+                               command_id,request_sha256,revision,created_at_ms,updated_at_ms)
+                           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            note_id,
+                            workspace_id,
+                            project_id,
+                            actor_id,
+                            clean_title,
+                            clean_body,
+                            clean_body,
+                            None,
+                            "",
+                            json.dumps(roles, ensure_ascii=False),
+                            audience,
+                            "accepted",
+                            int(repository["repository_id"]),
+                            str(repository["full_name"]),
+                            path,
+                            "",
+                            None,
+                            command_id,
+                            request_sha,
+                            1,
+                            now,
+                            now,
+                        ),
+                    )
                 self.store.db.execute("COMMIT")
             except Exception:
                 self.store.db.execute("ROLLBACK")
                 raise
-        return self._public_note(actor_id, workspace_id, row)
+
+        return await self._process_and_publish(
+            actor_id=actor_id,
+            workspace_id=workspace_id,
+            note_id=note_id,
+        )
 
     def get_note(
         self, *, actor_id: str, workspace_id: str, note_id: str
@@ -358,6 +597,13 @@ class CollaborationService:
         self, *, actor_id: str, workspace_id: str, note_id: str
     ) -> dict[str, Any]:
         note = self.get_note(actor_id=actor_id, workspace_id=workspace_id, note_id=note_id)
+        if note["status"] != "ready":
+            return {
+                "note_id": note_id,
+                "verified": False,
+                "status": note["status"],
+                "repository": note["repository"],
+            }
         repository = note["repository"]
         content = await self.github.read_repository_path(
             actor_id=actor_id,
@@ -411,6 +657,8 @@ class CollaborationService:
         body: str,
     ) -> dict[str, Any]:
         note = self.get_note(actor_id=actor_id, workspace_id=workspace_id, note_id=note_id)
+        if note["status"] != "ready":
+            raise StoreError("NOTE_NOT_READY", "Project note is not ready for discussion")
         self.store.project_access(
             actor_id, workspace_id, note["project_id"], require_role="editor"
         )
@@ -743,3 +991,7 @@ class CollaborationService:
             "invite_token": token,
             "expires_at_ms": now + ttl_seconds * 1000,
         }
+
+
+    async def close(self) -> None:
+        await self.note_processor.close()
