@@ -14,6 +14,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .auth import COOKIE_NAME, SESSION_TTL_SECONDS, issue_session, parse_session
+from .board import BoardService
+from .board_api import attach_board_routes
+from .board_view_context import BoardViewContextStore
+from .board_view_context_api import attach_board_view_context_routes
 from .collaboration import CollaborationService
 from .collaboration_api import attach_collaboration_routes
 from .collaboration_analysis import CollaborationAnalysisService
@@ -281,6 +285,9 @@ def create_app(
     app = FastAPI(title="Projects Hub", version=__version__, lifespan=lifespan)
     app.state.settings = settings
     app.state.store = store
+    app.state.board = BoardService(store)
+    app.state.board_view_context = BoardViewContextStore(store, app.state.board)
+    app.state.board_hub = None
     app.state.live_host = live_host
     app.state.github_connections = github_connections or GitHubConnections(store, settings)
     app.state.device_commands = device_commands or DeviceCommandService(store)
@@ -298,6 +305,9 @@ def create_app(
         if app.state.live_host is None:
             app.state.live_host = build_live_host(
                 store,
+                board=app.state.board,
+                board_hub=app.state.board_hub,
+                board_view_context=app.state.board_view_context,
                 device_commands=app.state.device_commands,
                 readiness=app.state.readiness,
                 development=app.state.development,
@@ -367,6 +377,18 @@ def create_app(
             raise _error(exc) from exc
         return actor_id
 
+    app.state.board_hub = attach_board_routes(
+        app,
+        service=app.state.board,
+        actor_id_from_request=actor_id_from_request,
+        session_secret=settings.session_secret,
+        cookie_name=COOKIE_NAME,
+    )
+    attach_board_view_context_routes(
+        app,
+        service=app.state.board_view_context,
+        actor_id_from_request=actor_id_from_request,
+    )
     attach_collaboration_routes(
         app,
         service=app.state.collaboration,
