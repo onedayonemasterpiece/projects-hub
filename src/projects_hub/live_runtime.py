@@ -8,6 +8,7 @@ from .device_commands import DeviceCommandService
 from .development import DevelopmentService
 from .expert_reviews import ExpertReviewAdapter
 from .github_connections import GitHubConnections
+from .collaboration import CollaborationService
 from .regional_knowledge import RegionalKnowledgeAdapter
 from .live_adapter import ProjectsHubLiveAdapter
 from .live_admission import ProjectsHubAdmissionMixin
@@ -57,6 +58,7 @@ def build_live_host(
     readiness: ReadinessService | None = None,
     development: DevelopmentService | None = None,
     github_connections: GitHubConnections | None = None,
+    collaboration: CollaborationService | None = None,
     expert_reviews_factory: (
         Callable[[str, str], ExpertReviewAdapter | None] | None
     ) = None,
@@ -220,6 +222,7 @@ def build_live_host(
             readiness=readiness,
             development=development,
             github_connections=github_connections,
+            collaboration=collaboration,
             expert_reviews_factory=expert_reviews_factory,
             regional_knowledge_factory=regional_knowledge_factory,
             **shared,
