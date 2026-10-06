@@ -447,6 +447,13 @@ class GitHubConnections:
             workspace_id,
             repository_id,
         )
+        if connection.get("project_id"):
+            self.store.project_access(
+                actor_id,
+                workspace_id,
+                str(connection["project_id"]),
+                require_role="editor" if write else None,
+            )
         if connection["state"] != "available" or connection["installation_state"] != "active":
             raise StoreError(
                 "GITHUB_REPOSITORY_UNAVAILABLE",
@@ -505,6 +512,120 @@ class GitHubConnections:
             "project_id": connection["project_id"],
             "default_branch": connection["default_branch"],
             **content,
+        }
+
+    @staticmethod
+    def _path_allowed(connection: dict[str, Any], path: str) -> bool:
+        restrictions = [
+            str(item).strip().strip("/")
+            for item in (connection.get("allowed_paths") or [])
+            if str(item).strip()
+        ]
+        if not restrictions:
+            return True
+        clean = str(path or "").strip().strip("/")
+        return any(clean == prefix or clean.startswith(prefix + "/") for prefix in restrictions)
+
+    async def write_repository_text(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        repository_id: int,
+        project_id: str,
+        path: str,
+        text: str,
+        message: str,
+    ) -> dict[str, Any]:
+        token, connection = await self.repository_token(
+            actor_id=actor_id,
+            workspace_id=workspace_id,
+            repository_id=repository_id,
+            write=True,
+        )
+        if (
+            connection.get("project_id") != project_id
+            or connection.get("role") != "project_docs"
+        ):
+            raise StoreError(
+                "GITHUB_WRITE_POLICY_DENIED",
+                "Only the bound project_docs repository may store project notes",
+            )
+        clean_path = str(path or "").strip().strip("/")
+        if not self._path_allowed(connection, clean_path):
+            raise StoreError(
+                "GITHUB_WRITE_POLICY_DENIED",
+                "Repository path is outside the configured project_docs scope",
+            )
+        client = self._require_client()
+        existing_sha: str | None = None
+        try:
+            existing = await client.repository_contents(
+                token=token,
+                full_name=str(connection["full_name"]),
+                path=clean_path,
+                ref=str(connection["default_branch"]),
+            )
+            if existing.get("kind") != "file":
+                raise StoreError("GITHUB_WRITE_CONFLICT", "Repository target is not a file")
+            if existing.get("text") == text:
+                return {
+                    "repository_id": int(connection["repository_id"]),
+                    "full_name": connection["full_name"],
+                    "project_id": connection["project_id"],
+                    "default_branch": connection["default_branch"],
+                    **existing,
+                    "write_recovered": True,
+                }
+            existing_sha = str(existing.get("sha") or "") or None
+            raise StoreError(
+                "GITHUB_WRITE_CONFLICT",
+                "Repository path already contains different content",
+            )
+        except GitHubAppError as exc:
+            if exc.code != "GITHUB_NOT_FOUND":
+                raise StoreError(exc.code, str(exc)) from exc
+
+        write_error: GitHubAppError | None = None
+        try:
+            await client.put_repository_content(
+                token=token,
+                full_name=str(connection["full_name"]),
+                path=clean_path,
+                text=text,
+                message=message,
+                branch=str(connection["default_branch"]),
+                sha=existing_sha,
+            )
+        except GitHubAppError as exc:
+            write_error = exc
+
+        # Authoritative readback also reconciles an unknown client outcome.
+        try:
+            readback = await client.repository_contents(
+                token=token,
+                full_name=str(connection["full_name"]),
+                path=clean_path,
+                ref=str(connection["default_branch"]),
+            )
+        except GitHubAppError as exc:
+            if write_error is not None:
+                raise StoreError(write_error.code, str(write_error)) from write_error
+            raise StoreError(exc.code, str(exc)) from exc
+        if readback.get("kind") != "file" or readback.get("text") != text:
+            if write_error is not None:
+                raise StoreError(write_error.code, str(write_error)) from write_error
+            raise StoreError(
+                "GITHUB_READBACK_MISMATCH",
+                "Repository write could not be verified by readback",
+            )
+        return {
+            "repository_id": int(connection["repository_id"]),
+            "full_name": connection["full_name"],
+            "project_id": connection["project_id"],
+            "default_branch": connection["default_branch"],
+            **readback,
+            "write_recovered": write_error is not None,
         }
 
     async def webhook(
