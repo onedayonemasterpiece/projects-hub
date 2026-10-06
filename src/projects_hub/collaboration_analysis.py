@@ -698,6 +698,16 @@ class CollaborationAnalysisService:
             *[self._question_public(row) for row in analysis_rows],
             *[self._owner_question_public(row) for row in owner_rows],
         ]
+        now = _now_ms()
+        items = [
+            item
+            for item in items
+            if not (
+                item["state"] == "deferred"
+                and item.get("deferred_until_ms") is not None
+                and int(item["deferred_until_ms"]) > now
+            )
+        ]
         state_rank = {"open": 0, "deferred": 1}
         items.sort(
             key=lambda item: (
@@ -782,12 +792,19 @@ class CollaborationAnalysisService:
             self.store.db.execute("BEGIN IMMEDIATE")
             try:
                 for item in normalized:
-                    state = {
-                        "answer": "resolved",
-                        "skip": "skipped",
-                        "unknown": "unknown",
-                        "later": "deferred",
-                    }[item["disposition"]]
+                    source_question = by_id[item["question_id"]]
+                    if (
+                        bool(source_question["blocking"])
+                        and item["disposition"] in {"skip", "unknown"}
+                    ):
+                        state = "open"
+                    else:
+                        state = {
+                            "answer": "resolved",
+                            "skip": "skipped",
+                            "unknown": "unknown",
+                            "later": "deferred",
+                        }[item["disposition"]]
                     self.store.db.execute(
                         """UPDATE collaboration_questions SET state=?,disposition=?,
                            answer_text=?,answered_by_actor_id=?,deferred_until_ms=?,
@@ -937,8 +954,8 @@ class CollaborationAnalysisService:
 
         state = {
             "answer": "resolved",
-            "skip": "skipped",
-            "unknown": "unknown",
+            "skip": "open",
+            "unknown": "open",
             "later": "deferred",
         }[disposition]
         now = _now_ms()
