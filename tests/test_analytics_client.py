@@ -12,6 +12,15 @@ class CatalogClient(AnalyticsBridgeClient):
         super().__init__(command="/does/not/matter")
         self.models = models
         self.calls = []
+        self._tool_schemas = {
+            "council_run": {
+                "properties": {
+                    "context_mode": {},
+                    "evidence_bundle": {},
+                    "request_key": {},
+                }
+            }
+        }
 
     async def safe_council_available(self) -> bool:
         return True
@@ -21,16 +30,12 @@ class CatalogClient(AnalyticsBridgeClient):
         if name == "list_models":
             return {"status": "ok", "models": list(self.models)}
         if name == "council_run":
-            if arguments.get("tier") == "pro" and "paid_confirmation_token" not in arguments:
-                return {
-                    "status": "confirmation_required",
-                    "paidConfirmationToken": "pcf_" + "a" * 32,
-                    "confirmationExpiresAt": 9_999_999_999_999,
-                    "costPolicy": "nvidia_full_debate_with_bounded_transient_retries",
-                    "usagePlan": {"nvidiaCalls": 6, "totalCalls": 6},
-                    "participants": arguments["participants"],
-                }
-            return {"status": "running", "taskId": "dvt_" + "4" * 32}
+            return {
+                "status": "running",
+                "taskId": "dvt_" + "4" * 32,
+                "nvidiaSlotCapacity": 2,
+                "requiresExplicitUserConfirmation": False,
+            }
         raise AssertionError(name)
 
 
@@ -100,30 +105,20 @@ def test_model_catalog_is_read_only_allowlisted_capability() -> None:
     assert "start_task" not in AnalyticsBridgeClient.ALLOWED_TOOLS
 
 
-def test_paid_council_requires_confirmation_and_replays_exact_two_nvidia_models() -> None:
-    client = CatalogClient(
-        [
-            _model(
-                "nvidia/moonshotai/kimi-k3",
-                provider="nvidia",
-                free=False,
-            ),
-            _model(
-                "nvidia/deepseek-ai/deepseek-v4.1-flash",
-                provider="nvidia",
-                free=False,
-            ),
-        ]
-    )
-    first = asyncio.run(
+def test_pro_council_auto_dispatches_exact_two_nvidia_models() -> None:
+    client = CatalogClient([])
+    result = asyncio.run(
         client.council(
             prompt="Review.",
             evidence_bundle='{"sources":[]}',
-            request_key="analysis:test-paid-council",
+            request_key="analysis:test-nvidia-council",
             tier="pro",
         )
     )
-    assert first["status"] == "confirmation_required"
+    assert result["status"] == "running"
+    assert result["nvidiaSlotCapacity"] == 2
+    assert result["requiresExplicitUserConfirmation"] is False
+    assert [name for name, _args in client.calls] == ["council_run"]
     call = client.calls[-1][1]
     assert call["tier"] == "pro"
     assert call["rounds"] == 2
@@ -137,32 +132,17 @@ def test_paid_council_requires_confirmation_and_replays_exact_two_nvidia_models(
     ]
     assert "paid_confirmation_token" not in call
 
-    confirmed = asyncio.run(
-        client.council(
-            prompt="Review.",
-            evidence_bundle='{"sources":[]}',
-            request_key="analysis:test-paid-council",
-            tier="pro",
-            paid_confirmation_token="pcf_" + "a" * 32,
-        )
-    )
-    assert confirmed["status"] == "running"
-    second = client.calls[-1][1]
-    assert second["participants"] == call["participants"]
-    assert second["paid_confirmation_token"] == "pcf_" + "a" * 32
 
-
-def test_paid_council_fails_closed_when_required_nvidia_model_is_missing() -> None:
-    client = CatalogClient(
-        [_model("nvidia/moonshotai/kimi-k3", provider="nvidia", free=False)]
-    )
-    with pytest.raises(AnalyticsBridgeError, match="Required paid council models"):
+def test_pro_council_fails_closed_against_obsolete_confirmation_schema() -> None:
+    client = CatalogClient([])
+    client._tool_schemas["council_run"]["properties"]["paid_confirmation_token"] = {}
+    with pytest.raises(AnalyticsBridgeError, match="Automatic dual-slot NVIDIA"):
         asyncio.run(
             client.council(
                 prompt="Review.",
                 evidence_bundle='{"sources":[]}',
-                request_key="analysis:test-paid-missing",
+                request_key="analysis:test-stale-council-runtime",
                 tier="pro",
             )
         )
-    assert [name for name, _args in client.calls] == ["list_models"]
+    assert client.calls == []
