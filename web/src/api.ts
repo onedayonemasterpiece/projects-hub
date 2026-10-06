@@ -497,3 +497,49 @@ export const answerSingleCollaborationQuestion = (
     }),
   },
 );
+
+
+export type CollaborationBrief = {
+  personal: CollaborationEvent[];
+  personal_unread_count: number;
+  personal_through_id: number;
+  general_available: boolean;
+  general_count: number;
+  general_preview: CollaborationEvent[];
+  general_through_id: number;
+  general_news_enabled: boolean;
+};
+
+export const getCollaborationBrief = (workspaceId: string) => {
+  const params = new URLSearchParams({ workspace_id: workspaceId });
+  return api<CollaborationBrief>(`/api/collaboration/brief?${params}`);
+};
+
+export const markCollaborationBriefSeen = (
+  workspaceId: string,
+  personalThroughId?: number,
+  generalThroughId?: number,
+) => api<{
+  personal_cursor: number;
+  general_cursor: number;
+  general_news_enabled: boolean;
+}>("/api/collaboration/brief/seen", {
+  method: "POST",
+  body: JSON.stringify({
+    workspace_id: workspaceId,
+    personal_through_id: personalThroughId,
+    general_through_id: generalThroughId,
+  }),
+});
+
+export const setCollaborationGeneralNews = (
+  workspaceId: string,
+  enabled: boolean,
+) => api<{
+  personal_cursor: number;
+  general_cursor: number;
+  general_news_enabled: boolean;
+}>("/api/collaboration/preferences/general-news", {
+  method: "POST",
+  body: JSON.stringify({ workspace_id: workspaceId, enabled }),
+});
