@@ -238,6 +238,33 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
     }
     if (activeIdentity.current) await themeRef.current.apply(value.preferences);
   }, [clearPrivateIdentity]);
+  const applyAuthenticatedBootstrap = useCallback(async (value: Bootstrap, isCurrent: () => boolean = () => true) => {
+    if (!activeIdentity.current || !isCurrent()) return;
+    await hydratePreferences(value);
+    const currentIdentity = () => activeIdentity.current && isCurrent() && themeRef.current.actor === value.actor.id;
+    if (!currentIdentity()) return;
+    setBoot(value);
+    const saved = localStorage.getItem("projects-hub-conversation");
+    if (!saved) return;
+    try {
+      const current = await getConversation(saved);
+      if (!currentIdentity() || localStorage.getItem("projects-hub-conversation") !== saved
+          || conversationRef.current) return;
+      if (current.id === saved && current.workspace_id === value.workspace.id && current.actor_id === value.actor.id) {
+        conversationRef.current = current;
+        setConversation(current);
+      } else {
+        localStorage.removeItem("projects-hub-conversation");
+      }
+    } catch (error) {
+      if (!currentIdentity() || localStorage.getItem("projects-hub-conversation") !== saved) return;
+      if (error instanceof ApiError && [403, 404].includes(error.status)) {
+        localStorage.removeItem("projects-hub-conversation");
+      } else {
+        throw error;
+      }
+    }
+  }, [hydratePreferences]);
   const reconcilePreferences = useCallback(() => {
     const actor = themeRef.current.actor;
     if (!actor) return;
@@ -637,22 +664,6 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
   useEffect(() => {
     let cancelled = false;
 
-    async function applyBootstrap(value: Bootstrap) {
-      if (cancelled) return;
-      await hydratePreferences(value);
-      if (!cancelled) setBoot(value);
-      const saved = localStorage.getItem("projects-hub-conversation");
-      if (!saved) return;
-      try {
-        const current = await getConversation(saved);
-        if (cancelled) return;
-        if (current.workspace_id === value.workspace.id && current.actor_id === value.actor.id) setConversation(current);
-        else localStorage.removeItem("projects-hub-conversation");
-      } catch {
-        localStorage.removeItem("projects-hub-conversation");
-      }
-    }
-
     async function initialize() {
       try {
         const config = await getAuthConfig();
@@ -660,7 +671,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
         setAuthConfig(config);
 
         try {
-          await applyBootstrap(await bootstrap());
+          await applyAuthenticatedBootstrap(await bootstrap(), () => !cancelled);
         } catch (error) {
           if (!(error instanceof ApiError) || error.status !== 401) throw error;
         }
@@ -677,7 +688,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [applyAuthenticatedBootstrap]);
 
   useEffect(() => {
     const online = () => {
@@ -876,8 +887,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
         const value = inviteCode.trim();
         if (!value) throw new Error("Введите одноразовый код приглашения.");
         const authenticated = await exchangeInvite(value);
-        await hydratePreferences(authenticated);
-        setBoot(authenticated);
+        await applyAuthenticatedBootstrap(authenticated);
         setInviteCode("");
         return;
       }
@@ -885,8 +895,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
         throw new Error("Вход сейчас недоступен.");
       }
       const value = await login();
-      await hydratePreferences(value);
-      setBoot(value);
+      await applyAuthenticatedBootstrap(value);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Не удалось войти.");
     } finally {

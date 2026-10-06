@@ -157,14 +157,6 @@ try {
     await page.waitForFunction(()=>{const button=document.querySelector('.voice-orb');return button && !button.disabled && button.getAttribute('aria-label')==='Остановить разговор';});
     emit({type:'input_transcript',text:'Private conversation B'});
     await page.getByText('Private conversation B',{exact:true}).waitFor();
-    authenticated=false;
-    await page.evaluate(()=>window.dispatchEvent(new Event('projects-hub-theme-resume')));
-    await page.getByRole('button',{name:'Войти в пилот',exact:true}).waitFor();
-    assert.equal(await page.getByText('Private conversation B',{exact:true}).count(),0);
-    await page.getByRole('button',{name:'Войти в пилот',exact:true}).click();
-    await page.getByRole('button',{name:'Начать голосовой разговор',exact:true}).waitFor();
-    assert.equal(await page.getByText('Private conversation B',{exact:true}).count(),0);
-    // Deliberate durable replay through App stays open across both handoffs.
     const localId=await page.evaluate(async()=>{
       const storage=await import('/src/offlineSources.ts');
       const source=await storage.createLocalVoiceSource('W','CB');
@@ -173,6 +165,22 @@ try {
       await sink.drain();await storage.sealLocalVoiceSource(source.id);
       return source.id;
     });
+    const loginDocument=await page.evaluate(()=>performance.timeOrigin);
+    authenticated=false;
+    await page.evaluate(()=>window.dispatchEvent(new Event('projects-hub-theme-resume')));
+    await page.getByRole('button',{name:'Войти в пилот',exact:true}).waitFor();
+    assert.equal(await page.getByText('Private conversation B',{exact:true}).count(),0);
+    const loginConversationRequested=new Promise(resolve=>{delayedConversation=resolve;});
+    await page.getByRole('button',{name:'Войти в пилот',exact:true}).click();
+    await loginConversationRequested;
+    await page.waitForTimeout(150);
+    assert.equal(await page.getByRole('button',{name:'Передать запись',exact:true}).count(),0);
+    releaseConversation();
+    await page.getByRole('button',{name:'Передать запись',exact:true}).waitFor();
+    assert.equal(await page.evaluate(()=>performance.timeOrigin),loginDocument);
+    await page.getByRole('button',{name:'Начать голосовой разговор',exact:true}).waitFor();
+    assert.equal(await page.getByText('Private conversation B',{exact:true}).count(),0);
+    // Deliberate durable replay through App stays open across both handoffs.
     // IndexedDB is ready while server restoration is deliberately delayed.
     const conversationRequested=new Promise(resolve=>{delayedConversation=resolve;});
     await page.reload({waitUntil:'domcontentloaded'});
