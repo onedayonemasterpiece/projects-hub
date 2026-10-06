@@ -26,21 +26,17 @@ class FakeBridge:
 
     async def council(self, **kwargs):
         self.councils.append(dict(kwargs))
-        if kwargs.get("tier") == "pro" and not kwargs.get("paid_confirmation_token"):
-            return {
-                "status": "confirmation_required",
-                "councilLevel": "pro",
-                "requiresExplicitUserConfirmation": True,
-                "paidConfirmationToken": "pcf_" + "b" * 32,
-                "confirmationExpiresAt": 9_999_999_999_999,
-                "costPolicy": "nvidia_full_debate_with_bounded_transient_retries",
-                "usagePlan": {"nvidiaCalls": 6, "totalCalls": 6, "maxNvidiaAttempts": 30},
-                "participants": [
-                    {"provider": "nvidia", "model": "nvidia/moonshotai/kimi-k3"},
-                    {"provider": "nvidia", "model": "nvidia/deepseek-ai/deepseek-v4.1-flash"},
-                ],
-            }
-        return {"status": "running", "taskId": "dvt_" + "c" * 32}
+        return {
+            "status": "running",
+            "taskId": "dvt_" + "c" * 32,
+            "resourcePolicy": (
+                "nvidia_dual_slot_kimi_deepseek_full_debate"
+                if kwargs.get("tier") == "pro"
+                else "free_only_no_nvidia"
+            ),
+            "nvidiaSlotCapacity": 2,
+            "requiresExplicitUserConfirmation": False,
+        }
 
     async def read_task(self, _task_id):
         return {
@@ -234,7 +230,8 @@ async def test_mira_analysis_tool_uses_same_session_and_broadcasts_publish(tmp_p
         store.close()
 
 
-def test_paid_council_http_requires_separate_confirmation(tmp_path: Path):
+
+def test_nvidia_council_http_auto_dispatches_without_confirm_endpoint(tmp_path: Path):
     store, boot, actor, workspace, project, _board, board_id, bridge, analytics = setup(tmp_path)
     settings = Settings(
         data_dir=tmp_path / "data",
@@ -254,7 +251,7 @@ def test_paid_council_http_requires_separate_confirmation(tmp_path: Path):
                     "project_id": project,
                     "board_id": board_id,
                     "object_ids": ["obj_analysis_seed"],
-                    "command_id": "analysis_paid_http_01",
+                    "command_id": "analysis_nvidia_http_01",
                     "model": "council_pro",
                     "purpose": "architecture",
                     "question": "Compare two risks.",
@@ -262,33 +259,24 @@ def test_paid_council_http_requires_separate_confirmation(tmp_path: Path):
             )
             assert started.status_code == 200, started.text
             run = started.json()
-            assert run["status"] == "confirmation_required"
-            assert run["confirmation_plan"]["usagePlan"]["nvidiaCalls"] == 6
-            assert "confirmation_token" not in run
+            assert run["status"] == "running"
+            assert "confirmation_plan" not in run
             assert len(bridge.councils) == 1
+            assert bridge.councils[0]["tier"] == "pro"
 
-            confirmed = client.post(
+            obsolete = client.post(
                 f"/api/analysis/runs/{run['id']}/confirm",
                 json={"workspace_id": workspace},
             )
-            assert confirmed.status_code == 200, confirmed.text
-            assert confirmed.json()["status"] == "running"
-            assert len(bridge.councils) == 2
-            assert bridge.councils[-1]["paid_confirmation_token"] == "pcf_" + "b" * 32
-
-            repeated = client.post(
-                f"/api/analysis/runs/{run['id']}/confirm",
-                json={"workspace_id": workspace},
-            )
-            assert repeated.status_code == 200
-            assert repeated.json()["status"] == "running"
-            assert len(bridge.councils) == 2
+            assert obsolete.status_code == 404
+            assert len(bridge.councils) == 1
     finally:
         store.close()
 
+@pytest.mark.asyncio
 
 @pytest.mark.asyncio
-async def test_mira_paid_council_requires_explicit_confirm_flag(tmp_path: Path):
+async def test_mira_nvidia_council_starts_without_confirmation_action(tmp_path: Path):
     store, _boot, actor, workspace, project, board, board_id, bridge, analytics = setup(tmp_path)
     try:
         conversation = store.create_conversation(actor, workspace, project)
@@ -300,7 +288,14 @@ async def test_mira_paid_council_requires_explicit_confirm_flag(tmp_path: Path):
             model="gemini-3.8-live",
             conversation_id=conversation["id"],
         )
+        analysis_fn = next(
+            item for item in initialized["configuration"]["functions"]
+            if item["name"] == "board_analysis"
+        )
+        assert "confirm" not in analysis_fn["parameters"]["properties"]["action"]["enum"]
+        assert "confirmed" not in analysis_fn["parameters"]["properties"]
         session = SimpleNamespace(state=initialized["state"])
+
         started = await adapter.execute_tool(
             session,
             {
@@ -314,38 +309,10 @@ async def test_mira_paid_council_requires_explicit_confirm_flag(tmp_path: Path):
                 },
             },
         )
-        assert started["status"] == "confirmation_required"
+        assert started["status"] == "running"
+        assert started["ui_command"]["kind"] == "analysis"
         assert len(bridge.councils) == 1
-
-        from projects_hub.store import StoreError
-        with pytest.raises(StoreError) as exc:
-            await adapter.execute_tool(
-                session,
-                {
-                    "name": "board_analysis",
-                    "args": {
-                        "action": "confirm",
-                        "run_id": started["id"],
-                        "confirmed": False,
-                    },
-                },
-            )
-        assert exc.value.code == "ANALYTICS_EXPLICIT_CONFIRMATION_REQUIRED"
-        assert len(bridge.councils) == 1
-
-        confirmed = await adapter.execute_tool(
-            session,
-            {
-                "name": "board_analysis",
-                "args": {
-                    "action": "confirm",
-                    "run_id": started["id"],
-                    "confirmed": True,
-                },
-            },
-        )
-        assert confirmed["status"] == "running"
-        assert confirmed["ui_command"]["kind"] == "analysis"
-        assert len(bridge.councils) == 2
+        assert bridge.councils[0]["tier"] == "pro"
     finally:
         store.close()
+
