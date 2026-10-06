@@ -391,3 +391,165 @@ async def test_note_source_survives_processor_failure_and_same_command_resumes(t
     finally:
         await service.close()
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_note_intent_survives_missing_binding_and_same_command_resumes(tmp_path: Path):
+    store = DurableStore(tmp_path / "missing-binding")
+    owner = store.ensure_platform_owner("Owner Missing Binding")
+    actor = owner["actor"]["id"]
+    workspace = owner["workspace"]["id"]
+    project = owner["projects"][0]["id"]
+    github = FakeGitHubConnections(store)
+    processor = FakeNoteProcessor()
+    service = CollaborationService(
+        store,
+        github,  # type: ignore[arg-type]
+        note_processor=processor,  # type: ignore[arg-type]
+    )
+    try:
+        with pytest.raises(StoreError) as exc:
+            await service.create_note(
+                actor_id=actor,
+                workspace_id=workspace,
+                project_id=project,
+                command_id="cmd.note.binding",
+                title="Binding recovery",
+                body="Этот исходный текст нельзя потерять из-за отсутствующего binding.",
+            )
+        assert exc.value.code == "GITHUB_PROJECT_DOCS_REQUIRED"
+        with store._lock:
+            intent = store.db.execute(
+                "SELECT * FROM project_note_intents WHERE command_id='cmd.note.binding'"
+            ).fetchone()
+            materialized = store.db.execute(
+                "SELECT 1 FROM project_notes WHERE command_id='cmd.note.binding'"
+            ).fetchone()
+        assert intent is not None
+        assert intent["source_text"] == "Этот исходный текст нельзя потерять из-за отсутствующего binding."
+        assert intent["status"] == "blocked"
+        assert intent["error_code"] == "GITHUB_PROJECT_DOCS_REQUIRED"
+        assert materialized is None
+        assert processor.calls == []
+        assert github.write_count == 0
+
+        now = 1_800_000_000_000
+        with store._lock:
+            store.db.execute(
+                """INSERT INTO github_installations(
+                       installation_id,workspace_id,account_id,account_login,account_type,
+                       html_url,repository_selection,permissions_json,state,suspended_at_ms,
+                       last_verified_at_ms,created_at_ms,updated_at_ms)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    90, workspace, 110, "example", "Organization",
+                    "https://github.com/example", "selected", '{"contents":"write"}',
+                    "active", None, now, now, now,
+                ),
+            )
+            store.db.execute(
+                """INSERT INTO repository_connections(
+                       id,workspace_id,installation_id,repository_id,full_name,default_branch,
+                       private,project_id,role,access_mode,allowed_paths_json,state,
+                       last_verified_at_ms,created_at_ms,updated_at_ms)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    "repo-after-bind", workspace, 90, 510, "example/private-after-bind", "main",
+                    1, project, "project_docs", "app_managed_write", '["docs/notes"]',
+                    "available", now, now, now,
+                ),
+            )
+
+        ready = await service.create_note(
+            actor_id=actor,
+            workspace_id=workspace,
+            project_id=project,
+            command_id="cmd.note.binding",
+            title="Binding recovery",
+            body="Этот исходный текст нельзя потерять из-за отсутствующего binding.",
+        )
+        assert ready["id"] == intent["id"]
+        assert ready["status"] == "ready"
+        assert ready["audience"] == "project"
+        assert len(processor.calls) == 1
+        assert github.write_count == 1
+        with store._lock:
+            intent_after = store.db.execute(
+                "SELECT * FROM project_note_intents WHERE id=?",
+                (ready["id"],),
+            ).fetchone()
+        assert intent_after["status"] == "ready"
+        assert intent_after["error_code"] is None
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_project_note_refuses_public_repository_before_processing(tmp_path: Path):
+    store = DurableStore(tmp_path / "public-binding")
+    owner = store.ensure_platform_owner("Owner Public Binding")
+    actor = owner["actor"]["id"]
+    workspace = owner["workspace"]["id"]
+    project = owner["projects"][0]["id"]
+    now = 1_800_000_000_000
+    with store._lock:
+        store.db.execute(
+            """INSERT INTO github_installations(
+                   installation_id,workspace_id,account_id,account_login,account_type,
+                   html_url,repository_selection,permissions_json,state,suspended_at_ms,
+                   last_verified_at_ms,created_at_ms,updated_at_ms)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                91, workspace, 111, "example", "Organization",
+                "https://github.com/example", "selected", '{"contents":"write"}',
+                "active", None, now, now, now,
+            ),
+        )
+        store.db.execute(
+            """INSERT INTO repository_connections(
+                   id,workspace_id,installation_id,repository_id,full_name,default_branch,
+                   private,project_id,role,access_mode,allowed_paths_json,state,
+                   last_verified_at_ms,created_at_ms,updated_at_ms)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "repo-public", workspace, 91, 511, "example/public-docs", "main",
+                0, project, "project_docs", "app_managed_write", '["docs/notes"]',
+                "available", now, now, now,
+            ),
+        )
+    github = FakeGitHubConnections(store)
+    processor = FakeNoteProcessor()
+    service = CollaborationService(
+        store,
+        github,  # type: ignore[arg-type]
+        note_processor=processor,  # type: ignore[arg-type]
+    )
+    try:
+        with pytest.raises(StoreError) as exc:
+            await service.create_note(
+                actor_id=actor,
+                workspace_id=workspace,
+                project_id=project,
+                command_id="cmd.note.public",
+                title="Must stay project-private",
+                body="Этот текст предназначен только участникам проекта.",
+            )
+        assert exc.value.code == "NOTE_AUDIENCE_REPOSITORY_MISMATCH"
+        with store._lock:
+            intent = store.db.execute(
+                "SELECT * FROM project_note_intents WHERE command_id='cmd.note.public'"
+            ).fetchone()
+            materialized = store.db.execute(
+                "SELECT 1 FROM project_notes WHERE command_id='cmd.note.public'"
+            ).fetchone()
+        assert intent is not None
+        assert intent["audience"] == "project"
+        assert intent["status"] == "blocked"
+        assert intent["error_code"] == "NOTE_AUDIENCE_REPOSITORY_MISMATCH"
+        assert materialized is None
+        assert processor.calls == []
+        assert github.write_count == 0
+    finally:
+        await service.close()
+        store.close()
