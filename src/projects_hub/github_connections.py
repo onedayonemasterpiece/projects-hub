@@ -396,6 +396,43 @@ class GitHubConnections:
             bound.append(int(item["repository_id"]))
         return bound
 
+    async def refresh(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+    ) -> dict[str, Any]:
+        self.store.require_workspace_owner(actor_id, workspace_id)
+        client = self._require_client()
+        refreshed: list[int] = []
+        installations = self.store.list_github_installations(actor_id, workspace_id)
+        for stored in installations:
+            if stored.get("state") != "active":
+                continue
+            installation_id = int(stored["installation_id"])
+            installation = await client.get_installation(installation_id)
+            if installation.get("suspended_at"):
+                self.store.set_github_installation_state(
+                    installation_id=installation_id,
+                    state="suspended",
+                )
+                continue
+            repositories = await client.list_repositories(installation_id)
+            self.store.upsert_github_installation(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                installation=installation,
+            )
+            self.store.sync_github_repositories(
+                workspace_id=workspace_id,
+                installation_id=installation_id,
+                repositories=repositories,
+            )
+            refreshed.append(installation_id)
+        result = self.status(actor_id, workspace_id)
+        result["refreshed_installation_ids"] = refreshed
+        return result
+
     def status(self, actor_id: str, workspace_id: str) -> dict[str, Any]:
         auto_bound = self._auto_bind_exact_matches(actor_id, workspace_id)
         return {
