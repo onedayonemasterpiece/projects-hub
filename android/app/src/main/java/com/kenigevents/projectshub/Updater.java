@@ -1,7 +1,9 @@
 package com.kenigevents.projectshub;
 
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.net.Uri;
 import android.provider.Settings;
 import android.util.Log;
@@ -26,6 +28,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 final class Updater {
     private static final String TAG = "ProjectsHubUpdate";
+    private static final String PREFS = "projects_hub_update";
+    private static final String PENDING_INSTALL = "pending_install_v1";
 
     interface Listener {
         void onAvailable(AvailableUpdate update);
@@ -50,13 +54,17 @@ final class Updater {
     private final Activity activity;
     private final ExecutorService executor;
     private final Listener listener;
+    private final SharedPreferences preferences;
     private final AtomicBoolean checking = new AtomicBoolean(false);
+    private final AtomicBoolean downloading = new AtomicBoolean(false);
     private volatile AvailableUpdate pendingInstall;
 
     Updater(Activity activity, ExecutorService executor, Listener listener) {
         this.activity = activity;
         this.executor = executor;
         this.listener = listener;
+        this.preferences = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        this.pendingInstall = restorePendingInstall();
     }
 
     void checkForUpdate() {
@@ -70,6 +78,13 @@ final class Updater {
                                 BuildConfig.VERSION_CODE,
                                 update.versionCode
                         )) {
+                            if (pendingInstall != null || downloading.get()) {
+                                Log.i(
+                                        TAG,
+                                        "update_offer_suppressed versionCode=" + update.versionCode
+                                );
+                                return;
+                            }
                             Log.i(TAG, "update_available versionCode=" + update.versionCode);
                             activity.runOnUiThread(() -> listener.onAvailable(update));
                         } else {
@@ -103,6 +118,12 @@ final class Updater {
     void downloadAndInstall(AvailableUpdate update) {
         if (!activity.getPackageManager().canRequestPackageInstalls()) {
             pendingInstall = update;
+            if (!persistPendingInstall(update)) {
+                pendingInstall = null;
+                Log.w(TAG, "pending_install_persist_failed versionCode=" + update.versionCode);
+                listener.onFailure("Не удалось подготовить обновление.");
+                return;
+            }
             Log.i(TAG, "install_permission_required versionCode=" + update.versionCode);
             Intent settings = new Intent(
                     Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
@@ -113,7 +134,12 @@ final class Updater {
             return;
         }
 
+        if (!downloading.compareAndSet(false, true)) {
+            Log.i(TAG, "update_download_already_running versionCode=" + update.versionCode);
+            return;
+        }
         pendingInstall = null;
+        clearPersistedPendingInstall();
         Log.i(TAG, "update_download_start versionCode=" + update.versionCode);
         listener.onMessage("Скачиваю обновление…");
         executor.execute(() -> {
@@ -130,15 +156,64 @@ final class Updater {
                 activity.runOnUiThread(() ->
                         listener.onFailure("Не удалось скачать или проверить обновление.")
                 );
+            } finally {
+                downloading.set(false);
             }
         });
     }
 
     void resumePendingInstall() {
         AvailableUpdate update = pendingInstall;
-        if (update != null && activity.getPackageManager().canRequestPackageInstalls()) {
-            downloadAndInstall(update);
+        if (update == null) {
+            update = restorePendingInstall();
+            pendingInstall = update;
         }
+        if (update == null) return;
+
+        if (!activity.getPackageManager().canRequestPackageInstalls()) {
+            Log.i(TAG, "resume_pending_permission_wait versionCode=" + update.versionCode);
+            return;
+        }
+        Log.i(TAG, "resume_pending_ready versionCode=" + update.versionCode);
+        downloadAndInstall(update);
+    }
+
+    private boolean persistPendingInstall(AvailableUpdate update) {
+        try {
+            String encoded = PendingUpdateState.encode(
+                    update.versionCode,
+                    update.versionName,
+                    update.apkUrl,
+                    update.sha256
+            );
+            return preferences.edit().putString(PENDING_INSTALL, encoded).commit();
+        } catch (RuntimeException failure) {
+            return false;
+        }
+    }
+
+    private AvailableUpdate restorePendingInstall() {
+        String encoded = preferences.getString(PENDING_INSTALL, null);
+        if (encoded == null) return null;
+
+        PendingUpdateState.Value value = PendingUpdateState.decode(encoded);
+        if (!PendingUpdateState.shouldResume(value, BuildConfig.VERSION_CODE)) {
+            clearPersistedPendingInstall();
+            Log.w(TAG, "pending_install_discarded");
+            return null;
+        }
+
+        Log.i(TAG, "pending_install_restored versionCode=" + value.versionCode);
+        return new AvailableUpdate(
+                value.versionCode,
+                value.versionName,
+                value.apkUrl,
+                value.sha256
+        );
+    }
+
+    private void clearPersistedPendingInstall() {
+        preferences.edit().remove(PENDING_INSTALL).apply();
     }
 
     private AvailableUpdate fetchLatestUpdate() throws Exception {
