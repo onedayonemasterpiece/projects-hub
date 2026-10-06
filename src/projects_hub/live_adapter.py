@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 from .analytics import AnalyticsService
 from .board import BoardService
+from .board_view_context import BoardViewContextStore
 from .device_commands import DeviceCommandService
 from .development import DevelopmentService
 from .github_connections import GitHubConnections
@@ -72,19 +73,22 @@ def _functions(
         {
             "name": "board_query",
             "description": (
-                "Search the current project's board by sticky text, normalized color name, "
-                "author display name or object id. For Russian color wording translate the "
-                "semantic color to one of yellow/pink/blue/green/orange/violet before search. "
-                "Returns current bounding boxes for reliable focus."
+                "Read board structure without mutating it. action=view_context returns the "
+                "current originating browser tab's visible/selected/focused objects using "
+                "server-authoritative text, revisions and bounding boxes. action=search "
+                "searches the whole authorized board by text, normalized color, author or id."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["search", "view_context"],
+                    },
                     "project_id": {"type": "string"},
                     "query": {"type": "string"},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 20},
                 },
-                "required": ["query"],
             },
         },
         {
@@ -686,7 +690,8 @@ SYSTEM_INSTRUCTION = """# ROLE
 # BOARD
 - Это та же самая Live-сессия Миры: доска не создаёт второй ASR/LLM, не управляет микрофоном и не сбрасывает разговор.
 - На «открой доску проекта» используй board_navigate action=open для текущего project; на «закрой доску» — action=close.
-- Для поиска сначала используй board_query. Если пользователь просит «покажи/наведи на этот стикер», затем board_navigate action=focus с фактическим object_id из свежего результата.
+- Для слов «этот», «здесь», «видимые», «выбранный», «рядом» сначала используй board_query action=view_context. Это структурный context текущей вкладки: server-authoritative text/revision/bbox для видимых/выбранных объектов. Если context unavailable/expired — не угадывай объект: используй search или уточни у пользователя.
+- Для поиска по всей доске используй board_query action=search. Если пользователь просит «покажи/наведи на этот стикер», затем board_navigate action=focus с фактическим object_id из свежего результата.
 - board_navigate action=focus возвращает только запрос клиенту на фокус. Не говори «уже показала», пока не уверена в клиентском результате; безопасная формулировка — «Навожу на него».
 - Изменения делай только через board_edit и объявляй сохранение только после receipt status=saved. Конфликт revision не перезаписывай вслепую: прочитай свежий объект/поиск и уточни действие.
 - Цвета sticky хранятся как yellow/pink/blue/green/orange/violet; русские формулировки пользователя семантически нормализуй к этим значениям при поиске/создании.
@@ -768,6 +773,7 @@ class ProjectsHubLiveAdapter:
         *,
         board: BoardService | None = None,
         board_hub: Any | None = None,
+        board_view_context: BoardViewContextStore | None = None,
         analytics: AnalyticsService | None = None,
         sharing: SharingService | None = None,
         device_commands: DeviceCommandService | None = None,
@@ -785,6 +791,7 @@ class ProjectsHubLiveAdapter:
         self.store = store
         self.board = board or BoardService(store)
         self.board_hub = board_hub
+        self.board_view_context = board_view_context or BoardViewContextStore(store, self.board)
         self.analytics = analytics or AnalyticsService(store, self.board)
         self.sharing = sharing or SharingService(store, self.board)
         self.device_commands = device_commands or DeviceCommandService(store)
@@ -839,6 +846,7 @@ class ProjectsHubLiveAdapter:
         client_source_id: str | None = None,
         client_version: str | None = None,
         client_timezone: str | None = None,
+        client_instance_id: str | None = None,
         backend_version: str | None = None,
         backend_release_sha: str | None = None,
         attempt_id: str | None = None,
@@ -938,6 +946,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "client_source_id": client_source_id,
                 "client_version": client_version,
                 "client_timezone": client_timezone,
+                "client_instance_id": client_instance_id,
                 "backend_version": backend_version,
                 "backend_release_sha": backend_release_sha,
                 "attempt_id": attempt_id,
@@ -955,6 +964,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "recovery_only": recovery_only,
                 "client_version": client_version,
                 "client_timezone": client_timezone,
+                "client_instance_id": client_instance_id,
                 "backend_version": backend_version,
                 "backend_release_sha": backend_release_sha,
                 "attempt_id": attempt_id,
@@ -1487,6 +1497,28 @@ explicit buffered replay is required instead of pretending the provisional text 
             )
 
             if name == "board_query":
+                action = str(args.get("action") or "search")
+                if action == "view_context":
+                    client_instance_id = str(state.get("client_instance_id") or "")
+                    if not client_instance_id:
+                        return {
+                            "status": "unavailable",
+                            "reason": "live_client_instance_unavailable",
+                            "project_id": project_id,
+                            "board_id": board["id"],
+                        }
+                    return self.board_view_context.resolve(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        conversation_id=conversation_id,
+                        project_id=project_id,
+                        client_instance_id=client_instance_id,
+                    )
+                if action != "search":
+                    raise StoreError("INVALID_ARGUMENT", "Unknown board query action")
+                query = str(args.get("query") or "").strip()
+                if not query:
+                    raise StoreError("INVALID_ARGUMENT", "query is required for board search")
                 try:
                     limit = int(args.get("limit", 12))
                 except (TypeError, ValueError):
@@ -1498,7 +1530,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                         actor_id,
                         workspace_id,
                         board["id"],
-                        str(args.get("query") or ""),
+                        query,
                         limit=limit,
                     ),
                 }
