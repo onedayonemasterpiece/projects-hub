@@ -23,6 +23,11 @@ class ResumeBridge:
 class ResumeDevCoveer:
     def __init__(self) -> None:
         self.calls: list[dict] = []
+        self.reads: list[str] = []
+        self.turn_id = "turn-before"
+        self.updated_at = 1
+        self.lose_next_continue_response = False
+        self.fail_reads = 0
 
     async def status(self):
         return {
@@ -47,9 +52,40 @@ class ResumeDevCoveer:
             }],
         }
 
+    async def read_task(self, task_id: str, **kwargs):
+        self.reads.append(task_id)
+        if self.fail_reads > 0:
+            self.fail_reads -= 1
+            raise RuntimeError("simulated readback interruption")
+        return {
+            "status": "completed",
+            "task": {
+                "taskId": task_id,
+                "taskReference": task_id,
+                "updatedAt": self.updated_at,
+            },
+            "latestTurn": {
+                "turnId": self.turn_id,
+                "status": "completed",
+                "finalResponse": "REVIEW_VERDICT: ACCEPTED",
+            },
+        }
+
     async def continue_codex_task(self, task_id: str, **kwargs):
         self.calls.append({"task_id": task_id, **kwargs})
-        return {"status": "running", "taskId": task_id}
+        self.updated_at += 1
+        self.turn_id = f"turn-after-{len(self.calls)}"
+        if self.lose_next_continue_response:
+            self.lose_next_continue_response = False
+            # The provider accepted the new turn, but the client loses the
+            # response and the first reconciliation read also fails.
+            self.fail_reads = 1
+            raise RuntimeError("simulated lost continue response")
+        return {
+            "status": "running",
+            "taskId": task_id,
+            "turnId": self.turn_id,
+        }
 
     async def close(self):
         return None
@@ -248,4 +284,130 @@ async def test_owner_resume_refuses_when_another_execution_is_active(tmp_path: P
     finally:
         await service.close()
         await development.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_lost_owner_resume_response_reconciles_across_new_command_without_second_dispatch(tmp_path: Path):
+    store, service, development, devcoveer, actor, workspace = make_state(tmp_path)
+    try:
+        question = next(
+            item for item in service.inbox(actor_id=actor, workspace_id=workspace)
+            if item["source_kind"] == "owner_development"
+        )
+        devcoveer.lose_next_continue_response = True
+
+        with pytest.raises(StoreError) as first:
+            await service.answer_owner_development_question(
+                actor_id=actor,
+                workspace_id=workspace,
+                question_id=question["id"],
+                command_id="owner.reply.lost1",
+                disposition="answer",
+                body="Сохраняем тот же scope и продолжаем существующее ревью.",
+            )
+        assert first.value.code == "DEVELOPMENT_RESUME_OUTCOME_UNKNOWN"
+        assert len(devcoveer.calls) == 1
+        with store._lock:
+            resume = store.db.execute(
+                """SELECT status,answer_text FROM development_owner_resumes
+                   WHERE execution_id='devexec_waiting'"""
+            ).fetchone()
+            execution = store.db.execute(
+                "SELECT status,phase FROM task_executions WHERE id='devexec_waiting'"
+            ).fetchone()
+        assert resume["status"] == "dispatch_unknown"
+        assert dict(execution) == {"status": "blocked", "phase": "needs_owner"}
+
+        # The UI may generate a new command id on retry. Provider readback
+        # proves that the previous continuation already created a new turn, so
+        # no second continue_task call is allowed.
+        retried = await service.answer_owner_development_question(
+            actor_id=actor,
+            workspace_id=workspace,
+            question_id=question["id"],
+            command_id="owner.reply.lost2",
+            disposition="answer",
+            body="Сохраняем тот же scope и продолжаем существующее ревью.",
+        )
+        assert retried["continuation"] == "resumed"
+        assert retried["execution"]["id"] == "devexec_waiting"
+        assert len(devcoveer.calls) == 1
+        with store._lock:
+            rows = store.db.execute(
+                """SELECT command_id,status FROM development_owner_resumes
+                   WHERE execution_id='devexec_waiting'"""
+            ).fetchall()
+        assert [(row["command_id"], row["status"]) for row in rows] == [
+            ("owner.reply.lost1", "applied")
+        ]
+    finally:
+        await service.close()
+        await development.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_background_reconciles_unknown_owner_resume_after_service_restart(tmp_path: Path):
+    store, service, development, devcoveer, actor, workspace = make_state(tmp_path)
+    replacement: DevelopmentService | None = None
+    try:
+        question = next(
+            item for item in service.inbox(actor_id=actor, workspace_id=workspace)
+            if item["source_kind"] == "owner_development"
+        )
+        devcoveer.lose_next_continue_response = True
+        with pytest.raises(StoreError) as first:
+            await service.answer_owner_development_question(
+                actor_id=actor,
+                workspace_id=workspace,
+                question_id=question["id"],
+                command_id="owner.reply.restart1",
+                disposition="answer",
+                body="Ответ принят; после рестарта продолжить тот же quality thread.",
+            )
+        assert first.value.code == "DEVELOPMENT_RESUME_OUTCOME_UNKNOWN"
+        assert len(devcoveer.calls) == 1
+
+        await development.close()
+        replacement = DevelopmentService(
+            store,
+            ReadinessService(store),
+            devcoveer=devcoveer,  # type: ignore[arg-type]
+        )
+        advanced = await replacement.advance_active_once()
+        assert advanced >= 1
+        with store._lock:
+            execution = store.db.execute(
+                """SELECT status,phase,quality_task_id,implementation_task_id
+                   FROM task_executions WHERE id='devexec_waiting'"""
+            ).fetchone()
+            resume = store.db.execute(
+                """SELECT status FROM development_owner_resumes
+                   WHERE execution_id='devexec_waiting'"""
+            ).fetchone()
+        assert execution["status"] == "running"
+        assert execution["phase"] == "reviewing"
+        assert execution["quality_task_id"] == "dvt_quality"
+        assert execution["implementation_task_id"] == "dvt_impl"
+        assert resume["status"] == "applied"
+        assert len(devcoveer.calls) == 1
+
+        # The collaboration worker synchronizes the accepted answer back to the
+        # common question object after development reconciliation.
+        service.development = replacement
+        service._sync_owner_development_questions()
+        synced = next(
+            item for item in service.inbox(actor_id=actor, workspace_id=workspace)
+            if item["id"] == question["id"]
+        )
+        assert synced["state"] == "resolved"
+        assert synced["disposition"] == "answer"
+        assert synced["answer_text"] == "Ответ принят; после рестарта продолжить тот же quality thread."
+    finally:
+        await service.close()
+        if replacement is not None:
+            await replacement.close()
+        else:
+            await development.close()
         store.close()
