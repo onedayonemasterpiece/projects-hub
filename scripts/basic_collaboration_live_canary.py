@@ -34,6 +34,14 @@ def _request(
 ) -> dict[str, Any]:
     data = None
     headers = {"Accept": "application/json"}
+    parsed_base = urllib.parse.urlsplit(base)
+    if (
+        method.upper() not in {"GET", "HEAD", "OPTIONS"}
+        and parsed_base.scheme.lower() == "https"
+        and parsed_base.netloc
+    ):
+        # Public acceptance calls emulate a browser same-origin mutation.
+        headers["Origin"] = f"{parsed_base.scheme.lower()}://{parsed_base.netloc}"
     if payload is not None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json"
@@ -65,6 +73,14 @@ def _request_status(
 ) -> int:
     data = None
     headers = {"Accept": "application/json"}
+    parsed_base = urllib.parse.urlsplit(base)
+    if (
+        method.upper() not in {"GET", "HEAD", "OPTIONS"}
+        and parsed_base.scheme.lower() == "https"
+        and parsed_base.netloc
+    ):
+        # Public acceptance calls emulate a browser same-origin mutation.
+        headers["Origin"] = f"{parsed_base.scheme.lower()}://{parsed_base.netloc}"
     if payload is not None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json"
