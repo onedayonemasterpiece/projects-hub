@@ -1,7 +1,8 @@
 .board-shell {
   position: fixed;
   inset: 0;
-  z-index: 28;
+  /* Full-screen board must stay above the global context island (z-index: 30). */
+  z-index: 40;
   display: grid;
   grid-template-rows: auto 1fr;
   pointer-events: none;
