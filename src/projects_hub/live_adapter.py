@@ -12,6 +12,7 @@ from .device_commands import DeviceCommandService
 from .development import DevelopmentService
 from .github_connections import GitHubConnections
 from .collaboration import CollaborationService
+from .collaboration_analysis import CollaborationAnalysisService
 from .expert_reviews import (
     ExpertReviewAccessError,
     ExpertReviewAdapter,
@@ -356,6 +357,108 @@ def _functions(
             },
         ]
     )
+    functions.extend(
+        [
+            {
+                "name": "project_participants_list",
+                "description": (
+                    "List participants who currently have an explicit grant to the project, "
+                    "with actor ids and roles. Use this before addressing a collaboration question."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {"project_id": {"type": "string"}},
+                    "required": ["project_id"],
+                },
+            },
+            {
+                "name": "project_note_analyze",
+                "description": (
+                    "Start provided-context-only strong analysis of one shared project note and "
+                    "its current linked replies. The analysis may produce a small addressed package "
+                    "of typed questions; it cannot launch development."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "project_id": {"type": "string"},
+                        "note_id": {"type": "string"},
+                        "addressed_to_actor_id": {"type": "string"},
+                        "model": {"type": "string", "enum": ["kimi_k3", "deepseek"]},
+                        "purpose": {
+                            "type": "string",
+                            "enum": ["requirements", "edge_cases", "architecture", "code_review", "ideas"],
+                        },
+                        "question": {"type": "string", "maxLength": 4000},
+                    },
+                    "required": [
+                        "project_id",
+                        "note_id",
+                        "addressed_to_actor_id",
+                        "question",
+                    ],
+                },
+            },
+            {
+                "name": "collaboration_questions_inbox",
+                "description": (
+                    "Read durable questions addressed specifically to the current actor, including "
+                    "blocking flag, shared context and prior disposition."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 50}
+                    },
+                },
+            },
+            {
+                "name": "collaboration_questions_answer",
+                "description": (
+                    "Answer one or several questions from the same analysis in one semantic turn. "
+                    "Each item must use answer, unknown, skip or later. Reading a question never "
+                    "counts as an answer."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "analysis_id": {"type": "string"},
+                        "responses": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 6,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "question_id": {"type": "string"},
+                                    "disposition": {
+                                        "type": "string",
+                                        "enum": ["answer", "unknown", "skip", "later"],
+                                    },
+                                    "body": {"type": "string", "maxLength": 12000},
+                                    "deferred_until_ms": {"type": "integer"},
+                                },
+                                "required": ["question_id", "disposition"],
+                            },
+                        },
+                    },
+                    "required": ["analysis_id", "responses"],
+                },
+            },
+            {
+                "name": "collaboration_continuation_status",
+                "description": (
+                    "Read one durable collaboration continuation. This is read-only and never "
+                    "advances the worker."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {"job_id": {"type": "string"}},
+                    "required": ["job_id"],
+                },
+            },
+        ]
+    )
     if regional_knowledge:
         functions.append(
             {
@@ -628,6 +731,11 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Ответ на заметку делай через project_note_reply; он остаётся связанным с note_id и виден участникам проекта.
 - В общем приветствии/«что нового» сначала используй collaboration_personal_brief: лично адресованное важнее общего. Общие новости предлагай как необязательное продолжение.
 - Не создавай отдельный чат на проект: focus проекта меняется внутри одной личной timeline.
+- Перед адресованным вопросом прочитай project_participants_list и используй реальный actor_id/role, а не свободный текст роли.
+- Для сильного анализа заметки используй project_note_analyze: он получает только frozen note/reply evidence через provided-only bridge. Не превращай analysis в development.
+- Когда вопросы адресованы текущему человеку, collaboration_questions_inbox даёт их общий контекст. Пользователь может одной репликой ответить на несколько; передай их одним collaboration_questions_answer.
+- answer, unknown, skip и later — разные состояния. Blocking continuation запускается только когда все blocking questions получили disposition=answer. later сохраняет отложенную зависимость; unknown/skip не выдумывают решение и не снимают blocker.
+- Простое чтение статуса/вопроса никогда не продвигает worker.
 
 # MEMORY
 - Для явного «запомни/сохрани» и явно долговечной информации используй memory_commit_voice_source.
@@ -694,6 +802,7 @@ class ProjectsHubLiveAdapter:
         development: DevelopmentService | None = None,
         github_connections: GitHubConnections | None = None,
         collaboration: CollaborationService | None = None,
+        collaboration_analysis: CollaborationAnalysisService | None = None,
         expert_reviews_factory: (
             Callable[[str, str], ExpertReviewAdapter | None] | None
         ) = None,
@@ -708,6 +817,7 @@ class ProjectsHubLiveAdapter:
         self.development = development or DevelopmentService(store, self.readiness)
         self.github_connections = github_connections
         self.collaboration = collaboration
+        self.collaboration_analysis = collaboration_analysis
         self.expert_reviews_factory = expert_reviews_factory
         self.regional_knowledge_factory = regional_knowledge_factory
 
@@ -1359,6 +1469,67 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "backend_version": state.get("backend_version"),
                 "backend_release_sha": state.get("backend_release_sha"),
             }
+
+        if name in {
+            "project_participants_list",
+            "project_note_analyze",
+            "collaboration_questions_inbox",
+            "collaboration_questions_answer",
+            "collaboration_continuation_status",
+        }:
+            if self.collaboration is None or self.collaboration_analysis is None:
+                raise StoreError("TOOL_NOT_AVAILABLE", "Project collaboration analysis is unavailable")
+            if name == "project_participants_list":
+                return {
+                    "participants": self.collaboration.list_participants(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        project_id=str(args.get("project_id") or ""),
+                    )
+                }
+            if name == "project_note_analyze":
+                command_id, _args_sha = self._command_id(session, name, args)
+                return await self.collaboration_analysis.start_analysis(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    project_id=str(args.get("project_id") or ""),
+                    note_id=str(args.get("note_id") or ""),
+                    addressed_to_actor_id=str(args.get("addressed_to_actor_id") or ""),
+                    command_id=command_id,
+                    model=str(args.get("model") or "kimi_k3"),
+                    purpose=str(args.get("purpose") or "requirements"),
+                    question=str(args.get("question") or ""),
+                )
+            if name == "collaboration_questions_inbox":
+                try:
+                    limit = int(args.get("limit", 30))
+                except (TypeError, ValueError):
+                    limit = 30
+                return {
+                    "questions": self.collaboration_analysis.inbox(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        limit=limit,
+                    )
+                }
+            if name == "collaboration_questions_answer":
+                raw = args.get("responses")
+                if not isinstance(raw, list):
+                    raise StoreError("INVALID_ARGUMENT", "responses must be a list")
+                command_id, _args_sha = self._command_id(session, name, args)
+                return self.collaboration_analysis.answer_questions(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    analysis_id=str(args.get("analysis_id") or ""),
+                    command_id=command_id,
+                    responses=[dict(item) for item in raw if isinstance(item, dict)],
+                )
+            if name == "collaboration_continuation_status":
+                return self.collaboration_analysis.job_status(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    job_id=str(args.get("job_id") or ""),
+                )
 
         if name.startswith("project_note") or name == "project_notes_list" or name == "collaboration_personal_brief":
             if self.collaboration is None:
