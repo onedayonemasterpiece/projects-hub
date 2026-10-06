@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./styles.css";
 import "./collaboration.css";
+import "./collaboration-questions.css";
 
 if ("serviceWorker" in navigator && import.meta.env.PROD) {
   let reloadingForWorker = false;
