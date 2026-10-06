@@ -7,11 +7,12 @@ const source=fs.readFileSync(new URL('../src/App.tsx',import.meta.url),'utf8');
 test('real App timing callback distinguishes admitted speech, queued end and output without inventing transcript',()=>{
   const calls=[];
   const setters=['setSpeechActive','setSpeechPending','setPlaybackProblem','setInterimInputTranscript','setInputTranscriptSeen'];
-  const names=[...setters,'speechStartsNewUserBubble','reserveUserVoiceBubble','settleCurrentVoiceBubble','userTurnBoundaryPendingRef','userTranscriptIndex','turnHasInput','userTurnAwaitingFinalRef'];
+  const names=[...setters,'speechStartsNewUserBubble','reserveUserVoiceBubble','settleCurrentVoiceBubble','userTurnBoundaryPendingRef','userTranscriptIndex','turnHasInput','userTurnAwaitingFinalRef','activeIdentity'];
   const refs=[{current:true},{current:2},{current:true},{current:true}];
+  const activeIdentity={current:true};
   const reserveUserVoiceBubble=()=>calls.push(['reserveUserVoiceBubble',true]);
   const settleCurrentVoiceBubble=()=>calls.push(['settleCurrentVoiceBubble',true]);
-  const values=[...setters.map(name=>value=>calls.push([name,value])),speechStartsNewUserBubble,reserveUserVoiceBubble,settleCurrentVoiceBubble,...refs];
+  const values=[...setters.map(name=>value=>calls.push([name,value])),speechStartsNewUserBubble,reserveUserVoiceBubble,settleCurrentVoiceBubble,...refs,activeIdentity];
   const body=source.match(/onTiming: event => \{([\s\S]*?)\n      \},\n      onState:/)?.[1];
   assert.ok(body,'must exercise the actual App callback');
   const callback=new Function(...names,`return event=>{${body}}`)(...values);
@@ -27,6 +28,11 @@ test('real App timing callback distinguishes admitted speech, queued end and out
   calls.length=0;callback('audio_scheduled');
   assert.deepEqual(calls,[['setPlaybackProblem',null]]);
   calls.length=0;callback('audio_queue');assert.deepEqual(calls,[]);
+  activeIdentity.current=false;
+  const before=refs.map(ref=>({...ref}));
+  for(const event of ['speech_start','speech_end','first_output_audio','audio_scheduled','audio_queue']) callback(event);
+  assert.deepEqual(calls,[],'old identity must not update UI or reserve/settle a turn');
+  assert.deepEqual(refs,before,'old identity must not modify capture/transcript refs');
 });
 
 test('live feedback is mounted before the first user transcript',()=>{

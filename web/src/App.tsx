@@ -365,10 +365,22 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
   }, [boot]);
 
   const refreshPendingSources = useCallback(async () => {
-    if (!boot) return;
+    if (!boot || !activeIdentity.current) return;
+    const current = conversationRef.current;
+    if (!current || current.actor_id !== boot.actor.id || current.workspace_id !== boot.workspace.id) {
+      setPendingSources([]);
+      return;
+    }
     const sources = await listPendingVoiceSources(boot.workspace.id);
-    setPendingSources(sources.filter(source => source.conversation_id === conversationRef.current?.id));
+    if (!activeIdentity.current || themeRef.current.actor !== boot.actor.id
+        || conversationRef.current?.id !== current.id) return;
+    setPendingSources(sources.filter(source => source.conversation_id === current.id));
   }, [boot]);
+
+  useEffect(() => {
+    if (!boot || !conversation) return;
+    void refreshPendingSources().catch(() => {});
+  }, [boot, conversation?.id, refreshPendingSources]);
 
   const refreshGitHub = useCallback(async () => {
     if (!boot || boot.role !== "owner") {

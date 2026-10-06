@@ -20,7 +20,7 @@ try {
     const acks=[];
     let delayedMemory=null, releaseMemory=null, delayedFailure=null, releaseFailure=null;
     let sourceKnown=false, sourceStatus='live', replayFrames=0, replayStops=0, replayEnded=null, replayInputDone=null;
-    let replayMode=false;
+    let replayMode=false, delayedConversation=null, releaseConversation=null;
     const boot=()=>({actor:{id:actor,display_name:actor},workspace:{id:'W',name:'Projects'},role:'member',projects:[{id:'P',name:'Projects Hub',status:'active'}],preferences:saved});
     const conversation=()=>({id:'C'+actor,actor_id:actor,workspace_id:'W',focus_project_id:null,focus_project_name:null});
     await page.addInitScript(()=>{
@@ -70,6 +70,10 @@ try {
         await route.fulfill({status:401,json:{detail:'AUTH_REQUIRED'}});return;
       } else if(path.startsWith('/api/conversations/')) {
         if(path!=='/api/conversations/C'+actor) {await route.fulfill({status:404,json:{detail:'NOT_FOUND'}});return;}
+        if(delayedConversation) {
+          delayedConversation();delayedConversation=null;
+          await new Promise(resolve=>{releaseConversation=resolve;});
+        }
         payload=conversation();
       } else if(path.endsWith('/sessions')) {
         sessionStarts++;
@@ -167,8 +171,15 @@ try {
       const sink=storage.createLocalPersistSink(source.id);
       await sink.persist({pcm:new Int16Array(320),sample_rate:16000,captured_at_ms:Date.now()});
       await sink.drain();await storage.sealLocalVoiceSource(source.id);
-      window.dispatchEvent(new Event('online'));return source.id;
+      return source.id;
     });
+    // IndexedDB is ready while server restoration is deliberately delayed.
+    const conversationRequested=new Promise(resolve=>{delayedConversation=resolve;});
+    await page.reload({waitUntil:'domcontentloaded'});
+    await conversationRequested;
+    await page.waitForTimeout(150);
+    releaseConversation();
+    await page.getByRole('button',{name:'Передать запись',exact:true}).waitFor();
     replayEnded=new Promise(resolve=>{replayInputDone=resolve;});
     await page.getByRole('button',{name:'Передать запись',exact:true}).click();
     await replayEnded;
