@@ -109,6 +109,14 @@ class DevelopmentService:
                 );
                 CREATE INDEX IF NOT EXISTS task_execution_stages_execution_idx
                     ON task_execution_stages(execution_id,created_at_ms);
+                CREATE TABLE IF NOT EXISTS development_owner_resumes(
+                    execution_id TEXT NOT NULL REFERENCES task_executions(id),
+                    command_id TEXT NOT NULL,
+                    answer_sha256 TEXT NOT NULL,
+                    answer_text TEXT NOT NULL,
+                    created_at_ms INTEGER NOT NULL,
+                    PRIMARY KEY(execution_id, command_id)
+                );
                 """
             )
             columns = {
@@ -1441,6 +1449,134 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
         public = self._execution_public(row)
         public["update_check_recommended"] = public["status"] == "completed"
         return {"execution": public}
+
+    async def resume_needs_owner(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        execution_id: str,
+        command_id: str,
+        answer: str,
+    ) -> dict[str, Any]:
+        """Resume a previously authorized run without creating a new execution."""
+
+        self._authorize_owner(actor_id, workspace_id)
+        clean_command = str(command_id or "").strip()
+        clean_answer = str(answer or "").strip()
+        if not clean_command or len(clean_command) > 160:
+            raise StoreError("INVALID_ARGUMENT", "Owner resume command_id is invalid")
+        if not clean_answer or len(clean_answer) > 12000:
+            raise StoreError("INVALID_ARGUMENT", "Owner resume answer is invalid")
+        answer_sha = hashlib.sha256(clean_answer.encode("utf-8")).hexdigest()
+
+        async with self._transition_guard():
+            row = self._execution_row(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                execution_id=execution_id,
+            )
+            with self.store._lock:
+                existing = self.store.db.execute(
+                    """SELECT answer_sha256 FROM development_owner_resumes
+                       WHERE execution_id=? AND command_id=?""",
+                    (execution_id, clean_command),
+                ).fetchone()
+            if existing:
+                if existing["answer_sha256"] != answer_sha:
+                    raise StoreError(
+                        "DEVELOPMENT_RESUME_CONFLICT",
+                        "Owner resume command was already used with another answer",
+                    )
+                public = self._execution_public(row)
+                public["update_check_recommended"] = public["status"] == "completed"
+                return {"execution": public, "resumed": row["status"] == "running"}
+
+            if row["status"] != "blocked" or row["phase"] != "needs_owner":
+                raise StoreError(
+                    "DEVELOPMENT_NOT_WAITING_FOR_OWNER",
+                    "Development execution is not waiting for an owner answer",
+                )
+            if row["error_code"] not in {"REVIEW_REWORK_LIMIT", "REVIEW_VERDICT_MISSING"}:
+                raise StoreError(
+                    "DEVELOPMENT_OWNER_RESUME_UNSUPPORTED",
+                    "This owner blocker cannot be safely resumed from a conversation answer",
+                )
+
+            quality_task_id = str(row["quality_task_id"] or "").strip()
+            if not quality_task_id:
+                raise StoreError("DEVELOPMENT_STAGE_MISSING", "Quality thread is unavailable")
+            remaining = await self._require_stage_capacity(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                model=QUALITY_MODEL,
+                reasoning_effort=QUALITY_EFFORT,
+            )
+            cycle = int(row["review_cycle"] or 0)
+            await self.devcoveer.continue_codex_task(
+                quality_task_id,
+                project=str(row["project_hint"]),
+                prompt=f"""The platform owner answered a durable needs-owner question for the
+already-authorized execution {execution_id}. Preserve the existing specification,
+task_ids, project target and implementation scope. Do not start a new development
+task and do not broaden scope.
+
+Previous blocker: {row['error_code']}
+Previous review summary:
+{str(row['result_summary'] or '')[:8000]}
+
+Owner answer:
+{clean_answer}
+
+Re-evaluate the existing implementation using this answer. If the implementation
+can now be accepted, end with exactly:
+REVIEW_VERDICT: ACCEPTED
+If material implementation changes are still required, end with exactly:
+REVIEW_VERDICT: REWORK_REQUIRED
+Before the verdict give concise findings.""",
+                access="read",
+                model=QUALITY_MODEL,
+                reasoning_effort=QUALITY_EFFORT,
+            )
+            self._record_stage(
+                execution_id=execution_id,
+                stage="review",
+                cycle=cycle,
+                model=QUALITY_MODEL,
+                reasoning_effort=QUALITY_EFFORT,
+                devcoveer_task_id=quality_task_id,
+            )
+            now = _now_ms()
+            with self.store._lock:
+                self.store.db.execute("BEGIN IMMEDIATE")
+                try:
+                    self.store.db.execute(
+                        """INSERT INTO development_owner_resumes(
+                               execution_id,command_id,answer_sha256,answer_text,created_at_ms)
+                           VALUES(?,?,?,?,?)""",
+                        (execution_id, clean_command, answer_sha, clean_answer, now),
+                    )
+                    self.store.db.execute(
+                        """UPDATE task_executions SET
+                               status='running',phase='reviewing',
+                               phase_detail='Ответ владельца принят; сильная модель повторяет ревью',
+                               devcoveer_task_id=?,quota_remaining_percent=?,
+                               error_code=NULL,finished_at_ms=NULL,updated_at_ms=?
+                           WHERE id=?""",
+                        (quality_task_id, remaining, now, execution_id),
+                    )
+                    self.store.db.execute("COMMIT")
+                except Exception:
+                    self.store.db.execute("ROLLBACK")
+                    raise
+            current = self._execution_row(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                execution_id=execution_id,
+            )
+            public = self._execution_public(current)
+            public["update_check_recommended"] = False
+            return {"execution": public, "resumed": True}
 
     async def advance_active_once(self) -> int:
         """Advance durable executions independently of any client/status read."""
