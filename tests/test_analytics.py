@@ -108,6 +108,7 @@ def _sticky(
         object_id=object_id,
         expected_object_revision=None,
         payload={"type": "sticky", "text": text, "style": {"color": "yellow"}},
+        execution_origin="mira",
     )
 
 
@@ -191,6 +192,7 @@ def test_single_analysis_is_frozen_idempotent_and_provided_context_only(tmp_path
             object_id="obj_analysis_a",
             expected_object_revision=created["object_revision"],
             payload={"text": "Changed after the frozen analysis input"},
+            execution_origin="mira",
         )
         changed = service.get_run(
             actor_id=actor, workspace_id=workspace, run_id=run["id"]
