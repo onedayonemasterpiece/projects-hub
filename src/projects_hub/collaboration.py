@@ -93,6 +93,15 @@ class CollaborationService:
                 );
                 CREATE INDEX IF NOT EXISTS collaboration_events_workspace_idx
                     ON collaboration_events(workspace_id, id DESC);
+                CREATE TABLE IF NOT EXISTS collaboration_attention_state(
+                    actor_id TEXT NOT NULL REFERENCES actors(id),
+                    workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+                    personal_cursor INTEGER NOT NULL DEFAULT 0,
+                    general_cursor INTEGER NOT NULL DEFAULT 0,
+                    general_news_enabled INTEGER NOT NULL DEFAULT 1 CHECK(general_news_enabled IN (0,1)),
+                    updated_at_ms INTEGER NOT NULL,
+                    PRIMARY KEY(actor_id,workspace_id)
+                );
                 """
             )
 
@@ -495,25 +504,152 @@ class CollaborationService:
             for row in rows
         ]
 
+    def _attention_state(self, actor_id: str, workspace_id: str) -> dict[str, Any]:
+        self.store._membership(actor_id, workspace_id)
+        with self.store._lock:
+            row = self.store.db.execute(
+                """SELECT personal_cursor,general_cursor,general_news_enabled,updated_at_ms
+                   FROM collaboration_attention_state
+                   WHERE actor_id=? AND workspace_id=?""",
+                (actor_id, workspace_id),
+            ).fetchone()
+            if row:
+                return {
+                    "personal_cursor": int(row["personal_cursor"]),
+                    "general_cursor": int(row["general_cursor"]),
+                    "general_news_enabled": bool(row["general_news_enabled"]),
+                    "updated_at_ms": int(row["updated_at_ms"]),
+                }
+            now = _now_ms()
+            self.store.db.execute(
+                """INSERT INTO collaboration_attention_state(
+                       actor_id,workspace_id,personal_cursor,general_cursor,
+                       general_news_enabled,updated_at_ms)
+                   VALUES(?,?,0,0,1,?)""",
+                (actor_id, workspace_id, now),
+            )
+            return {
+                "personal_cursor": 0,
+                "general_cursor": 0,
+                "general_news_enabled": True,
+                "updated_at_ms": now,
+            }
+
     def personal_brief(
         self, *, actor_id: str, workspace_id: str, limit: int = 12
     ) -> dict[str, Any]:
-        events = self.timeline(
-            actor_id=actor_id, workspace_id=workspace_id, after_id=0, limit=max(limit * 4, 24)
-        )
-        personal = [
-            item for item in reversed(events)
-            if item["addressed_to_actor_id"] == actor_id
-        ][:limit]
-        general = [
-            item for item in reversed(events)
-            if item["addressed_to_actor_id"] is None and item["actor_id"] != actor_id
-        ][:limit]
+        state = self._attention_state(actor_id, workspace_id)
+        with self.store._lock:
+            personal_rows = self.store.db.execute(
+                """SELECT e.*,p.name AS project_name
+                   FROM collaboration_events e
+                   JOIN projects p ON p.id=e.project_id
+                   JOIN project_grants g ON g.project_id=e.project_id AND g.actor_id=?
+                   WHERE e.workspace_id=? AND e.id>?
+                     AND e.addressed_to_actor_id=?
+                     AND g.revoked_at_ms IS NULL
+                   ORDER BY e.id ASC LIMIT ?""",
+                (
+                    actor_id,
+                    workspace_id,
+                    state["personal_cursor"],
+                    actor_id,
+                    max(1, min(int(limit), 50)),
+                ),
+            ).fetchall()
+            general_rows = self.store.db.execute(
+                """SELECT e.*,p.name AS project_name
+                   FROM collaboration_events e
+                   JOIN projects p ON p.id=e.project_id
+                   JOIN project_grants g ON g.project_id=e.project_id AND g.actor_id=?
+                   WHERE e.workspace_id=? AND e.id>?
+                     AND e.addressed_to_actor_id IS NULL
+                     AND e.actor_id!=?
+                     AND g.revoked_at_ms IS NULL
+                   ORDER BY e.id ASC LIMIT ?""",
+                (
+                    actor_id,
+                    workspace_id,
+                    state["general_cursor"],
+                    actor_id,
+                    max(1, min(int(limit), 50)),
+                ),
+            ).fetchall()
+
+        def public(row: Any) -> dict[str, Any]:
+            return {
+                "id": int(row["id"]),
+                "project_id": row["project_id"],
+                "project_name": row["project_name"],
+                "actor_id": row["actor_id"],
+                "kind": row["kind"],
+                "object_kind": row["object_kind"],
+                "object_id": row["object_id"],
+                "parent_object_id": row["parent_object_id"],
+                "addressed_to_actor_id": row["addressed_to_actor_id"],
+                "summary": row["summary"],
+                "created_at_ms": int(row["created_at_ms"]),
+            }
+
+        personal = [public(row) for row in personal_rows]
+        general = [public(row) for row in general_rows]
+        enabled = bool(state["general_news_enabled"])
         return {
             "personal": personal,
-            "general_available": bool(general),
-            "general_count": len(general),
-            "general_preview": general[:3],
+            "personal_unread_count": len(personal),
+            "personal_through_id": personal[-1]["id"] if personal else state["personal_cursor"],
+            "general_available": enabled and bool(general),
+            "general_count": len(general) if enabled else 0,
+            "general_preview": general[:3] if enabled else [],
+            "general_through_id": general[-1]["id"] if general else state["general_cursor"],
+            "general_news_enabled": enabled,
+        }
+
+    def mark_brief_seen(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        personal_through_id: int | None = None,
+        general_through_id: int | None = None,
+    ) -> dict[str, Any]:
+        state = self._attention_state(actor_id, workspace_id)
+        personal = max(state["personal_cursor"], int(personal_through_id or 0))
+        general = max(state["general_cursor"], int(general_through_id or 0))
+        now = _now_ms()
+        with self.store._lock:
+            self.store.db.execute(
+                """UPDATE collaboration_attention_state
+                   SET personal_cursor=?,general_cursor=?,updated_at_ms=?
+                   WHERE actor_id=? AND workspace_id=?""",
+                (personal, general, now, actor_id, workspace_id),
+            )
+        return {
+            "personal_cursor": personal,
+            "general_cursor": general,
+            "general_news_enabled": state["general_news_enabled"],
+        }
+
+    def set_general_news(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        enabled: bool,
+    ) -> dict[str, Any]:
+        state = self._attention_state(actor_id, workspace_id)
+        now = _now_ms()
+        with self.store._lock:
+            self.store.db.execute(
+                """UPDATE collaboration_attention_state
+                   SET general_news_enabled=?,updated_at_ms=?
+                   WHERE actor_id=? AND workspace_id=?""",
+                (int(bool(enabled)), now, actor_id, workspace_id),
+            )
+        return {
+            "personal_cursor": state["personal_cursor"],
+            "general_cursor": state["general_cursor"],
+            "general_news_enabled": bool(enabled),
         }
 
     def list_participants(
