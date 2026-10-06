@@ -171,6 +171,7 @@ def _http_for_code(code: str) -> int:
         "LIVE_TRANSPORT_MISMATCH",
         "LIVE_SOCKET_BUSY",
         "NOTE_NOT_READY",
+        "NOTE_AUDIENCE_REPOSITORY_MISMATCH",
         "GITHUB_PROJECT_DOCS_REQUIRED",
         "GITHUB_WRITE_CONFLICT",
         "COLLABORATION_COMMAND_CONFLICT",
