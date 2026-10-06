@@ -553,3 +553,85 @@ async def test_project_note_refuses_public_repository_before_processing(tmp_path
     finally:
         await service.close()
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_public_project_docs_blocks_before_model_and_preserves_intent_for_retry(tmp_path: Path):
+    store, service, github, processor, owner, project_id = _bound_store(tmp_path)
+    actor = owner["actor"]["id"]
+    workspace = owner["workspace"]["id"]
+    try:
+        with store._lock:
+            store.db.execute(
+                """UPDATE repository_connections
+                   SET private=0
+                   WHERE workspace_id=? AND repository_id=?""",
+                (workspace, 501),
+            )
+
+        with pytest.raises(StoreError) as exc:
+            await service.create_note(
+                actor_id=actor,
+                workspace_id=workspace,
+                project_id=project_id,
+                command_id="cmd.note.public-block",
+                title="Private project note",
+                body="Этот исходный текст нельзя публиковать в public repository.",
+            )
+        assert exc.value.code == "NOTE_AUDIENCE_REPOSITORY_MISMATCH"
+        assert processor.calls == []
+        assert github.write_count == 0
+
+        with store._lock:
+            intent = store.db.execute(
+                """SELECT * FROM project_note_intents
+                   WHERE author_actor_id=? AND project_id=? AND command_id=?""",
+                (actor, project_id, "cmd.note.public-block"),
+            ).fetchone()
+            materialized = store.db.execute(
+                "SELECT * FROM project_notes WHERE id=?",
+                (intent["id"],),
+            ).fetchone()
+        assert intent is not None
+        assert intent["source_text"] == "Этот исходный текст нельзя публиковать в public repository."
+        assert intent["audience"] == "project"
+        assert intent["status"] == "blocked"
+        assert intent["error_code"] == "NOTE_AUDIENCE_REPOSITORY_MISMATCH"
+        assert materialized is None
+
+        # Fix only the repository visibility/configuration and replay the same
+        # semantic command. The durable intent is reused; no second note exists.
+        with store._lock:
+            store.db.execute(
+                """UPDATE repository_connections
+                   SET private=1
+                   WHERE workspace_id=? AND repository_id=?""",
+                (workspace, 501),
+            )
+        ready = await service.create_note(
+            actor_id=actor,
+            workspace_id=workspace,
+            project_id=project_id,
+            command_id="cmd.note.public-block",
+            title="Private project note",
+            body="Этот исходный текст нельзя публиковать в public repository.",
+        )
+        assert ready["id"] == intent["id"]
+        assert ready["audience"] == "project"
+        assert ready["status"] == "ready"
+        assert len(processor.calls) == 1
+        assert github.write_count == 1
+        with store._lock:
+            assert store.db.execute(
+                """SELECT COUNT(*) AS n FROM project_note_intents
+                   WHERE author_actor_id=? AND project_id=? AND command_id=?""",
+                (actor, project_id, "cmd.note.public-block"),
+            ).fetchone()["n"] == 1
+            assert store.db.execute(
+                """SELECT COUNT(*) AS n FROM project_notes
+                   WHERE author_actor_id=? AND project_id=? AND command_id=?""",
+                (actor, project_id, "cmd.note.public-block"),
+            ).fetchone()["n"] == 1
+    finally:
+        await service.close()
+        store.close()
