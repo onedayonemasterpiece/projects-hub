@@ -516,6 +516,37 @@ class CollaborationService:
             "general_preview": general[:3],
         }
 
+    def list_participants(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        project_id: str,
+    ) -> list[dict[str, Any]]:
+        self.store.project_access(actor_id, workspace_id, project_id)
+        with self.store._lock:
+            rows = self.store.db.execute(
+                """SELECT a.id,a.display_name,g.role,g.can_analyze,g.can_manage_share
+                   FROM project_grants g
+                   JOIN actors a ON a.id=g.actor_id
+                   JOIN projects p ON p.id=g.project_id
+                   WHERE g.project_id=? AND p.workspace_id=?
+                     AND g.revoked_at_ms IS NULL
+                   ORDER BY CASE g.role WHEN 'owner' THEN 0 WHEN 'editor' THEN 1 ELSE 2 END,
+                            a.display_name,a.id""",
+                (project_id, workspace_id),
+            ).fetchall()
+        return [
+            {
+                "actor_id": row["id"],
+                "display_name": row["display_name"],
+                "role": row["role"],
+                "can_analyze": bool(row["can_analyze"]),
+                "can_manage_share": bool(row["can_manage_share"]),
+            }
+            for row in rows
+        ]
+
     def invite_participant(
         self,
         *,
