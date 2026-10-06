@@ -138,6 +138,41 @@ async def test_start_task_remains_explicit_native_codex_write(
     ]
 
 
+
+@pytest.mark.asyncio
+async def test_start_task_can_be_explicit_native_codex_read():
+    client = DevCoveerClient(command="/tmp/not-used")
+    captured: list[tuple[str, dict]] = []
+
+    async def fake_call(name: str, arguments: dict):
+        captured.append((name, dict(arguments)))
+        return {"status": "running", "taskId": "dvt_read"}
+
+    client._call = fake_call  # type: ignore[method-assign]
+    result = await client.start_codex_task(
+        project="projects-hub-owner",
+        prompt="review only",
+        model="gpt-6-astra",
+        reasoning_effort="high",
+        access="read",
+    )
+
+    assert result["taskId"] == "dvt_read"
+    assert captured == [
+        (
+            "start_task",
+            {
+                "project": "projects-hub-owner",
+                "prompt": "review only",
+                "access": "read",
+                "provider": "codex",
+                "model": "gpt-6-astra",
+                "reasoning_effort": "high",
+            },
+        )
+    ]
+
+
 def test_command_uses_production_env_without_overriding_explicit_command(
     monkeypatch: pytest.MonkeyPatch,
 ):

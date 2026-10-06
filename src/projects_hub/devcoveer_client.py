@@ -177,13 +177,14 @@ class DevCoveerClient:
         prompt: str,
         model: str,
         reasoning_effort: str,
+        access: str = "write",
     ) -> dict[str, Any]:
         return await self._call(
             "start_task",
             {
                 "project": project,
                 "prompt": prompt,
-                "access": "write",
+                "access": access,
                 "provider": "codex",
                 "model": model,
                 "reasoning_effort": reasoning_effort,
