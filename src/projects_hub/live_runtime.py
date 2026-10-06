@@ -6,6 +6,7 @@ from typing import Any, Callable
 
 from .analytics import AnalyticsService
 from .board import BoardService
+from .board_view_context import BoardViewContextStore
 from .device_commands import DeviceCommandService
 from .development import DevelopmentService
 from .expert_reviews import ExpertReviewAdapter
@@ -57,6 +58,7 @@ def build_live_host(
     environment: dict[str, str] | None = None,
     board: BoardService | None = None,
     board_hub: Any | None = None,
+    board_view_context: BoardViewContextStore | None = None,
     analytics: AnalyticsService | None = None,
     sharing: SharingService | None = None,
     device_commands: DeviceCommandService | None = None,
@@ -82,6 +84,7 @@ def build_live_host(
     max_sessions = _live_max_sessions(env)
     max_sessions_per_actor = _live_max_sessions_per_actor(env, max_sessions)
     board = board or BoardService(store)
+    board_view_context = board_view_context or BoardViewContextStore(store, board)
     analytics = analytics or AnalyticsService(store, board)
     sharing = sharing or SharingService(store, board)
     device_commands = device_commands or DeviceCommandService(store)
@@ -134,6 +137,7 @@ def build_live_host(
             store,
             board=board,
             board_hub=board_hub,
+            board_view_context=board_view_context,
             analytics=analytics,
             sharing=sharing,
             device_commands=device_commands,
