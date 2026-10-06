@@ -114,6 +114,7 @@ class DevelopmentService:
                     command_id TEXT NOT NULL,
                     answer_sha256 TEXT NOT NULL,
                     answer_text TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'dispatching',
                     created_at_ms INTEGER NOT NULL,
                     PRIMARY KEY(execution_id, command_id)
                 );
@@ -1478,7 +1479,7 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
             )
             with self.store._lock:
                 existing = self.store.db.execute(
-                    """SELECT answer_sha256 FROM development_owner_resumes
+                    """SELECT answer_sha256,status FROM development_owner_resumes
                        WHERE execution_id=? AND command_id=?""",
                     (execution_id, clean_command),
                 ).fetchone()
@@ -1487,6 +1488,11 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
                     raise StoreError(
                         "DEVELOPMENT_RESUME_CONFLICT",
                         "Owner resume command was already used with another answer",
+                    )
+                if existing["status"] != "applied":
+                    raise StoreError(
+                        "DEVELOPMENT_RESUME_OUTCOME_UNKNOWN",
+                        "The prior owner resume outcome is not confirmed; do not repeat it blindly",
                     )
                 public = self._execution_public(row)
                 public["update_check_recommended"] = public["status"] == "completed"
@@ -1513,10 +1519,19 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
                 reasoning_effort=QUALITY_EFFORT,
             )
             cycle = int(row["review_cycle"] or 0)
-            await self.devcoveer.continue_codex_task(
-                quality_task_id,
-                project=str(row["project_hint"]),
-                prompt=f"""The platform owner answered a durable needs-owner question for the
+            now = _now_ms()
+            with self.store._lock:
+                self.store.db.execute(
+                    """INSERT INTO development_owner_resumes(
+                           execution_id,command_id,answer_sha256,answer_text,status,created_at_ms)
+                       VALUES(?,?,?,?,?,?)""",
+                    (execution_id, clean_command, answer_sha, clean_answer, "dispatching", now),
+                )
+            try:
+                await self.devcoveer.continue_codex_task(
+                    quality_task_id,
+                    project=str(row["project_hint"]),
+                    prompt=f"""The platform owner answered a durable needs-owner question for the
 already-authorized execution {execution_id}. Preserve the existing specification,
 task_ids, project target and implementation scope. Do not start a new development
 task and do not broaden scope.
@@ -1534,10 +1549,19 @@ REVIEW_VERDICT: ACCEPTED
 If material implementation changes are still required, end with exactly:
 REVIEW_VERDICT: REWORK_REQUIRED
 Before the verdict give concise findings.""",
-                access="read",
-                model=QUALITY_MODEL,
-                reasoning_effort=QUALITY_EFFORT,
-            )
+                    access="read",
+                    model=QUALITY_MODEL,
+                    reasoning_effort=QUALITY_EFFORT,
+                )
+            except Exception:
+                with self.store._lock:
+                    self.store.db.execute(
+                        """UPDATE development_owner_resumes
+                           SET status='dispatch_unknown'
+                           WHERE execution_id=? AND command_id=?""",
+                        (execution_id, clean_command),
+                    )
+                raise
             self._record_stage(
                 execution_id=execution_id,
                 stage="review",
@@ -1551,10 +1575,10 @@ Before the verdict give concise findings.""",
                 self.store.db.execute("BEGIN IMMEDIATE")
                 try:
                     self.store.db.execute(
-                        """INSERT INTO development_owner_resumes(
-                               execution_id,command_id,answer_sha256,answer_text,created_at_ms)
-                           VALUES(?,?,?,?,?)""",
-                        (execution_id, clean_command, answer_sha, clean_answer, now),
+                        """UPDATE development_owner_resumes
+                           SET status='applied'
+                           WHERE execution_id=? AND command_id=?""",
+                        (execution_id, clean_command),
                     )
                     self.store.db.execute(
                         """UPDATE task_executions SET
