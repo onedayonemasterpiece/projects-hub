@@ -344,7 +344,7 @@ export type ProjectNote = {
   body: string;
   source_text: string;
   structured: Record<string, unknown> | null;
-  audience: "project" | "public";
+  audience: "project";
   status: "accepted" | "processing" | "waiting_repository" | "blocked" | "ready";
   processing: {
     model: string | null;
