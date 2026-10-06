@@ -711,13 +711,25 @@ class CollaborationAnalysisService:
         bounded = max(1, min(int(limit), 100))
         with self.store._lock:
             analysis_rows = self.store.db.execute(
-                """SELECT * FROM collaboration_questions
-                   WHERE workspace_id=? AND addressed_to_actor_id=?""",
+                """SELECT q.* FROM collaboration_questions q
+                   JOIN project_grants g
+                     ON g.project_id=q.project_id
+                    AND g.actor_id=q.addressed_to_actor_id
+                   JOIN projects p ON p.id=q.project_id
+                   WHERE q.workspace_id=? AND q.addressed_to_actor_id=?
+                     AND g.revoked_at_ms IS NULL
+                     AND p.status='active'""",
                 (workspace_id, actor_id),
             ).fetchall()
             owner_rows = self.store.db.execute(
-                """SELECT * FROM owner_development_questions
-                   WHERE workspace_id=? AND addressed_to_actor_id=?""",
+                """SELECT q.* FROM owner_development_questions q
+                   JOIN project_grants g
+                     ON g.project_id=q.project_id
+                    AND g.actor_id=q.addressed_to_actor_id
+                   JOIN projects p ON p.id=q.project_id
+                   WHERE q.workspace_id=? AND q.addressed_to_actor_id=?
+                     AND g.revoked_at_ms IS NULL
+                     AND p.status='active'""",
                 (workspace_id, actor_id),
             ).fetchall()
         items = [
@@ -1137,9 +1149,45 @@ class CollaborationAnalysisService:
                         (str(payload.get("errorCategory") or state), now, now, row["id"]),
                     )
 
+    async def _advance_pending_analyses_once(self) -> int:
+        """Poll already-dispatched analyses from the durable worker.
+
+        Status/read APIs stay pure; provider progress is owned by this worker.
+        """
+        with self.store._lock:
+            rows = self.store.db.execute(
+                """SELECT id,workspace_id,project_id,initiating_actor_id
+                   FROM collaboration_analyses
+                   WHERE status='running' AND provider_task_id IS NOT NULL
+                   ORDER BY created_at_ms LIMIT 8"""
+            ).fetchall()
+        advanced = 0
+        for row in rows:
+            try:
+                await self.refresh_analysis(
+                    actor_id=str(row["initiating_actor_id"]),
+                    workspace_id=str(row["workspace_id"]),
+                    analysis_id=str(row["id"]),
+                )
+            except StoreError as exc:
+                # Revocation or another durable authorization failure must stop
+                # publication instead of spinning forever or leaking questions.
+                with self.store._lock:
+                    now = _now_ms()
+                    self.store.db.execute(
+                        """UPDATE collaboration_analyses
+                           SET status='failed',error_code=?,updated_at_ms=?,
+                               finished_at_ms=?
+                           WHERE id=? AND status='running'""",
+                        (exc.code, now, now, row["id"]),
+                    )
+            advanced += 1
+        return advanced
+
     async def advance_jobs_once(self) -> int:
         async with self._lock:
             self._sync_owner_development_questions()
+            analyses_advanced = await self._advance_pending_analyses_once()
             with self.store._lock:
                 rows = self.store.db.execute(
                     """SELECT * FROM collaboration_jobs
@@ -1149,7 +1197,7 @@ class CollaborationAnalysisService:
             for row in rows:
                 if row["kind"] == "analysis_followup":
                     await self._advance_analysis_job(row)
-            return len(rows)
+            return analyses_advanced + len(rows)
 
     async def _loop(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
