@@ -333,3 +333,85 @@ export const bindGitHubRepository = (
       allowed_paths: payload.allowed_paths ?? [],
     }),
   });
+
+
+export type ProjectNote = {
+  id: string;
+  project_id: string;
+  author: { id: string; display_name: string };
+  author_roles: string[];
+  title: string;
+  body: string;
+  audience: "project";
+  repository: {
+    repository_id: number;
+    full_name: string;
+    path: string;
+    sha: string;
+  };
+  revision: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+};
+
+export type ProjectReply = {
+  id: string;
+  note_id: string;
+  project_id: string;
+  author: { id: string; display_name: string };
+  body: string;
+  created_at_ms: number;
+};
+
+export type CollaborationEvent = {
+  id: number;
+  project_id: string;
+  project_name: string;
+  actor_id: string;
+  kind: "note_created" | "note_replied" | string;
+  object_kind: "note" | "reply" | string;
+  object_id: string;
+  parent_object_id: string | null;
+  addressed_to_actor_id: string | null;
+  summary: string;
+  created_at_ms: number;
+};
+
+export const getCollaborationTimeline = (workspaceId: string, afterId = 0) => {
+  const params = new URLSearchParams({
+    workspace_id: workspaceId,
+    after_id: String(afterId),
+    limit: "100",
+  });
+  return api<{ items: CollaborationEvent[] }>(`/api/collaboration/timeline?${params}`);
+};
+
+export const getProjectNote = (workspaceId: string, noteId: string) => {
+  const params = new URLSearchParams({ workspace_id: workspaceId });
+  return api<ProjectNote>(
+    `/api/collaboration/notes/${encodeURIComponent(noteId)}?${params}`,
+  );
+};
+
+export const getProjectNoteReplies = (workspaceId: string, noteId: string) => {
+  const params = new URLSearchParams({ workspace_id: workspaceId });
+  return api<{ items: ProjectReply[] }>(
+    `/api/collaboration/notes/${encodeURIComponent(noteId)}/replies?${params}`,
+  );
+};
+
+export const postProjectNoteReply = (
+  workspaceId: string,
+  noteId: string,
+  body: string,
+) => api<ProjectReply>(
+  `/api/collaboration/notes/${encodeURIComponent(noteId)}/replies`,
+  {
+    method: "POST",
+    body: JSON.stringify({
+      workspace_id: workspaceId,
+      command_id: `ui.reply.${Date.now()}.${crypto.randomUUID().slice(0, 8)}`,
+      body,
+    }),
+  },
+);
