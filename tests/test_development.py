@@ -1102,6 +1102,147 @@ async def test_interrupted_implementation_never_starts_second_write_task(tmp_pat
         store.close()
 
 
+
+@pytest.mark.asyncio
+async def test_old_review_limit_block_auto_resumes_same_write_thread(tmp_path: Path):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = FakeDevCoveer()
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+
+        await service.advance_active_once()
+        await service.advance_active_once()
+
+        review = service._active_stage(execution_id)
+        assert review is not None
+        assert review["stage"] == "review"
+        service._finish_stage(
+            stage_id=review["id"],
+            status="completed",
+            summary="Two concrete defects remain.",
+            review_verdict="rework_required",
+        )
+        with store._lock:
+            store.db.execute(
+                "UPDATE task_execution_stages SET cycle=2 WHERE id=?",
+                (review["id"],),
+            )
+            store.db.execute(
+                """UPDATE task_executions
+                   SET status='blocked',phase='needs_owner',
+                       phase_detail='Legacy two-cycle cap',
+                       review_cycle=2,result_summary=?,
+                       error_code='REVIEW_REWORK_LIMIT',
+                       finished_at_ms=123,updated_at_ms=123
+                   WHERE id=?""",
+                ("Two concrete defects remain.", execution_id),
+            )
+
+        starts_before = len([1 for name, _ in fake.calls if name == "start"])
+        continues_before = len([1 for name, _ in fake.calls if name == "continue"])
+        advanced = await service.advance_active_once()
+        current = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+
+        assert advanced == 1
+        assert current["execution"]["status"] == "running"
+        assert current["execution"]["phase"] == "reworking"
+        assert current["execution"]["review_cycle"] == 3
+        assert current["execution"]["error_code"] is None
+        assert current["execution"]["finished_at_ms"] is None
+        assert len([1 for name, _ in fake.calls if name == "start"]) == starts_before
+
+        continuation_calls = [
+            args for name, args in fake.calls if name == "continue"
+        ]
+        assert len(continuation_calls) == continues_before + 1
+        assert continuation_calls[-1]["task"] == fake._implementation_task
+        assert continuation_calls[-1]["access"] == "write"
+        assert "rework cycle 3" in continuation_calls[-1]["prompt"].lower()
+
+        last_stage = current["execution"]["stages"][-1]
+        assert last_stage["stage"] == "rework"
+        assert last_stage["cycle"] == 3
+        assert last_stage["status"] == "running"
+        assert last_stage["devcoveer_task_id"] == fake._implementation_task
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_review_rework_limit_remains_bounded_at_new_maximum(tmp_path: Path):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = FakeDevCoveer()
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+
+        await service.advance_active_once()
+        await service.advance_active_once()
+
+        review = service._active_stage(execution_id)
+        assert review is not None
+        service._finish_stage(
+            stage_id=review["id"],
+            status="completed",
+            summary="Still not accepted at bounded maximum.",
+            review_verdict="rework_required",
+        )
+        max_cycle = development_module.MAX_REWORK_CYCLES
+        with store._lock:
+            store.db.execute(
+                "UPDATE task_execution_stages SET cycle=? WHERE id=?",
+                (max_cycle, review["id"]),
+            )
+            store.db.execute(
+                """UPDATE task_executions
+                   SET status='blocked',phase='needs_owner',
+                       review_cycle=?,result_summary=?,
+                       error_code='REVIEW_REWORK_LIMIT',
+                       finished_at_ms=123,updated_at_ms=123
+                   WHERE id=?""",
+                (
+                    max_cycle,
+                    "Still not accepted at bounded maximum.",
+                    execution_id,
+                ),
+            )
+
+        continues_before = len([1 for name, _ in fake.calls if name == "continue"])
+        advanced = await service.advance_active_once()
+        current = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+
+        assert advanced == 0
+        assert current["execution"]["status"] == "blocked"
+        assert current["execution"]["error_code"] == "REVIEW_REWORK_LIMIT"
+        assert current["execution"]["review_cycle"] == max_cycle
+        assert len([1 for name, _ in fake.calls if name == "continue"]) == continues_before
+    finally:
+        await service.close()
+        store.close()
+
+
 def test_owner_development_tools_are_not_exposed_to_ordinary_users():
     ordinary = {item["name"] for item in _functions(owner_development=False)}
     owner = {item["name"] for item in _functions(owner_development=True)}
