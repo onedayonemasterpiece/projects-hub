@@ -413,6 +413,32 @@ def _functions(
                 },
             },
             {
+                "name": "collaboration_brief_seen",
+                "description": (
+                    "Advance the current user's personal/general brief cursors after those items "
+                    "were actually presented or explicitly reviewed. This never answers questions."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "personal_through_id": {"type": "integer", "minimum": 0},
+                        "general_through_id": {"type": "integer", "minimum": 0},
+                    },
+                },
+            },
+            {
+                "name": "collaboration_general_news_set",
+                "description": (
+                    "Enable or disable optional general project news for the current user. "
+                    "Personal addressed questions/results remain available."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {"enabled": {"type": "boolean"}},
+                    "required": ["enabled"],
+                },
+            },
+            {
                 "name": "collaboration_personal_brief",
                 "description": (
                     "Read personally addressed collaboration activity first and whether optional "
@@ -824,7 +850,9 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Успех project_note_create означает, что backend уже записал Markdown в привязанный project_docs repository и сделал authoritative readback. Не говори «сохранено» раньше tool result.
 - Для чтения используй project_notes_list/project_note_get. Обычному участнику не нужен GitHub login: Projects Hub проверяет project grant на сервере.
 - Ответ на заметку делай через project_note_reply; он остаётся связанным с note_id и виден участникам проекта.
-- В общем приветствии/«что нового» сначала используй collaboration_personal_brief: лично адресованное важнее общего. Общие новости предлагай как необязательное продолжение.
+- На общий старт вроде «привет»/«что нового» сначала используй collaboration_personal_brief: лично адресованное важнее общего. Если пользователь сразу дал конкретную задачу, выполняй её и не вставляй приветственную сводку перед ней.
+- После того как фактически озвучила/показала элементы brief, вызови collaboration_brief_seen с соответствующим through_id, чтобы reconnect/следующий hello не повторял то же самое.
+- Общие новости только предлагай как необязательное продолжение. Если пользователь отказывается от них в целом, collaboration_general_news_set enabled=false; это не скрывает лично адресованные вопросы/результаты.
 - Не создавай отдельный чат на проект: focus проекта меняется внутри одной личной timeline.
 - Перед адресованным вопросом прочитай project_participants_list и используй реальный actor_id/role, а не свободный текст роли.
 - Для сильного анализа заметки используй project_note_analyze: он получает только frozen note/reply evidence через provided-only bridge. Не превращай analysis в development.
@@ -1862,6 +1890,26 @@ explicit buffered replay is required instead of pretending the provisional text 
                 return self.collaboration.personal_brief(
                     actor_id=actor_id,
                     workspace_id=workspace_id,
+                )
+            if name == "collaboration_brief_seen":
+                personal = args.get("personal_through_id")
+                general = args.get("general_through_id")
+                try:
+                    personal_value = int(personal) if personal is not None else None
+                    general_value = int(general) if general is not None else None
+                except (TypeError, ValueError):
+                    raise StoreError("INVALID_ARGUMENT", "brief cursor is invalid") from None
+                return self.collaboration.mark_brief_seen(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    personal_through_id=personal_value,
+                    general_through_id=general_value,
+                )
+            if name == "collaboration_general_news_set":
+                return self.collaboration.set_general_news(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    enabled=bool(args.get("enabled")),
                 )
 
         if name == "backlog_list":
