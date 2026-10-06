@@ -1237,6 +1237,7 @@ class CollaborationAnalysisService:
     async def advance_jobs_once(self) -> int:
         async with self._lock:
             self._sync_owner_development_questions()
+            notes_advanced = await self.collaboration.advance_pending_notes_once()
             analyses_advanced = await self._advance_pending_analyses_once()
             with self.store._lock:
                 rows = self.store.db.execute(
@@ -1247,7 +1248,7 @@ class CollaborationAnalysisService:
             for row in rows:
                 if row["kind"] == "analysis_followup":
                     await self._advance_analysis_job(row)
-            return analyses_advanced + len(rows)
+            return notes_advanced + analyses_advanced + len(rows)
 
     async def _loop(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
