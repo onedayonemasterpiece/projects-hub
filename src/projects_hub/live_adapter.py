@@ -287,6 +287,75 @@ def _functions(
             },
         },
     ]
+    functions.extend(
+        [
+            {
+                "name": "project_notes_list",
+                "description": (
+                    "List durable shared notes for an accessible project. "
+                    "These are project-audience objects, not the private conversation transcript."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "project_id": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                    },
+                    "required": ["project_id"],
+                },
+            },
+            {
+                "name": "project_note_create",
+                "description": (
+                    "Create one durable shared project note. Backend derives author identity/roles, "
+                    "writes Markdown to the bound project_docs repository and verifies readback "
+                    "before returning success. Use only when the user intends to share/save a note "
+                    "for project participants."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "project_id": {"type": "string"},
+                        "title": {"type": "string", "maxLength": 240},
+                        "body": {"type": "string", "maxLength": 60000},
+                    },
+                    "required": ["project_id", "title", "body"],
+                },
+            },
+            {
+                "name": "project_note_get",
+                "description": "Read one accessible shared project note and its linked replies.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"note_id": {"type": "string"}},
+                    "required": ["note_id"],
+                },
+            },
+            {
+                "name": "project_note_reply",
+                "description": (
+                    "Post a linked durable reply to a shared project note as the current Projects Hub actor."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "note_id": {"type": "string"},
+                        "body": {"type": "string", "maxLength": 12000},
+                    },
+                    "required": ["note_id", "body"],
+                },
+            },
+            {
+                "name": "collaboration_personal_brief",
+                "description": (
+                    "Read personally addressed collaboration activity first and whether optional "
+                    "general project news exists. Use for generic opening/status requests; a concrete "
+                    "user request always has priority."
+                ),
+                "parameters": {"type": "object", "properties": {}},
+            },
+        ]
+    )
     if regional_knowledge:
         functions.append(
             {
@@ -551,6 +620,14 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Разделяй: что доступно прямо сейчас; что требует привязанного Android-устройства, подключённого GitHub repository, Regional Knowledge grant или expert grant.
 - Не зачитывай названия function tools и не делай длинный технический список. Объясняй человеческими сценариями: поговорить и переключаться между проектами, помнить важное, работать с подключёнными репозиториями, календарём/подготовкой к событиям и только теми дополнительными источниками/экспертными функциями, которые реально доступны в этой сессии.
 - Если capability недоступна, можно кратко сказать, что её можно подключить, но не обещай, что она уже работает.
+
+# PROJECT COLLABORATION
+- Общая проектная заметка — first-class project object, а не копия личной переписки. Создавай её через project_note_create только по намерению пользователя сохранить/поделиться заметкой.
+- Успех project_note_create означает, что backend уже записал Markdown в привязанный project_docs repository и сделал authoritative readback. Не говори «сохранено» раньше tool result.
+- Для чтения используй project_notes_list/project_note_get. Обычному участнику не нужен GitHub login: Projects Hub проверяет project grant на сервере.
+- Ответ на заметку делай через project_note_reply; он остаётся связанным с note_id и виден участникам проекта.
+- В общем приветствии/«что нового» сначала используй collaboration_personal_brief: лично адресованное важнее общего. Общие новости предлагай как необязательное продолжение.
+- Не создавай отдельный чат на проект: focus проекта меняется внутри одной личной timeline.
 
 # MEMORY
 - Для явного «запомни/сохрани» и явно долговечной информации используй memory_commit_voice_source.
@@ -1282,6 +1359,65 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "backend_version": state.get("backend_version"),
                 "backend_release_sha": state.get("backend_release_sha"),
             }
+
+        if name.startswith("project_note") or name == "project_notes_list" or name == "collaboration_personal_brief":
+            if self.collaboration is None:
+                raise StoreError("TOOL_NOT_AVAILABLE", "Project collaboration is unavailable")
+            if name == "project_notes_list":
+                project_id = str(args.get("project_id") or "")
+                if not project_id:
+                    raise StoreError("INVALID_ARGUMENT", "project_id is required")
+                try:
+                    limit = int(args.get("limit", 30))
+                except (TypeError, ValueError):
+                    limit = 30
+                return {
+                    "notes": self.collaboration.list_notes(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        project_id=project_id,
+                        limit=limit,
+                    )
+                }
+            if name == "project_note_create":
+                command_id, _args_sha = self._command_id(session, name, args)
+                return await self.collaboration.create_note(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    project_id=str(args.get("project_id") or ""),
+                    command_id=command_id,
+                    title=str(args.get("title") or ""),
+                    body=str(args.get("body") or ""),
+                )
+            if name == "project_note_get":
+                note_id = str(args.get("note_id") or "")
+                note = self.collaboration.get_note(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    note_id=note_id,
+                )
+                return {
+                    "note": note,
+                    "replies": self.collaboration.list_replies(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        note_id=note_id,
+                    ),
+                }
+            if name == "project_note_reply":
+                command_id, _args_sha = self._command_id(session, name, args)
+                return self.collaboration.reply(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    note_id=str(args.get("note_id") or ""),
+                    command_id=command_id,
+                    body=str(args.get("body") or ""),
+                )
+            if name == "collaboration_personal_brief":
+                return self.collaboration.personal_brief(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                )
 
         if name == "backlog_list":
             self.store.require_platform_owner(actor_id)
