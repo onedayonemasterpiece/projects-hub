@@ -102,28 +102,9 @@ export type AnalysisRun = {
   purpose: "requirements" | "edge_cases" | "architecture" | "code_review" | "ideas";
   model: "kimi_k3" | "deepseek" | "council_free" | "council_pro";
   question: string;
-  status: "dispatching" | "dispatch_unknown" | "waiting_capacity" | "confirmation_required" | "confirming" | "running" | "completed" | "failed" | "cancelled" | "blocked";
+  status: "dispatching" | "dispatch_unknown" | "waiting_capacity" | "running" | "completed" | "failed" | "cancelled" | "blocked";
   result_markdown: string;
   error_code: string | null;
-  confirmation_plan: {
-    councilLevel?: string;
-    costPolicy?: string;
-    usagePlan?: {
-      freeCalls?: number;
-      nvidiaCalls?: number;
-      totalCalls?: number;
-      maxFreeAttempts?: number;
-      maxNvidiaAttempts?: number;
-    };
-    participants?: Array<{
-      provider?: string;
-      model?: string;
-      participationMode?: string;
-    }>;
-    requiresExplicitUserConfirmation?: boolean;
-    confirmationExpiresAt?: number;
-    content?: string;
-  } | null;
   source_changed: boolean | null;
   source_changed_count: number | null;
   created_at_ms: number;
@@ -312,16 +293,6 @@ export async function getAnalysisRun(workspaceId: string, runId: string) {
 export async function refreshAnalysisRun(workspaceId: string, runId: string) {
   return request<AnalysisRun>(
     "/api/analysis/runs/" + encodeURIComponent(runId) + "/refresh",
-    {
-      method: "POST",
-      body: JSON.stringify({ workspace_id: workspaceId }),
-    },
-  );
-}
-
-export async function confirmAnalysisRun(workspaceId: string, runId: string) {
-  return request<AnalysisRun>(
-    "/api/analysis/runs/" + encodeURIComponent(runId) + "/confirm",
     {
       method: "POST",
       body: JSON.stringify({ workspace_id: workspaceId }),
