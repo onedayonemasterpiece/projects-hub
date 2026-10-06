@@ -205,10 +205,6 @@ class AnalyticsService:
                 else "pro" if row["model_alias"] == "council_pro"
                 else None
             ),
-            "confirmation_plan": (
-                json.loads(row["confirmation_plan_json"])
-                if row["confirmation_plan_json"] else None
-            ),
             "question": row["question"],
             "sources": sources,
             "input_sha256": row["input_sha256"],
@@ -354,51 +350,6 @@ class AnalyticsService:
             ) from exc
 
         status = str(response.get("status") or "failed")
-        if status == "confirmation_required":
-            token = response.get("paidConfirmationToken")
-            expires_at = response.get("confirmationExpiresAt")
-            if not isinstance(token, str) or not token.startswith("pcf_"):
-                with self.store._lock:
-                    self.store.db.execute(
-                        """UPDATE analysis_runs
-                           SET status='failed',error_code='ANALYTICS_CONFIRMATION_INVALID',
-                               updated_at_ms=?,finished_at_ms=? WHERE id=?""",
-                        (_now_ms(), _now_ms(), run_id),
-                    )
-                return self.get_run(
-                    actor_id=actor_id, workspace_id=workspace_id, run_id=run_id
-                )
-            plan = {
-                key: response.get(key)
-                for key in (
-                    "councilLevel",
-                    "costPolicy",
-                    "usagePlan",
-                    "participants",
-                    "requiresExplicitUserConfirmation",
-                    "confirmationExpiresAt",
-                    "content",
-                )
-                if response.get(key) is not None
-            }
-            with self.store._lock:
-                self.store.db.execute(
-                    """UPDATE analysis_runs
-                       SET status='confirmation_required',confirmation_token=?,
-                           confirmation_plan_json=?,confirmation_expires_at_ms=?,
-                           error_code=NULL,updated_at_ms=? WHERE id=?""",
-                    (
-                        token,
-                        _canonical(plan),
-                        int(expires_at) if isinstance(expires_at, int) else None,
-                        _now_ms(),
-                        run_id,
-                    ),
-                )
-            return self.get_run(
-                actor_id=actor_id, workspace_id=workspace_id, run_id=run_id
-            )
-
         task_id = response.get("taskId") or response.get("taskReference")
         if not isinstance(task_id, str):
             task_id = None
@@ -530,16 +481,12 @@ class AnalyticsService:
             raise AnalyticsBridgeError(
                 "Frozen evidence integrity check failed; refusing provider redispatch"
             )
-        if row["model_alias"] == "council_free":
+        if row["model_alias"] in {"council_free", "council_pro"}:
             return await self.bridge.council(
                 prompt=f"Purpose: {row['purpose']}\n\n{row['question']}",
                 evidence_bundle=evidence,
                 request_key=f"analysis:{row['id']}",
-                tier="free",
-            )
-        if row["model_alias"] == "council_pro":
-            raise AnalyticsBridgeError(
-                "Paid council dispatch is never replayed without a fresh explicit confirmation"
+                tier="pro" if row["model_alias"] == "council_pro" else "free",
             )
         return await self.bridge.consult(
             model=row["model_alias"],
@@ -557,19 +504,19 @@ class AnalyticsService:
             if row["initiating_actor_id"] != actor_id or row["workspace_id"] != workspace_id:
                 raise StoreError("ANALYSIS_NOT_FOUND", "Analysis run is not available")
             self.store.project_access(actor_id, workspace_id, row["project_id"])
-            if row["status"] in TERMINAL_STATES or row["status"] == "confirmation_required":
+            if row["status"] in TERMINAL_STATES:
                 return self._public(actor_id, workspace_id, row)
-            if row["status"] == "confirming":
-                if _now_ms() - int(row["updated_at_ms"]) < 60_000:
-                    return self._public(actor_id, workspace_id, row)
+            if row["status"] in {"confirmation_required", "confirming"}:
                 self.store.db.execute(
                     """UPDATE analysis_runs
                        SET status='dispatch_unknown',
-                           error_code='ANALYTICS_CONFIRMATION_DISPATCH_UNKNOWN',
-                           updated_at_ms=? WHERE id=?""",
+                           confirmation_token=NULL,
+                           confirmation_plan_json=NULL,
+                           confirmation_expires_at_ms=NULL,
+                           error_code=NULL,updated_at_ms=? WHERE id=?""",
                     (_now_ms(), run_id),
                 )
-                return self._public(actor_id, workspace_id, self._row(run_id))
+                row = self._row(run_id)
             run_snapshot = dict(row)
 
         task_id = run_snapshot.get("provider_task_id")
@@ -668,10 +615,14 @@ class AnalyticsService:
                         now, now, run_id,
                     ),
                 )
-            elif provider_status == "dispatch_unknown":
+            elif provider_status in {"dispatch_unknown", "waiting_capacity"}:
+                next_status = (
+                    "waiting_capacity" if provider_status == "waiting_capacity"
+                    else "dispatch_unknown"
+                )
                 self.store.db.execute(
-                    """UPDATE analysis_runs SET status='dispatch_unknown',updated_at_ms=? WHERE id=?""",
-                    (now, run_id),
+                    """UPDATE analysis_runs SET status=?,updated_at_ms=? WHERE id=?""",
+                    (next_status, now, run_id),
                 )
             else:
                 self.store.db.execute(
@@ -679,151 +630,6 @@ class AnalyticsService:
                     (now, run_id),
                 )
             return self._public(actor_id, workspace_id, self._row(run_id))
-
-    async def confirm_paid(
-        self,
-        *,
-        actor_id: str,
-        workspace_id: str,
-        run_id: str,
-    ) -> dict[str, Any]:
-        now = _now_ms()
-        with self.store._lock:
-            row = self._row(run_id)
-            if row["initiating_actor_id"] != actor_id or row["workspace_id"] != workspace_id:
-                raise StoreError("ANALYSIS_NOT_FOUND", "Analysis run is not available")
-            self.store.project_access(
-                actor_id, workspace_id, row["project_id"], require_analyze=True
-            )
-            if row["model_alias"] != "council_pro":
-                raise StoreError(
-                    "ANALYTICS_CONFIRMATION_NOT_REQUIRED",
-                    "This analysis does not use a paid council",
-                )
-            if row["status"] != "confirmation_required":
-                return self._public(actor_id, workspace_id, row)
-            token = row["confirmation_token"]
-            expires_at = row["confirmation_expires_at_ms"]
-            if (
-                not isinstance(token, str)
-                or not token.startswith("pcf_")
-                or not isinstance(expires_at, int)
-                or expires_at <= now
-            ):
-                self.store.db.execute(
-                    """UPDATE analysis_runs
-                       SET status='failed',confirmation_token=NULL,
-                           error_code='ANALYTICS_CONFIRMATION_EXPIRED',
-                           updated_at_ms=?,finished_at_ms=? WHERE id=?""",
-                    (now, now, run_id),
-                )
-                return self._public(actor_id, workspace_id, self._row(run_id))
-            evidence = str(row["evidence_bundle"] or "")
-            if hashlib.sha256(evidence.encode("utf-8")).hexdigest() != row["input_sha256"]:
-                raise StoreError(
-                    "ANALYTICS_INPUT_INTEGRITY",
-                    "Frozen evidence integrity check failed",
-                )
-            snapshot = dict(row)
-            self.store.db.execute(
-                """UPDATE analysis_runs
-                   SET status='confirming',confirmation_token=NULL,
-                       updated_at_ms=? WHERE id=?""",
-                (now, run_id),
-            )
-
-        try:
-            response = await self.bridge.council(
-                prompt=f"Purpose: {snapshot['purpose']}\n\n{snapshot['question']}",
-                evidence_bundle=evidence,
-                request_key=f"analysis:{run_id}",
-                tier="pro",
-                paid_confirmation_token=token,
-            )
-        except AnalyticsBridgeError:
-            with self.store._lock:
-                self.store.db.execute(
-                    """UPDATE analysis_runs
-                       SET status='dispatch_unknown',
-                           error_code='ANALYTICS_CONFIRMATION_DISPATCH_UNKNOWN',
-                           updated_at_ms=? WHERE id=?""",
-                    (_now_ms(), run_id),
-                )
-            return self.get_run(
-                actor_id=actor_id, workspace_id=workspace_id, run_id=run_id
-            )
-
-        status = str(response.get("status") or "failed")
-        if status == "confirmation_required":
-            token2 = response.get("paidConfirmationToken")
-            expires2 = response.get("confirmationExpiresAt")
-            plan = {
-                key: response.get(key)
-                for key in (
-                    "councilLevel",
-                    "costPolicy",
-                    "usagePlan",
-                    "participants",
-                    "requiresExplicitUserConfirmation",
-                    "confirmationExpiresAt",
-                    "content",
-                )
-                if response.get(key) is not None
-            }
-            with self.store._lock:
-                self.store.db.execute(
-                    """UPDATE analysis_runs
-                       SET status='confirmation_required',confirmation_token=?,
-                           confirmation_plan_json=?,confirmation_expires_at_ms=?,
-                           error_code=NULL,updated_at_ms=? WHERE id=?""",
-                    (
-                        token2 if isinstance(token2, str) else None,
-                        _canonical(plan),
-                        int(expires2) if isinstance(expires2, int) else None,
-                        _now_ms(),
-                        run_id,
-                    ),
-                )
-            return self.get_run(
-                actor_id=actor_id, workspace_id=workspace_id, run_id=run_id
-            )
-
-        task_id = response.get("taskId") or response.get("taskReference")
-        task_id = task_id if isinstance(task_id, str) else None
-        if status not in {"running", "completed", "dispatch_unknown", "waiting_capacity"}:
-            with self.store._lock:
-                self.store.db.execute(
-                    """UPDATE analysis_runs
-                       SET status='failed',provider_task_id=?,error_code=?,
-                           updated_at_ms=?,finished_at_ms=? WHERE id=?""",
-                    (
-                        task_id,
-                        str(response.get("errorCategory") or "ANALYTICS_PROVIDER_FAILED"),
-                        _now_ms(), _now_ms(), run_id,
-                    ),
-                )
-            return self.get_run(
-                actor_id=actor_id, workspace_id=workspace_id, run_id=run_id
-            )
-        mapped = (
-            "dispatch_unknown" if status == "dispatch_unknown"
-            else "waiting_capacity" if status == "waiting_capacity"
-            else "running"
-        )
-        with self.store._lock:
-            self.store.db.execute(
-                """UPDATE analysis_runs
-                   SET status=?,provider_task_id=?,error_code=NULL,
-                       confirmation_expires_at_ms=NULL,updated_at_ms=? WHERE id=?""",
-                (mapped, task_id, _now_ms(), run_id),
-            )
-        if status == "completed":
-            return await self.refresh(
-                actor_id=actor_id, workspace_id=workspace_id, run_id=run_id
-            )
-        return self.get_run(
-            actor_id=actor_id, workspace_id=workspace_id, run_id=run_id
-        )
 
     async def cancel(
         self, *, actor_id: str, workspace_id: str, run_id: str
