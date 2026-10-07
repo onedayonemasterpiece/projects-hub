@@ -4,6 +4,7 @@ export type Bootstrap = {
   workspace: { id: string; name: string };
   role: string;
   projects: Project[];
+  preferences: { theme: "light" | "dark"; revision: number };
 };
 export type Conversation = {
   id: string;
@@ -202,7 +203,11 @@ export class ApiError extends Error {
   }
 }
 
+let identityRequestGeneration = 0;
+export function beginIdentityRequests(): number { return ++identityRequestGeneration; }
+
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const requestGeneration = identityRequestGeneration;
   const response = await fetch(path, {
     credentials: "same-origin",
     cache: "no-store",
@@ -214,6 +219,9 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 401) window.dispatchEvent(new CustomEvent("projects-hub-authentication-expired", {
+      detail: { requestGeneration },
+    }));
     const detail = payload?.error ?? payload?.detail ?? {};
     throw new ApiError(
       response.status,
@@ -234,6 +242,12 @@ export const exchangeInvite = (token: string) =>
 
 export const login = () =>
   api<Bootstrap>("/api/dev/login", { method: "POST", body: JSON.stringify({}) });
+
+export const getPreferences = () => api<Bootstrap["preferences"] & { actor_id: string }>("/api/preferences");
+export const acknowledgePreference = (binding: {conversation_id: string; session_id: string; command_id: string}, value: Bootstrap["preferences"] & {web_status: "applied"; native_status: "applied" | "failed" | "unsupported" | "not_required"}) =>
+  api(`/api/live/${encodeURIComponent(binding.conversation_id)}/sessions/${encodeURIComponent(binding.session_id)}/preferences/${encodeURIComponent(binding.command_id)}/applied`, {
+    method: "POST", body: JSON.stringify(value),
+  });
 
 export const bootstrap = () => api<Bootstrap>("/api/bootstrap");
 

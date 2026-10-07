@@ -1,3 +1,4 @@
+from live_tools import execute, bundle_setup
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
@@ -60,9 +61,8 @@ async def test_live_calendar_creates_readiness_card_and_tools_update_it(tmp_path
             model="gemini-live",
             conversation_id=conversation["id"],
         )
-        function_names = {
-            item["name"] for item in initialized["configuration"]["functions"]
-        }
+        selected, _ = bundle_setup(adapter, initialized, "readiness")
+        function_names = {item["name"] for item in selected["functions"]}
         assert {
             "event_cards_list",
             "event_readiness_set",
@@ -71,7 +71,7 @@ async def test_live_calendar_creates_readiness_card_and_tools_update_it(tmp_path
         }.issubset(function_names)
 
         session = SimpleNamespace(state=initialized["state"])
-        created = await adapter.execute_tool(
+        created = await execute(adapter,
             session,
             {
                 "name": "calendar_create_event_on_device",
@@ -92,13 +92,13 @@ async def test_live_calendar_creates_readiness_card_and_tools_update_it(tmp_path
         assert card["incomplete_count"] == 4
         assert card["device_event_id"] == "calendar-provider-42"
 
-        listed = await adapter.execute_tool(
+        listed = await execute(adapter,
             session,
             {"name": "event_cards_list", "id": "provider-call-2", "args": {}},
         )
         assert [item["id"] for item in listed["events"]] == [card["id"]]
 
-        updated = await adapter.execute_tool(
+        updated = await execute(adapter,
             session,
             {
                 "name": "event_readiness_set",
@@ -114,7 +114,7 @@ async def test_live_calendar_creates_readiness_card_and_tools_update_it(tmp_path
             item for item in updated["checklist"] if item["key"] == "questions"
         )["done"] is True
 
-        task = await adapter.execute_tool(
+        task = await execute(adapter,
             session,
             {
                 "name": "task_create_follow_up",
@@ -129,7 +129,7 @@ async def test_live_calendar_creates_readiness_card_and_tools_update_it(tmp_path
         )
         assert task["state"] == "proposed"
 
-        done = await adapter.execute_tool(
+        done = await execute(adapter,
             session,
             {
                 "name": "task_set_state",
@@ -171,7 +171,7 @@ async def test_recovered_voice_source_new_instruction_creates_exactly_one_follow
         session = SimpleNamespace(state=initialized["state"])
         assert any(item["id"] == old["id"] for item in initialized["context"]["pending_voice_sources"])
 
-        page = await adapter.execute_tool(
+        page = await execute(adapter,
             session,
             {"name": "voice_source_read", "args": {"source_id": old["id"], "offset": 0, "max_chars": 4000}},
         )
@@ -194,8 +194,8 @@ async def test_recovered_voice_source_new_instruction_creates_exactly_one_follow
                 "description": "Новая инструкция после восстановления",
             },
         }
-        first = await adapter.execute_tool(session, call)
-        repeated = await adapter.execute_tool(session, call)
+        first = await execute(adapter, session, call)
+        repeated = await execute(adapter, session, call)
         assert repeated == first
         tasks = adapter.readiness.list_tasks(
             actor_id=actor, workspace_id=workspace, project_id=project, limit=20
@@ -203,7 +203,7 @@ async def test_recovered_voice_source_new_instruction_creates_exactly_one_follow
         matching = [item for item in tasks if item["title"] == "Проверить афишу"]
         assert len(matching) == 1
 
-        other = await adapter.execute_tool(
+        other = await execute(adapter,
             session,
             {
                 "name": "task_create_follow_up",

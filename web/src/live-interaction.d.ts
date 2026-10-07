@@ -15,6 +15,7 @@ declare module "@onedayonemasterpiece/live-interaction/browser" {
     | { audio_stream_end: true; captured_at_ms: number };
 
   export type LiveClient = {
+    readonly generation: number;
     readonly sessionId: string | null;
     readonly starting: boolean;
     readonly microphoneEnabled: boolean;
