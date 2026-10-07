@@ -5,6 +5,10 @@ import android.graphics.Color;
 import android.view.View;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import java.util.concurrent.CountDownLatch;
@@ -25,16 +29,27 @@ public class MainActivitySmokeTest {
         scenario.onActivity(activity -> {
             WebView view = activity.themeWebView();
             view.setWebViewClient(new WebViewClient() {
+                @Override public WebResourceResponse shouldInterceptRequest(
+                        WebView page, WebResourceRequest request) {
+                    // A genuine HTTPS main-frame URL is essential: loadDataWithBaseURL
+                    // may expose an opaque/about:blank URL to the privileged bridge,
+                    // which is correctly denied by the production origin guard.
+                    if (request.isForMainFrame() && url.equals(request.getUrl().toString())) {
+                        byte[] body = "<html><body>Theme bridge fixture</body></html>"
+                                .getBytes(StandardCharsets.UTF_8);
+                        return new WebResourceResponse("text/html", "UTF-8",
+                                new ByteArrayInputStream(body));
+                    }
+                    return super.shouldInterceptRequest(page, request);
+                }
                 @Override public void onPageFinished(WebView page, String finished) {
-                    // Activity launch may still have a pending production page;
-                    // its onPageFinished is NOT proof the test fixture loaded.
                     page.evaluateJavascript(
                             "document.body?.textContent?.includes('Theme bridge fixture')===true",
                             value -> { if ("true".equals(value)) loaded.countDown(); });
                 }
             });
-            // Prepared bridge fixture, not provider/microphone acceptance.
-            view.loadDataWithBaseURL(url, "<html><body>Theme bridge fixture</body></html>", "text/html", "UTF-8", null);
+            // Intercept the prepared page locally but keep the actual HTTPS origin.
+            view.loadUrl(url);
         });
         assertTrue("exact theme fixture must load before posting to bridge",
                 loaded.await(15, TimeUnit.SECONDS));

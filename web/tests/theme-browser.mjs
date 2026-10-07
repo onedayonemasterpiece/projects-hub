@@ -110,6 +110,9 @@ try {
       console.error('THEME_BOOTSTRAP_DIAGNOSTICS',JSON.stringify({debug,errors}));
       throw error;
     }
+    // Theme CSS may apply before the asynchronous canonical conversation and
+    // React UI have mounted; wait for an actual rendered control.
+    await page.getByRole('button',{name:'Начать голосовой разговор',exact:true}).waitFor({timeout:20000});
     const controls = await page.locator('button').count();
     assert.ok(controls>0);
     // Keep a real mounted element identity and focus throughout ten presentation changes.
