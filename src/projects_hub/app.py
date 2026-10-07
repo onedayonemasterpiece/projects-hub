@@ -55,6 +55,17 @@ class ConversationCreate(BaseModel):
     focus_project_id: str | None = None
 
 
+class TimelineMessageUpsert(BaseModel):
+    workspace_id: str
+    turn_id: str = Field(min_length=8, max_length=160)
+    role: Literal["user", "assistant"]
+    text: str = Field(default="", max_length=120_000)
+    source_id: str | None = Field(default=None, max_length=160)
+    transcript_revision: int = Field(default=0, ge=0, le=1_000_000_000)
+    revision: int = Field(default=1, ge=1, le=1_000_000_000)
+    blocks: list[dict[str, Any]] = Field(default_factory=list, max_length=8)
+
+
 class LiveStart(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -176,6 +187,7 @@ def _http_for_code(code: str) -> int:
         "GITHUB_WRITE_CONFLICT",
         "COLLABORATION_COMMAND_CONFLICT",
         "GITHUB_READBACK_MISMATCH",
+        "TIMELINE_MESSAGE_CONFLICT",
     }:
         return 409
     if code.startswith("INVALID") or code in {"SOURCE_TRANSCRIPT_PENDING"}:
@@ -815,6 +827,43 @@ def create_app(
     @app.get("/api/conversations/{conversation_id}")
     async def get_conversation(conversation_id: str, request: Request) -> dict[str, Any]:
         return store.get_conversation(actor_id_from_request(request), conversation_id)
+
+    @app.get("/api/conversations/{conversation_id}/timeline")
+    async def conversation_timeline(
+        conversation_id: str,
+        request: Request,
+        workspace_id: str,
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        return {
+            "items": store.list_conversation_timeline_messages(
+                actor_id=actor_id_from_request(request),
+                conversation_id=conversation_id,
+                workspace_id=workspace_id,
+                limit=limit,
+            )
+        }
+
+    @app.put("/api/conversations/{conversation_id}/timeline/messages/{message_id}")
+    async def conversation_timeline_message(
+        conversation_id: str,
+        message_id: str,
+        payload: TimelineMessageUpsert,
+        request: Request,
+    ) -> dict[str, Any]:
+        return store.upsert_conversation_timeline_message(
+            actor_id=actor_id_from_request(request),
+            conversation_id=conversation_id,
+            workspace_id=payload.workspace_id,
+            message_id=message_id,
+            turn_id=payload.turn_id,
+            role=payload.role,
+            text=payload.text,
+            source_id=payload.source_id,
+            transcript_revision=payload.transcript_revision,
+            revision=payload.revision,
+            blocks=payload.blocks,
+        )
 
     @app.get("/api/event-cards")
     async def event_cards(
