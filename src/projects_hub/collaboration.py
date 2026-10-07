@@ -175,6 +175,15 @@ class CollaborationService:
                 self.store.db.execute(
                     "ALTER TABLE project_notes ADD COLUMN processing_lease_until_ms INTEGER"
                 )
+            # Leases are process-local ownership markers. A fresh service
+            # instance means the previous process cannot still own them.
+            self.store.db.execute(
+                """UPDATE project_notes
+                   SET processing_lease_token=NULL,processing_lease_until_ms=NULL
+                   WHERE status!='ready'
+                     AND (processing_lease_token IS NOT NULL
+                          OR processing_lease_until_ms IS NOT NULL)"""
+            )
 
     @staticmethod
     def _clean_command(command_id: str) -> str:
