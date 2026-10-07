@@ -11,6 +11,10 @@ from typing import Any, Callable
 from .device_commands import DeviceCommandService
 from .development import DevelopmentService
 from .github_connections import GitHubConnections
+from .collaboration import CollaborationService
+from .collaboration_analysis import CollaborationAnalysisService
+from .board import BoardService
+from .board_view_context import BoardViewContextStore
 from .expert_reviews import (
     ExpertReviewAccessError,
     ExpertReviewAdapter,
@@ -59,6 +63,70 @@ def _functions(
             "name": "projects_list_accessible",
             "description": "List projects the current actor may use in this workspace. Use when project context is unclear.",
             "parameters": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "board_navigate",
+            "description": (
+                "Open/close the current project board, show all objects, or focus one known "
+                "object. This controls only the visual surface and never starts another Live session."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["open", "close", "view_all", "focus"]},
+                    "project_id": {"type": "string"},
+                    "object_id": {"type": "string"},
+                },
+                "required": ["action"],
+            },
+        },
+        {
+            "name": "board_query",
+            "description": (
+                "Read authorized board structure. view_context resolves the current browser tab's "
+                "visible/selected/focused objects; search scans the whole board."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["search", "view_context"]},
+                    "project_id": {"type": "string"},
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                },
+                "required": ["action"],
+            },
+        },
+        {
+            "name": "board_edit",
+            "description": (
+                "Create/update/move/delete one board object through Mira. Human UI remains read-only. "
+                "Updates/moves/deletes require expected_object_revision from fresh board state."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "operation": {"type": "string", "enum": ["create", "update", "move", "delete"]},
+                    "object_id": {"type": "string"},
+                    "expected_object_revision": {"type": "integer", "minimum": 1},
+                    "payload": {"type": "object"},
+                },
+                "required": ["operation"],
+            },
+        },
+        {
+            "name": "board_history",
+            "description": "Read bounded durable history for one board object.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "object_id": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                },
+                "required": ["object_id"],
+            },
         },
         {
             "name": "runtime_versions_get",
@@ -286,6 +354,224 @@ def _functions(
             },
         },
     ]
+    functions.extend(
+        [
+            {
+                "name": "project_notes_list",
+                "description": (
+                    "List durable shared notes for an accessible project. "
+                    "These are project-audience objects, not the private conversation transcript."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "project_id": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                    },
+                    "required": ["project_id"],
+                },
+            },
+            {
+                "name": "project_note_create",
+                "description": (
+                    "Create one durable shared project note. Backend derives author identity/roles, "
+                    "writes Markdown to the bound project_docs repository and verifies readback "
+                    "before returning success. Use only when the user intends to share/save a note "
+                    "for project participants."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "project_id": {"type": "string"},
+                        "title": {"type": "string", "maxLength": 240},
+                        "body": {"type": "string", "maxLength": 60000},
+                    },
+                    "required": ["project_id", "title", "body"],
+                },
+            },
+            {
+                "name": "project_note_get",
+                "description": "Read one accessible shared project note and its linked replies.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"note_id": {"type": "string"}},
+                    "required": ["note_id"],
+                },
+            },
+            {
+                "name": "project_note_reply",
+                "description": (
+                    "Post a linked durable reply to a shared project note as the current Projects Hub actor."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "note_id": {"type": "string"},
+                        "body": {"type": "string", "maxLength": 12000},
+                    },
+                    "required": ["note_id", "body"],
+                },
+            },
+            {
+                "name": "collaboration_brief_seen",
+                "description": (
+                    "Advance the current user's personal/general brief cursors after those items "
+                    "were actually presented or explicitly reviewed. This never answers questions."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "personal_through_id": {"type": "integer", "minimum": 0},
+                        "general_through_id": {"type": "integer", "minimum": 0},
+                    },
+                },
+            },
+            {
+                "name": "collaboration_general_news_set",
+                "description": (
+                    "Enable or disable optional general project news for the current user. "
+                    "Personal addressed questions/results remain available."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {"enabled": {"type": "boolean"}},
+                    "required": ["enabled"],
+                },
+            },
+            {
+                "name": "collaboration_personal_brief",
+                "description": (
+                    "Read personally addressed collaboration activity first and whether optional "
+                    "general project news exists. Use for generic opening/status requests; a concrete "
+                    "user request always has priority."
+                ),
+                "parameters": {"type": "object", "properties": {}},
+            },
+        ]
+    )
+    functions.extend(
+        [
+            {
+                "name": "project_participants_list",
+                "description": (
+                    "List participants who currently have an explicit grant to the project, "
+                    "with actor ids and roles. Use this before addressing a collaboration question."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {"project_id": {"type": "string"}},
+                    "required": ["project_id"],
+                },
+            },
+            {
+                "name": "project_note_analyze",
+                "description": (
+                    "Start provided-context-only strong analysis of one shared project note and "
+                    "its current linked replies. The analysis may produce a small addressed package "
+                    "of typed questions; it cannot launch development."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "project_id": {"type": "string"},
+                        "note_id": {"type": "string"},
+                        "addressed_to_actor_id": {"type": "string"},
+                        "model": {"type": "string", "enum": ["kimi_k3", "deepseek"]},
+                        "purpose": {
+                            "type": "string",
+                            "enum": ["requirements", "edge_cases", "architecture", "code_review", "ideas"],
+                        },
+                        "question": {"type": "string", "maxLength": 4000},
+                    },
+                    "required": [
+                        "project_id",
+                        "note_id",
+                        "addressed_to_actor_id",
+                        "question",
+                    ],
+                },
+            },
+            {
+                "name": "collaboration_questions_inbox",
+                "description": (
+                    "Read durable questions addressed specifically to the current actor, including "
+                    "blocking flag, shared context and prior disposition."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 50}
+                    },
+                },
+            },
+            {
+                "name": "collaboration_questions_answer",
+                "description": (
+                    "Answer one or several questions from the same analysis in one semantic turn. "
+                    "Each item must use answer, unknown, skip or later. Reading a question never "
+                    "counts as an answer."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "analysis_id": {"type": "string"},
+                        "responses": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 6,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "question_id": {"type": "string"},
+                                    "disposition": {
+                                        "type": "string",
+                                        "enum": ["answer", "unknown", "skip", "later"],
+                                    },
+                                    "body": {"type": "string", "maxLength": 12000},
+                                    "deferred_until_ms": {"type": "integer"},
+                                },
+                                "required": ["question_id", "disposition"],
+                            },
+                        },
+                    },
+                    "required": ["analysis_id", "responses"],
+                },
+            },
+            {
+                "name": "collaboration_question_respond",
+                "description": (
+                    "Respond to one non-analysis collaboration question, currently including "
+                    "owner-development needs_owner questions. Use answer, unknown, skip or later. "
+                    "Backend preserves the existing authorized execution and never starts a new one."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "question_id": {"type": "string"},
+                        "disposition": {
+                            "type": "string",
+                            "enum": ["answer", "unknown", "skip", "later"],
+                        },
+                        "body": {"type": "string", "maxLength": 12000},
+                        "deferred_until_ms": {"type": "integer"},
+                    },
+                    "required": ["question_id", "disposition"],
+                },
+            },
+            {
+                "name": "collaboration_continuation_status",
+                "description": (
+                    "Read one durable collaboration continuation. This is read-only and never "
+                    "advances the worker."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {"job_id": {"type": "string"}},
+                    "required": ["job_id"],
+                },
+            },
+        ]
+    )
     if regional_knowledge:
         functions.append(
             {
@@ -551,6 +837,30 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Не зачитывай названия function tools и не делай длинный технический список. Объясняй человеческими сценариями: поговорить и переключаться между проектами, помнить важное, работать с подключёнными репозиториями, календарём/подготовкой к событиям и только теми дополнительными источниками/экспертными функциями, которые реально доступны в этой сессии.
 - Если capability недоступна, можно кратко сказать, что её можно подключить, но не обещай, что она уже работает.
 
+# BOARD
+- Доска — inline visual surface той же personal timeline и той же Live-сессии. Она не создаёт второй разговор и не трогает микрофон.
+- На «открой доску проекта» вызывай board_navigate action=open; на «закрой доску» — action=close.
+- Для «этот/здесь/видимые/выбранный» сначала board_query action=view_context. Если viewport context недоступен или устарел, не угадывай: search или уточнение.
+- Пользователь не редактирует объекты вручную. Создание/изменение/перемещение/удаление идёт только через board_edit; успех объявляй только по receipt status=saved.
+- Для update/move/delete используй свежий expected_object_revision; конфликт не перезаписывай вслепую.
+- board_navigate focus/view_all управляет только камерой текущего единственного renderer.
+
+# PROJECT COLLABORATION
+- Общая проектная заметка — first-class project object, а не копия личной переписки. Создавай её через project_note_create только по намерению пользователя сохранить/поделиться заметкой.
+- Успех project_note_create означает, что backend уже записал Markdown в привязанный project_docs repository и сделал authoritative readback. Не говори «сохранено» раньше tool result.
+- Для чтения используй project_notes_list/project_note_get. Обычному участнику не нужен GitHub login: Projects Hub проверяет project grant на сервере.
+- Ответ на заметку делай через project_note_reply; он остаётся связанным с note_id и виден участникам проекта.
+- На общий старт вроде «привет»/«что нового» сначала используй collaboration_personal_brief: лично адресованное важнее общего. Если пользователь сразу дал конкретную задачу, выполняй её и не вставляй приветственную сводку перед ней.
+- После того как фактически озвучила/показала элементы brief, вызови collaboration_brief_seen с соответствующим through_id, чтобы reconnect/следующий hello не повторял то же самое.
+- Общие новости только предлагай как необязательное продолжение. Если пользователь отказывается от них в целом, collaboration_general_news_set enabled=false; это не скрывает лично адресованные вопросы/результаты.
+- Не создавай отдельный чат на проект: focus проекта меняется внутри одной личной timeline.
+- Перед адресованным вопросом прочитай project_participants_list и используй реальный actor_id/role, а не свободный текст роли.
+- Для сильного анализа заметки используй project_note_analyze: он получает только frozen note/reply evidence через provided-only bridge. Не превращай analysis в development.
+- Когда вопросы адресованы текущему человеку, collaboration_questions_inbox даёт их общий контекст. Пользователь может одной репликой ответить на несколько; передай их одним collaboration_questions_answer.
+- answer, unknown, skip и later — разные состояния. Blocking continuation запускается только когда все blocking questions получили disposition=answer. later сохраняет отложенную зависимость; unknown/skip не выдумывают решение и не снимают blocker.
+- Простое чтение статуса/вопроса никогда не продвигает worker.
+- Если collaboration_questions_inbox возвращает source_kind=owner_development, отвечай через collaboration_question_respond. Только platform owner сможет реально resume; backend продолжит тот же execution/thread и не создаст новую разработку.
+
 # MEMORY
 - Для явного «запомни/сохрани» и явно долговечной информации используй memory_commit_voice_source.
 - Один voice source может относиться к нескольким проектам: сделай отдельный memory_commit_voice_source для каждого действительно нужного project/result.
@@ -616,6 +926,11 @@ class ProjectsHubLiveAdapter:
         readiness: ReadinessService | None = None,
         development: DevelopmentService | None = None,
         github_connections: GitHubConnections | None = None,
+        collaboration: CollaborationService | None = None,
+        collaboration_analysis: CollaborationAnalysisService | None = None,
+        board: BoardService | None = None,
+        board_hub: Any | None = None,
+        board_view_context: BoardViewContextStore | None = None,
         expert_reviews_factory: (
             Callable[[str, str], ExpertReviewAdapter | None] | None
         ) = None,
@@ -629,6 +944,11 @@ class ProjectsHubLiveAdapter:
         self.readiness = readiness or ReadinessService(store)
         self.development = development or DevelopmentService(store, self.readiness)
         self.github_connections = github_connections
+        self.collaboration = collaboration
+        self.collaboration_analysis = collaboration_analysis
+        self.board = board or BoardService(store)
+        self.board_hub = board_hub
+        self.board_view_context = board_view_context or BoardViewContextStore(store, self.board)
         self.expert_reviews_factory = expert_reviews_factory
         self.regional_knowledge_factory = regional_knowledge_factory
 
@@ -832,6 +1152,7 @@ class ProjectsHubLiveAdapter:
         backend_version: str | None = None,
         backend_release_sha: str | None = None,
         attempt_id: str | None = None,
+        client_instance_id: str | None = None,
         **_args: Any,
     ) -> dict[str, Any]:
         actor_id = str(actor.get("subject") or "")
@@ -930,6 +1251,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "backend_version": backend_version,
                 "backend_release_sha": backend_release_sha,
                 "attempt_id": attempt_id,
+                "client_instance_id": client_instance_id,
                 "caption_vocabulary": transcription_vocabulary,
             },
             "context": {
@@ -948,6 +1270,7 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "backend_version": backend_version,
                 "backend_release_sha": backend_release_sha,
                 "attempt_id": attempt_id,
+                "client_instance_id": client_instance_id,
             },
             "configuration": {
                 "system_instruction": system_instruction,
@@ -1280,6 +1603,323 @@ explicit buffered replay is required instead of pretending the provisional text 
                 "backend_version": state.get("backend_version"),
                 "backend_release_sha": state.get("backend_release_sha"),
             }
+
+        if name.startswith("board_"):
+            conversation = self.store.get_conversation(actor_id, conversation_id)
+            project_id = str(args.get("project_id") or "") or conversation.get("focus_project_id")
+            if not project_id:
+                raise StoreError("BOARD_PROJECT_REQUIRED", "Choose a project before using its board")
+            project_id = str(project_id)
+            access = self.store.project_access(actor_id, workspace_id, project_id)
+
+            if name == "board_navigate":
+                action = str(args.get("action") or "")
+                if action not in {"open", "close", "view_all", "focus"}:
+                    raise StoreError("INVALID_ARGUMENT", "Unknown board navigation action")
+                command_id, _args_sha = self._command_id(session, name, args)
+                token = "uif_" + command_id[-24:]
+                if action == "close":
+                    return {
+                        "project_id": project_id,
+                        "ui_command": {
+                            "kind": "board", "action": "close",
+                            "project_id": project_id, "token": token,
+                        },
+                    }
+                board = self.board.open_board(
+                    actor_id, workspace_id, project_id,
+                    create_if_allowed=(action == "open" and access["role"] != "viewer"),
+                )
+                ui_command: dict[str, Any] = {
+                    "kind": "board", "action": action,
+                    "project_id": project_id, "board_id": board["id"], "token": token,
+                }
+                if action == "focus":
+                    object_id = str(args.get("object_id") or "")
+                    if not object_id:
+                        raise StoreError("INVALID_ARGUMENT", "object_id is required for focus")
+                    snapshot = self.board.snapshot(actor_id, workspace_id, board["id"])
+                    item = next((v for v in snapshot["objects"] if v["id"] == object_id), None)
+                    if item is None:
+                        raise StoreError("OBJECT_NOT_FOUND", "Board object is not available")
+                    ui_command["object_id"] = object_id
+                    ui_command["bbox"] = item["geometry"]
+                    ui_command["board_seq"] = snapshot["board"]["seq"]
+                return {
+                    "project_id": project_id,
+                    "board_id": board["id"],
+                    "ui_command": ui_command,
+                    "ui_ack_required": action in {"focus", "view_all"},
+                }
+
+            board = self.board.open_board(
+                actor_id, workspace_id, project_id, create_if_allowed=False
+            )
+            if name == "board_query":
+                action = str(args.get("action") or "")
+                if action == "view_context":
+                    client_instance_id = str(state.get("client_instance_id") or "")
+                    if not client_instance_id:
+                        return {
+                            "status": "unavailable",
+                            "reason": "live_client_instance_unavailable",
+                            "project_id": project_id,
+                            "board_id": board["id"],
+                        }
+                    return self.board_view_context.resolve(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        conversation_id=conversation_id,
+                        project_id=project_id,
+                        client_instance_id=client_instance_id,
+                    )
+                if action != "search":
+                    raise StoreError("INVALID_ARGUMENT", "Unknown board query action")
+                query = str(args.get("query") or "").strip()
+                if not query:
+                    raise StoreError("INVALID_ARGUMENT", "query is required for board search")
+                try:
+                    limit = int(args.get("limit", 12))
+                except (TypeError, ValueError):
+                    limit = 12
+                return {
+                    "project_id": project_id,
+                    "board_id": board["id"],
+                    "items": self.board.search(
+                        actor_id, workspace_id, board["id"], query, limit=limit
+                    ),
+                }
+
+            if name == "board_history":
+                object_id = str(args.get("object_id") or "")
+                if not object_id:
+                    raise StoreError("INVALID_ARGUMENT", "object_id is required")
+                try:
+                    limit = int(args.get("limit", 20))
+                except (TypeError, ValueError):
+                    limit = 20
+                return {
+                    "project_id": project_id,
+                    "board_id": board["id"],
+                    "items": self.board.history(
+                        actor_id, workspace_id, board["id"], object_id, limit=limit
+                    ),
+                }
+
+            if name == "board_edit":
+                operation = str(args.get("operation") or "")
+                if operation not in {"create", "update", "move", "delete"}:
+                    raise StoreError("INVALID_ARGUMENT", "Unknown board edit operation")
+                command_id, _args_sha = self._command_id(session, name, args)
+                object_id = str(args.get("object_id") or "")
+                if not object_id:
+                    if operation != "create":
+                        raise StoreError("INVALID_ARGUMENT", "object_id is required")
+                    object_id = "obj_mira_" + hashlib.sha256(
+                        command_id.encode("utf-8")
+                    ).hexdigest()[:24]
+                expected_raw = args.get("expected_object_revision")
+                expected_revision = None
+                if expected_raw is not None:
+                    try:
+                        expected_revision = int(expected_raw)
+                    except (TypeError, ValueError):
+                        raise StoreError(
+                            "INVALID_ARGUMENT",
+                            "expected_object_revision must be an integer",
+                        ) from None
+                payload = args.get("payload") or {}
+                if not isinstance(payload, dict):
+                    raise StoreError("INVALID_ARGUMENT", "payload must be an object")
+                receipt = self.board.apply_command(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    board_id=board["id"],
+                    command_id=command_id,
+                    operation=operation,
+                    object_id=object_id,
+                    expected_object_revision=expected_revision,
+                    payload=payload,
+                    execution_origin="mira",
+                )
+                if self.board_hub is not None:
+                    await self.board_hub.publish(
+                        board["id"], {"type": "event", "event": receipt["event"]}
+                    )
+                return {
+                    **receipt,
+                    "project_id": project_id,
+                    "ui_command": {
+                        "kind": "board", "action": "open",
+                        "project_id": project_id, "board_id": board["id"],
+                        "token": "uif_" + command_id[-24:],
+                    },
+                }
+
+        if name in {
+            "project_participants_list",
+            "project_note_analyze",
+            "collaboration_questions_inbox",
+            "collaboration_questions_answer",
+            "collaboration_question_respond",
+            "collaboration_continuation_status",
+        }:
+            if self.collaboration is None or self.collaboration_analysis is None:
+                raise StoreError("TOOL_NOT_AVAILABLE", "Project collaboration analysis is unavailable")
+            if name == "project_participants_list":
+                return {
+                    "participants": self.collaboration.list_participants(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        project_id=str(args.get("project_id") or ""),
+                    )
+                }
+            if name == "project_note_analyze":
+                command_id, _args_sha = self._command_id(session, name, args)
+                return await self.collaboration_analysis.start_analysis(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    project_id=str(args.get("project_id") or ""),
+                    note_id=str(args.get("note_id") or ""),
+                    addressed_to_actor_id=str(args.get("addressed_to_actor_id") or ""),
+                    command_id=command_id,
+                    model=str(args.get("model") or "kimi_k3"),
+                    purpose=str(args.get("purpose") or "requirements"),
+                    question=str(args.get("question") or ""),
+                )
+            if name == "collaboration_questions_inbox":
+                try:
+                    limit = int(args.get("limit", 30))
+                except (TypeError, ValueError):
+                    limit = 30
+                return {
+                    "questions": self.collaboration_analysis.inbox(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        limit=limit,
+                    )
+                }
+            if name == "collaboration_questions_answer":
+                raw = args.get("responses")
+                if not isinstance(raw, list):
+                    raise StoreError("INVALID_ARGUMENT", "responses must be a list")
+                command_id, _args_sha = self._command_id(session, name, args)
+                return self.collaboration_analysis.answer_questions(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    analysis_id=str(args.get("analysis_id") or ""),
+                    command_id=command_id,
+                    responses=[dict(item) for item in raw if isinstance(item, dict)],
+                )
+            if name == "collaboration_question_respond":
+                command_id, _args_sha = self._command_id(session, name, args)
+                deferred = args.get("deferred_until_ms")
+                try:
+                    deferred_value = int(deferred) if deferred is not None else None
+                except (TypeError, ValueError):
+                    raise StoreError("INVALID_ARGUMENT", "deferred_until_ms is invalid") from None
+                return await self.collaboration_analysis.answer_owner_development_question(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    question_id=str(args.get("question_id") or ""),
+                    command_id=command_id,
+                    disposition=str(args.get("disposition") or ""),
+                    body=str(args.get("body") or ""),
+                    deferred_until_ms=deferred_value,
+                )
+            if name == "collaboration_continuation_status":
+                return self.collaboration_analysis.job_status(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    job_id=str(args.get("job_id") or ""),
+                )
+
+        if (
+            name.startswith("project_note")
+            or name == "project_notes_list"
+            or name in {
+                "collaboration_personal_brief",
+                "collaboration_brief_seen",
+                "collaboration_general_news_set",
+            }
+        ):
+            if self.collaboration is None:
+                raise StoreError("TOOL_NOT_AVAILABLE", "Project collaboration is unavailable")
+            if name == "project_notes_list":
+                project_id = str(args.get("project_id") or "")
+                if not project_id:
+                    raise StoreError("INVALID_ARGUMENT", "project_id is required")
+                try:
+                    limit = int(args.get("limit", 30))
+                except (TypeError, ValueError):
+                    limit = 30
+                return {
+                    "notes": self.collaboration.list_notes(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        project_id=project_id,
+                        limit=limit,
+                    )
+                }
+            if name == "project_note_create":
+                command_id, _args_sha = self._command_id(session, name, args)
+                return await self.collaboration.create_note(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    project_id=str(args.get("project_id") or ""),
+                    command_id=command_id,
+                    title=str(args.get("title") or ""),
+                    body=str(args.get("body") or ""),
+                )
+            if name == "project_note_get":
+                note_id = str(args.get("note_id") or "")
+                note = self.collaboration.get_note(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    note_id=note_id,
+                )
+                return {
+                    "note": note,
+                    "replies": self.collaboration.list_replies(
+                        actor_id=actor_id,
+                        workspace_id=workspace_id,
+                        note_id=note_id,
+                    ),
+                }
+            if name == "project_note_reply":
+                command_id, _args_sha = self._command_id(session, name, args)
+                return self.collaboration.reply(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    note_id=str(args.get("note_id") or ""),
+                    command_id=command_id,
+                    body=str(args.get("body") or ""),
+                )
+            if name == "collaboration_personal_brief":
+                return self.collaboration.personal_brief(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                )
+            if name == "collaboration_brief_seen":
+                personal = args.get("personal_through_id")
+                general = args.get("general_through_id")
+                try:
+                    personal_value = int(personal) if personal is not None else None
+                    general_value = int(general) if general is not None else None
+                except (TypeError, ValueError):
+                    raise StoreError("INVALID_ARGUMENT", "brief cursor is invalid") from None
+                return self.collaboration.mark_brief_seen(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    personal_through_id=personal_value,
+                    general_through_id=general_value,
+                )
+            if name == "collaboration_general_news_set":
+                return self.collaboration.set_general_news(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    enabled=bool(args.get("enabled")),
+                )
 
         if name == "backlog_list":
             self.store.require_platform_owner(actor_id)

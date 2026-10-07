@@ -8,6 +8,10 @@ from .device_commands import DeviceCommandService
 from .development import DevelopmentService
 from .expert_reviews import ExpertReviewAdapter
 from .github_connections import GitHubConnections
+from .collaboration import CollaborationService
+from .collaboration_analysis import CollaborationAnalysisService
+from .board import BoardService
+from .board_view_context import BoardViewContextStore
 from .regional_knowledge import RegionalKnowledgeAdapter
 from .live_adapter import ProjectsHubLiveAdapter
 from .live_admission import ProjectsHubAdmissionMixin
@@ -53,10 +57,15 @@ def build_live_host(
     store: DurableStore,
     *,
     environment: dict[str, str] | None = None,
+    board: BoardService | None = None,
+    board_hub: Any | None = None,
+    board_view_context: BoardViewContextStore | None = None,
     device_commands: DeviceCommandService | None = None,
     readiness: ReadinessService | None = None,
     development: DevelopmentService | None = None,
     github_connections: GitHubConnections | None = None,
+    collaboration: CollaborationService | None = None,
+    collaboration_analysis: CollaborationAnalysisService | None = None,
     expert_reviews_factory: (
         Callable[[str, str], ExpertReviewAdapter | None] | None
     ) = None,
@@ -216,10 +225,15 @@ def build_live_host(
         diagnostic=live_diagnostic,
         adapter_factory=lambda **shared: ProjectsHubLiveAdapter(
             store,
+            board=board,
+            board_hub=board_hub,
+            board_view_context=board_view_context,
             device_commands=device_commands,
             readiness=readiness,
             development=development,
             github_connections=github_connections,
+            collaboration=collaboration,
+            collaboration_analysis=collaboration_analysis,
             expert_reviews_factory=expert_reviews_factory,
             regional_knowledge_factory=regional_knowledge_factory,
             **shared,

@@ -12,6 +12,24 @@ export type Conversation = {
   focus_project_id: string | null;
   focus_project_name: string | null;
 };
+export type PersonalTimelineBlock =
+  | { kind: "collaboration_timeline" }
+  | { kind: "collaboration_questions" }
+  | { kind: "board"; project_id: string; mode: "active" | "reference" };
+export type PersonalTimelineMessage = {
+  id: string;
+  conversation_id: string;
+  workspace_id: string;
+  turn_id: string;
+  role: "user" | "assistant";
+  text: string;
+  source_id: string | null;
+  transcript_revision: number;
+  revision: number;
+  blocks: PersonalTimelineBlock[];
+  created_at_ms: number;
+  updated_at_ms: number;
+};
 export type AuthConfig =
   | { mode: "first_party_invite" }
   | { mode: "loopback_dev" | "disabled" };
@@ -225,7 +243,61 @@ export const createConversation = (workspaceId: string, projectId?: string | nul
     body: JSON.stringify({ workspace_id: workspaceId, focus_project_id: projectId ?? null }),
   });
 
+export const getOrCreatePersonalConversation = (
+  workspaceId: string,
+  projectId?: string | null,
+) =>
+  api<Conversation>("/api/conversations/personal", {
+    method: "POST",
+    body: JSON.stringify({ workspace_id: workspaceId, focus_project_id: projectId ?? null }),
+  });
+
 export const getConversation = (id: string) => api<Conversation>(`/api/conversations/${id}`);
+
+export const getPersonalTimeline = (
+  conversationId: string,
+  workspaceId: string,
+  limit = 200,
+) => {
+  const params = new URLSearchParams({
+    workspace_id: workspaceId,
+    limit: String(limit),
+  });
+  return api<{ items: PersonalTimelineMessage[] }>(
+    `/api/conversations/${encodeURIComponent(conversationId)}/timeline?${params}`,
+  );
+};
+
+export const upsertPersonalTimelineMessage = (
+  conversationId: string,
+  message: {
+    id: string;
+    workspace_id: string;
+    turn_id: string;
+    role: "user" | "assistant";
+    text: string;
+    source_id?: string | null;
+    transcript_revision: number;
+    revision: number;
+    blocks: PersonalTimelineBlock[];
+  },
+) =>
+  api<PersonalTimelineMessage>(
+    `/api/conversations/${encodeURIComponent(conversationId)}/timeline/messages/${encodeURIComponent(message.id)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        workspace_id: message.workspace_id,
+        turn_id: message.turn_id,
+        role: message.role,
+        text: message.text,
+        source_id: message.source_id ?? null,
+        transcript_revision: message.transcript_revision,
+        revision: message.revision,
+        blocks: message.blocks,
+      }),
+    },
+  );
 
 export const getMemories = (workspaceId: string, projectId?: string | null) => {
   const params = new URLSearchParams({ workspace_id: workspaceId, limit: "12" });
@@ -333,3 +405,224 @@ export const bindGitHubRepository = (
       allowed_paths: payload.allowed_paths ?? [],
     }),
   });
+
+
+export type ProjectNote = {
+  id: string;
+  project_id: string;
+  author: { id: string; display_name: string };
+  author_roles: string[];
+  title: string;
+  body: string;
+  source_text: string;
+  structured: Record<string, unknown> | null;
+  audience: "project";
+  status: "accepted" | "processing" | "waiting_repository" | "blocked" | "ready";
+  processing: {
+    model: string | null;
+    prompt_version: string | null;
+    request_uid: string | null;
+    attempts: number;
+    error: string | null;
+  };
+  repository: {
+    repository_id: number;
+    full_name: string;
+    path: string;
+    sha: string;
+    commit_sha: string | null;
+  };
+  revision: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+};
+
+export type ProjectReply = {
+  id: string;
+  note_id: string;
+  project_id: string;
+  author: { id: string; display_name: string };
+  body: string;
+  created_at_ms: number;
+};
+
+export type CollaborationEvent = {
+  id: number;
+  project_id: string;
+  project_name: string;
+  actor_id: string;
+  kind: "note_created" | "note_replied" | string;
+  object_kind: "note" | "reply" | string;
+  object_id: string;
+  parent_object_id: string | null;
+  addressed_to_actor_id: string | null;
+  summary: string;
+  created_at_ms: number;
+};
+
+export const getCollaborationTimeline = (workspaceId: string, afterId = 0) => {
+  const params = new URLSearchParams({
+    workspace_id: workspaceId,
+    after_id: String(afterId),
+    limit: "100",
+  });
+  return api<{ items: CollaborationEvent[] }>(`/api/collaboration/timeline?${params}`);
+};
+
+export const getProjectNote = (workspaceId: string, noteId: string) => {
+  const params = new URLSearchParams({ workspace_id: workspaceId });
+  return api<ProjectNote>(
+    `/api/collaboration/notes/${encodeURIComponent(noteId)}?${params}`,
+  );
+};
+
+export const getProjectNoteReplies = (workspaceId: string, noteId: string) => {
+  const params = new URLSearchParams({ workspace_id: workspaceId });
+  return api<{ items: ProjectReply[] }>(
+    `/api/collaboration/notes/${encodeURIComponent(noteId)}/replies?${params}`,
+  );
+};
+
+export const postProjectNoteReply = (
+  workspaceId: string,
+  noteId: string,
+  body: string,
+) => api<ProjectReply>(
+  `/api/collaboration/notes/${encodeURIComponent(noteId)}/replies`,
+  {
+    method: "POST",
+    body: JSON.stringify({
+      workspace_id: workspaceId,
+      command_id: `ui.reply.${Date.now()}.${crypto.randomUUID().slice(0, 8)}`,
+      body,
+    }),
+  },
+);
+
+
+export type CollaborationQuestion = {
+  id: string;
+  source_kind: "analysis" | "owner_development";
+  analysis_id: string;
+  execution_id?: string;
+  project_id: string;
+  asked_by_actor_id: string;
+  addressed_to_actor_id: string;
+  addressed_role: string;
+  prompt: string;
+  shared_context: string;
+  blocking: boolean;
+  alternatives: Array<"answer" | "unknown" | "skip" | "later">;
+  state: "open" | "resolved" | "skipped" | "unknown" | "deferred";
+  disposition: "answer" | "unknown" | "skip" | "later" | null;
+  answer_text: string | null;
+  answered_by_actor_id: string | null;
+  deferred_until_ms: number | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+};
+
+export const getCollaborationQuestions = (workspaceId: string) => {
+  const params = new URLSearchParams({ workspace_id: workspaceId, limit: "50" });
+  return api<{ items: CollaborationQuestion[] }>(
+    `/api/collaboration/questions/inbox?${params}`,
+  );
+};
+
+export const answerCollaborationQuestions = (
+  workspaceId: string,
+  analysisId: string,
+  responses: Array<{
+    question_id: string;
+    disposition: "answer" | "unknown" | "skip" | "later";
+    body?: string;
+    deferred_until_ms?: number;
+  }>,
+) => api<{
+  analysis_id: string;
+  questions: CollaborationQuestion[];
+  continuation: "queued" | "deferred" | "blocked" | "not_required";
+}>(
+  `/api/collaboration/analyses/${encodeURIComponent(analysisId)}/answers`,
+  {
+    method: "POST",
+    body: JSON.stringify({
+      workspace_id: workspaceId,
+      command_id: `ui.questions.${Date.now()}.${crypto.randomUUID().slice(0, 8)}`,
+      responses,
+    }),
+  },
+);
+
+
+export const answerSingleCollaborationQuestion = (
+  workspaceId: string,
+  questionId: string,
+  disposition: "answer" | "unknown" | "skip" | "later",
+  body = "",
+  deferredUntilMs?: number,
+) => api<{
+  question_id: string;
+  execution_id: string;
+  state: string;
+  disposition: string;
+  continuation: "resumed" | "deferred" | "blocked";
+}>(
+  `/api/collaboration/questions/${encodeURIComponent(questionId)}/respond`,
+  {
+    method: "POST",
+    body: JSON.stringify({
+      workspace_id: workspaceId,
+      command_id: `ui.question.${Date.now()}.${crypto.randomUUID().slice(0, 8)}`,
+      disposition,
+      body,
+      deferred_until_ms: deferredUntilMs,
+    }),
+  },
+);
+
+
+export type CollaborationBrief = {
+  personal: CollaborationEvent[];
+  personal_unread_count: number;
+  personal_through_id: number;
+  general_available: boolean;
+  general_count: number;
+  general_preview: CollaborationEvent[];
+  general_through_id: number;
+  general_news_enabled: boolean;
+};
+
+export const getCollaborationBrief = (workspaceId: string) => {
+  const params = new URLSearchParams({ workspace_id: workspaceId });
+  return api<CollaborationBrief>(`/api/collaboration/brief?${params}`);
+};
+
+export const markCollaborationBriefSeen = (
+  workspaceId: string,
+  personalThroughId?: number,
+  generalThroughId?: number,
+) => api<{
+  personal_cursor: number;
+  general_cursor: number;
+  general_news_enabled: boolean;
+}>("/api/collaboration/brief/seen", {
+  method: "POST",
+  body: JSON.stringify({
+    workspace_id: workspaceId,
+    personal_through_id: personalThroughId,
+    general_through_id: generalThroughId,
+  }),
+});
+
+export const setCollaborationGeneralNews = (
+  workspaceId: string,
+  enabled: boolean,
+) => api<{
+  personal_cursor: number;
+  general_cursor: number;
+  general_news_enabled: boolean;
+}>("/api/collaboration/preferences/general-news", {
+  method: "POST",
+  body: JSON.stringify({ workspace_id: workspaceId, enabled }),
+});

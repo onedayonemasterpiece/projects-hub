@@ -14,6 +14,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .auth import COOKIE_NAME, SESSION_TTL_SECONDS, issue_session, parse_session
+from .board import BoardService
+from .board_api import attach_board_routes
+from .board_view_context import BoardViewContextStore
+from .board_view_context_api import attach_board_view_context_routes
+from .collaboration import CollaborationService
+from .collaboration_api import attach_collaboration_routes
+from .collaboration_analysis import CollaborationAnalysisService
+from .collaboration_analysis_api import attach_collaboration_analysis_routes
 from .github_app import GitHubAppError
 from .github_connections import GitHubConnections
 from .device_commands import DeviceCommandService
@@ -47,6 +55,17 @@ class ConversationCreate(BaseModel):
     focus_project_id: str | None = None
 
 
+class TimelineMessageUpsert(BaseModel):
+    workspace_id: str
+    turn_id: str = Field(min_length=8, max_length=160)
+    role: Literal["user", "assistant"]
+    text: str = Field(default="", max_length=120_000)
+    source_id: str | None = Field(default=None, max_length=160)
+    transcript_revision: int = Field(default=0, ge=0, le=1_000_000_000)
+    revision: int = Field(default=1, ge=1, le=1_000_000_000)
+    blocks: list[dict[str, Any]] = Field(default_factory=list, max_length=8)
+
+
 class LiveStart(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -67,6 +86,11 @@ class LiveStart(BaseModel):
         default=None,
         pattern=r"^[A-Za-z0-9._+/-]{1,100}$",
         max_length=100,
+    )
+    client_instance_id: str | None = Field(
+        default=None,
+        pattern=r"^[0-9A-Za-z._:-]{8,128}$",
+        max_length=128,
     )
     attempt_id: str | None = Field(
         default=None,
@@ -128,6 +152,7 @@ def _http_for_code(code: str) -> int:
         "GITHUB_WRITE_POLICY_DENIED",
         "GITHUB_WRITE_PERMISSION_MISSING",
         "GITHUB_WEBHOOK_INVALID",
+        "PROJECT_FORBIDDEN",
         "DEVICE_COMMAND_CLAIM_INVALID",
     }:
         return 403
@@ -144,8 +169,10 @@ def _http_for_code(code: str) -> int:
         "DEVICE_COMMAND_NOT_FOUND",
     }:
         return 404
-    if code in {"LIVE_BUSY"}:
+    if code in {"LIVE_BUSY", "NOTE_PROCESSOR_CAPACITY"}:
         return 429
+    if code in {"NOTE_TEXT_TOO_LARGE"}:
+        return 413
     if code in {
         "DEVICE_SELECTION_REQUIRED",
         "DEVICE_CAPABILITY_NOT_AVAILABLE",
@@ -154,6 +181,13 @@ def _http_for_code(code: str) -> int:
         "DEVICE_READBACK_REQUIRED",
         "LIVE_TRANSPORT_MISMATCH",
         "LIVE_SOCKET_BUSY",
+        "NOTE_NOT_READY",
+        "NOTE_AUDIENCE_REPOSITORY_MISMATCH",
+        "GITHUB_PROJECT_DOCS_REQUIRED",
+        "GITHUB_WRITE_CONFLICT",
+        "COLLABORATION_COMMAND_CONFLICT",
+        "GITHUB_READBACK_MISMATCH",
+        "TIMELINE_MESSAGE_CONFLICT",
     }:
         return 409
     if code.startswith("INVALID") or code in {"SOURCE_TRANSCRIPT_PENDING"}:
@@ -163,6 +197,15 @@ def _http_for_code(code: str) -> int:
         "GITHUB_UNAVAILABLE",
         "GITHUB_ERROR",
         "GITHUB_INVALID_RESPONSE",
+        "NOTE_PROCESSOR_NOT_CONFIGURED",
+        "NOTE_PROCESSOR_UNAVAILABLE",
+        "NOTE_LIMITER_UNAVAILABLE",
+        "NOTE_LIMITER_INVALID_RESPONSE",
+        "NOTE_LIMITER_CONTRACT_MISMATCH",
+        "NOTE_MODEL_LIMIT_NOT_FOUND",
+        "NOTE_MODEL_LIMIT_INVALID",
+        "NOTE_PROCESSOR_KEY_UNAVAILABLE",
+        "NOTE_PROCESSOR_INVALID_RESPONSE",
     } else 400
 
 
@@ -235,6 +278,8 @@ def create_app(
     device_commands: DeviceCommandService | None = None,
     readiness: ReadinessService | None = None,
     development: DevelopmentService | None = None,
+    collaboration: CollaborationService | None = None,
+    collaboration_analysis: CollaborationAnalysisService | None = None,
     regional_knowledge_factory: Any | None = None,
 ) -> FastAPI:
     configure_logging()
@@ -249,12 +294,20 @@ def create_app(
             development_service, "start_background"
         ):
             await development_service.start_background()
+        collaboration_analysis_service = getattr(app.state, "collaboration_analysis", None)
+        collaboration_service = getattr(app.state, "collaboration", None)
+        if collaboration_analysis_service is not None:
+            await collaboration_analysis_service.start_background()
         try:
             yield
         finally:
             host = getattr(app.state, "live_host", None)
             if host is not None and hasattr(host, "stop_all"):
                 await host.stop_all()
+            if collaboration_analysis_service is not None:
+                await collaboration_analysis_service.close()
+            if collaboration_service is not None and hasattr(collaboration_service, "close"):
+                await collaboration_service.close()
             if development_service is not None and hasattr(
                 development_service, "close"
             ):
@@ -265,19 +318,35 @@ def create_app(
     app = FastAPI(title="Projects Hub", version=__version__, lifespan=lifespan)
     app.state.settings = settings
     app.state.store = store
+    app.state.board = BoardService(store)
+    app.state.board_view_context = BoardViewContextStore(store, app.state.board)
+    app.state.board_hub = None
     app.state.live_host = live_host
     app.state.github_connections = github_connections or GitHubConnections(store, settings)
     app.state.device_commands = device_commands or DeviceCommandService(store)
     app.state.readiness = readiness or ReadinessService(store)
     app.state.development = development or DevelopmentService(store, app.state.readiness)
+    app.state.collaboration = collaboration or CollaborationService(
+        store, app.state.github_connections
+    )
+    app.state.collaboration_analysis = collaboration_analysis or CollaborationAnalysisService(
+        store,
+        app.state.collaboration,
+        development=app.state.development,
+    )
     def host() -> Any:
         if app.state.live_host is None:
             app.state.live_host = build_live_host(
                 store,
+                board=app.state.board,
+                board_hub=app.state.board_hub,
+                board_view_context=app.state.board_view_context,
                 device_commands=app.state.device_commands,
                 readiness=app.state.readiness,
                 development=app.state.development,
                 github_connections=app.state.github_connections,
+                collaboration=app.state.collaboration,
+                collaboration_analysis=app.state.collaboration_analysis,
                 regional_knowledge_factory=regional_knowledge_factory,
             )
         return app.state.live_host
@@ -340,6 +409,29 @@ def create_app(
         except StoreError as exc:
             raise _error(exc) from exc
         return actor_id
+
+    app.state.board_hub = attach_board_routes(
+        app,
+        service=app.state.board,
+        actor_id_from_request=actor_id_from_request,
+        session_secret=settings.session_secret,
+        cookie_name=COOKIE_NAME,
+    )
+    attach_board_view_context_routes(
+        app,
+        service=app.state.board_view_context,
+        actor_id_from_request=actor_id_from_request,
+    )
+    attach_collaboration_routes(
+        app,
+        service=app.state.collaboration,
+        actor_id_from_request=actor_id_from_request,
+    )
+    attach_collaboration_analysis_routes(
+        app,
+        service=app.state.collaboration_analysis,
+        actor_id_from_request=actor_id_from_request,
+    )
 
     @app.exception_handler(StoreError)
     async def store_error(_request: Request, exc: StoreError):
@@ -446,6 +538,16 @@ def create_app(
     async def github_status(request: Request, workspace_id: str) -> dict[str, Any]:
         actor_id = actor_id_from_request(request)
         return app.state.github_connections.status(actor_id, workspace_id)
+
+    @app.post("/api/github/refresh")
+    async def github_refresh(
+        request: Request,
+        workspace_id: str,
+    ) -> dict[str, Any]:
+        return await app.state.github_connections.refresh(
+            actor_id=actor_id_from_request(request),
+            workspace_id=workspace_id,
+        )
 
     @app.post("/api/github/app-manifest/start")
     async def github_app_manifest_start(
@@ -722,9 +824,57 @@ def create_app(
             payload.focus_project_id,
         )
 
+    @app.post("/api/conversations/personal")
+    async def personal_conversation(
+        payload: ConversationCreate,
+        request: Request,
+    ) -> dict[str, Any]:
+        return store.get_or_create_personal_conversation(
+            actor_id_from_request(request),
+            payload.workspace_id,
+            payload.focus_project_id,
+        )
+
     @app.get("/api/conversations/{conversation_id}")
     async def get_conversation(conversation_id: str, request: Request) -> dict[str, Any]:
         return store.get_conversation(actor_id_from_request(request), conversation_id)
+
+    @app.get("/api/conversations/{conversation_id}/timeline")
+    async def conversation_timeline(
+        conversation_id: str,
+        request: Request,
+        workspace_id: str,
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        return {
+            "items": store.list_conversation_timeline_messages(
+                actor_id=actor_id_from_request(request),
+                conversation_id=conversation_id,
+                workspace_id=workspace_id,
+                limit=limit,
+            )
+        }
+
+    @app.put("/api/conversations/{conversation_id}/timeline/messages/{message_id}")
+    async def conversation_timeline_message(
+        conversation_id: str,
+        message_id: str,
+        payload: TimelineMessageUpsert,
+        request: Request,
+    ) -> dict[str, Any]:
+        return store.upsert_conversation_timeline_message(
+            actor_id=actor_id_from_request(request),
+            conversation_id=conversation_id,
+            workspace_id=payload.workspace_id,
+            message_id=message_id,
+            turn_id=payload.turn_id,
+            role=payload.role,
+            text=payload.text,
+            source_id=payload.source_id,
+            transcript_revision=payload.transcript_revision,
+            revision=payload.revision,
+            blocks=payload.blocks,
+        )
 
     @app.get("/api/event-cards")
     async def event_cards(
@@ -944,6 +1094,7 @@ def create_app(
                 client_source_id=payload.client_source_id,
                 client_version=payload.client_version,
                 client_timezone=payload.client_timezone,
+                client_instance_id=payload.client_instance_id,
                 backend_version=__version__,
                 backend_release_sha=settings.release_sha,
                 attempt_id=payload.attempt_id,

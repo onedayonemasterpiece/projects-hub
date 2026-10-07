@@ -1891,3 +1891,66 @@ def test_owner_development_tools_are_not_exposed_to_ordinary_users():
         "development_execution_status",
         "backlog_list",
     } <= owner
+
+
+@pytest.mark.asyncio
+async def test_pending_unknown_owner_resume_blocks_new_development_start(tmp_path: Path):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = FakeDevCoveer()
+    service = DevelopmentService(store, readiness, devcoveer=fake)
+    try:
+        tasks = create_backlog(service, boot, project)
+        first = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[tasks[0]["id"]],
+        )
+        execution_id = first["execution"]["id"]
+        now = 1_800_000_000_500
+        with store._lock:
+            store.db.execute(
+                """UPDATE task_executions
+                   SET status='blocked',phase='needs_owner',
+                       error_code='REVIEW_VERDICT_MISSING',
+                       phase_detail='Owner answer dispatched with unknown outcome',
+                       finished_at_ms=?,updated_at_ms=?
+                   WHERE id=?""",
+                (now, now, execution_id),
+            )
+            store.db.execute(
+                """UPDATE task_execution_stages
+                   SET status='completed',finished_at_ms=?,updated_at_ms=?
+                   WHERE execution_id=? AND status='running'""",
+                (now, now, execution_id),
+            )
+            store.db.execute(
+                """INSERT INTO development_owner_resumes(
+                       execution_id,command_id,answer_sha256,answer_text,status,
+                       provider_baseline_json,quota_remaining_percent,
+                       created_at_ms,updated_at_ms)
+                   VALUES(?,?,?,?,?,?,?,?,?)""",
+                (
+                    execution_id,
+                    "owner.pending.0001",
+                    "a" * 64,
+                    "Owner answer with unknown provider receipt.",
+                    "dispatch_unknown",
+                    '{"turn_id":"turn-before"}',
+                    80.0,
+                    now,
+                    now,
+                ),
+            )
+        calls_before = list(fake.calls)
+        with pytest.raises(StoreError) as exc:
+            await service.start(
+                actor_id=boot["actor"]["id"],
+                workspace_id=boot["workspace"]["id"],
+                task_ids=[tasks[1]["id"]],
+            )
+        assert exc.value.code == "DEVELOPMENT_EXECUTION_ACTIVE"
+        # The guard fires before quota/model/provider admission or any new task.
+        assert fake.calls == calls_before
+    finally:
+        await service.close()
+        store.close()

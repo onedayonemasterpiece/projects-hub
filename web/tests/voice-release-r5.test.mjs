@@ -7,8 +7,8 @@ const source=fs.readFileSync(new URL('../src/App.tsx',import.meta.url),'utf8');
 test('real App timing callback distinguishes admitted speech, queued end and output without inventing transcript',()=>{
   const calls=[];
   const setters=['setSpeechActive','setSpeechPending','setPlaybackProblem','setInterimInputTranscript','setInputTranscriptSeen'];
-  const names=[...setters,'speechStartsNewUserBubble','reserveUserVoiceBubble','settleCurrentVoiceBubble','userTurnBoundaryPendingRef','userTranscriptIndex','turnHasInput','userTurnAwaitingFinalRef'];
-  const refs=[{current:true},{current:2},{current:true},{current:true}];
+  const names=[...setters,'speechStartsNewUserBubble','reserveUserVoiceBubble','settleCurrentVoiceBubble','userTurnBoundaryPendingRef','userTranscriptIndex','assistantTranscriptIndex','turnHasInput','userTurnAwaitingFinalRef'];
+  const refs=[{current:true},{current:2},{current:4},{current:true},{current:true}];
   const reserveUserVoiceBubble=()=>calls.push(['reserveUserVoiceBubble',true]);
   const settleCurrentVoiceBubble=()=>calls.push(['settleCurrentVoiceBubble',true]);
   const values=[...setters.map(name=>value=>calls.push([name,value])),speechStartsNewUserBubble,reserveUserVoiceBubble,settleCurrentVoiceBubble,...refs];
@@ -20,6 +20,7 @@ test('real App timing callback distinguishes admitted speech, queued end and out
   assert.ok(calls.some(([name,value])=>name==='settleCurrentVoiceBubble'&&value===true));
   assert.ok(calls.some(([name,value])=>name==='reserveUserVoiceBubble'&&value===true));
   assert.equal(refs[1].current,-1);
+  assert.equal(refs[2].current,-1);
   calls.length=0;callback('speech_end');
   assert.deepEqual(calls,[['setSpeechActive',false],['setSpeechPending',true]]);
   calls.length=0;callback('first_output_audio');

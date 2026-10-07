@@ -1,0 +1,65 @@
+
+.collaboration-inline {
+  display: grid;
+  gap: 10px;
+  width: min(100%, 720px);
+  margin: 4px auto 10px;
+}
+.collaboration-widget,
+.collaboration-thread {
+  border: 1px solid var(--line, rgba(127,127,127,.22));
+  border-radius: 18px;
+  padding: 14px 16px;
+  background: var(--surface, rgba(255,255,255,.06));
+  display: grid;
+  gap: 10px;
+}
+.collaboration-widget.addressed {
+  box-shadow: inset 3px 0 0 currentColor;
+}
+.collaboration-widget-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.collaboration-widget-head span,
+.collaboration-widget-head small {
+  opacity: .72;
+}
+.collaboration-general-toggle {
+  justify-self: center;
+  border: 0;
+  background: transparent;
+  text-decoration: underline;
+  cursor: pointer;
+  opacity: .78;
+}
+.collaboration-thread h3,
+.collaboration-thread p {
+  margin: 0;
+}
+.collaboration-replies {
+  display: grid;
+  gap: 8px;
+}
+.collaboration-reply {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(127,127,127,.1);
+}
+.collaboration-reply p {
+  white-space: pre-wrap;
+  margin-top: 4px;
+}
+.collaboration-reply-box {
+  display: grid;
+  gap: 8px;
+}
+.collaboration-reply-box textarea {
+  min-height: 72px;
+  resize: vertical;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font: inherit;
+}

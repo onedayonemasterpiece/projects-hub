@@ -508,3 +508,67 @@ async def test_manifest_flow_bootstraps_and_persists_github_app_without_manual_s
         assert replay.value.code == "GITHUB_APP_MANIFEST_STATE_INVALID"
     finally:
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_owner_refresh_discovers_new_installation_repository_without_rebinding_existing(tmp_path: Path):
+    store, boot, client, service = setup(tmp_path)
+    try:
+        owner = boot["actor"]["id"]
+        workspace = boot["workspace"]["id"]
+        started = service.start_install(actor_id=owner, workspace_id=workspace)
+        state = parse_qs(urlparse(started["install_url"]).query)["state"][0]
+        await service.complete_install(state=state, installation_id=77)
+
+        project = next(
+            item["id"] for item in boot["projects"] if item["name"] == "Projects Hub"
+        )
+        before = service.bind_repository(
+            actor_id=owner,
+            workspace_id=workspace,
+            repository_id=101,
+            project_id=project,
+            role="project_docs",
+            access_mode="app_managed_write",
+            allowed_paths=["docs/notes"],
+        )
+        assert before["role"] == "project_docs"
+
+        client.repositories.append(
+            {
+                "id": 303,
+                "full_name": "onedayonemasterpiece/projects-hub-notes",
+                "default_branch": "main",
+                "private": True,
+            }
+        )
+        refreshed = await service.refresh(
+            actor_id=owner,
+            workspace_id=workspace,
+        )
+        assert refreshed["refreshed_installation_ids"] == [77]
+        by_id = {item["repository_id"]: item for item in refreshed["repositories"]}
+        assert by_id[303]["full_name"] == "onedayonemasterpiece/projects-hub-notes"
+        assert by_id[303]["private"] is True
+        assert by_id[303]["project_id"] is None
+        assert by_id[303]["role"] == "unassigned"
+        assert by_id[303]["access_mode"] == "read_only"
+        assert by_id[101]["project_id"] == project
+        assert by_id[101]["role"] == "project_docs"
+        assert by_id[101]["access_mode"] == "app_managed_write"
+        assert by_id[101]["allowed_paths"] == ["docs/notes"]
+
+        member = "usr_refresh_member"
+        store.db.execute(
+            "INSERT INTO actors(id,display_name,created_at_ms) VALUES(?,?,?)",
+            (member, "Member", 1),
+        )
+        store.db.execute(
+            "INSERT INTO memberships(actor_id,workspace_id,role) VALUES(?,?,?)",
+            (member, workspace, "member"),
+        )
+        with pytest.raises(StoreError) as denied:
+            await service.refresh(actor_id=member, workspace_id=workspace)
+        assert denied.value.code == "FORBIDDEN"
+    finally:
+        store.close()

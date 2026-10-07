@@ -202,6 +202,63 @@ class GitHubAppClient:
             "text": text,
         }
 
+    async def put_repository_content(
+        self,
+        *,
+        token: str,
+        full_name: str,
+        path: str,
+        text: str,
+        message: str,
+        branch: str,
+        sha: str | None = None,
+    ) -> dict[str, Any]:
+        owner, separator, repo = str(full_name or "").partition("/")
+        clean_path = str(path or "").strip().strip("/")
+        if (
+            not separator
+            or not owner
+            or not repo
+            or "/" in repo
+            or not clean_path
+            or len(clean_path) > 500
+            or "\\" in clean_path
+            or any(part in {"", ".", ".."} for part in clean_path.split("/"))
+            or any(
+                ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._"
+                for ch in owner + repo
+            )
+        ):
+            raise GitHubAppError("INVALID_ARGUMENT", "Repository target is invalid")
+        clean_message = str(message or "").strip()[:240]
+        if not clean_message:
+            raise GitHubAppError("INVALID_ARGUMENT", "Commit message is required")
+        if len(text.encode("utf-8")) > 120_000:
+            raise GitHubAppError("INVALID_ARGUMENT", "Repository text is too large")
+        endpoint = (
+            f"/repos/{quote(owner, safe='-._')}/{quote(repo, safe='-._')}/contents/"
+            + "/".join(quote(part, safe="-._") for part in clean_path.split("/"))
+        )
+        body: dict[str, Any] = {
+            "message": clean_message,
+            "content": base64.b64encode(text.encode("utf-8")).decode("ascii"),
+            "branch": str(branch),
+        }
+        if sha:
+            body["sha"] = str(sha)
+        payload = await self._json_request("PUT", endpoint, token=token, body=body)
+        if not isinstance(payload, dict):
+            raise GitHubAppError("GITHUB_INVALID_RESPONSE", "GitHub write response is invalid")
+        content = payload.get("content")
+        commit = payload.get("commit")
+        if not isinstance(content, dict) or not isinstance(commit, dict):
+            raise GitHubAppError("GITHUB_INVALID_RESPONSE", "GitHub write receipt is incomplete")
+        return {
+            "path": str(content.get("path") or clean_path),
+            "sha": str(content.get("sha") or ""),
+            "commit_sha": str(commit.get("sha") or ""),
+        }
+
     async def get_installation(self, installation_id: int) -> dict[str, Any]:
         payload = await self._json_request(
             "GET",
