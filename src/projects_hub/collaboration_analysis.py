@@ -809,7 +809,7 @@ class CollaborationAnalysisService:
             )
 
         if status == "completed":
-            return await self.refresh_analysis(
+            return await self._refresh_analysis_locked(
                 actor_id=initiating_actor_id,
                 workspace_id=workspace_id,
                 analysis_id=str(snapshot["id"]),
@@ -821,6 +821,17 @@ class CollaborationAnalysisService:
         )
 
     async def refresh_analysis(
+        self, *, actor_id: str, workspace_id: str, analysis_id: str
+    ) -> dict[str, Any]:
+        """Explicit reconciliation entry point serialized with the durable worker."""
+        async with self._lock:
+            return await self._refresh_analysis_locked(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                analysis_id=analysis_id,
+            )
+
+    async def _refresh_analysis_locked(
         self, *, actor_id: str, workspace_id: str, analysis_id: str
     ) -> dict[str, Any]:
         with self.store._lock:
@@ -1415,7 +1426,7 @@ class CollaborationAnalysisService:
         advanced = 0
         for row in rows:
             try:
-                await self.refresh_analysis(
+                await self._refresh_analysis_locked(
                     actor_id=str(row["initiating_actor_id"]),
                     workspace_id=str(row["workspace_id"]),
                     analysis_id=str(row["id"]),
