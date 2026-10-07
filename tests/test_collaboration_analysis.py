@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -806,6 +807,65 @@ async def test_invalid_repair_fails_closed_without_third_consult(tmp_path: Path)
         assert failed["repair_attempt_count"] == 1
         assert len(failed["questions"]) == 0
         assert len(repair.consults) == 2
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_explicit_refresh_serializes_with_background_analysis_worker(tmp_path: Path):
+    (
+        store, collaboration, service, bridge,
+        actor_a, actor_b, workspace_id, project_id,
+    ) = setup(tmp_path)
+    try:
+        note = await collaboration.create_note(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            command_id="cmd.note.refresh-race",
+            title="Refresh race",
+            body="Worker and explicit reconciliation must share one serialized path.",
+        )
+        started = await service.start_analysis(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            note_id=note["id"],
+            addressed_to_actor_id=actor_b,
+            command_id="cmd.analysis.refresh-race",
+            model="kimi_k3",
+            purpose="requirements",
+            question="Сформируй минимальные вопросы.",
+        )
+        assert started["status"] == "running"
+
+        worker_result, explicit = await asyncio.gather(
+            service.advance_jobs_once(),
+            service.refresh_analysis(
+                actor_id=actor_a,
+                workspace_id=workspace_id,
+                analysis_id=started["id"],
+            ),
+        )
+        assert worker_result >= 0
+        assert explicit["status"] == "completed"
+
+        current = service.get_analysis(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            analysis_id=started["id"],
+        )
+        assert current["status"] == "completed"
+        assert len(current["questions"]) == 2
+        with store._lock:
+            assert store.db.execute(
+                "SELECT COUNT(*) AS n FROM collaboration_questions WHERE analysis_id=?",
+                (started["id"],),
+            ).fetchone()["n"] == 2
+        # Both callers may observe the provider, but serialization prevents
+        # overlapping materialization/repair transactions.
+        assert bridge.reads.count("provider-analysis-1") <= 2
     finally:
         await service.close()
         store.close()
