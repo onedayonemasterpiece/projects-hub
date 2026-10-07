@@ -243,6 +243,15 @@ export const createConversation = (workspaceId: string, projectId?: string | nul
     body: JSON.stringify({ workspace_id: workspaceId, focus_project_id: projectId ?? null }),
   });
 
+export const getOrCreatePersonalConversation = (
+  workspaceId: string,
+  projectId?: string | null,
+) =>
+  api<Conversation>("/api/conversations/personal", {
+    method: "POST",
+    body: JSON.stringify({ workspace_id: workspaceId, focus_project_id: projectId ?? null }),
+  });
+
 export const getConversation = (id: string) => api<Conversation>(`/api/conversations/${id}`);
 
 export const getPersonalTimeline = (
