@@ -287,12 +287,28 @@ class ChatGPTNoteAnalysisSync:
             groups.setdefault(key, []).append(row)
         imported = 0
         for group in list(groups.values())[:10]:
-            example = group[0]
+            # Acceptance canaries may leave historical notes by revoked actors.
+            # Pick a currently authorized actor for the manifest read rather
+            # than allowing the newest revoked author to block the whole group.
+            example = None
+            for candidate in group:
+                try:
+                    self.store.project_access(
+                        str(candidate["author_actor_id"]),
+                        str(candidate["workspace_id"]),
+                        str(candidate["project_id"]),
+                        require_role="editor",
+                    )
+                except StoreError:
+                    continue
+                example = candidate
+                break
+            if example is None:
+                continue
             owner = str(example["author_actor_id"])
             ws = str(example["workspace_id"])
             project = str(example["project_id"])
             try:
-                self.store.project_access(owner, ws, project, require_role="editor")
                 connections = self.store.list_repository_connections(owner, ws)
                 connection = next(
                     (
@@ -315,7 +331,7 @@ class ChatGPTNoteAnalysisSync:
                     str(manifest["text"]),
                     repository=str(example["repository_full_name"]),
                 )
-            except (StoreError, ValueError, TypeError):
+            except (StoreError, ValueError, TypeError, KeyError, AttributeError):
                 continue
 
             by_id = {str(note["id"]): note for note in group}
