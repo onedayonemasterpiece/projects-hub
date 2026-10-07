@@ -37,15 +37,16 @@ def test_personal_conversation_timeline_is_reused_revisioned_and_private(tmp_pat
         with TestClient(app, base_url="http://testserver") as client:
             client.cookies.set(COOKIE_NAME, issue_session(owner, settings.session_secret))
             first = client.post(
-                "/api/conversations",
+                "/api/conversations/personal",
                 json={"workspace_id": workspace, "focus_project_id": project},
             )
             assert first.status_code == 200
             conversation_id = first.json()["id"]
 
-            # One active personal conversation is reused across focus changes / devices.
+            # The dedicated UI personal conversation is reused across focus changes / devices,
+            # while generic Live/offline resource conversations remain independent.
             second = client.post(
-                "/api/conversations",
+                "/api/conversations/personal",
                 json={"workspace_id": workspace, "focus_project_id": None},
             )
             assert second.status_code == 200
