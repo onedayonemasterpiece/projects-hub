@@ -250,12 +250,15 @@ class DevCoveerClient:
         model: str | None = None,
         reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
+        # Continue the already-existing task using its saved backend/provider
+        # context. Re-selecting provider="codex" here turns a continuation into
+        # a fresh native-Codex selection and can trigger an unnecessary
+        # current-user opt-in gate before any provider side effect.
         args: dict[str, Any] = {
             "task": task_id,
             "project": project,
             "prompt": prompt,
             "access": access,
-            "provider": "codex",
         }
         if model:
             args["model"] = model

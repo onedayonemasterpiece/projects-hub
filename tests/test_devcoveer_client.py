@@ -247,6 +247,42 @@ async def test_start_task_can_be_explicit_native_codex_read():
     ]
 
 
+@pytest.mark.asyncio
+async def test_continue_task_preserves_existing_native_provider_context():
+    client = DevCoveerClient(command="/tmp/not-used")
+    captured: list[tuple[str, dict]] = []
+
+    async def fake_call(name: str, arguments: dict):
+        captured.append((name, dict(arguments)))
+        return {"status": "running", "taskId": "dvt_existing"}
+
+    client._call = fake_call  # type: ignore[method-assign]
+    result = await client.continue_codex_task(
+        "dvt_existing",
+        project="projects-hub-owner",
+        prompt="continue the same review",
+        access="read",
+        model="gpt-6-astra",
+        reasoning_effort="high",
+    )
+
+    assert result["taskId"] == "dvt_existing"
+    assert captured == [
+        (
+            "continue_task",
+            {
+                "task": "dvt_existing",
+                "project": "projects-hub-owner",
+                "prompt": "continue the same review",
+                "access": "read",
+                "model": "gpt-6-astra",
+                "reasoning_effort": "high",
+            },
+        )
+    ]
+    assert "provider" not in captured[0][1]
+
+
 def test_command_uses_production_env_without_overriding_explicit_command(
     monkeypatch: pytest.MonkeyPatch,
 ):
