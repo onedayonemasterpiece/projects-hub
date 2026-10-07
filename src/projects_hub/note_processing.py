@@ -547,6 +547,27 @@ class GeminiNoteProcessor:
         )
 
     @staticmethod
+    def _provider_error_detail(body: Any, status_code: int) -> str:
+        error = body.get("error") if isinstance(body, dict) else None
+        if not isinstance(error, dict):
+            return f"HTTP {status_code}"
+        provider_status = str(error.get("status") or "").strip()[:80]
+        message = str(error.get("message") or "").replace("\n", " ").strip()
+        message = re.sub(
+            r"AIza[A-Za-z0-9_-]{20,}",
+            "[REDACTED]",
+            message,
+        )
+        message = re.sub(
+            r"(?i)(api[_ -]?key|x-goog-api-key|key)\s*[:=]\s*[^\s,;]+",
+            r"\1=[REDACTED]",
+            message,
+        )
+        message = message[:300]
+        suffix = " ".join(value for value in (provider_status, message) if value)
+        return f"HTTP {status_code}" + (f" {suffix}" if suffix else "")
+
+    @staticmethod
     def _response_text(body: Any) -> str:
         if not isinstance(body, dict):
             raise ValueError("provider response is not an object")
@@ -708,10 +729,17 @@ class GeminiNoteProcessor:
                 status="failed",
                 error_code="http_" + str(response.status_code),
             )
+            detail = self._provider_error_detail(payload, response.status_code)
+            if 400 <= response.status_code < 500:
+                raise NoteProcessingError(
+                    "NOTE_PROCESSOR_PROVIDER_REJECTED",
+                    "Gemini note processing was rejected by the provider: " + detail,
+                    retryable=False,
+                )
             raise NoteProcessingError(
                 "NOTE_PROCESSOR_UNAVAILABLE",
-                "Gemini note processing was rejected by the provider",
-                retryable=response.status_code >= 500,
+                "Gemini note processing provider is unavailable: " + detail,
+                retryable=True,
             )
         try:
             text = self._response_text(payload).strip()

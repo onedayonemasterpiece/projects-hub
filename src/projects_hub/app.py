@@ -156,7 +156,7 @@ def _http_for_code(code: str) -> int:
         "DEVICE_COMMAND_CLAIM_INVALID",
     }:
         return 403
-    if code in {"IDENTITY_PROVIDER_INVALID"}:
+    if code in {"IDENTITY_PROVIDER_INVALID", "NOTE_PROCESSOR_PROVIDER_REJECTED"}:
         return 502
     if code in {"IDENTITY_PROVIDER_UNAVAILABLE"}:
         return 503
