@@ -5,6 +5,7 @@ import test from "node:test";
 const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const board = readFileSync(new URL("../src/InlineBoard.tsx", import.meta.url), "utf8");
 const api = readFileSync(new URL("../src/boardApi.ts", import.meta.url), "utf8");
+const productApi = readFileSync(new URL("../src/api.ts", import.meta.url), "utf8");
 
 test("personal timeline mounts at most one board renderer", () => {
   assert.equal((app.match(/<InlineBoard/g) ?? []).length, 1);
@@ -53,4 +54,19 @@ test("board shares the current Live browser-tab identity and structural context 
 test("board socket is receive-oriented and direct object mutation stays server-side", () => {
   assert.match(api, /class BoardSocket/);
   assert.doesNotMatch(api, /sendCommand|operation:\s*"create"|operation:\s*"update"/);
+});
+
+
+test("personal conversation is server-backed and widgets are durable message blocks", () => {
+  assert.match(app, /getPersonalTimeline\(/);
+  assert.match(app, /upsertPersonalTimelineMessage\(/);
+  assert.match(app, /key=\{message\.id\}/);
+  assert.match(app, /message\.blocks\.map\(/);
+  assert.match(app, /transcriptRevision/);
+  assert.match(app, /sourceId/);
+  assert.doesNotMatch(app, /projects-hub-personal-timeline:/);
+  assert.equal((app.match(/<CollaborationTimeline/g) ?? []).length, 1);
+  assert.equal((app.match(/<CollaborationQuestions/g) ?? []).length, 1);
+  assert.match(productApi, /getPersonalTimeline/);
+  assert.match(productApi, /upsertPersonalTimelineMessage/);
 });
