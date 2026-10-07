@@ -1130,6 +1130,23 @@ class CollaborationAnalysisService:
         now = _now_ms()
         analysis = self._analysis_row(str(row["analysis_id"]))
         if row["status"] == "queued":
+            try:
+                self.store.project_access(
+                    str(row["requesting_actor_id"]),
+                    str(row["workspace_id"]),
+                    str(row["project_id"]),
+                    require_analyze=True,
+                )
+            except StoreError as exc:
+                with self.store._lock:
+                    self.store.db.execute(
+                        """UPDATE collaboration_jobs
+                           SET status='failed',error_code=?,updated_at_ms=?,
+                               finished_at_ms=?
+                           WHERE id=? AND status='queued'""",
+                        (exc.code, now, now, row["id"]),
+                    )
+                return
             payload = json.loads(row["payload_json"])
             evidence = str(analysis["evidence_bundle"]) + "\n\nTYPED ANSWERS:\n" + _canonical(payload)
             try:
