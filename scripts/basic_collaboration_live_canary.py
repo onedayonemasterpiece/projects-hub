@@ -257,10 +257,14 @@ def run(
 ) -> dict[str, Any]:
     started = time.monotonic()
     run_id = uuid.uuid4().hex[:12]
+    actor_a = ""
     actor_b = ""
     actor_c = ""
     project_id = ""
     owner = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())
+    )
+    author = urllib.request.build_opener(
         urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())
     )
     participant = urllib.request.build_opener(
@@ -272,24 +276,51 @@ def run(
 
     health = _request(owner, base, "GET", "/healthz")
     owner_name = _owner_display_name(data_dir)
-    login_a = _request(
+    login_owner = _request(
         owner,
         base,
         "POST",
         "/api/dev/login",
         {"display_name": owner_name},
     )
-    workspace_id = str((login_a.get("workspace") or {}).get("id") or "")
+    workspace_id = str((login_owner.get("workspace") or {}).get("id") or "")
     if not workspace_id:
         raise RuntimeError("owner login returned no workspace")
-    target = _project(login_a, project_name)
+    target = _project(login_owner, project_name)
     project_id = str(target["id"])
 
     note_id = ""
     analysis_id = ""
     continuation_job_id = ""
     try:
-        invited = _request(
+        invited_a = _request(
+            owner,
+            base,
+            "POST",
+            f"/api/projects/{project_id}/participants/invite",
+            {
+                "workspace_id": workspace_id,
+                "display_name": f"Collaboration canary A {run_id}",
+                "role": "editor",
+                "ttl_seconds": 3600,
+            },
+        )
+        actor_a = str(invited_a.get("actor_id") or "")
+        if not actor_a:
+            raise RuntimeError("participant A invite returned no actor")
+        _assert_no_github_identity(data_dir, actor_a)
+        login_a = _request(
+            author,
+            public_base,
+            "POST",
+            "/api/auth/invite",
+            {"token": str(invited_a.get("invite_token") or "")},
+        )
+        a_projects = login_a.get("projects") or []
+        if [item.get("id") for item in a_projects if isinstance(item, dict)] != [project_id]:
+            raise RuntimeError("participant A received projects outside the explicit grant")
+
+        invited_b = _request(
             owner,
             base,
             "POST",
@@ -301,25 +332,24 @@ def run(
                 "ttl_seconds": 3600,
             },
         )
-        actor_b = str(invited.get("actor_id") or "")
+        actor_b = str(invited_b.get("actor_id") or "")
         if not actor_b:
-            raise RuntimeError("participant invite returned no actor")
+            raise RuntimeError("participant B invite returned no actor")
         _assert_no_github_identity(data_dir, actor_b)
-
         login_b = _request(
             participant,
             public_base,
             "POST",
             "/api/auth/invite",
-            {"token": str(invited.get("invite_token") or "")},
+            {"token": str(invited_b.get("invite_token") or "")},
         )
         b_projects = login_b.get("projects") or []
         if [item.get("id") for item in b_projects if isinstance(item, dict)] != [project_id]:
             raise RuntimeError("participant B received projects outside the explicit grant")
 
         note = _request(
-            owner,
-            base,
+            author,
+            public_base,
             "POST",
             "/api/collaboration/notes",
             {
@@ -339,12 +369,14 @@ def run(
         note_id = str(note.get("id") or "")
         if note.get("status") != "ready" or not note_id:
             raise RuntimeError(f"note is not ready: {note.get('status')}")
+        if note.get("author", {}).get("id") != actor_a:
+            raise RuntimeError("project note author does not match participant A")
         if not note.get("structured") or not (note.get("processing") or {}).get("model"):
             raise RuntimeError("note has no structured Gemini processing evidence")
 
         readback = _request(
-            owner,
-            base,
+            author,
+            public_base,
             "GET",
             f"/api/collaboration/notes/{note_id}/readback?"
             + urllib.parse.urlencode({"workspace_id": workspace_id}),
@@ -376,8 +408,8 @@ def run(
         )
         reply_id = str(reply.get("id") or "")
         replies_a = _request(
-            owner,
-            base,
+            author,
+            public_base,
             "GET",
             f"/api/collaboration/notes/{note_id}/replies?"
             + urllib.parse.urlencode({"workspace_id": workspace_id}),
@@ -386,6 +418,24 @@ def run(
             isinstance(item, dict) and item.get("id") == reply_id for item in replies_a
         ):
             raise RuntimeError("A did not read back B's linked reply")
+
+        # A is a fresh actor with no historical brief cursor/backlog, so this is
+        # a deterministic live check of personal-first delivery rather than an
+        # assertion against the platform owner's accumulated unread history.
+        brief_a = _request(
+            author,
+            public_base,
+            "GET",
+            "/api/collaboration/brief?"
+            + urllib.parse.urlencode({"workspace_id": workspace_id}),
+        )
+        personal_a = {
+            str(item.get("object_id") or "")
+            for item in brief_a.get("personal") or []
+            if isinstance(item, dict)
+        }
+        if reply_id not in personal_a:
+            raise RuntimeError("A personal brief did not surface B's addressed reply")
 
         actor_c, outsider_token = _create_same_workspace_actor_without_project(
             data_dir,
@@ -412,7 +462,26 @@ def run(
         analysis_result: dict[str, Any] | None = None
         job_result: dict[str, Any] | None = None
         questions_answered = 0
+        continuation_event_visible = False
         if with_analysis:
+            before_items = _request(
+                owner,
+                base,
+                "GET",
+                "/api/collaboration/timeline?"
+                + urllib.parse.urlencode(
+                    {"workspace_id": workspace_id, "after_id": 0, "limit": 100}
+                ),
+            ).get("items") or []
+            continuation_after_id = max(
+                [
+                    int(item.get("id") or 0)
+                    for item in before_items
+                    if isinstance(item, dict)
+                ]
+                or [0]
+            )
+
             started_analysis = _request(
                 owner,
                 base,
@@ -507,24 +576,29 @@ def run(
                 raise RuntimeError(
                     "durable continuation failed: " + str(job_result.get("error_code") or "")
                 )
-
-        brief = _request(
-            owner,
-            base,
-            "GET",
-            "/api/collaboration/brief?"
-            + urllib.parse.urlencode({"workspace_id": workspace_id}),
-        )
-        personal_objects = {
-            str(item.get("object_id") or "")
-            for item in brief.get("personal") or []
-            if isinstance(item, dict)
-        }
-        if reply_id not in personal_objects:
-            raise RuntimeError("A personal brief did not surface B's addressed reply")
-        if with_analysis and analysis_id not in personal_objects:
-            # continuation_completed uses analysis id as its object id.
-            raise RuntimeError("A personal brief did not surface completed continuation")
+            after_items = _request(
+                owner,
+                base,
+                "GET",
+                "/api/collaboration/timeline?"
+                + urllib.parse.urlencode(
+                    {
+                        "workspace_id": workspace_id,
+                        "after_id": continuation_after_id,
+                        "limit": 100,
+                    }
+                ),
+            ).get("items") or []
+            continuation_event_visible = any(
+                isinstance(item, dict)
+                and item.get("kind") == "continuation_completed"
+                and item.get("object_id") == analysis_id
+                for item in after_items
+            )
+            if not continuation_event_visible:
+                raise RuntimeError(
+                    "owner timeline did not surface the completed continuation result"
+                )
 
         repository = note.get("repository") or {}
         return {
@@ -539,6 +613,8 @@ def run(
             "repository_sha": repository.get("sha"),
             "repository_commit_sha": repository.get("commit_sha"),
             "repository_readback_verified": True,
+            "participant_a_no_external_identity": True,
+            "participant_a_project_count": 1,
             "participant_b_no_external_identity": True,
             "participant_b_project_count": 1,
             "participant_b_read_note": True,
@@ -551,8 +627,8 @@ def run(
             "continuation_job_id": continuation_job_id or None,
             "continuation_status": job_result.get("status") if job_result else None,
             "personal_brief_contains_reply": True,
-            "personal_brief_contains_continuation": bool(
-                not with_analysis or analysis_id in personal_objects
+            "continuation_event_visible_to_owner": bool(
+                not with_analysis or continuation_event_visible
             ),
             "elapsed_ms": round((time.monotonic() - started) * 1000),
         }
@@ -577,7 +653,16 @@ def run(
                 )
             except Exception:
                 pass
-
+        if actor_a:
+            try:
+                _cleanup_actor(
+                    data_dir,
+                    actor_id=actor_a,
+                    project_id=project_id or None,
+                    delete_actor=False,
+                )
+            except Exception:
+                pass
 
 def main() -> int:
     parser = argparse.ArgumentParser()
