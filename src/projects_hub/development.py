@@ -1513,11 +1513,35 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
                 "evidence": evidence,
             }
 
-        if not checks and not workflows and _now_ms() - published_at < CANDIDATE_CHECK_DISCOVERY_GRACE_MS:
+        if mergeable_state == "dirty":
+            evidence["ci_success"] = False
+            self._store_candidate_state(
+                execution_id=str(item["id"]),
+                sha=sha,
+                branch=branch,
+                pr=pr_number,
+                published_at_ms=published_at,
+                evidence=evidence,
+            )
+            item["candidate_evidence_json"] = json.dumps(
+                evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
+            return {
+                "ready": True,
+                "successful": False,
+                "detail": "Кандидат конфликтует со свежим main; запускаю технический rework до ревью",
+                "evidence": evidence,
+            }
+
+        if not checks and not workflows:
             return {
                 "ready": False,
                 "successful": False,
-                "detail": "Кандидат опубликован; жду появления CI checks",
+                "detail": (
+                    "Кандидат опубликован; жду появления CI checks"
+                    if _now_ms() - published_at < CANDIDATE_CHECK_DISCOVERY_GRACE_MS
+                    else "CI checks для кандидата ещё не появились; продолжаю deterministic ожидание"
+                ),
                 "evidence": evidence,
             }
 
@@ -1525,14 +1549,11 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
         terminal_rows = [*checks, *workflows]
         successful = (
             remote_sha == sha
-            and mergeable_state != "dirty"
-            and (
-                not terminal_rows
-                or all(
-                    str(row.get("conclusion") or "").lower()
-                    in allowed_conclusions
-                    for row in terminal_rows
-                )
+            and bool(terminal_rows)
+            and all(
+                str(row.get("conclusion") or "").lower()
+                in allowed_conclusions
+                for row in terminal_rows
             )
         )
         evidence["ci_success"] = successful
@@ -2303,6 +2324,99 @@ Latest independent review findings for this cycle:
 
 Do NOT merge, deploy or release. Stop when the existing implementation is again ready for independent review."""
 
+    async def _recover_failed_candidate_gate_locked(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        item: dict[str, Any],
+        stage: dict[str, Any],
+        summary: str,
+        validation: dict[str, Any],
+    ) -> bool:
+        evidence = validation.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+        evidence_text = json.dumps(
+            evidence,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )[:8000]
+        recovery_summary = (
+            summary
+            + "\n\nDeterministic candidate gate requires technical recovery "
+            "before independent review. Reconcile with fresh origin/main and fix "
+            "only the candidate/CI problems below; preserve the authorized scope.\n"
+            + evidence_text
+        )[:12000]
+        try:
+            recovered = await self._start_write_recovery_continuation(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                item=item,
+                stage=stage,
+                summary=recovery_summary,
+            )
+        except StoreError as exc:
+            now = _now_ms()
+            if exc.code in {
+                "CODEX_CAPACITY_RESERVED",
+                "CODEX_MODEL_UNAVAILABLE",
+                "CODEX_REASONING_UNAVAILABLE",
+            }:
+                with self.store._lock:
+                    self.store.db.execute(
+                        """UPDATE task_executions
+                           SET status='running',phase='capacity_wait',
+                               phase_detail='Candidate recovery ждёт доступной Codex capacity',
+                               error_code=?,finished_at_ms=NULL,updated_at_ms=?
+                           WHERE id=?""",
+                        (exc.code, now, item["id"]),
+                    )
+                return False
+            if exc.code == "DEVELOPMENT_DISPATCH_UNKNOWN":
+                with self.store._lock:
+                    self.store.db.execute(
+                        """UPDATE task_executions
+                           SET status='running',phase='recovering',
+                               phase_detail='Сверяю неизвестный результат запуска candidate recovery',
+                               error_code=?,finished_at_ms=NULL,updated_at_ms=?
+                           WHERE id=?""",
+                        (exc.code, now, item["id"]),
+                    )
+                return False
+            raise
+        except DevCoveerError:
+            now = _now_ms()
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE task_executions
+                       SET status='running',phase='recovering',
+                           phase_detail='Повторяю техническое восстановление candidate gate',
+                           error_code='DEVELOPMENT_CANDIDATE_RECOVERY_RETRY',
+                           finished_at_ms=NULL,updated_at_ms=?
+                       WHERE id=?""",
+                    (now, item["id"]),
+                )
+            return False
+
+        if recovered:
+            now = _now_ms()
+            reason = (
+                "Разрешаю конфликт кандидата со свежим main до независимого ревью"
+                if str(evidence.get("mergeable_state") or "") == "dirty"
+                else "Исправляю deterministic CI/candidate gate до независимого ревью"
+            )
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE task_executions
+                       SET phase_detail=?,error_code=NULL,finished_at_ms=NULL,
+                           updated_at_ms=? WHERE id=?""",
+                    (reason, now, item["id"]),
+                )
+        return recovered
+
     async def _start_write_recovery_continuation(
         self,
         *,
@@ -2392,8 +2506,10 @@ Do NOT merge, deploy or release. Stop when the existing implementation is again 
                     """UPDATE task_executions
                        SET status='running',phase=?,phase_detail=?,
                            implementation_task_id=?,devcoveer_task_id=?,
-                           quota_remaining_percent=?,error_code=NULL,
-                           finished_at_ms=NULL,updated_at_ms=?
+                           quota_remaining_percent=?,
+                           candidate_sha=NULL,candidate_branch=NULL,candidate_pr=NULL,
+                           candidate_published_at_ms=NULL,candidate_evidence_json=NULL,
+                           error_code=NULL,finished_at_ms=NULL,updated_at_ms=?
                        WHERE id=?""",
                     (
                         phase,
@@ -3184,6 +3300,24 @@ Do NOT merge, deploy or release. Stop when the existing implementation is again 
                             item["id"],
                         ),
                     )
+                row = self._execution_row(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    execution_id=item["id"],
+                )
+                public = self._execution_public(row)
+                public["update_check_recommended"] = False
+                return {"execution": public}
+
+            if validation.get("successful") is not True:
+                await self._recover_failed_candidate_gate_locked(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    item=item,
+                    stage=stage,
+                    summary=summary,
+                    validation=validation,
+                )
                 row = self._execution_row(
                     actor_id=actor_id,
                     workspace_id=workspace_id,
@@ -4288,6 +4422,16 @@ Before the verdict give concise findings.""",
                     ),
                 )
             return True
+
+        if validation.get("successful") is not True:
+            return await self._recover_failed_candidate_gate_locked(
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                item=item,
+                stage=write_stage,
+                summary=str(item.get("result_summary") or ""),
+                validation=validation,
+            )
 
         remaining = await self._require_stage_capacity(
             actor_id=actor_id,
