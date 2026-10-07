@@ -12,6 +12,8 @@ import {
   bindGitHubRepository,
   createConversation,
   getConversation,
+  getPersonalTimeline,
+  upsertPersonalTimelineMessage,
   getGitHubStatus,
   getMemories,
   getEventCards,
@@ -28,6 +30,8 @@ import {
   type AuthConfig,
   type Bootstrap,
   type Conversation,
+  type PersonalTimelineBlock,
+  type PersonalTimelineMessage,
   type GitHubStatus,
   type MemoryItem,
   type EventCard,
@@ -54,14 +58,74 @@ import {
 type WaitState = null | { elapsed_ms: number; stage: string; can_restart: boolean };
 type ChatRole = "user" | "assistant";
 type ChatMessage = {
+  id: string;
+  turnId: string;
   role: ChatRole;
   text: string;
+  sourceId: string | null;
+  transcriptRevision: number;
+  revision: number;
+  blocks: PersonalTimelineBlock[];
   awaitingTranscript?: boolean;
   provisionalCaption?: boolean;
   deliveryNote?: string;
 };
 
 const VOICE_TURN_PLACEHOLDER = "";
+
+function opaqueTimelineId(prefix: "msg" | "turn") {
+  return prefix + "_" + crypto.randomUUID().replaceAll("-", "");
+}
+
+function widgetMessageId(conversationId: string) {
+  return "msg_widgets_" + conversationId;
+}
+
+function widgetTurnId(conversationId: string) {
+  return "turn_widgets_" + conversationId;
+}
+
+function defaultWidgetMessage(conversationId: string): ChatMessage {
+  return {
+    id: widgetMessageId(conversationId),
+    turnId: widgetTurnId(conversationId),
+    role: "assistant",
+    text: "",
+    sourceId: null,
+    transcriptRevision: 0,
+    revision: 1,
+    blocks: [
+      { kind: "collaboration_timeline" },
+      { kind: "collaboration_questions" },
+    ],
+  };
+}
+
+function timelineFingerprint(message: ChatMessage) {
+  return JSON.stringify({
+    id: message.id,
+    turnId: message.turnId,
+    role: message.role,
+    text: message.text,
+    sourceId: message.sourceId,
+    transcriptRevision: message.transcriptRevision,
+    revision: message.revision,
+    blocks: message.blocks,
+  });
+}
+
+function timelineMessageFromServer(message: PersonalTimelineMessage): ChatMessage {
+  return {
+    id: message.id,
+    turnId: message.turn_id,
+    role: message.role,
+    text: message.text,
+    sourceId: message.source_id,
+    transcriptRevision: message.transcript_revision,
+    revision: message.revision,
+    blocks: message.blocks,
+  };
+}
 
 const developmentStageLabel: Record<string, string> = {
   design: "Проектирование",
@@ -74,7 +138,8 @@ const developmentStageLabel: Record<string, string> = {
   deploying: "Развёртывание",
   releasing: "Релиз",
   ready: "Готово",
-  capacity_wait: "Ожидание лимита",
+  capacity_wait: "Ожидание ресурса",
+  recovering: "Автовосстановление",
   needs_owner: "Нужно решение владельца",
   failed: "Ошибка",
 };
@@ -173,6 +238,7 @@ export default function App() {
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [voiceState, setVoiceState] = useState("off");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [timelineLoadedConversationId, setTimelineLoadedConversationId] = useState<string | null>(null);
   const [collaborationRefresh, setCollaborationRefresh] = useState(0);
   const [boardProjectId, setBoardProjectId] = useState<string | null>(null);
   const [boardCommand, setBoardCommand] = useState<BoardUiCommand | null>(null);
@@ -203,6 +269,9 @@ export default function App() {
   const [githubBusy, setGitHubBusy] = useState(false);
   const clientRef = useRef<LiveClient | null>(null);
   const currentSourceIdRef = useRef<string | null>(null);
+  const currentTurnIdRef = useRef<string | null>(null);
+  const timelinePersistedRef = useRef<Map<string, string>>(new Map());
+  const timelineInFlightRef = useRef<Set<string>>(new Set());
   const userTranscriptIndex = useRef(-1);
   const assistantTranscriptIndex = useRef(-1);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -345,7 +414,36 @@ export default function App() {
     };
   }, [boot, developmentAccess, isAndroidApp]);
 
-  const mergeChatMessage = useCallback((role: ChatRole, fragment: string, preferred: MutableRefObject<number>) => {
+  const updateWidgetBlocks = useCallback((
+    update: (blocks: PersonalTimelineBlock[]) => PersonalTimelineBlock[],
+  ) => {
+    const current = conversationRef.current;
+    if (!current) return;
+    const id = widgetMessageId(current.id);
+    setChatMessages(previous => {
+      const messages = [...previous];
+      const index = messages.findIndex(item => item.id === id);
+      const base = index >= 0 ? messages[index] : defaultWidgetMessage(current.id);
+      const blocks = update(base.blocks);
+      if (index >= 0 && JSON.stringify(blocks) === JSON.stringify(base.blocks)) {
+        return previous;
+      }
+      const next = {
+        ...base,
+        blocks,
+        revision: index >= 0 ? base.revision + 1 : base.revision,
+      };
+      if (index >= 0) messages[index] = next;
+      else messages.push(next);
+      return messages;
+    });
+  }, []);
+
+  const mergeChatMessage = useCallback((
+    role: ChatRole,
+    fragment: string,
+    preferred: MutableRefObject<number>,
+  ) => {
     const clean = fragment.trim();
     if (!clean) return;
     setChatMessages(previous => {
@@ -356,26 +454,45 @@ export default function App() {
         ? preferred.current
         : -1;
       if (index < 0) {
-        messages.push({ role, text: clean });
-        if (messages.length > 48) messages.splice(0, messages.length - 48);
+        const turnId = currentTurnIdRef.current ?? opaqueTimelineId("turn");
+        currentTurnIdRef.current = turnId;
+        messages.push({
+          id: opaqueTimelineId("msg"),
+          turnId,
+          role,
+          text: clean,
+          sourceId: role === "user" ? currentSourceIdRef.current : null,
+          transcriptRevision: role === "user" ? 1 : 0,
+          revision: 1,
+          blocks: [],
+        });
         preferred.current = messages.length - 1;
         return messages;
       }
-      if (role === "user" && messages[index].awaitingTranscript) {
+      const current = messages[index];
+      if (role === "user" && current.awaitingTranscript) {
         // The primary conversational Live model is authoritative. Its final
-        // input transcript replaces any speculative/final sidecar caption and
-        // clears a transport/recovery note that may have been shown meanwhile.
+        // input transcript replaces any provisional sidecar caption using the
+        // same durable message/turn identity.
         messages[index] = {
-          role,
+          ...current,
           text: clean,
+          sourceId: current.sourceId ?? currentSourceIdRef.current,
+          transcriptRevision: current.transcriptRevision + 1,
+          revision: current.revision + 1,
           awaitingTranscript: false,
+          provisionalCaption: false,
           deliveryNote: undefined,
         };
         return messages;
       }
       messages[index] = {
-        ...messages[index],
-        text: mergeTranscript(messages[index].text, clean),
+        ...current,
+        text: mergeTranscript(current.text, clean),
+        transcriptRevision: role === "user"
+          ? current.transcriptRevision + 1
+          : current.transcriptRevision,
+        revision: current.revision + 1,
       };
       return messages;
     });
@@ -412,10 +529,21 @@ export default function App() {
 
   const reserveUserVoiceBubble = useCallback(() => {
     userTurnAwaitingFinalRef.current = true;
+    const turnId = opaqueTimelineId("turn");
+    currentTurnIdRef.current = turnId;
     setChatMessages(previous => {
       const messages = [...previous];
-      messages.push({ role: "user", text: VOICE_TURN_PLACEHOLDER, awaitingTranscript: true });
-      if (messages.length > 48) messages.splice(0, messages.length - 48);
+      messages.push({
+        id: opaqueTimelineId("msg"),
+        turnId,
+        role: "user",
+        text: VOICE_TURN_PLACEHOLDER,
+        sourceId: currentSourceIdRef.current,
+        transcriptRevision: 0,
+        revision: 1,
+        blocks: [],
+        awaitingTranscript: true,
+      });
       userTranscriptIndex.current = messages.length - 1;
       return messages;
     });
@@ -443,6 +571,7 @@ export default function App() {
       messages[index] = {
         ...messages[index],
         text,
+        revision: messages[index].revision + 1,
         awaitingTranscript: true,
         provisionalCaption: true,
       };
@@ -503,9 +632,16 @@ export default function App() {
       ) as BoardUiCommand | null;
       if (uiCommand && uiCommand.kind === "board") {
         if (uiCommand.action === "close") {
+          updateWidgetBlocks(blocks => blocks.map(block =>
+            block.kind === "board" ? { ...block, mode: "reference" } : block
+          ));
           setBoardProjectId(null);
           setBoardCommand(null);
         } else if (uiCommand.project_id) {
+          updateWidgetBlocks(blocks => [
+            ...blocks.filter(block => block.kind !== "board"),
+            { kind: "board", project_id: uiCommand.project_id!, mode: "active" },
+          ]);
           setBoardProjectId(uiCommand.project_id);
           setBoardCommand(uiCommand);
         }
@@ -552,36 +688,136 @@ export default function App() {
     } else if (event.type === "capability_unavailable" && event.code !== "NOT_CONFIGURED") {
       setNotice("Одна из дополнительных возможностей сейчас недоступна.");
     }
-  }, [applyCaptionToUserBubble, loadBacklog, loadEventCards, loadMemories, mergeChatMessage]);
+  }, [applyCaptionToUserBubble, loadBacklog, loadEventCards, loadMemories, mergeChatMessage, updateWidgetBlocks]);
 
   useEffect(() => {
-    if (!boot) return;
-    const key = `projects-hub-personal-timeline:${boot.actor.id}`;
-    const raw = localStorage.getItem(key);
-    if (!raw) return;
-    try {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        setChatMessages(parsed.filter(item =>
-          item && (item.role === "user" || item.role === "assistant")
-          && typeof item.text === "string"
-        ).slice(-48));
-      }
-    } catch {
-      localStorage.removeItem(key);
+    if (!boot || !conversation) {
+      setTimelineLoadedConversationId(null);
+      return;
     }
-  }, [boot?.actor.id]);
+    let cancelled = false;
+    const conversationId = conversation.id;
+    setTimelineLoadedConversationId(null);
+    void getPersonalTimeline(conversationId, boot.workspace.id)
+      .then(result => {
+        if (cancelled) return;
+        const restored = result.items.map(timelineMessageFromServer);
+        const persisted = new Map<string, string>();
+        restored.forEach(message => persisted.set(message.id, timelineFingerprint(message)));
+
+        const widgetId = widgetMessageId(conversationId);
+        const widgetIndex = restored.findIndex(message => message.id === widgetId);
+        if (widgetIndex < 0) {
+          restored.push(defaultWidgetMessage(conversationId));
+        } else {
+          const widget = restored[widgetIndex];
+          const requiredKinds = new Set(widget.blocks.map(block => block.kind));
+          const missing: PersonalTimelineBlock[] = [];
+          if (!requiredKinds.has("collaboration_timeline")) {
+            missing.push({ kind: "collaboration_timeline" });
+          }
+          if (!requiredKinds.has("collaboration_questions")) {
+            missing.push({ kind: "collaboration_questions" });
+          }
+          if (missing.length) {
+            restored[widgetIndex] = {
+              ...widget,
+              blocks: [...widget.blocks, ...missing],
+              revision: widget.revision + 1,
+            };
+          }
+        }
+
+        const activeBoard = restored
+          .flatMap(message => message.blocks)
+          .find(block => block.kind === "board" && block.mode === "active");
+        setBoardProjectId(
+          activeBoard && activeBoard.kind === "board"
+            ? activeBoard.project_id
+            : null,
+        );
+        setBoardCommand(null);
+        userTranscriptIndex.current = -1;
+        assistantTranscriptIndex.current = -1;
+        currentTurnIdRef.current = null;
+        timelinePersistedRef.current = persisted;
+        setChatMessages(restored);
+        setTimelineLoadedConversationId(conversationId);
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setNotice(error instanceof Error ? error.message : "Не удалось восстановить личную ленту.");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [boot?.workspace.id, conversation?.id]);
 
   useEffect(() => {
-    if (!boot) return;
-    const stable = chatMessages.filter(item =>
-      !item.awaitingTranscript && item.text.trim()
-    ).slice(-48);
-    localStorage.setItem(
-      `projects-hub-personal-timeline:${boot.actor.id}`,
-      JSON.stringify(stable),
-    );
-  }, [boot?.actor.id, chatMessages]);
+    if (
+      !boot
+      || !conversation
+      || timelineLoadedConversationId !== conversation.id
+    ) return;
+    let cancelled = false;
+
+    const sync = async () => {
+      for (const message of chatMessages) {
+        if (!message.text.trim() && message.blocks.length === 0) continue;
+        const fingerprint = timelineFingerprint(message);
+        if (
+          timelinePersistedRef.current.get(message.id) === fingerprint
+          || timelineInFlightRef.current.has(message.id)
+        ) continue;
+        timelineInFlightRef.current.add(message.id);
+        try {
+          const saved = await upsertPersonalTimelineMessage(
+            conversation.id,
+            {
+              id: message.id,
+              workspace_id: boot.workspace.id,
+              turn_id: message.turnId,
+              role: message.role,
+              text: message.text,
+              source_id: message.sourceId,
+              transcript_revision: message.transcriptRevision,
+              revision: message.revision,
+              blocks: message.blocks,
+            },
+          );
+          if (cancelled) return;
+          const canonical = timelineMessageFromServer(saved);
+          timelinePersistedRef.current.set(
+            canonical.id,
+            timelineFingerprint(canonical),
+          );
+          if (canonical.revision > message.revision) {
+            setChatMessages(previous => previous.map(item =>
+              item.id === canonical.id ? { ...canonical } : item
+            ));
+          }
+        } catch {
+          // Keep the message dirty; the bounded sync loop retries without
+          // changing the visible conversation or inventing another identity.
+        } finally {
+          timelineInFlightRef.current.delete(message.id);
+        }
+      }
+    };
+
+    void sync();
+    const timer = window.setInterval(() => void sync(), 2_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [
+    boot?.workspace.id,
+    conversation?.id,
+    timelineLoadedConversationId,
+    chatMessages,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -589,16 +825,13 @@ export default function App() {
     async function applyBootstrap(value: Bootstrap) {
       if (cancelled) return;
       setBoot(value);
-      const saved = localStorage.getItem("projects-hub-conversation");
-      if (!saved) return;
-      try {
-        const current = await getConversation(saved);
-        if (cancelled) return;
-        if (current.workspace_id === value.workspace.id) setConversation(current);
-        else localStorage.removeItem("projects-hub-conversation");
-      } catch {
-        localStorage.removeItem("projects-hub-conversation");
-      }
+      // Server-side create is idempotent for actor+workspace and therefore
+      // recovers the same personal conversation on a new browser/device.
+      const current = await createConversation(value.workspace.id, null);
+      if (cancelled) return;
+      setConversation(current);
+      conversationRef.current = current;
+      localStorage.setItem("projects-hub-conversation", current.id);
     }
 
     async function initialize() {
@@ -1384,8 +1617,8 @@ export default function App() {
             }}
           >
             <div className="chat-stack">
-              {chatMessages.map((message, index) => (
-                <div className={"chat-row " + message.role} key={index}>
+              {chatMessages.map(message => (
+                <div className={"chat-row " + message.role} key={message.id}>
                   <div className={"chat-message " + message.role}>
                     {message.text && (
                       <div
@@ -1404,36 +1637,68 @@ export default function App() {
                     {message.deliveryNote && (
                       <span className="message-delivery-note">{message.deliveryNote}</span>
                     )}
+                    {boot && message.blocks.map(block => {
+                      if (block.kind === "collaboration_timeline") {
+                        return (
+                          <CollaborationTimeline
+                            key={block.kind}
+                            workspaceId={boot.workspace.id}
+                            actorId={boot.actor.id}
+                            refreshKey={collaborationRefresh}
+                          />
+                        );
+                      }
+                      if (block.kind === "collaboration_questions") {
+                        return (
+                          <CollaborationQuestions
+                            key={block.kind}
+                            workspaceId={boot.workspace.id}
+                            refreshKey={collaborationRefresh}
+                            onChanged={() => setCollaborationRefresh(value => value + 1)}
+                          />
+                        );
+                      }
+                      if (
+                        block.kind === "board"
+                        && block.mode === "active"
+                        && conversation
+                        && boardProjectId === block.project_id
+                      ) {
+                        return (
+                          <InlineBoard
+                            key={"board:" + block.project_id}
+                            workspaceId={boot.workspace.id}
+                            conversationId={conversation.id}
+                            projectId={block.project_id}
+                            clientInstanceId={clientInstanceId}
+                            command={boardCommand}
+                            onClose={() => {
+                              updateWidgetBlocks(blocks => blocks.map(item =>
+                                item.kind === "board"
+                                  ? { ...item, mode: "reference" }
+                                  : item
+                              ));
+                              setBoardProjectId(null);
+                              setBoardCommand(null);
+                            }}
+                          />
+                        );
+                      }
+                      if (block.kind === "board") {
+                        const projectName = boot.projects.find(
+                          project => project.id === block.project_id
+                        )?.name ?? "Проект";
+                        return (
+                          <div className="board-reference" key={"board:" + block.project_id}>
+                            Доска · {projectName}
+                          </div>
+                        );
+                      }
+                      return null;
+                    })}
                   </div>
                 </div>
               ))}
-              {boot && (
-                <>
-                  <CollaborationTimeline
-                    workspaceId={boot.workspace.id}
-                    actorId={boot.actor.id}
-                    refreshKey={collaborationRefresh}
-                  />
-                  <CollaborationQuestions
-                    workspaceId={boot.workspace.id}
-                    refreshKey={collaborationRefresh}
-                    onChanged={() => setCollaborationRefresh(value => value + 1)}
-                  />
-                  {conversation && boardProjectId && (
-                    <InlineBoard
-                      workspaceId={boot.workspace.id}
-                      conversationId={conversation.id}
-                      projectId={boardProjectId}
-                      clientInstanceId={clientInstanceId}
-                      command={boardCommand}
-                      onClose={() => {
-                        setBoardProjectId(null);
-                        setBoardCommand(null);
-                      }}
-                    />
-                  )}
-                </>
-              )}
               {interimInputTranscript && (
                 <div className="chat-row user interim" aria-live="polite">
                   <div
@@ -1718,19 +1983,6 @@ export default function App() {
           )}
           {eventCards.length > 0 && <button className="island action-pill" onClick={openEvents}>Готовность</button>}
           {memories.length > 0 && <button className="island action-pill" onClick={openMemory}>Память</button>}
-          {chatMessages.length > 0 && (
-            <button
-              className="island action-pill"
-              onClick={() => {
-                setChatMessages([]);
-                setInterimInputTranscript("");
-                userTranscriptIndex.current = -1;
-                assistantTranscriptIndex.current = -1;
-              }}
-            >
-              Очистить диалог
-            </button>
-          )}
         </nav>
       )}
       <section className="voice-dock">
