@@ -206,11 +206,13 @@ def _poll_analysis(
     deadline = time.monotonic() + timeout_seconds
     current: dict[str, Any] = {}
     while time.monotonic() < deadline:
+        # Read-only polling is intentional: the durable server worker owns
+        # analysis progression and question materialization.
         current = _request(
             opener,
             base,
-            "POST",
-            f"/api/collaboration/analyses/{analysis_id}/refresh?"
+            "GET",
+            f"/api/collaboration/analyses/{analysis_id}?"
             + urllib.parse.urlencode({"workspace_id": workspace_id}),
             timeout=45.0,
         )
