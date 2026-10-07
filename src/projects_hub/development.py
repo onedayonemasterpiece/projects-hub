@@ -543,12 +543,18 @@ Do NOT implement product code, merge, deploy or release in this turn. Perform a 
 
 The brief must be sufficient for a separate implementation thread to work without guessing. Include when browser acceptance, Android emulator/device acceptance, CI, deployment or signed Android release are required. Keep scope to the selected backlog tasks and preserve .devcoveer critical requirements. End with a concise summary and the exact spec path."""
 
-    @staticmethod
-    def _implementation_prompt(project_name: str, spec_path: str) -> str:
+    @classmethod
+    def _implementation_prompt(
+        cls,
+        project_name: str,
+        spec_path: str,
+        execution_id: str,
+    ) -> str:
+        marker = cls._candidate_branch_marker(execution_id)
         return f"""Implement the owner-approved development specification for {project_name} at:
 {spec_path}
 
-Read the specification and current repository state first. Refresh/reconcile with the latest origin/main before declaring the candidate ready; resolve merge conflicts without dropping unrelated main work. Implement the requested product change, add/update tests, and perform the required debugging and browser/emulator checks from the spec. If the candidate changes Android/native code, ensure the project semantic version is the next unused version relative to fresh main before review so the signed main release can be published. Prepare a clean committed reviewable chatgpt/* branch; deterministic GitHub publication/CI is owned by the durable orchestrator. DO NOT merge, deploy, publish a release or modify production. Stop when the committed candidate is ready for independent quality review. Report the branch/HEAD and local evidence."""
+Read the specification and current repository state first. Refresh/reconcile with the latest origin/main before declaring the candidate ready; resolve merge conflicts without dropping unrelated main work. Implement the requested product change, add/update tests, and perform the required debugging and browser/emulator checks from the spec. If the candidate changes Android/native code, ensure the project semantic version is the next unused version relative to fresh main before review so the signed main release can be published. Prepare a clean committed reviewable chatgpt/* branch whose name contains the stable execution marker {marker} (for example chatgpt/ownerdev-{marker}-short-topic); deterministic GitHub publication/CI is owned by the durable orchestrator. DO NOT merge, deploy, publish a release or modify production. Stop when the committed candidate is ready for independent quality review. Report the branch/HEAD and local evidence."""
 
     @staticmethod
     def _review_prompt(
@@ -1207,6 +1213,14 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
         raise DevCoveerError("DevCoveer direct action failed")
 
     @staticmethod
+    def _candidate_branch_marker(execution_id: str) -> str:
+        raw = str(execution_id or "")
+        if raw.startswith("devrun_"):
+            raw = raw[len("devrun_") :]
+        clean = re.sub(r"[^a-z0-9]+", "-", raw.lower()).strip("-")
+        return f"devrun-{clean[:8]}" if clean else ""
+
+    @staticmethod
     def _candidate_evidence_text(item: dict[str, Any]) -> str:
         raw = item.get("candidate_evidence_json")
         if not isinstance(raw, str) or not raw:
@@ -1278,24 +1292,75 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
             operation="git_state",
         )
         git_state = self._direct_result_data(git_payload)
-        branch = str(git_state.get("branch") or "")
-        sha = str(git_state.get("head") or "")
-        clean = (
+        current_branch = str(git_state.get("branch") or "")
+        current_sha = str(git_state.get("head") or "").lower()
+        current_clean = (
             git_state.get("head_state") == "branch"
-            and branch.startswith("chatgpt/")
-            and len(sha) == 40
+            and current_branch.startswith("chatgpt/")
+            and re.fullmatch(r"[0-9a-f]{40}", current_sha) is not None
             and not (git_state.get("staged") or [])
             and not (git_state.get("unstaged") or [])
             and not (git_state.get("untracked") or [])
             and not (git_state.get("conflicts") or [])
         )
 
+        branch = current_branch
+        sha = current_sha
+        candidate_source = "current_checkout" if current_clean else ""
+        local_candidates: list[dict[str, Any]] = []
+        if not current_clean:
+            stored_branch = str(item.get("candidate_branch") or "").strip()
+            marker = self._candidate_branch_marker(str(item["id"]))
+            probe_payload: dict[str, Any] = {
+                "prefix": "chatgpt/",
+                "limit": 50,
+            }
+            if stored_branch.startswith("chatgpt/"):
+                probe_payload["prefix"] = stored_branch
+            elif marker:
+                probe_payload["contains"] = marker
+            branches_payload = await self.devcoveer.direct_project_probe(
+                project=project,
+                operation="branch_list",
+                payload=probe_payload,
+            )
+            branches_data = self._direct_result_data(branches_payload)
+            rows = branches_data.get("branches")
+            if isinstance(rows, list):
+                for raw in rows:
+                    if not isinstance(raw, dict):
+                        continue
+                    candidate_branch = str(raw.get("branch") or "")
+                    candidate_sha = str(raw.get("sha") or "").lower()
+                    if not candidate_branch.startswith("chatgpt/"):
+                        continue
+                    if re.fullmatch(r"[0-9a-f]{40}", candidate_sha) is None:
+                        continue
+                    if stored_branch and candidate_branch != stored_branch:
+                        continue
+                    if not stored_branch and marker and marker not in candidate_branch:
+                        continue
+                    local_candidates.append(
+                        {
+                            "branch": candidate_branch,
+                            "sha": candidate_sha,
+                            "committed_unix": int(raw.get("committed_unix") or 0),
+                        }
+                    )
+            if len(local_candidates) == 1:
+                branch = local_candidates[0]["branch"]
+                sha = local_candidates[0]["sha"]
+                candidate_source = "local_branch_ref"
+
+        clean = bool(candidate_source)
         if not clean:
             evidence = {
                 "candidate_status": "not_publishable",
-                "reason": "candidate must be a clean committed chatgpt/* branch",
-                "branch": branch,
-                "sha": sha,
+                "reason": "no unique clean committed chatgpt/* candidate branch was found",
+                "branch": current_branch,
+                "sha": current_sha,
+                "branch_marker": self._candidate_branch_marker(str(item["id"])),
+                "local_candidates": local_candidates,
                 "staged": list(git_state.get("staged") or []),
                 "unstaged": list(git_state.get("unstaged") or []),
                 "untracked": list(git_state.get("untracked") or []),
@@ -1338,6 +1403,7 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
                 project=project,
                 operation="git_push_existing",
                 payload={
+                    "branch": branch,
                     "expected_sha": sha,
                     "request_key": f"{item['id']}:push:{sha[:16]}",
                 },
@@ -1402,6 +1468,7 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
         ]
         evidence = {
             "candidate_status": "published",
+            "candidate_source": candidate_source,
             "branch": branch,
             "sha": sha,
             "remote_sha": remote_sha,
@@ -3246,6 +3313,7 @@ Do NOT merge, deploy or release. Stop when the existing implementation is again 
                     prompt=self._implementation_prompt(
                         self._project_name(actor_id, workspace_id, str(item["project_id"])),
                         spec_path,
+                        str(item["id"]),
                     ),
                     model=implementation_model,
                     reasoning_effort=implementation_effort,
@@ -4093,6 +4161,198 @@ Before the verdict give concise findings.""",
                 provider_receipt=self._owner_resume_marker(provider_response),
             )
 
+    async def _recover_legacy_evidence_loop_locked(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        execution_id: str,
+    ) -> bool:
+        row = self._execution_row(
+            actor_id=actor_id,
+            workspace_id=workspace_id,
+            execution_id=execution_id,
+        )
+        item = dict(row)
+        status = str(item.get("status") or "")
+        phase = str(item.get("phase") or "")
+        initial_legacy_failure = (
+            status == "failed"
+            and item.get("error_code") == "REVIEW_REWORK_LIMIT"
+            and bool(str(item.get("implementation_task_id") or "").strip())
+            and not str(item.get("candidate_evidence_json") or "").strip()
+        )
+        continuing_validation = (
+            status == "running"
+            and phase == "validating"
+            and self._active_stage(execution_id) is None
+            and bool(str(item.get("implementation_task_id") or "").strip())
+        )
+        if not initial_legacy_failure and not continuing_validation:
+            return False
+
+        project_name = self._project_name(
+            actor_id,
+            workspace_id,
+            str(item["project_id"]),
+        )
+        desired_project_hint = self._project_hint(
+            actor_id,
+            workspace_id,
+            str(item["project_id"]),
+            project_name,
+        )
+        if desired_project_hint != str(item.get("project_hint") or ""):
+            item["project_hint"] = desired_project_hint
+
+        with self.store._lock:
+            write_stage_row = self.store.db.execute(
+                """SELECT * FROM task_execution_stages
+                   WHERE execution_id=? AND stage IN ('implementation','rework')
+                   ORDER BY created_at_ms DESC LIMIT 1""",
+                (execution_id,),
+            ).fetchone()
+        if write_stage_row is None:
+            return False
+        write_stage = dict(write_stage_row)
+
+        now = _now_ms()
+        with self.store._lock:
+            self.store.db.execute(
+                """UPDATE task_executions
+                   SET project_hint=?,status='running',phase='validating',
+                       phase_detail='Восстанавливаю ранее созданный кандидат и deterministic CI evidence',
+                       error_code=NULL,finished_at_ms=NULL,updated_at_ms=?
+                   WHERE id=?""",
+                (desired_project_hint, now, execution_id),
+            )
+
+        try:
+            validation = await self._candidate_validation(
+                item=item,
+                stage=write_stage,
+            )
+        except (DevCoveerError, StoreError) as exc:
+            now = _now_ms()
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE task_executions
+                       SET status='running',phase='validating',
+                           phase_detail='Повторяю восстановление candidate/CI evidence',
+                           error_code='DEVELOPMENT_VALIDATION_RETRY',
+                           finished_at_ms=NULL,updated_at_ms=?
+                       WHERE id=?""",
+                    (now, execution_id),
+                )
+            return False
+
+        evidence = validation.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+        if evidence.get("candidate_status") == "not_publishable":
+            try:
+                return await self._start_write_recovery_continuation(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    item=item,
+                    stage=write_stage,
+                    summary=str(item.get("result_summary") or ""),
+                )
+            except (DevCoveerError, StoreError):
+                now = _now_ms()
+                with self.store._lock:
+                    self.store.db.execute(
+                        """UPDATE task_executions
+                           SET status='running',phase='recovering',
+                               phase_detail='Автоматически восстанавливаю committed candidate',
+                               error_code='DEVELOPMENT_CANDIDATE_RECOVERY_RETRY',
+                               finished_at_ms=NULL,updated_at_ms=?
+                           WHERE id=?""",
+                        (now, execution_id),
+                    )
+                return False
+
+        if validation.get("ready") is not True:
+            now = _now_ms()
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE task_executions
+                       SET status='running',phase='validating',
+                           phase_detail=?,error_code=NULL,
+                           finished_at_ms=NULL,updated_at_ms=?
+                       WHERE id=?""",
+                    (
+                        str(validation.get("detail") or "Жду deterministic CI"),
+                        now,
+                        execution_id,
+                    ),
+                )
+            return True
+
+        remaining = await self._require_stage_capacity(
+            actor_id=actor_id,
+            workspace_id=workspace_id,
+            model=QUALITY_MODEL,
+            reasoning_effort=QUALITY_EFFORT,
+        )
+        evidence_text = json.dumps(
+            evidence,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )[:8000]
+        review_cycle = 0
+        review_attempt = self._stage_attempt_count(
+            execution_id,
+            "review",
+            cycle=review_cycle,
+        ) + 1
+        marker = self._dispatch_marker(
+            execution_id,
+            "legacy-validation-review",
+            review_cycle,
+            review_attempt,
+        )
+        quality_task_id, _ = await self._start_marked_codex_task(
+            project=desired_project_hint,
+            marker=marker,
+            prompt=self._recovery_review_prompt(
+                str(item.get("spec_path") or ""),
+                review_cycle,
+                evidence_text,
+            ),
+            model=QUALITY_MODEL,
+            reasoning_effort=QUALITY_EFFORT,
+            access="read",
+        )
+        self._record_stage(
+            execution_id=execution_id,
+            stage="review",
+            cycle=review_cycle,
+            model=QUALITY_MODEL,
+            reasoning_effort=QUALITY_EFFORT,
+            devcoveer_task_id=quality_task_id,
+        )
+        now = _now_ms()
+        with self.store._lock:
+            self.store.db.execute(
+                """UPDATE task_executions
+                   SET status='running',phase='reviewing',
+                       phase_detail='Повторное независимое ревью с восстановленным CI evidence',
+                       quality_task_id=?,devcoveer_task_id=?,
+                       quota_remaining_percent=?,review_cycle=0,
+                       error_code=NULL,finished_at_ms=NULL,updated_at_ms=?
+                   WHERE id=?""",
+                (
+                    quality_task_id,
+                    quality_task_id,
+                    remaining,
+                    now,
+                    execution_id,
+                ),
+            )
+        return True
+
     async def advance_active_once(self) -> int:
         """Advance durable executions independently of any client/status read."""
 
@@ -4143,6 +4403,15 @@ Before the verdict give concise findings.""",
                               OR error_code='REVIEW_REWORK_LIMIT'
                           )
                       )
+                      OR (
+                          status='failed'
+                          AND error_code='REVIEW_REWORK_LIMIT'
+                          AND implementation_task_id IS NOT NULL
+                          AND (
+                              candidate_evidence_json IS NULL
+                              OR candidate_evidence_json=''
+                          )
+                      )
                    ORDER BY created_at_ms ASC LIMIT 10"""
             ).fetchall()
         for candidate in rows:
@@ -4159,6 +4428,32 @@ Before the verdict give concise findings.""",
                     ).fetchone()
                 if not fresh:
                     continue
+                if (
+                    fresh["status"] == "failed"
+                    and fresh["error_code"] == "REVIEW_REWORK_LIMIT"
+                ):
+                    recovered = await self._recover_legacy_evidence_loop_locked(
+                        actor_id=str(candidate["actor_id"]),
+                        workspace_id=str(candidate["workspace_id"]),
+                        execution_id=str(candidate["id"]),
+                    )
+                    if recovered:
+                        advanced += 1
+                    continue
+                if (
+                    fresh["status"] == "running"
+                    and str(fresh["phase"] or "") == "validating"
+                    and self._active_stage(str(candidate["id"])) is None
+                ):
+                    recovered = await self._recover_legacy_evidence_loop_locked(
+                        actor_id=str(candidate["actor_id"]),
+                        workspace_id=str(candidate["workspace_id"]),
+                        execution_id=str(candidate["id"]),
+                    )
+                    if recovered:
+                        advanced += 1
+                    continue
+
                 if (
                     fresh["status"] == "blocked"
                     and fresh["error_code"] == "DEVELOPMENT_STAGE_INTERRUPTED"
