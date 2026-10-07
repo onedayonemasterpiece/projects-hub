@@ -556,3 +556,75 @@ async def test_revoked_project_grant_hides_addressed_questions_and_denies_answer
     finally:
         await service.close()
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_queued_analysis_continuation_rechecks_requester_grant_before_dispatch(tmp_path: Path):
+    (
+        store, collaboration, service, bridge,
+        actor_a, actor_b, workspace_id, project_id,
+    ) = setup(tmp_path)
+    try:
+        note = await collaboration.create_note(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            command_id="cmd.note.continuation-revoke",
+            title="Continuation revoke",
+            body="Continuation must use current authorization, not only frozen evidence.",
+        )
+        run = await service.start_analysis(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            note_id=note["id"],
+            addressed_to_actor_id=actor_b,
+            command_id="cmd.analysis.continuation-revoke",
+            model="kimi_k3",
+            purpose="requirements",
+            question="Задай минимальные вопросы.",
+        )
+        completed = await service.refresh_analysis(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            analysis_id=run["id"],
+        )
+        responses = [
+            {
+                "question_id": item["id"],
+                "disposition": "answer",
+                "body": "Достаточный ответ для продолжения.",
+            }
+            for item in completed["questions"]
+        ]
+        receipt = service.answer_questions(
+            actor_id=actor_b,
+            workspace_id=workspace_id,
+            analysis_id=run["id"],
+            command_id="cmd.answers.continuation-revoke",
+            responses=responses,
+        )
+        assert receipt["continuation"] == "queued"
+        assert len(bridge.consults) == 1
+
+        # Revoke the initiating/requesting actor after evidence and answers were
+        # durably accepted but before the external continuation dispatch.
+        with store._lock:
+            store.db.execute(
+                """UPDATE project_grants SET revoked_at_ms=?
+                   WHERE actor_id=? AND project_id=?""",
+                (1_900_000_000_000, actor_a, project_id),
+            )
+
+        await service.advance_jobs_once()
+        with store._lock:
+            job = store.db.execute(
+                "SELECT status,error_code FROM collaboration_jobs WHERE analysis_id=?",
+                (run["id"],),
+            ).fetchone()
+        assert job["status"] == "failed"
+        assert job["error_code"] == "PROJECT_FORBIDDEN"
+        assert len(bridge.consults) == 1
+    finally:
+        await service.close()
+        store.close()
