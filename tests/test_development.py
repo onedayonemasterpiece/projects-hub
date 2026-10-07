@@ -38,6 +38,7 @@ class FakeDevCoveer:
         self.local_candidate_available = True
         self.ci_pending_once = False
         self.ci_failure = False
+        self.ci_absent = False
         self._ci_reads = 0
         self.main_head = "d" * 40
         self.main_ci_failure = False
@@ -178,11 +179,11 @@ class FakeDevCoveer:
                 self._ci_reads += 1
                 pending = self.ci_pending_once and self._ci_reads == 1
                 failure = self.ci_failure
-                checks = [
+                checks = [] if self.ci_absent else [
                     {"name": "backend", "status": "in_progress" if pending else "completed", "conclusion": None if pending else ("failure" if failure else "success")},
                     {"name": "pwa", "status": "in_progress" if pending else "completed", "conclusion": None if pending else ("failure" if failure else "success")},
                 ]
-                workflows = [
+                workflows = [] if self.ci_absent else [
                     {"id": 123, "name": "Projects Hub contracts", "status": "in_progress" if pending else "completed", "conclusion": None if pending else ("failure" if failure else "success")}
                 ]
                 if payload.get("pr"):
@@ -1456,6 +1457,77 @@ async def test_completed_write_publishes_exact_candidate_and_waits_for_ci(
 
 
 @pytest.mark.asyncio
+async def test_legacy_dirty_candidate_recovers_before_quality_review(tmp_path: Path):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = InterruptedStageDevCoveer("none", resume_success=False)
+    fake.checkout_candidate = False
+    fake.pr_mergeable_state = "dirty"
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+        fake.candidate_branch = (
+            "chatgpt/voice-theme-"
+            + service._candidate_branch_marker(execution_id)
+            + "-20261007"
+        )
+
+        await service.advance_active_once()
+        stage = service._active_stage(execution_id)
+        assert stage is not None and stage["stage"] == "implementation"
+        service._finish_stage(
+            stage_id=stage["id"],
+            status="completed",
+            summary="Legacy committed candidate needs fresh-main reconciliation.",
+        )
+        with store._lock:
+            store.db.execute(
+                """UPDATE task_executions
+                   SET status='failed',phase='failed',
+                       review_cycle=12,error_code='REVIEW_REWORK_LIMIT',
+                       candidate_sha=NULL,candidate_branch=NULL,candidate_pr=NULL,
+                       candidate_published_at_ms=NULL,candidate_evidence_json=NULL,
+                       finished_at_ms=123,updated_at_ms=123
+                   WHERE id=?""",
+                (execution_id,),
+            )
+
+        advanced = await service.advance_active_once()
+        current = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+
+        assert advanced == 1
+        assert current["execution"]["status"] == "running"
+        assert current["execution"]["phase"] == "implementing"
+        assert current["execution"]["candidate_sha"] is None
+        assert current["execution"]["candidate_pr"] is None
+        assert not any(
+            stage["stage"] == "review" and stage["status"] == "running"
+            for stage in current["execution"]["stages"]
+        )
+        starts = [
+            args
+            for name, args in fake.calls
+            if name == "start"
+            and args["model"] == "gpt-6.1-sol"
+            and args["task"] == fake._recovery_implementation_task
+        ]
+        assert len(starts) == 1
+        assert '"mergeable_state":"dirty"' in starts[0]["prompt"]
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
 async def test_legacy_evidence_loop_recovers_noncurrent_candidate_branch(
     tmp_path: Path,
 ):
@@ -1568,10 +1640,65 @@ def test_implementation_prompt_requires_stable_execution_branch_marker():
 
 
 @pytest.mark.asyncio
-async def test_review_accepted_cannot_bypass_failed_deterministic_ci(tmp_path: Path):
+async def test_failed_deterministic_ci_enters_write_recovery_before_review(tmp_path: Path):
     store, readiness, boot, project = setup(tmp_path)
-    fake = FakeDevCoveer()
+    fake = InterruptedStageDevCoveer("none", resume_success=False)
     fake.ci_failure = True
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+
+        await service.advance_active_once()  # design -> implementation
+        await service.advance_active_once()  # implementation -> failed candidate gate -> recovery
+
+        current = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+        assert current["execution"]["status"] == "running"
+        assert current["execution"]["phase"] == "implementing"
+        assert current["execution"]["candidate_sha"] is None
+        assert current["execution"]["candidate_branch"] is None
+        assert current["execution"]["candidate_pr"] is None
+        assert not any(
+            stage["stage"] == "review" for stage in current["execution"]["stages"]
+        )
+
+        implementation_stages = [
+            stage
+            for stage in current["execution"]["stages"]
+            if stage["stage"] == "implementation"
+        ]
+        assert [stage["status"] for stage in implementation_stages] == [
+            "superseded",
+            "running",
+        ]
+        recovery_starts = [
+            args
+            for name, args in fake.calls
+            if name == "start"
+            and args["model"] == "gpt-6.1-sol"
+            and args["task"] == fake._recovery_implementation_task
+        ]
+        assert len(recovery_starts) == 1
+        assert '"conclusion":"failure"' in recovery_starts[0]["prompt"]
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_dirty_pr_enters_conflict_recovery_before_review(tmp_path: Path):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = InterruptedStageDevCoveer("none", resume_success=False)
+    fake.pr_mergeable_state = "dirty"
     try:
         service = DevelopmentService(store, readiness, devcoveer=fake)
         task = create_backlog(service, boot, project)[0]
@@ -1584,34 +1711,81 @@ async def test_review_accepted_cannot_bypass_failed_deterministic_ci(tmp_path: P
 
         await service.advance_active_once()
         await service.advance_active_once()
-        reviewing = await service.status(
-            actor_id=boot["actor"]["id"],
-            workspace_id=boot["workspace"]["id"],
-            execution_id=execution_id,
-        )
-        assert reviewing["execution"]["phase"] == "reviewing"
-        assert reviewing["execution"]["candidate_evidence"]["ci_success"] is False
 
-        await service.advance_active_once()
-        after = await service.status(
+        current = await service.status(
             actor_id=boot["actor"]["id"],
             workspace_id=boot["workspace"]["id"],
             execution_id=execution_id,
         )
-        assert after["execution"]["status"] == "running"
-        assert after["execution"]["phase"] == "reworking"
-        assert after["execution"]["review_cycle"] == 1
-        assert not any(stage["stage"] == "delivery" for stage in after["execution"]["stages"])
-        completed_review = [
-            stage for stage in after["execution"]["stages"]
-            if stage["stage"] == "review" and stage["status"] == "completed"
-        ][0]
-        assert completed_review["review_verdict"] == "rework_required"
-        assert "Deterministic delivery gate rejected ACCEPTED verdict" in completed_review["summary"]
-        assert '"conclusion":"failure"' in completed_review["summary"]
+        assert current["execution"]["status"] == "running"
+        assert current["execution"]["phase"] == "implementing"
+        assert "свежим main" in current["execution"]["phase_detail"]
+        assert current["execution"]["candidate_sha"] is None
+        assert current["execution"]["candidate_pr"] is None
+        assert not any(
+            stage["stage"] == "review" for stage in current["execution"]["stages"]
+        )
+        recovery_starts = [
+            args
+            for name, args in fake.calls
+            if name == "start"
+            and args["model"] == "gpt-6.1-sol"
+            and args["task"] == fake._recovery_implementation_task
+        ]
+        assert len(recovery_starts) == 1
+        assert '"mergeable_state":"dirty"' in recovery_starts[0]["prompt"]
+        assert "fresh origin/main" in recovery_starts[0]["prompt"]
     finally:
         await service.close()
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_absent_ci_checks_never_count_as_success_after_grace(tmp_path: Path):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = FakeDevCoveer()
+    fake.ci_absent = True
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+
+        await service.advance_active_once()
+        await service.advance_active_once()
+        waiting = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+        assert waiting["execution"]["phase"] == "validating"
+
+        with store._lock:
+            store.db.execute(
+                "UPDATE task_executions SET candidate_published_at_ms=1 WHERE id=?",
+                (execution_id,),
+            )
+
+        await service.advance_active_once()
+        still_waiting = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+        assert still_waiting["execution"]["status"] == "running"
+        assert still_waiting["execution"]["phase"] == "validating"
+        assert not any(
+            stage["stage"] == "review"
+            for stage in still_waiting["execution"]["stages"]
+        )
+    finally:
+        await service.close()
+        store.close()
+
 
 
 @pytest.mark.asyncio
