@@ -635,3 +635,104 @@ async def test_public_project_docs_blocks_before_model_and_preserves_intent_for_
     finally:
         await service.close()
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_note_worker_retries_transient_block_without_second_user_command(tmp_path: Path):
+    store, service, github, processor, owner, project_id = _bound_store(tmp_path)
+    actor = owner["actor"]["id"]
+    workspace = owner["workspace"]["id"]
+    processor.fail_once = True
+    try:
+        with pytest.raises(StoreError) as exc:
+            await service.create_note(
+                actor_id=actor,
+                workspace_id=workspace,
+                project_id=project_id,
+                command_id="cmd.note.worker-retry1",
+                title="Durable retry",
+                body="Worker should continue this accepted note without another user command.",
+            )
+        assert exc.value.code == "NOTE_PROCESSOR_UNAVAILABLE"
+        with store._lock:
+            blocked = store.db.execute(
+                "SELECT id,status,processing_error FROM project_notes WHERE command_id=?",
+                ("cmd.note.worker-retry1",),
+            ).fetchone()
+        assert blocked["status"] == "blocked"
+        assert blocked["processing_error"] == "NOTE_PROCESSOR_UNAVAILABLE"
+
+        advanced = await service.advance_pending_notes_once()
+        assert advanced == 1
+        ready = service.get_note(
+            actor_id=actor,
+            workspace_id=workspace,
+            note_id=blocked["id"],
+        )
+        assert ready["status"] == "ready"
+        assert len(processor.calls) == 2
+        assert github.write_count == 1
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_service_restart_reclaims_orphaned_note_lease_and_continues(tmp_path: Path):
+    store, service, github, processor, owner, project_id = _bound_store(tmp_path)
+    actor = owner["actor"]["id"]
+    workspace = owner["workspace"]["id"]
+    processor.fail_once = True
+    replacement: CollaborationService | None = None
+    try:
+        with pytest.raises(StoreError):
+            await service.create_note(
+                actor_id=actor,
+                workspace_id=workspace,
+                project_id=project_id,
+                command_id="cmd.note.restart-retry1",
+                title="Restart retry",
+                body="An orphaned processing lease must not wait for its TTL after restart.",
+            )
+        with store._lock:
+            row = store.db.execute(
+                "SELECT id FROM project_notes WHERE command_id=?",
+                ("cmd.note.restart-retry1",),
+            ).fetchone()
+            store.db.execute(
+                """UPDATE project_notes
+                   SET status='processing',
+                       processing_lease_token='orphaned-old-process',
+                       processing_lease_until_ms=?
+                   WHERE id=?""",
+                (9_999_999_999_999, row["id"]),
+            )
+
+        await service.close()
+        replacement = CollaborationService(
+            store,
+            github,  # type: ignore[arg-type]
+            note_processor=FakeNoteProcessor(),  # type: ignore[arg-type]
+        )
+        with store._lock:
+            reclaimed = store.db.execute(
+                """SELECT processing_lease_token,processing_lease_until_ms
+                   FROM project_notes WHERE id=?""",
+                (row["id"],),
+            ).fetchone()
+        assert reclaimed["processing_lease_token"] is None
+        assert reclaimed["processing_lease_until_ms"] is None
+
+        advanced = await replacement.advance_pending_notes_once()
+        assert advanced == 1
+        ready = replacement.get_note(
+            actor_id=actor,
+            workspace_id=workspace,
+            note_id=row["id"],
+        )
+        assert ready["status"] == "ready"
+        assert github.write_count == 1
+    finally:
+        if replacement is not None:
+            await replacement.close()
+        store.close()
