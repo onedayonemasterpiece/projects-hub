@@ -128,6 +128,28 @@ class DurableStore:
             created_at_ms INTEGER NOT NULL,
             updated_at_ms INTEGER NOT NULL
         );
+        CREATE INDEX IF NOT EXISTS conversations_personal_idx
+            ON conversations(actor_id, workspace_id, updated_at_ms DESC);
+        CREATE TABLE IF NOT EXISTS conversation_timeline_messages(
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL REFERENCES conversations(id),
+            workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+            actor_id TEXT NOT NULL REFERENCES actors(id),
+            turn_id TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('user','assistant')),
+            text TEXT NOT NULL DEFAULT '',
+            source_id TEXT REFERENCES sources(id),
+            transcript_revision INTEGER NOT NULL DEFAULT 0,
+            revision INTEGER NOT NULL DEFAULT 1,
+            blocks_json TEXT NOT NULL DEFAULT '[]',
+            created_at_ms INTEGER NOT NULL,
+            updated_at_ms INTEGER NOT NULL,
+            UNIQUE(conversation_id, turn_id, role)
+        );
+        CREATE INDEX IF NOT EXISTS conversation_timeline_messages_idx
+            ON conversation_timeline_messages(
+                conversation_id, created_at_ms ASC, id ASC
+            );
         CREATE TABLE IF NOT EXISTS sources(
             id TEXT PRIMARY KEY,
             conversation_id TEXT NOT NULL REFERENCES conversations(id),
@@ -2112,6 +2134,273 @@ class DurableStore:
                 "projects": projects,
             }
 
+    @staticmethod
+    def _timeline_opaque_id(value: str, label: str) -> str:
+        clean = str(value or "").strip()
+        if (
+            not 8 <= len(clean) <= 160
+            or any(
+                not (ch.isalnum() or ch in "._:-")
+                for ch in clean
+            )
+        ):
+            raise StoreError("INVALID_ARGUMENT", f"{label} is invalid")
+        return clean
+
+    @staticmethod
+    def _timeline_blocks(value: Any) -> list[dict[str, Any]]:
+        if value is None:
+            return []
+        if not isinstance(value, list) or len(value) > 8:
+            raise StoreError("INVALID_ARGUMENT", "timeline blocks are invalid")
+        blocks: list[dict[str, Any]] = []
+        for raw in value:
+            if not isinstance(raw, dict):
+                raise StoreError("INVALID_ARGUMENT", "timeline block is invalid")
+            kind = str(raw.get("kind") or "")
+            if kind in {"collaboration_timeline", "collaboration_questions"}:
+                blocks.append({"kind": kind})
+                continue
+            if kind == "board":
+                project_id = str(raw.get("project_id") or "")
+                if not project_id or len(project_id) > 160:
+                    raise StoreError("INVALID_ARGUMENT", "board block project is invalid")
+                mode = str(raw.get("mode") or "reference")
+                if mode not in {"active", "reference"}:
+                    raise StoreError("INVALID_ARGUMENT", "board block mode is invalid")
+                blocks.append(
+                    {
+                        "kind": "board",
+                        "project_id": project_id,
+                        "mode": mode,
+                    }
+                )
+                continue
+            raise StoreError("INVALID_ARGUMENT", "timeline block kind is invalid")
+        return blocks
+
+    @staticmethod
+    def _timeline_message_public(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "conversation_id": row["conversation_id"],
+            "workspace_id": row["workspace_id"],
+            "turn_id": row["turn_id"],
+            "role": row["role"],
+            "text": row["text"],
+            "source_id": row["source_id"],
+            "transcript_revision": int(row["transcript_revision"]),
+            "revision": int(row["revision"]),
+            "blocks": json.loads(row["blocks_json"]),
+            "created_at_ms": int(row["created_at_ms"]),
+            "updated_at_ms": int(row["updated_at_ms"]),
+        }
+
+    def upsert_conversation_timeline_message(
+        self,
+        *,
+        actor_id: str,
+        conversation_id: str,
+        workspace_id: str,
+        message_id: str,
+        turn_id: str,
+        role: str,
+        text: str,
+        source_id: str | None,
+        transcript_revision: int,
+        revision: int,
+        blocks: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        message_id = self._timeline_opaque_id(message_id, "message_id")
+        turn_id = self._timeline_opaque_id(turn_id, "turn_id")
+        clean_role = str(role or "")
+        if clean_role not in {"user", "assistant"}:
+            raise StoreError("INVALID_ARGUMENT", "timeline role is invalid")
+        clean_text = str(text or "")
+        if len(clean_text) > 120_000:
+            raise StoreError("INVALID_ARGUMENT", "timeline text is too large")
+        try:
+            clean_transcript_revision = int(transcript_revision)
+            clean_revision = int(revision)
+        except (TypeError, ValueError) as exc:
+            raise StoreError("INVALID_ARGUMENT", "timeline revision is invalid") from exc
+        if clean_transcript_revision < 0 or not 1 <= clean_revision <= 1_000_000_000:
+            raise StoreError("INVALID_ARGUMENT", "timeline revision is invalid")
+        clean_blocks = self._timeline_blocks(blocks)
+        encoded_blocks = json.dumps(
+            clean_blocks,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        clean_source = str(source_id or "").strip() or None
+
+        with self._lock:
+            conversation = self.db.execute(
+                """SELECT id,workspace_id,actor_id FROM conversations
+                   WHERE id=?""",
+                (conversation_id,),
+            ).fetchone()
+            if (
+                not conversation
+                or conversation["actor_id"] != actor_id
+                or conversation["workspace_id"] != workspace_id
+            ):
+                raise StoreError(
+                    "CONVERSATION_NOT_FOUND",
+                    "Conversation is not available",
+                )
+            self._membership(actor_id, workspace_id)
+            if clean_source is not None:
+                source = self.db.execute(
+                    """SELECT id FROM sources
+                       WHERE id=? AND conversation_id=? AND workspace_id=? AND actor_id=?""",
+                    (clean_source, conversation_id, workspace_id, actor_id),
+                ).fetchone()
+                if not source:
+                    raise StoreError(
+                        "SOURCE_NOT_FOUND",
+                        "Voice source is not available to this conversation",
+                    )
+
+            existing = self.db.execute(
+                "SELECT * FROM conversation_timeline_messages WHERE id=?",
+                (message_id,),
+            ).fetchone()
+            if existing is None:
+                turn_existing = self.db.execute(
+                    """SELECT * FROM conversation_timeline_messages
+                       WHERE conversation_id=? AND turn_id=? AND role=?""",
+                    (conversation_id, turn_id, clean_role),
+                ).fetchone()
+                if turn_existing is not None:
+                    raise StoreError(
+                        "TIMELINE_MESSAGE_CONFLICT",
+                        "Timeline turn already has another message identity",
+                    )
+                now = _now_ms()
+                self.db.execute(
+                    """INSERT INTO conversation_timeline_messages(
+                           id,conversation_id,workspace_id,actor_id,turn_id,role,
+                           text,source_id,transcript_revision,revision,blocks_json,
+                           created_at_ms,updated_at_ms)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        message_id,
+                        conversation_id,
+                        workspace_id,
+                        actor_id,
+                        turn_id,
+                        clean_role,
+                        clean_text,
+                        clean_source,
+                        clean_transcript_revision,
+                        clean_revision,
+                        encoded_blocks,
+                        now,
+                        now,
+                    ),
+                )
+            else:
+                if (
+                    existing["conversation_id"] != conversation_id
+                    or existing["workspace_id"] != workspace_id
+                    or existing["actor_id"] != actor_id
+                    or existing["turn_id"] != turn_id
+                    or existing["role"] != clean_role
+                ):
+                    raise StoreError(
+                        "TIMELINE_MESSAGE_CONFLICT",
+                        "Timeline message identity cannot be rebound",
+                    )
+                if clean_revision < int(existing["revision"]):
+                    return self._timeline_message_public(existing)
+                if clean_transcript_revision < int(existing["transcript_revision"]):
+                    raise StoreError(
+                        "TIMELINE_MESSAGE_CONFLICT",
+                        "Timeline transcript revision cannot move backwards",
+                    )
+                if (
+                    existing["source_id"] is not None
+                    and clean_source is not None
+                    and existing["source_id"] != clean_source
+                ):
+                    raise StoreError(
+                        "TIMELINE_MESSAGE_CONFLICT",
+                        "Timeline voice source cannot be rebound",
+                    )
+                same_payload = (
+                    existing["text"] == clean_text
+                    and existing["source_id"] == (clean_source or existing["source_id"])
+                    and int(existing["transcript_revision"])
+                    == clean_transcript_revision
+                    and existing["blocks_json"] == encoded_blocks
+                )
+                if clean_revision == int(existing["revision"]):
+                    if same_payload:
+                        return self._timeline_message_public(existing)
+                    raise StoreError(
+                        "TIMELINE_MESSAGE_CONFLICT",
+                        "Timeline revision was reused with different content",
+                    )
+                self.db.execute(
+                    """UPDATE conversation_timeline_messages
+                       SET text=?,source_id=COALESCE(source_id,?),
+                           transcript_revision=?,revision=?,blocks_json=?,
+                           updated_at_ms=?
+                       WHERE id=?""",
+                    (
+                        clean_text,
+                        clean_source,
+                        clean_transcript_revision,
+                        clean_revision,
+                        encoded_blocks,
+                        _now_ms(),
+                        message_id,
+                    ),
+                )
+
+            row = self.db.execute(
+                "SELECT * FROM conversation_timeline_messages WHERE id=?",
+                (message_id,),
+            ).fetchone()
+            return self._timeline_message_public(row)
+
+    def list_conversation_timeline_messages(
+        self,
+        *,
+        actor_id: str,
+        conversation_id: str,
+        workspace_id: str,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        bounded = max(1, min(int(limit), 500))
+        with self._lock:
+            conversation = self.db.execute(
+                """SELECT id,workspace_id,actor_id FROM conversations
+                   WHERE id=?""",
+                (conversation_id,),
+            ).fetchone()
+            if (
+                not conversation
+                or conversation["actor_id"] != actor_id
+                or conversation["workspace_id"] != workspace_id
+            ):
+                raise StoreError(
+                    "CONVERSATION_NOT_FOUND",
+                    "Conversation is not available",
+                )
+            self._membership(actor_id, workspace_id)
+            rows = self.db.execute(
+                """SELECT * FROM (
+                       SELECT * FROM conversation_timeline_messages
+                       WHERE conversation_id=?
+                       ORDER BY created_at_ms DESC,id DESC LIMIT ?
+                   )
+                   ORDER BY created_at_ms ASC,id ASC""",
+                (conversation_id, bounded),
+            ).fetchall()
+            return [self._timeline_message_public(row) for row in rows]
+
     def create_conversation(
         self, actor_id: str, workspace_id: str, focus_project_id: str | None = None
     ) -> dict[str, Any]:
@@ -2120,6 +2409,20 @@ class DurableStore:
             self._membership(actor_id, workspace_id)
             if focus_project_id is not None:
                 self.project_access(actor_id, workspace_id, focus_project_id)
+            existing = self.db.execute(
+                """SELECT id,focus_project_id FROM conversations
+                   WHERE actor_id=? AND workspace_id=?
+                   ORDER BY updated_at_ms DESC,created_at_ms DESC LIMIT 1""",
+                (actor_id, workspace_id),
+            ).fetchone()
+            if existing:
+                if focus_project_id is not None and existing["focus_project_id"] != focus_project_id:
+                    self.db.execute(
+                        """UPDATE conversations
+                           SET focus_project_id=?,updated_at_ms=? WHERE id=?""",
+                        (focus_project_id, now, existing["id"]),
+                    )
+                return self.get_conversation(actor_id, str(existing["id"]))
             conversation_id = _id("conv")
             self.db.execute(
                 """INSERT INTO conversations
