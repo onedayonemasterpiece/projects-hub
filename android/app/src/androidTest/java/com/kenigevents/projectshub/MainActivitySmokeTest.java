@@ -25,12 +25,19 @@ public class MainActivitySmokeTest {
         scenario.onActivity(activity -> {
             WebView view = activity.themeWebView();
             view.setWebViewClient(new WebViewClient() {
-                @Override public void onPageFinished(WebView page, String finished) { loaded.countDown(); }
+                @Override public void onPageFinished(WebView page, String finished) {
+                    // Activity launch may still have a pending production page;
+                    // its onPageFinished is NOT proof the test fixture loaded.
+                    page.evaluateJavascript(
+                            "document.body?.textContent?.includes('Theme bridge fixture')===true",
+                            value -> { if ("true".equals(value)) loaded.countDown(); });
+                }
             });
             // Prepared bridge fixture, not provider/microphone acceptance.
             view.loadDataWithBaseURL(url, "<html><body>Theme bridge fixture</body></html>", "text/html", "UTF-8", null);
         });
-        assertTrue(loaded.await(10, TimeUnit.SECONDS));
+        assertTrue("exact theme fixture must load before posting to bridge",
+                loaded.await(15, TimeUnit.SECONDS));
     }
 
     private void message(ActivityScenario<MainActivity> scenario, String theme, int revision) throws Exception {

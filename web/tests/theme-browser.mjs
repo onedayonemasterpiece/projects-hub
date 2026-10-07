@@ -98,7 +98,18 @@ try {
       await route.fulfill({json:payload});
     });
     await page.goto('http://127.0.0.1:5179/');
-    await page.waitForFunction(()=>document.documentElement.dataset.theme==='light');
+    try {
+      await page.waitForFunction(()=>document.documentElement.dataset.theme==='light',null,{timeout:15000});
+    } catch (error) {
+      const debug=await page.evaluate(()=>({
+        theme:document.documentElement.dataset.theme,
+        marker:getComputedStyle(document.documentElement).getPropertyValue('--theme-marker').trim(),
+        root:document.getElementById('root')?.textContent?.slice(0,500),
+        url:location.href,
+      }));
+      console.error('THEME_BOOTSTRAP_DIAGNOSTICS',JSON.stringify({debug,errors}));
+      throw error;
+    }
     const controls = await page.locator('button').count();
     assert.ok(controls>0);
     // Keep a real mounted element identity and focus throughout ten presentation changes.
