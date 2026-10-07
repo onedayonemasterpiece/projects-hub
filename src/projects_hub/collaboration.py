@@ -8,6 +8,7 @@ import time
 from typing import Any
 
 from .github_connections import GitHubConnections
+from .chatgpt_note_analysis import ChatGPTNoteAnalysisSync
 from .note_processing import (
     GeminiNoteProcessor,
     NoteProcessingError,
@@ -59,6 +60,7 @@ class CollaborationService:
         self.github = github
         self.note_processor = note_processor or GeminiNoteProcessor()
         self._init_schema()
+        self.chatgpt_analysis = ChatGPTNoteAnalysisSync(store, github)
 
     def _init_schema(self) -> None:
         with self.store._lock:
@@ -827,7 +829,13 @@ class CollaborationService:
             ).fetchone()
             if not row:
                 raise StoreError("NOTE_NOT_FOUND", "Project note is not available")
-        return self._public_note(actor_id, workspace_id, row)
+        note = self._public_note(actor_id, workspace_id, row)
+        note["chatgpt_analysis"] = self.chatgpt_analysis.for_note(
+            actor_id=actor_id,
+            workspace_id=workspace_id,
+            note_id=note_id,
+        )
+        return note
 
     def list_notes(
         self,
