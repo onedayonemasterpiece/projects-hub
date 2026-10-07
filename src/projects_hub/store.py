@@ -130,6 +130,14 @@ class DurableStore:
         );
         CREATE INDEX IF NOT EXISTS conversations_personal_idx
             ON conversations(actor_id, workspace_id, updated_at_ms DESC);
+        CREATE TABLE IF NOT EXISTS personal_conversations(
+            actor_id TEXT NOT NULL REFERENCES actors(id),
+            workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+            conversation_id TEXT NOT NULL UNIQUE REFERENCES conversations(id),
+            created_at_ms INTEGER NOT NULL,
+            updated_at_ms INTEGER NOT NULL,
+            PRIMARY KEY(actor_id, workspace_id)
+        );
         CREATE TABLE IF NOT EXISTS conversation_timeline_messages(
             id TEXT PRIMARY KEY,
             conversation_id TEXT NOT NULL REFERENCES conversations(id),
@@ -2407,28 +2415,92 @@ class DurableStore:
         now = _now_ms()
         with self._lock:
             self._membership(actor_id, workspace_id)
-            if focus_project_id is not None:
-                self.project_access(actor_id, workspace_id, focus_project_id)
-            existing = self.db.execute(
-                """SELECT id,focus_project_id FROM conversations
-                   WHERE actor_id=? AND workspace_id=?
-                   ORDER BY updated_at_ms DESC,created_at_ms DESC LIMIT 1""",
-                (actor_id, workspace_id),
-            ).fetchone()
-            if existing:
-                if focus_project_id is not None and existing["focus_project_id"] != focus_project_id:
-                    self.db.execute(
-                        """UPDATE conversations
-                           SET focus_project_id=?,updated_at_ms=? WHERE id=?""",
-                        (focus_project_id, now, existing["id"]),
-                    )
-                return self.get_conversation(actor_id, str(existing["id"]))
+            if focus_project_id is not None and not self._project_row(workspace_id, focus_project_id):
+                raise StoreError("PROJECT_NOT_FOUND", "Project is not available")
             conversation_id = _id("conv")
             self.db.execute(
                 """INSERT INTO conversations
                    (id,workspace_id,actor_id,focus_project_id,created_at_ms,updated_at_ms)
                    VALUES(?,?,?,?,?,?)""",
                 (conversation_id, workspace_id, actor_id, focus_project_id, now, now),
+            )
+            return self.get_conversation(actor_id, conversation_id)
+
+    def get_or_create_personal_conversation(
+        self,
+        actor_id: str,
+        workspace_id: str,
+        focus_project_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Return the one UI timeline conversation without collapsing transport scopes."""
+        now = _now_ms()
+        with self._lock:
+            self._membership(actor_id, workspace_id)
+            if focus_project_id is not None:
+                self.project_access(actor_id, workspace_id, focus_project_id)
+            binding = self.db.execute(
+                """SELECT conversation_id FROM personal_conversations
+                   WHERE actor_id=? AND workspace_id=?""",
+                (actor_id, workspace_id),
+            ).fetchone()
+            if binding:
+                conversation_id = str(binding["conversation_id"])
+                if focus_project_id is not None:
+                    self.db.execute(
+                        """UPDATE conversations SET focus_project_id=?,updated_at_ms=?
+                           WHERE id=? AND actor_id=? AND workspace_id=?""",
+                        (
+                            focus_project_id,
+                            now,
+                            conversation_id,
+                            actor_id,
+                            workspace_id,
+                        ),
+                    )
+                self.db.execute(
+                    """UPDATE personal_conversations SET updated_at_ms=?
+                       WHERE actor_id=? AND workspace_id=?""",
+                    (now, actor_id, workspace_id),
+                )
+                return self.get_conversation(actor_id, conversation_id)
+
+            # Preserve the user's most recent existing conversation on rollout
+            # when possible, but do not change generic conversation creation:
+            # Live/offline resource scopes remain separate and testable.
+            recent = self.db.execute(
+                """SELECT id FROM conversations
+                   WHERE actor_id=? AND workspace_id=?
+                   ORDER BY updated_at_ms DESC,created_at_ms DESC LIMIT 1""",
+                (actor_id, workspace_id),
+            ).fetchone()
+            if recent:
+                conversation_id = str(recent["id"])
+                if focus_project_id is not None:
+                    self.db.execute(
+                        """UPDATE conversations SET focus_project_id=?,updated_at_ms=?
+                           WHERE id=?""",
+                        (focus_project_id, now, conversation_id),
+                    )
+            else:
+                conversation_id = _id("conv")
+                self.db.execute(
+                    """INSERT INTO conversations
+                       (id,workspace_id,actor_id,focus_project_id,created_at_ms,updated_at_ms)
+                       VALUES(?,?,?,?,?,?)""",
+                    (
+                        conversation_id,
+                        workspace_id,
+                        actor_id,
+                        focus_project_id,
+                        now,
+                        now,
+                    ),
+                )
+            self.db.execute(
+                """INSERT INTO personal_conversations(
+                       actor_id,workspace_id,conversation_id,created_at_ms,updated_at_ms)
+                   VALUES(?,?,?,?,?)""",
+                (actor_id, workspace_id, conversation_id, now, now),
             )
             return self.get_conversation(actor_id, conversation_id)
 
