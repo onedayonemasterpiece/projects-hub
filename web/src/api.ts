@@ -12,6 +12,24 @@ export type Conversation = {
   focus_project_id: string | null;
   focus_project_name: string | null;
 };
+export type PersonalTimelineBlock =
+  | { kind: "collaboration_timeline" }
+  | { kind: "collaboration_questions" }
+  | { kind: "board"; project_id: string; mode: "active" | "reference" };
+export type PersonalTimelineMessage = {
+  id: string;
+  conversation_id: string;
+  workspace_id: string;
+  turn_id: string;
+  role: "user" | "assistant";
+  text: string;
+  source_id: string | null;
+  transcript_revision: number;
+  revision: number;
+  blocks: PersonalTimelineBlock[];
+  created_at_ms: number;
+  updated_at_ms: number;
+};
 export type AuthConfig =
   | { mode: "first_party_invite" }
   | { mode: "loopback_dev" | "disabled" };
@@ -226,6 +244,51 @@ export const createConversation = (workspaceId: string, projectId?: string | nul
   });
 
 export const getConversation = (id: string) => api<Conversation>(`/api/conversations/${id}`);
+
+export const getPersonalTimeline = (
+  conversationId: string,
+  workspaceId: string,
+  limit = 200,
+) => {
+  const params = new URLSearchParams({
+    workspace_id: workspaceId,
+    limit: String(limit),
+  });
+  return api<{ items: PersonalTimelineMessage[] }>(
+    `/api/conversations/${encodeURIComponent(conversationId)}/timeline?${params}`,
+  );
+};
+
+export const upsertPersonalTimelineMessage = (
+  conversationId: string,
+  message: {
+    id: string;
+    workspace_id: string;
+    turn_id: string;
+    role: "user" | "assistant";
+    text: string;
+    source_id?: string | null;
+    transcript_revision: number;
+    revision: number;
+    blocks: PersonalTimelineBlock[];
+  },
+) =>
+  api<PersonalTimelineMessage>(
+    `/api/conversations/${encodeURIComponent(conversationId)}/timeline/messages/${encodeURIComponent(message.id)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        workspace_id: message.workspace_id,
+        turn_id: message.turn_id,
+        role: message.role,
+        text: message.text,
+        source_id: message.source_id ?? null,
+        transcript_revision: message.transcript_revision,
+        revision: message.revision,
+        blocks: message.blocks,
+      }),
+    },
+  );
 
 export const getMemories = (workspaceId: string, projectId?: string | null) => {
   const params = new URLSearchParams({ workspace_id: workspaceId, limit: "12" });
