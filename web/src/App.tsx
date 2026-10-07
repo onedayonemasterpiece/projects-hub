@@ -73,6 +73,9 @@ const developmentStageLabel: Record<string, string> = {
   ready: "Готово",
   capacity_wait: "Ожидание ресурса",
   recovering: "Автовосстановление",
+  validating: "CI / проверка",
+  delivery_merge: "Объединение",
+  delivery_main_ci: "Main CI / release",
   needs_owner: "Нужно решение владельца",
   failed: "Ошибка",
 };

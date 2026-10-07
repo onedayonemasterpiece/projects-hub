@@ -24,8 +24,8 @@ class DevCoveerClient:
     the persistent bridge process they require between start/read/continue calls.
     """
 
-    _ALLOWED = {"codex_status", "list_models", "list_tasks", "start_task", "continue_task", "read_task"}
-    _REQUIRED = {"codex_status", "list_models", "list_tasks", "start_task", "continue_task", "read_task"}
+    _ALLOWED = {"codex_status", "list_models", "list_tasks", "start_task", "continue_task", "read_task", "direct_ops_v2"}
+    _REQUIRED = {"codex_status", "list_models", "list_tasks", "start_task", "continue_task", "read_task", "direct_ops_v2"}
 
     def __init__(
         self,
@@ -184,6 +184,40 @@ class DevCoveerClient:
         if search:
             arguments["search"] = search
         return await self._call("list_tasks", arguments)
+
+    async def direct_project_probe(
+        self,
+        *,
+        project: str,
+        operation: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return await self._call(
+            "direct_ops_v2",
+            {
+                "project": project,
+                "plane": "project_probe",
+                "operation": operation,
+                "payload": dict(payload or {}),
+            },
+        )
+
+    async def direct_project_action(
+        self,
+        *,
+        project: str,
+        operation: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return await self._call(
+            "direct_ops_v2",
+            {
+                "project": project,
+                "plane": "project_action",
+                "operation": operation,
+                "payload": dict(payload or {}),
+            },
+        )
 
     async def start_codex_task(
         self,

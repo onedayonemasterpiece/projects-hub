@@ -32,6 +32,17 @@ class FakeDevCoveer:
         self._implementation_task = "dvt_" + "i" * 32
         self._quality_reads = 0
         self._implementation_reads = 0
+        self.candidate_head = "c" * 40
+        self.candidate_branch = "chatgpt/test-owner-development"
+        self.ci_pending_once = False
+        self.ci_failure = False
+        self._ci_reads = 0
+        self.main_head = "d" * 40
+        self.main_ci_failure = False
+        self.pr_mergeable_state = "clean"
+        self.deploy_job_id = "job_" + "1" * 24
+        self.deploy_job_status = "succeeded"
+        self.deploy_exit_code = 0
 
     async def status(self):
         self.calls.append(("status", {}))
@@ -93,6 +104,113 @@ class FakeDevCoveer:
             )
         )
         return {"status": "ok", "tasks": []}
+
+    async def direct_project_probe(
+        self,
+        *,
+        project: str,
+        operation: str,
+        payload: dict | None = None,
+    ):
+        payload = dict(payload or {})
+        self.calls.append(
+            ("direct_probe", {"project": project, "operation": operation, "payload": payload})
+        )
+        if operation == "git_state":
+            data = {
+                "head_state": "branch",
+                "branch": self.candidate_branch,
+                "head": self.candidate_head,
+                "staged": [],
+                "unstaged": [],
+                "untracked": [],
+                "conflicts": [],
+                "clean": True,
+            }
+        elif operation == "remote_head":
+            data = {
+                "remote": "origin",
+                "branch": "main",
+                "fresh_remote_sha": self.main_head,
+                "local_tracking_sha": self.main_head,
+            }
+        elif operation == "github_status":
+            if payload.get("branch") == "main":
+                failure = self.main_ci_failure
+                data = {
+                    "repository": "onedayonemasterpiece/projects-hub",
+                    "branch": {"name": "main", "head": self.main_head},
+                    "checks": [
+                        {"name": "backend", "status": "completed", "conclusion": "failure" if failure else "success"},
+                        {"name": "pwa", "status": "completed", "conclusion": "failure" if failure else "success"},
+                    ],
+                    "workflow_runs": [
+                        {"id": 777, "name": "Projects Hub contracts", "status": "completed", "conclusion": "failure" if failure else "success"}
+                    ],
+                }
+            else:
+                self._ci_reads += 1
+                pending = self.ci_pending_once and self._ci_reads == 1
+                failure = self.ci_failure
+                checks = [
+                    {"name": "backend", "status": "in_progress" if pending else "completed", "conclusion": None if pending else ("failure" if failure else "success")},
+                    {"name": "pwa", "status": "in_progress" if pending else "completed", "conclusion": None if pending else ("failure" if failure else "success")},
+                ]
+                workflows = [
+                    {"id": 123, "name": "Projects Hub contracts", "status": "in_progress" if pending else "completed", "conclusion": None if pending else ("failure" if failure else "success")}
+                ]
+                if payload.get("pr"):
+                    data = {
+                        "repository": "onedayonemasterpiece/projects-hub",
+                        "pr": {
+                            "number": int(payload["pr"]),
+                            "state": "open",
+                            "draft": False,
+                            "head": self.candidate_head,
+                            "head_ref": self.candidate_branch,
+                            "base_ref": "main",
+                            "mergeable_state": self.pr_mergeable_state,
+                        },
+                        "checks": checks,
+                        "workflow_runs": workflows,
+                    }
+                else:
+                    data = {
+                        "repository": "onedayonemasterpiece/projects-hub",
+                        "branch": {"name": self.candidate_branch, "head": self.candidate_head},
+                        "checks": checks,
+                        "workflow_runs": workflows,
+                    }
+        else:
+            raise AssertionError(operation)
+        return {"results": [{"status": "ok", "data": data}]}
+
+    async def direct_project_action(
+        self,
+        *,
+        project: str,
+        operation: str,
+        payload: dict | None = None,
+    ):
+        payload = dict(payload or {})
+        args = {"project": project, "operation": operation, "payload": payload}
+        self.calls.append(("direct_action", args))
+        if operation == "git_fetch":
+            return {"status": "ok", "action": operation, "repository": "onedayonemasterpiece/projects-hub", "remote": "origin", "branch": payload.get("branch"), "fetched_sha": self.main_head}
+        if operation == "git_push_existing":
+            return {"status": "ok", "action": operation, "branch": self.candidate_branch, "commit_sha": self.candidate_head}
+        if operation == "github_pr_create":
+            return {"status": "ok", "action": operation, "number": 120, "head_sha": self.candidate_head, "reused": True}
+        if operation == "github_pr_merge":
+            return {"status": "ok", "action": operation, "number": int(payload["pr"]), "head_sha": self.candidate_head, "merge_sha": self.main_head, "method": payload.get("method", "squash")}
+        if operation == "run_tool":
+            return {"status": "running", "action": "job_start", "job_id": self.deploy_job_id, "reused": False}
+        if operation == "job_status":
+            result = {"status": self.deploy_job_status, "action": "job_status", "job_id": self.deploy_job_id}
+            if self.deploy_job_status == "succeeded":
+                result["result"] = {"exit_code": self.deploy_exit_code}
+            return result
+        raise AssertionError(operation)
 
     async def start_codex_task(
         self,
@@ -823,12 +941,30 @@ async def test_owner_runs_two_thread_quality_pipeline_to_delivery(tmp_path: Path
             execution_id=run_id,
             sync=True,
         )
-        assert delivery["execution"]["phase"] == "delivering"
+        assert delivery["execution"]["phase"] == "delivery_merge"
         implementation_continuations = [
             arguments for name, arguments in fake.calls
             if name == "continue" and arguments["task"] == fake._implementation_task
         ]
-        assert len(implementation_continuations) == 1
+        assert implementation_continuations == []
+
+        await service.advance_active_once()
+        main_ci = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=run_id,
+        )
+        assert main_ci["execution"]["phase"] == "delivery_main_ci"
+        assert main_ci["execution"]["delivery_main_sha"] == fake.main_head
+
+        await service.advance_active_once()
+        deploying = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=run_id,
+        )
+        assert deploying["execution"]["phase"] == "deploying"
+        assert deploying["execution"]["delivery_job_id"] == fake.deploy_job_id
 
         await service.advance_active_once()
         done = await service.status(
@@ -839,12 +975,17 @@ async def test_owner_runs_two_thread_quality_pipeline_to_delivery(tmp_path: Path
         )
         assert done["execution"]["status"] == "completed"
         assert done["execution"]["phase"] == "ready"
+        assert done["execution"]["delivery_main_sha"] == fake.main_head
+        assert done["execution"]["delivery_job_id"] == fake.deploy_job_id
+        assert done["execution"]["delivery_deployed_at_ms"] is not None
+        assert done["execution"]["delivery_evidence"]["deployed_main_sha"] == fake.main_head
         assert done["execution"]["update_check_recommended"] is True
         assert [stage["stage"] for stage in done["execution"]["stages"]] == [
             "design", "implementation", "review", "delivery"
         ]
         assert done["execution"]["token_usage_by_model"]["gpt-6-astra"]["totalTokens"] == 150
-        assert done["execution"]["token_usage_by_model"]["gpt-6.1-sol"]["totalTokens"] == 230
+        assert done["execution"]["token_usage_by_model"]["gpt-6.1-sol"]["totalTokens"] == 200
+        assert "deterministic" not in done["execution"]["token_usage_by_model"]
 
         current = service.list_backlog(
             actor_id=boot["actor"]["id"],
@@ -907,7 +1048,7 @@ async def test_review_reuses_two_threads_and_reworks_before_delivery(tmp_path: P
         run_id = execution["execution"]["id"]
 
         phases = []
-        for _ in range(6):
+        for _ in range(8):
             await service.advance_active_once()
             current = await service.status(
                 actor_id=boot["actor"]["id"],
@@ -922,7 +1063,9 @@ async def test_review_reuses_two_threads_and_reworks_before_delivery(tmp_path: P
             "reviewing",
             "reworking",
             "reviewing",
-            "delivering",
+            "delivery_merge",
+            "delivery_main_ci",
+            "deploying",
             "ready",
         ]
         final = current["execution"]
@@ -1202,6 +1345,134 @@ async def test_self_development_retargets_design_before_implementation(
         await service.close()
         store.close()
 
+
+
+@pytest.mark.asyncio
+async def test_completed_write_publishes_exact_candidate_and_waits_for_ci(
+    tmp_path: Path,
+):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = FakeDevCoveer()
+    fake.ci_pending_once = True
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+
+        await service.advance_active_once()  # design -> implementation
+        await service.advance_active_once()  # implementation completed -> validation pending
+
+        waiting = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+        assert waiting["execution"]["status"] == "running"
+        assert waiting["execution"]["phase"] == "validating"
+        assert waiting["execution"]["candidate_sha"] == fake.candidate_head
+        assert waiting["execution"]["candidate_branch"] == fake.candidate_branch
+        assert waiting["execution"]["candidate_pr"] == 120
+        assert waiting["execution"]["candidate_evidence"]["checks"][0]["status"] == "in_progress"
+        active = service._active_stage(execution_id)
+        assert active is not None and active["stage"] == "implementation"
+
+        push_calls = [
+            args for name, args in fake.calls
+            if name == "direct_action" and args["operation"] == "git_push_existing"
+        ]
+        pr_calls = [
+            args for name, args in fake.calls
+            if name == "direct_action" and args["operation"] == "github_pr_create"
+        ]
+        assert len(push_calls) == 1
+        assert push_calls[0]["payload"]["expected_sha"] == fake.candidate_head
+        assert push_calls[0]["payload"]["request_key"].endswith(
+            ":push:" + fake.candidate_head[:16]
+        )
+        assert len(pr_calls) == 1
+        assert pr_calls[0]["payload"]["request_key"].endswith(
+            ":pr:" + fake.candidate_head[:16]
+        )
+
+        await service.advance_active_once()  # CI terminal -> review
+        reviewing = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+        assert reviewing["execution"]["phase"] == "reviewing"
+        push_calls = [
+            args for name, args in fake.calls
+            if name == "direct_action" and args["operation"] == "git_push_existing"
+        ]
+        assert len(push_calls) == 1
+
+        review_calls = [
+            args for name, args in fake.calls
+            if name == "continue"
+            and args["access"] == "read"
+            and "Review cycle" in args["prompt"]
+        ]
+        assert review_calls
+        prompt = review_calls[-1]["prompt"]
+        assert fake.candidate_head in prompt
+        assert '"backend"' in prompt
+        assert '"status":"completed"' in prompt
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_review_accepted_cannot_bypass_failed_deterministic_ci(tmp_path: Path):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = FakeDevCoveer()
+    fake.ci_failure = True
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+
+        await service.advance_active_once()
+        await service.advance_active_once()
+        reviewing = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+        assert reviewing["execution"]["phase"] == "reviewing"
+        assert reviewing["execution"]["candidate_evidence"]["ci_success"] is False
+
+        await service.advance_active_once()
+        after = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+        assert after["execution"]["status"] == "running"
+        assert after["execution"]["phase"] == "reworking"
+        assert after["execution"]["review_cycle"] == 1
+        assert not any(stage["stage"] == "delivery" for stage in after["execution"]["stages"])
+        completed_review = [
+            stage for stage in after["execution"]["stages"]
+            if stage["stage"] == "review" and stage["status"] == "completed"
+        ][0]
+        assert completed_review["review_verdict"] == "rework_required"
+        assert "Deterministic delivery gate rejected ACCEPTED verdict" in completed_review["summary"]
+        assert '"conclusion":"failure"' in completed_review["summary"]
+    finally:
+        await service.close()
+        store.close()
 
 
 @pytest.mark.asyncio
