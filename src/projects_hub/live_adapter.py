@@ -905,6 +905,7 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Перед стартом backend сам проверяет owner, native Codex quota >10%, live model catalog и отсутствие другого активного owner-run. Если owner profile недоступен, сначала вызови development_codex_status, назови доступные native модели и попроси владельца явно выбрать модель/effort. Не выбирай Astra/другую модель сама и не обходи отказ.
 - development_codex_status используй для вопросов об остатке лимита/доступности Codex; сообщай фактический remaining_percent и reset/status из tool result.
 - development_execution_status используй для «что сейчас делает Codex», «закончилось ли», «какой результат». Это только чтение durable state и не двигает execution. Не объявляй разработку завершённой раньше terminal status.
+- phase=recovering или capacity_wait означает автономное техническое восстановление: пользователю не требуется повторно запускать задачу или давать разрешение. Проси решение владельца только при phase=needs_owner и только когда backend действительно сообщает новый продуктовый выбор/доступ, а не технический сбой.
 - ChatGPT/Codex, запущенные владельцем вне Projects Hub, остаются допустимыми способами выполнить ту же backlog-задачу; execution Миры — только один из путей исполнения backlog.
 
 # EVENT READINESS
