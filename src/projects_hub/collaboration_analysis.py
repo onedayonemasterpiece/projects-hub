@@ -18,6 +18,7 @@ TERMINAL_ANALYSIS = {"completed", "failed", "cancelled"}
 QUESTION_STATES = {"open", "resolved", "skipped", "unknown", "deferred"}
 DISPOSITIONS = {"answer", "skip", "unknown", "later"}
 ANALYSIS_MODELS = {"kimi_k3", "deepseek"}
+MAX_ANALYSIS_REPAIR_ATTEMPTS = 1
 PURPOSES = {"requirements", "edge_cases", "architecture", "code_review", "ideas"}
 JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.S)
 
@@ -81,6 +82,9 @@ class CollaborationAnalysisService:
                     input_sha256 TEXT NOT NULL,
                     status TEXT NOT NULL,
                     provider_task_id TEXT,
+                    initial_provider_task_id TEXT,
+                    repair_attempt_count INTEGER NOT NULL DEFAULT 0,
+                    repair_model_alias TEXT,
                     result_markdown TEXT NOT NULL DEFAULT '',
                     result_json TEXT,
                     error_code TEXT,
@@ -177,6 +181,27 @@ class CollaborationAnalysisService:
                     ON collaboration_jobs(status,created_at_ms);
                 """
             )
+            analysis_columns = {
+                str(row["name"])
+                for row in self.store.db.execute(
+                    "PRAGMA table_info(collaboration_analyses)"
+                ).fetchall()
+            }
+            if "initial_provider_task_id" not in analysis_columns:
+                self.store.db.execute(
+                    "ALTER TABLE collaboration_analyses "
+                    "ADD COLUMN initial_provider_task_id TEXT"
+                )
+            if "repair_attempt_count" not in analysis_columns:
+                self.store.db.execute(
+                    "ALTER TABLE collaboration_analyses "
+                    "ADD COLUMN repair_attempt_count INTEGER NOT NULL DEFAULT 0"
+                )
+            if "repair_model_alias" not in analysis_columns:
+                self.store.db.execute(
+                    "ALTER TABLE collaboration_analyses "
+                    "ADD COLUMN repair_model_alias TEXT"
+                )
 
     def _analysis_row(self, analysis_id: str) -> Any:
         row = self.store.db.execute(
@@ -345,6 +370,9 @@ class CollaborationAnalysisService:
             "input_sha256": row["input_sha256"],
             "status": row["status"],
             "provider_task_id": row["provider_task_id"],
+            "initial_provider_task_id": row["initial_provider_task_id"],
+            "repair_attempt_count": int(row["repair_attempt_count"] or 0),
+            "repair_model": row["repair_model_alias"],
             "result_markdown": row["result_markdown"],
             "result": json.loads(row["result_json"]) if row["result_json"] else None,
             "error_code": row["error_code"],
@@ -669,6 +697,129 @@ class CollaborationAnalysisService:
             row = self._analysis_row(analysis_id)
         return self._analysis_public(actor_id, workspace_id, row)
 
+    @staticmethod
+    def _repair_model(original_model: str) -> str:
+        return "deepseek" if original_model == "kimi_k3" else "kimi_k3"
+
+    async def _dispatch_analysis_repair(
+        self,
+        *,
+        snapshot: dict[str, Any],
+        invalid_markdown: str,
+    ) -> dict[str, Any]:
+        attempt = int(snapshot.get("repair_attempt_count") or 0) + 1
+        if attempt > MAX_ANALYSIS_REPAIR_ATTEMPTS:
+            raise StoreError(
+                "ANALYTICS_INVALID_RESULT",
+                "Strong analysis result remained invalid after bounded repair",
+            )
+
+        workspace_id = str(snapshot["workspace_id"])
+        project_id = str(snapshot["project_id"])
+        initiating_actor_id = str(snapshot["initiating_actor_id"])
+        addressed_to_actor_id = str(snapshot["addressed_to_actor_id"])
+
+        self.store.project_access(
+            initiating_actor_id,
+            workspace_id,
+            project_id,
+            require_analyze=True,
+        )
+        self.store.project_access(
+            addressed_to_actor_id,
+            workspace_id,
+            project_id,
+        )
+
+        repair_model = self._repair_model(str(snapshot["model_alias"]))
+        repair_prompt = (
+            "The previous strong-analysis response did not satisfy the required "
+            "typed question schema. Re-run the analysis from the supplied frozen "
+            "evidence. Return STRICT JSON and nothing else with this exact shape: "
+            '{"summary":"shared context <=1200 chars","questions":['
+            '{"prompt":"one contextual question","blocking":true}]}. '
+            "Return 1-4 minimal questions whose answers materially affect the "
+            "requested task. Do not omit questions. Do not ask for facts already "
+            "present in evidence. "
+            f"Original task: {snapshot['question']}"
+        )
+        request_key = f"collab-analysis:{snapshot['id']}:repair:{attempt}"
+        try:
+            response = await self.bridge.consult(
+                model=repair_model,
+                purpose=str(snapshot["purpose"]),
+                question=repair_prompt,
+                evidence_bundle=str(snapshot["evidence_bundle"]),
+                request_key=request_key,
+            )
+        except AnalyticsBridgeError as exc:
+            now = _now_ms()
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE collaboration_analyses
+                       SET status='failed',
+                           result_markdown=?,
+                           repair_attempt_count=?,
+                           repair_model_alias=?,
+                           error_code='ANALYTICS_REPAIR_DISPATCH_UNKNOWN',
+                           updated_at_ms=?,finished_at_ms=?
+                       WHERE id=?""",
+                    (
+                        invalid_markdown,
+                        attempt,
+                        repair_model,
+                        now,
+                        now,
+                        snapshot["id"],
+                    ),
+                )
+            raise StoreError(
+                "ANALYTICS_REPAIR_DISPATCH_UNKNOWN",
+                "Analysis repair dispatch outcome is unknown; refusing blind retry",
+            ) from exc
+
+        task_id = response.get("taskId") or response.get("taskReference")
+        status = str(response.get("status") or "running")
+        now = _now_ms()
+        with self.store._lock:
+            self.store.db.execute(
+                """UPDATE collaboration_analyses
+                   SET initial_provider_task_id=COALESCE(
+                           initial_provider_task_id,provider_task_id
+                       ),
+                       provider_task_id=?,
+                       repair_attempt_count=?,
+                       repair_model_alias=?,
+                       status=?,
+                       result_markdown=?,
+                       result_json=NULL,
+                       error_code=NULL,
+                       updated_at_ms=?,
+                       finished_at_ms=NULL
+                   WHERE id=?""",
+                (
+                    str(task_id) if isinstance(task_id, str) else None,
+                    attempt,
+                    repair_model,
+                    "running" if status in {"running", "completed"} else status,
+                    invalid_markdown,
+                    now,
+                    snapshot["id"],
+                ),
+            )
+
+        if status == "completed":
+            return await self.refresh_analysis(
+                actor_id=initiating_actor_id,
+                workspace_id=workspace_id,
+                analysis_id=str(snapshot["id"]),
+            )
+        return self.get_analysis(
+            actor_id=initiating_actor_id,
+            workspace_id=workspace_id,
+            analysis_id=str(snapshot["id"]),
+        )
+
     async def refresh_analysis(
         self, *, actor_id: str, workspace_id: str, analysis_id: str
     ) -> dict[str, Any]:
@@ -689,42 +840,75 @@ class CollaborationAnalysisService:
             return self.get_analysis(
                 actor_id=actor_id, workspace_id=workspace_id, analysis_id=analysis_id
             )
+
         provider_status = str(
             payload.get("executionStatus") or payload.get("status") or "running"
         )
         now = _now_ms()
-        with self.store._lock:
-            row = self._analysis_row(analysis_id)
-            if provider_status == "completed":
-                markdown = self._extract_markdown(payload)
-                parsed = self._materialize_questions(row, markdown) if markdown else None
-                if not markdown or not parsed:
-                    self.store.db.execute(
-                        """UPDATE collaboration_analyses SET status='failed',
-                           result_markdown=?,error_code='ANALYTICS_INVALID_RESULT',
-                           updated_at_ms=?,finished_at_ms=? WHERE id=?""",
-                        (markdown, now, now, analysis_id),
-                    )
-                else:
+
+        if provider_status == "completed":
+            markdown = self._extract_markdown(payload)
+            with self.store._lock:
+                row = self._analysis_row(analysis_id)
+                current = dict(row)
+            parsed: dict[str, Any] | None = None
+            if markdown:
+                try:
+                    parsed = self._materialize_questions(row, markdown)
+                except StoreError as exc:
+                    if exc.code != "ANALYTICS_INVALID_RESULT":
+                        raise
+            if parsed:
+                with self.store._lock:
                     self.store.db.execute(
                         """UPDATE collaboration_analyses SET status='completed',
                            result_markdown=?,result_json=?,error_code=NULL,
                            updated_at_ms=?,finished_at_ms=? WHERE id=?""",
-                        (markdown, _canonical(parsed), now, now, analysis_id),
+                        (
+                            markdown,
+                            _canonical(parsed),
+                            now,
+                            now,
+                            analysis_id,
+                        ),
                     )
-            elif provider_status in {"failed", "cancelled", "interrupted"}:
+                    row = self._analysis_row(analysis_id)
+                return self._analysis_public(actor_id, workspace_id, row)
+
+            if int(current.get("repair_attempt_count") or 0) < MAX_ANALYSIS_REPAIR_ATTEMPTS:
+                return await self._dispatch_analysis_repair(
+                    snapshot=current,
+                    invalid_markdown=markdown,
+                )
+
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE collaboration_analyses SET status='failed',
+                       result_markdown=?,error_code='ANALYTICS_INVALID_RESULT',
+                       updated_at_ms=?,finished_at_ms=? WHERE id=?""",
+                    (markdown, now, now, analysis_id),
+                )
+                row = self._analysis_row(analysis_id)
+            return self._analysis_public(actor_id, workspace_id, row)
+
+        with self.store._lock:
+            row = self._analysis_row(analysis_id)
+            if provider_status in {"failed", "cancelled", "interrupted"}:
                 self.store.db.execute(
                     """UPDATE collaboration_analyses SET status=?,error_code=?,
                        updated_at_ms=?,finished_at_ms=? WHERE id=?""",
                     (
                         "cancelled" if provider_status == "cancelled" else "failed",
                         str(payload.get("errorCategory") or provider_status),
-                        now, now, analysis_id,
+                        now,
+                        now,
+                        analysis_id,
                     ),
                 )
             else:
                 self.store.db.execute(
-                    "UPDATE collaboration_analyses SET status='running',updated_at_ms=? WHERE id=?",
+                    "UPDATE collaboration_analyses "
+                    "SET status='running',updated_at_ms=? WHERE id=?",
                     (now, analysis_id),
                 )
             row = self._analysis_row(analysis_id)
