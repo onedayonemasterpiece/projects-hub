@@ -1456,6 +1456,124 @@ async def test_completed_write_publishes_exact_candidate_and_waits_for_ci(
         store.close()
 
 
+@pytest.mark.parametrize(
+    ("lost_status", "lost_phase", "lost_error"),
+    [
+        ("blocked", "blocked", "DEVELOPMENT_STAGE_MISSING"),
+        ("running", "validating", "DEVELOPMENT_VALIDATION_RETRY"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_completed_legacy_review_reconciles_candidate_without_active_stage(
+    tmp_path: Path,
+    lost_status: str,
+    lost_phase: str,
+    lost_error: str,
+):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = InterruptedStageDevCoveer("none", resume_success=False)
+    fake.checkout_candidate = False
+    fake.pr_mergeable_state = "dirty"
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+        await service.advance_active_once()
+
+        implementation = service._active_stage(execution_id)
+        assert implementation is not None
+        assert implementation["stage"] == "implementation"
+        service._finish_stage(
+            stage_id=implementation["id"],
+            status="completed",
+            summary="Existing committed candidate preserved.",
+        )
+        service._record_stage(
+            execution_id=execution_id,
+            stage="rework",
+            cycle=12,
+            model="gpt-6.1-sol",
+            reasoning_effort="medium",
+            devcoveer_task_id=fake._implementation_task,
+        )
+        rework = service._active_stage(execution_id)
+        assert rework is not None
+        service._finish_stage(
+            stage_id=rework["id"],
+            status="completed",
+            summary="Candidate is committed but has missing CI evidence.",
+        )
+        service._record_stage(
+            execution_id=execution_id,
+            stage="review",
+            cycle=12,
+            model="gpt-6-astra",
+            reasoning_effort="high",
+            devcoveer_task_id=fake._quality_task,
+        )
+        review = service._active_stage(execution_id)
+        assert review is not None
+        service._finish_stage(
+            stage_id=review["id"],
+            status="completed",
+            summary="Conflicts with fresh main and needs CI evidence.",
+            review_verdict="rework_required",
+        )
+        with store._lock:
+            store.db.execute(
+                """UPDATE task_executions
+                   SET status=?,phase=?,review_cycle=12,
+                       error_code=?,finished_at_ms=123,
+                       candidate_sha=?,candidate_branch=?,candidate_pr=120,
+                       candidate_published_at_ms=123,updated_at_ms=123
+                   WHERE id=?""",
+                (
+                    lost_status,
+                    lost_phase,
+                    lost_error,
+                    fake.candidate_head,
+                    fake.candidate_branch,
+                    execution_id,
+                ),
+            )
+
+        assert service._active_stage(execution_id) is None
+        advanced = await service.advance_active_once()
+        recovered = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+
+        assert advanced == 1
+        assert recovered["execution"]["status"] == "running"
+        assert recovered["execution"]["phase"] == "reworking"
+        assert recovered["execution"]["error_code"] is None
+        assert recovered["execution"]["finished_at_ms"] is None
+        stages = recovered["execution"]["stages"]
+        assert stages[-1]["stage"] == "rework"
+        assert stages[-1]["status"] == "running"
+        assert stages[-1]["devcoveer_task_id"] == fake._recovery_implementation_task
+        assert service.list_backlog(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            project_id=project["id"],
+        )[0]["id"] == task["id"]
+        gate_calls = [
+            args for name, args in fake.calls
+            if name == "direct_probe" and args["operation"] == "github_status"
+        ]
+        assert gate_calls and gate_calls[-1]["payload"]["pr"] == 120
+    finally:
+        await service.close()
+        store.close()
+
+
 @pytest.mark.asyncio
 async def test_legacy_dirty_candidate_recovers_before_quality_review(tmp_path: Path):
     store, readiness, boot, project = setup(tmp_path)

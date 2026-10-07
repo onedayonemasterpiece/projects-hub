@@ -4310,19 +4310,37 @@ Before the verdict give concise findings.""",
         item = dict(row)
         status = str(item.get("status") or "")
         phase = str(item.get("phase") or "")
+        has_implementation = bool(
+            str(item.get("implementation_task_id") or "").strip()
+        )
+        has_candidate = bool(
+            str(item.get("candidate_sha") or "").strip()
+            or str(item.get("candidate_branch") or "").strip()
+            or item.get("candidate_pr")
+        )
         initial_legacy_failure = (
             status == "failed"
             and item.get("error_code") == "REVIEW_REWORK_LIMIT"
-            and bool(str(item.get("implementation_task_id") or "").strip())
+            and has_implementation
             and not str(item.get("candidate_evidence_json") or "").strip()
+        )
+        recoverable_missing_stage = (
+            status == "blocked"
+            and item.get("error_code") == "DEVELOPMENT_STAGE_MISSING"
+            and has_implementation
+            and has_candidate
         )
         continuing_validation = (
             status == "running"
             and phase == "validating"
             and self._active_stage(execution_id) is None
-            and bool(str(item.get("implementation_task_id") or "").strip())
+            and has_implementation
         )
-        if not initial_legacy_failure and not continuing_validation:
+        if not (
+            initial_legacy_failure
+            or recoverable_missing_stage
+            or continuing_validation
+        ):
             return False
 
         project_name = self._project_name(
@@ -4545,6 +4563,15 @@ Before the verdict give concise findings.""",
                           AND (
                               error_code='DEVELOPMENT_STAGE_INTERRUPTED'
                               OR error_code='REVIEW_REWORK_LIMIT'
+                              OR (
+                                  error_code='DEVELOPMENT_STAGE_MISSING'
+                                  AND implementation_task_id IS NOT NULL
+                                  AND (
+                                      candidate_sha IS NOT NULL
+                                      OR candidate_branch IS NOT NULL
+                                      OR candidate_pr IS NOT NULL
+                                  )
+                              )
                           )
                       )
                       OR (
@@ -4571,6 +4598,18 @@ Before the verdict give concise findings.""",
                         (candidate["id"],),
                     ).fetchone()
                 if not fresh:
+                    continue
+                if (
+                    fresh["status"] == "blocked"
+                    and fresh["error_code"] == "DEVELOPMENT_STAGE_MISSING"
+                ):
+                    recovered = await self._recover_legacy_evidence_loop_locked(
+                        actor_id=str(candidate["actor_id"]),
+                        workspace_id=str(candidate["workspace_id"]),
+                        execution_id=str(candidate["id"]),
+                    )
+                    if recovered:
+                        advanced += 1
                     continue
                 if (
                     fresh["status"] == "failed"
