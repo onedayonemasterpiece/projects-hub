@@ -824,6 +824,17 @@ def create_app(
             payload.focus_project_id,
         )
 
+    @app.post("/api/conversations/personal")
+    async def personal_conversation(
+        payload: ConversationCreate,
+        request: Request,
+    ) -> dict[str, Any]:
+        return store.get_or_create_personal_conversation(
+            actor_id_from_request(request),
+            payload.workspace_id,
+            payload.focus_project_id,
+        )
+
     @app.get("/api/conversations/{conversation_id}")
     async def get_conversation(conversation_id: str, request: Request) -> dict[str, Any]:
         return store.get_conversation(actor_id_from_request(request), conversation_id)
