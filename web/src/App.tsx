@@ -10,7 +10,7 @@ import {
   ApiError,
   bootstrap,
   bindGitHubRepository,
-  createConversation,
+  getOrCreatePersonalConversation,
   getConversation,
   getPersonalTimeline,
   upsertPersonalTimelineMessage,
@@ -831,7 +831,7 @@ export default function App() {
       setBoot(value);
       // Server-side create is idempotent for actor+workspace and therefore
       // recovers the same personal conversation on a new browser/device.
-      const current = await createConversation(value.workspace.id, null);
+      const current = await getOrCreatePersonalConversation(value.workspace.id, null);
       if (cancelled) return;
       setConversation(current);
       conversationRef.current = current;
@@ -1067,7 +1067,7 @@ export default function App() {
   async function ensureConversation() {
     if (!boot) throw new Error("Нет workspace");
     if (conversationRef.current) return conversationRef.current;
-    const created = await createConversation(boot.workspace.id, null);
+    const created = await getOrCreatePersonalConversation(boot.workspace.id, null);
     setConversation(created);
     conversationRef.current = created;
     localStorage.setItem("projects-hub-conversation", created.id);
