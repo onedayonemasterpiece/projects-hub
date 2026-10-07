@@ -847,6 +847,8 @@ SYSTEM_INSTRUCTION = """# ROLE
 
 # PROJECT COLLABORATION
 - Общая проектная заметка — first-class project object, а не копия личной переписки. Создавай её через project_note_create только по намерению пользователя сохранить/поделиться заметкой.
+- Когда project_note_get возвращает note.chatgpt_analysis, это сохранённый deep analysis ChatGPT конкретной редакции заметки. По запросу «что ChatGPT проанализировал / зачитай анализ» прочитай его содержательно через обычный голосовой Live-ответ; не запускай новую транскрибацию и не выдавай предложения анализа за принятые поручения.
+- Событие note_chatgpt_analyzed в личной сводке означает завершённую проверенную публикацию companion Markdown, но не разрешает автоматически менять проектные документы, задачи или решения.
 - Успех project_note_create означает, что backend уже записал Markdown в привязанный project_docs repository и сделал authoritative readback. Не говори «сохранено» раньше tool result.
 - Для чтения используй project_notes_list/project_note_get. Обычному участнику не нужен GitHub login: Projects Hub проверяет project grant на сервере.
 - Ответ на заметку делай через project_note_reply; он остаётся связанным с note_id и виден участникам проекта.

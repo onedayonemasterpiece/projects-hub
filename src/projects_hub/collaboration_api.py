@@ -33,6 +33,10 @@ class GeneralNewsPreference(BaseModel):
     enabled: bool
 
 
+class ChatGPTSyncRequest(BaseModel):
+    workspace_id: str
+
+
 class ParticipantInvite(BaseModel):
     workspace_id: str
     display_name: str = Field(min_length=1, max_length=80)
@@ -157,6 +161,18 @@ def attach_collaboration_routes(
             workspace_id=payload.workspace_id,
             enabled=payload.enabled,
         )
+
+    @app.post("/api/collaboration/chatgpt/sync")
+    async def sync_chatgpt_analysis(
+        payload: ChatGPTSyncRequest,
+        request: Request,
+    ) -> dict[str, Any]:
+        # Maintenance/acceptance control. Ordinary project participants only
+        # read published analyses; they cannot enumerate configured routes.
+        actor = actor_id_from_request(request)
+        service.store.require_workspace_owner(actor, payload.workspace_id)
+        imported = await service.chatgpt_analysis.poll_once(force=True)
+        return {"imported": imported, "status": "checked"}
 
     @app.post("/api/projects/{project_id}/participants/invite")
     async def invite_participant(
