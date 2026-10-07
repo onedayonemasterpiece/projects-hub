@@ -168,7 +168,7 @@ export default function CollaborationTimeline({ workspaceId, actorId, refreshKey
         >
           <div className="collaboration-widget-head">
             <span>{event.project_name}</span>
-            <small>{event.kind === "note_replied" ? "Ответ на заметку" : "Проектная заметка"}</small>
+            <small>{event.kind === "note_chatgpt_analyzed" ? "Глубокий анализ ChatGPT" : event.kind === "note_replied" ? "Ответ на заметку" : "Проектная заметка"}</small>
           </div>
           <strong>{event.summary}</strong>
           {noteIdFor(event) && (
@@ -213,6 +213,15 @@ export default function CollaborationTimeline({ workspaceId, actorId, refreshKey
           </div>
           <h3>{opened.title}</h3>
           <p>{opened.body}</p>
+          {opened.chatgpt_analysis && (
+            <details className="collaboration-chatgpt-analysis">
+              <summary>Глубокий анализ ChatGPT · {opened.chatgpt_analysis.generated_at_utc.slice(0, 16)}</summary>
+              <p className="question-context">Отдельная аналитика, не принятое решение. Версия исходника: {opened.chatgpt_analysis.source_sha.slice(0, 12)}.</p>
+              <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                {opened.chatgpt_analysis.markdown}
+              </div>
+            </details>
+          )}
           <div className="collaboration-replies">
             {replies.map(item => (
               <div className="collaboration-reply" key={item.id}>
