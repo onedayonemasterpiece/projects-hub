@@ -157,3 +157,58 @@ async def test_verified_chatgpt_companion_import_notifies_once_and_is_acl_scoped
     finally:
         await service.close()
         store.close()
+
+
+def test_manual_chatgpt_import_endpoint_is_platform_owner_only(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from projects_hub.app import create_app
+    from projects_hub.auth import COOKIE_NAME, issue_session
+    from projects_hub.settings import Settings
+
+    store, service, _github, _processor, owner, _project_id = _bound_store(tmp_path)
+    actor = owner["actor"]["id"]
+    workspace = owner["workspace"]["id"]
+    other = "usr_chatgpt_sync_other"
+    with store._lock:
+        store.db.execute(
+            "INSERT INTO actors(id,display_name,created_at_ms) VALUES(?,?,?)",
+            (other, "Other member", 1),
+        )
+        store.db.execute(
+            "INSERT INTO memberships(actor_id,workspace_id,role) VALUES(?,?,?)",
+            (other, workspace, "member"),
+        )
+
+    calls = []
+    async def fake_poll(*, force=False):
+        calls.append(force)
+        return 1
+    monkeypatch.setattr(service.chatgpt_analysis, "poll_once", fake_poll)
+    settings = Settings(
+        data_dir=tmp_path,
+        static_dir=tmp_path / "missing-ui",
+        session_secret="chatgpt-import-test-secret-" * 3,
+        dev_auth=True,
+        cookie_secure=False,
+    )
+    app = create_app(settings, store=store, collaboration=service)
+    try:
+        with TestClient(app, base_url="http://testserver") as client:
+            client.cookies.set(COOKIE_NAME, issue_session(actor, settings.session_secret))
+            accepted = client.post(
+                "/api/collaboration/chatgpt/sync",
+                json={"workspace_id": workspace},
+            )
+            assert accepted.status_code == 200
+            assert accepted.json() == {"imported": 1, "status": "checked"}
+            assert True in calls
+
+            client.cookies.set(COOKIE_NAME, issue_session(other, settings.session_secret))
+            rejected = client.post(
+                "/api/collaboration/chatgpt/sync",
+                json={"workspace_id": workspace},
+            )
+            assert rejected.status_code == 403
+            assert rejected.json()["error"]["code"] == "FORBIDDEN"
+    finally:
+        store.close()
