@@ -26,9 +26,10 @@ test("Projects Hub renders both sides of the Live conversation as a bounded mess
   assert.match(source, /event\.type === "input_transcript"[\s\S]*mergeChatMessage\("user"/);
   assert.match(source, /event\.type === "output_transcript"[\s\S]*mergeChatMessage\("assistant"/);
   assert.match(source, /import \{ mergeTranscript, resolveTerminalVoiceState, selectProvisionalCaption, speechStartsNewUserBubble \} from "\.\/voiceUiContract\.js"/);
-  assert.match(source, /mergeTranscript\(messages\[index\]\.text, clean\)/);
-  assert.match(source, /messages\.length > 48/);
-  assert.match(source, /className=\{"chat-row " \+ message\.role\}/);
+  assert.match(source, /mergeTranscript\(current\.text, clean\)/);
+  assert.match(source, /getPersonalTimeline\(/);
+  assert.match(source, /upsertPersonalTimelineMessage\(/);
+  assert.match(source, /key=\{message\.id\}/);
   assert.match(source, /chatFollowRef/);
 });
 
@@ -276,7 +277,10 @@ test("accepted microphone turns stay visible without premature transcription err
   assert.match(source, /VOICE_TURN_PLACEHOLDER = ""/);
   assert.doesNotMatch(source, /"Голосовая реплика"/);
   assert.match(source, /const reserveUserVoiceBubble = useCallback/);
-  assert.match(source, /messages\.push\(\{ role: "user", text: VOICE_TURN_PLACEHOLDER, awaitingTranscript: true \}\)/);
+  assert.match(
+    source,
+    /messages\.push\(\{[\s\S]*id: opaqueTimelineId\("msg"\)[\s\S]*turnId,[\s\S]*role: "user"[\s\S]*text: VOICE_TURN_PLACEHOLDER[\s\S]*sourceId: currentSourceIdRef\.current[\s\S]*awaitingTranscript: true/,
+  );
   assert.match(source, /\{message\.text && \(/);
   assert.match(source, /speechStartsNewUserBubble\(event\)[\s\S]*settleCurrentVoiceBubble\(\)[\s\S]*reserveUserVoiceBubble\(\)/);
   assert.match(source, /Текст не удалось отобразить/);
@@ -293,8 +297,8 @@ test("Transcribe Live captions update silently and main Mira final wins", async 
   assert.match(source, /const applyCaptionToUserBubble = useCallback/);
   assert.match(source, /selectProvisionalCaption\(messages\[index\]\.text, clean, _final\)/);
   assert.match(source, /projectshub:\/\/audio\/focus\/acquire/);
-  assert.match(source, /text,[\s\S]*awaitingTranscript: true,[\s\S]*provisionalCaption: true/);
-  assert.match(source, /role === "user" && messages\[index\]\.awaitingTranscript[\s\S]*deliveryNote: undefined/);
+  assert.match(source, /text,[\s\S]*revision: messages\[index\]\.revision \+ 1[\s\S]*awaitingTranscript: true,[\s\S]*provisionalCaption: true/);
+  assert.match(source, /role === "user" && current\.awaitingTranscript[\s\S]*transcriptRevision: current\.transcriptRevision \+ 1[\s\S]*deliveryNote: undefined/);
   assert.doesNotMatch(source, /"Распознаю"/);
   assert.doesNotMatch(source, /"Транскрипция"/);
   assert.match(source, /event\.type === "caption_unavailable"[\s\S]*Captions are deliberately fail-open/);
