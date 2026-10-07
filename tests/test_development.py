@@ -1456,6 +1456,78 @@ async def test_completed_write_publishes_exact_candidate_and_waits_for_ci(
         store.close()
 
 
+@pytest.mark.asyncio
+async def test_missing_candidate_ci_after_grace_starts_technical_rework(
+    tmp_path: Path,
+):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = InterruptedStageDevCoveer("none", resume_success=False)
+    fake.ci_absent = True
+    fake.pr_mergeable_state = "unknown"
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+        await service.advance_active_once()  # design -> implementation
+        await service.advance_active_once()  # candidate published, checks absent
+
+        fresh = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+        assert fresh["execution"]["phase"] == "validating"
+        assert fresh["execution"]["candidate_evidence"]["checks"] == []
+        assert fresh["execution"]["candidate_pr"] == 120
+
+        with store._lock:
+            store.db.execute(
+                """UPDATE task_executions
+                   SET candidate_published_at_ms=?
+                   WHERE id=?""",
+                (
+                    development_module._now_ms()
+                    - development_module.CANDIDATE_CHECK_DISCOVERY_GRACE_MS
+                    - 1000,
+                    execution_id,
+                ),
+            )
+        await service.advance_active_once()
+        recovered = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+
+        assert recovered["execution"]["status"] == "running"
+        assert recovered["execution"]["phase"] == "implementing"
+        assert recovered["execution"]["error_code"] is None
+        assert recovered["execution"]["candidate_sha"] is None
+        assert recovered["execution"]["candidate_pr"] is None
+        assert recovered["execution"]["stages"][-1]["stage"] == "implementation"
+        assert recovered["execution"]["stages"][-1]["status"] == "running"
+        recovery_starts = [
+            args for name, args in fake.calls
+            if name == "start"
+            and args["task"] == fake._recovery_implementation_task
+        ]
+        assert len(recovery_starts) == 1
+        assert "missing_candidate_ci_checks" in recovery_starts[0]["prompt"]
+        pr_creates = [
+            args for name, args in fake.calls
+            if name == "direct_action" and args["operation"] == "github_pr_create"
+        ]
+        assert len(pr_creates) == 1
+    finally:
+        await service.close()
+        store.close()
+
+
 @pytest.mark.parametrize(
     ("lost_status", "lost_phase", "lost_error"),
     [
@@ -1895,7 +1967,8 @@ async def test_absent_ci_checks_never_count_as_success_after_grace(tmp_path: Pat
             execution_id=execution_id,
         )
         assert still_waiting["execution"]["status"] == "running"
-        assert still_waiting["execution"]["phase"] == "validating"
+        assert still_waiting["execution"]["phase"] == "implementing"
+        assert still_waiting["execution"]["candidate_pr"] is None
         assert not any(
             stage["stage"] == "review"
             for stage in still_waiting["execution"]["stages"]
