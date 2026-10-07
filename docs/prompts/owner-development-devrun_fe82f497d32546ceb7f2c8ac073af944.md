@@ -238,3 +238,13 @@ Recovery `ODR-fe82f497d32546ce-rework-4-a2`, 2026-10-07, continued the existing 
 - Requirements SHA-256 remains `b18bda6de9f0a16935b37fba18e1c85362694e61eb59360d97190ab09a00c0f7`; `git diff --check` passes. No application source, dependency pins or requirements changed during recovery.
 
 This is a review handoff with explicit incomplete verification: required Node/TypeScript/PWA, Chromium, Android build/emulator and exact-candidate CI evidence remain outstanding. Real provider/microphone and physical Android acceptance remain separate delivery gates. The existing caption-sidecar discrepancy remains disclosed above. Recovery does not claim product completion or passing independent quality acceptance; it performs no push, merge, deployment or release.
+
+### Recovery a3 checkpoint
+
+Recovery `ODR-fe82f497d32546ce-rework-4-a3`, 2026-10-07, found this checkout already on the existing implementation branch at `abd50e138313399b2e8ea3163b5169311ac04eaf`, with a clean initial `git status --short --branch`. No new independent-review findings were supplied. Existing commits and application source remain intact; this checkpoint records recovery verification only.
+
+- Full backend suite passed: **198 passed in 19.95 seconds**, using the same command as recovery a2.
+- PWA Node suite, TypeScript/build and mounted browser harness were attempted and exited 127 because npm/node are unavailable. Android unit/build and emulator smoke were attempted and exited 127 because Gradle is unavailable. These are unavailable checks, not passing results; unchanged a2 callback evidence is retained without rerunning it.
+- The protected requirements digest remains `b18bda6de9f0a16935b37fba18e1c85362694e61eb59360d97190ab09a00c0f7`; whitespace checks pass. No requirement, source, dependency or runtime change was needed.
+
+The implementation is handed back with the same outstanding verification listed above. Full review readiness and product acceptance cannot be established in this environment. This recovery commits only this checkpoint on the same branch; it does not push, merge, deploy or release.
