@@ -61,7 +61,7 @@ try {
       else if(!authenticated) {await route.fulfill({status:401,json:{detail:'AUTH_REQUIRED'}});return;}
       else if(path==='/api/bootstrap') payload=boot();
       else if(path==='/api/preferences') payload={actor_id:actor,...saved};
-      else if(path==='/api/conversations' && route.request().method()==='POST') payload=conversation();
+      else if((path==='/api/conversations' || path==='/api/conversations/personal') && route.request().method()==='POST') payload=conversation();
       else if(path.includes('/sources/by-client/')) {
         if(!sourceKnown) {await route.fulfill({status:404,json:{detail:'NOT_FOUND'}});return;}
         payload={source:{id:'source_fixture',status:sourceStatus}};
