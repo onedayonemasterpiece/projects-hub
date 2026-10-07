@@ -34,6 +34,8 @@ class FakeDevCoveer:
         self._implementation_reads = 0
         self.candidate_head = "c" * 40
         self.candidate_branch = "chatgpt/test-owner-development"
+        self.checkout_candidate = True
+        self.local_candidate_available = True
         self.ci_pending_once = False
         self.ci_failure = False
         self._ci_reads = 0
@@ -119,13 +121,37 @@ class FakeDevCoveer:
         if operation == "git_state":
             data = {
                 "head_state": "branch",
-                "branch": self.candidate_branch,
-                "head": self.candidate_head,
+                "branch": self.candidate_branch if self.checkout_candidate else "main",
+                "head": self.candidate_head if self.checkout_candidate else self.main_head,
                 "staged": [],
                 "unstaged": [],
                 "untracked": [],
                 "conflicts": [],
                 "clean": True,
+            }
+        elif operation == "branch_list":
+            rows = []
+            marker = str(payload.get("contains") or "")
+            prefix = str(payload.get("prefix") or "")
+            if (
+                self.local_candidate_available
+                and (not prefix or self.candidate_branch.startswith(prefix))
+                and (not marker or marker in self.candidate_branch)
+            ):
+                rows.append(
+                    {
+                        "branch": self.candidate_branch,
+                        "sha": self.candidate_head,
+                        "committed_unix": 1791377302,
+                        "subject": "candidate",
+                        "current": self.checkout_candidate,
+                    }
+                )
+            data = {
+                "branches": rows,
+                "current_branch": self.candidate_branch if self.checkout_candidate else "main",
+                "complete": True,
+                "truncated": False,
             }
         elif operation == "remote_head":
             data = {
@@ -1391,6 +1417,7 @@ async def test_completed_write_publishes_exact_candidate_and_waits_for_ci(
         ]
         assert len(push_calls) == 1
         assert push_calls[0]["payload"]["expected_sha"] == fake.candidate_head
+        assert push_calls[0]["payload"]["branch"] == fake.candidate_branch
         assert push_calls[0]["payload"]["request_key"].endswith(
             ":push:" + fake.candidate_head[:16]
         )
@@ -1426,6 +1453,118 @@ async def test_completed_write_publishes_exact_candidate_and_waits_for_ci(
     finally:
         await service.close()
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_legacy_evidence_loop_recovers_noncurrent_candidate_branch(
+    tmp_path: Path,
+):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = FakeDevCoveer()
+    fake.checkout_candidate = False
+    fake.candidate_branch = "chatgpt/voice-theme-devrun-fe82f497-20261006"
+    fake.candidate_head = "b" * 40
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+        fake.candidate_branch = (
+            "chatgpt/voice-theme-"
+            + service._candidate_branch_marker(execution_id)
+            + "-20261006"
+        )
+
+        await service.advance_active_once()  # design -> implementation
+        stage = service._active_stage(execution_id)
+        assert stage is not None and stage["stage"] == "implementation"
+        service._finish_stage(
+            stage_id=stage["id"],
+            status="completed",
+            summary="Committed candidate exists locally but old validation evidence was unavailable.",
+        )
+        with store._lock:
+            store.db.execute(
+                """UPDATE task_executions
+                   SET status='failed',phase='failed',
+                       review_cycle=12,error_code='REVIEW_REWORK_LIMIT',
+                       result_summary='Old evidence-only quality loop exhausted',
+                       candidate_sha=NULL,candidate_branch=NULL,candidate_pr=NULL,
+                       candidate_published_at_ms=NULL,candidate_evidence_json=NULL,
+                       finished_at_ms=123,updated_at_ms=123
+                   WHERE id=?""",
+                (execution_id,),
+            )
+
+        advanced = await service.advance_active_once()
+        current = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+
+        assert advanced == 1
+        assert current["execution"]["status"] == "running"
+        assert current["execution"]["phase"] == "reviewing"
+        assert current["execution"]["review_cycle"] == 0
+        assert current["execution"]["error_code"] is None
+        assert current["execution"]["candidate_sha"] == fake.candidate_head
+        assert current["execution"]["candidate_branch"] == fake.candidate_branch
+        assert current["execution"]["candidate_pr"] == 120
+        assert (
+            current["execution"]["candidate_evidence"]["candidate_source"]
+            == "local_branch_ref"
+        )
+
+        branch_probes = [
+            args
+            for name, args in fake.calls
+            if name == "direct_probe" and args["operation"] == "branch_list"
+        ]
+        assert len(branch_probes) == 1
+        assert branch_probes[0]["payload"]["contains"] == "devrun-" + execution_id.removeprefix("devrun_")[:8]
+
+        push_calls = [
+            args
+            for name, args in fake.calls
+            if name == "direct_action" and args["operation"] == "git_push_existing"
+        ]
+        assert len(push_calls) == 1
+        assert push_calls[0]["payload"]["branch"] == fake.candidate_branch
+        assert push_calls[0]["payload"]["expected_sha"] == fake.candidate_head
+
+        reviews = [
+            stage
+            for stage in current["execution"]["stages"]
+            if stage["stage"] == "review" and stage["status"] == "running"
+        ]
+        assert reviews and reviews[-1]["cycle"] == 0
+        review_starts = [
+            args
+            for name, args in fake.calls
+            if name == "start"
+            and args["model"] == "gpt-6-astra"
+            and args["access"] == "read"
+            and "legacy-validation-review" in args["prompt"]
+        ]
+        assert review_starts
+    finally:
+        await service.close()
+        store.close()
+
+
+def test_implementation_prompt_requires_stable_execution_branch_marker():
+    prompt = DevelopmentService._implementation_prompt(
+        "Projects Hub",
+        "docs/prompts/test.md",
+        "devrun_fe82f497d32546ceb7f2c8ac073af944",
+    )
+    assert "devrun-fe82f497" in prompt
+    assert "chatgpt/ownerdev-devrun-fe82f497-short-topic" in prompt
 
 
 @pytest.mark.asyncio
