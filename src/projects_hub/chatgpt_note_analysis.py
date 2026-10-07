@@ -59,7 +59,10 @@ def _result_path(source: str) -> str:
 def parse_routing_yaml(text: str, *, repository: str) -> list[dict[str, str]]:
     if not text or len(text.encode("utf-8")) > 100_000:
         raise ValueError("routing manifest size is invalid")
-    document = yaml.safe_load(text)
+    try:
+        document = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ValueError("routing manifest YAML is invalid") from exc
     if not isinstance(document, dict) or document.get("schema_version") != 1:
         raise ValueError("unsupported routing manifest schema")
     if not document.get("enabled"):
@@ -374,6 +377,6 @@ class ChatGPTNoteAnalysisSync:
                         body=body,
                     ):
                         imported += 1
-                except (StoreError, ValueError, TypeError):
+                except (StoreError, ValueError, TypeError, KeyError, AttributeError):
                     continue
         return imported
