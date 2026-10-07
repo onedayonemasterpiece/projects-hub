@@ -28,6 +28,11 @@ RETRYABLE_GITHUB_NOTE_ERRORS = {
     "GITHUB_ERROR",
     "GITHUB_INVALID_RESPONSE",
 }
+RETRYABLE_NOTE_PROCESSING_ERRORS = {
+    "NOTE_LIMITER_UNAVAILABLE",
+    "NOTE_PROCESSOR_CAPACITY",
+    "NOTE_PROCESSOR_UNAVAILABLE",
+}
 
 
 def _now_ms() -> int:
@@ -420,17 +425,16 @@ class CollaborationService:
                         attempt_no=attempt_no,
                     )
                 except NoteProcessingError as exc:
-                    retry_status = "accepted" if exc.retryable else "blocked"
                     with self.store._lock:
                         self.store.db.execute(
                             """UPDATE project_notes
-                               SET status=?,processing_error=?,updated_at_ms=?
+                               SET status='blocked',processing_error=?,updated_at_ms=?
                                WHERE id=?""",
-                            (retry_status, exc.code, _now_ms(), note_id),
+                            (exc.code, _now_ms(), note_id),
                         )
                     self._set_intent_state(
                         note_id,
-                        status=retry_status,
+                        status="blocked",
                         error_code=exc.code,
                     )
                     raise StoreError(exc.code, str(exc)) from exc
@@ -768,7 +772,20 @@ class CollaborationService:
             rows = self.store.db.execute(
                 """SELECT id,author_actor_id,workspace_id
                    FROM project_notes
-                   WHERE status IN ('accepted','processing','waiting_repository')
+                   WHERE (
+                         status IN ('accepted','processing','waiting_repository')
+                         OR (
+                             status='blocked'
+                             AND processing_error IN (
+                                 'NOTE_LIMITER_UNAVAILABLE',
+                                 'NOTE_PROCESSOR_CAPACITY',
+                                 'NOTE_PROCESSOR_UNAVAILABLE',
+                                 'GITHUB_UNAVAILABLE',
+                                 'GITHUB_ERROR',
+                                 'GITHUB_INVALID_RESPONSE'
+                             )
+                         )
+                     )
                      AND (
                        processing_lease_token IS NULL
                        OR processing_lease_until_ms IS NULL
