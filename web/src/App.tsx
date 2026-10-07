@@ -595,6 +595,7 @@ export default function App() {
       if (userTurnBoundaryPendingRef.current) {
         userTurnBoundaryPendingRef.current = false;
         userTranscriptIndex.current = -1;
+        assistantTranscriptIndex.current = -1;
         turnHasInput.current = false;
       }
       setInputTranscriptSeen(true);
@@ -618,7 +619,6 @@ export default function App() {
       // late final arrives or the first interim fragment of the next user turn.
       userTurnBoundaryPendingRef.current = true;
       turnHasInput.current = false;
-      assistantTranscriptIndex.current = -1;
     } else if (event.type === "tool_result" && event.status === "ok") {
       const toolResult = (
         event.result && typeof event.result === "object"
@@ -764,7 +764,11 @@ export default function App() {
 
     const sync = async () => {
       for (const message of chatMessages) {
-        if (!message.text.trim() && message.blocks.length === 0) continue;
+        if (
+          !message.text.trim()
+          && message.blocks.length === 0
+          && !message.sourceId
+        ) continue;
         const fingerprint = timelineFingerprint(message);
         if (
           timelinePersistedRef.current.get(message.id) === fingerprint
@@ -943,6 +947,7 @@ export default function App() {
         if (userTurnAwaitingFinalRef.current) settleCurrentVoiceBubble();
         userTurnBoundaryPendingRef.current = false;
         userTranscriptIndex.current = -1;
+        assistantTranscriptIndex.current = -1;
         turnHasInput.current = false;
         setInterimInputTranscript("");
         setInputTranscriptSeen(false);
