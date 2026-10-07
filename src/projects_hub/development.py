@@ -25,6 +25,9 @@ MAX_INTERRUPTED_RESUME_ATTEMPTS = 1
 MAX_INTERRUPTED_DESIGN_ATTEMPTS = 3
 MAX_INTERRUPTED_REVIEW_ATTEMPTS = 4
 MAX_INTERRUPTED_WRITE_CONTINUATIONS = 6
+CANDIDATE_CHECK_DISCOVERY_GRACE_MS = 120_000
+DELIVERY_CHECK_DISCOVERY_GRACE_MS = 120_000
+MAX_DELIVERY_DEPLOY_ATTEMPTS = 3
 PROJECTS_ROOT = Path(os.getenv("PROJECTS_HUB_PROJECTS_ROOT", "/home/dev/projects")).resolve()
 BACKGROUND_SYNC_INTERVAL_SECONDS = 2.0
 SELF_REPOSITORY_ENV = "PROJECTS_HUB_SELF_REPOSITORY"
@@ -87,6 +90,17 @@ class DevelopmentService:
                     quota_remaining_percent REAL,
                     result_summary TEXT NOT NULL DEFAULT '',
                     error_code TEXT,
+                    candidate_sha TEXT,
+                    candidate_branch TEXT,
+                    candidate_pr INTEGER,
+                    candidate_published_at_ms INTEGER,
+                    candidate_evidence_json TEXT,
+                    delivery_merge_sha TEXT,
+                    delivery_main_sha TEXT,
+                    delivery_merged_at_ms INTEGER,
+                    delivery_job_id TEXT,
+                    delivery_deployed_at_ms INTEGER,
+                    delivery_evidence_json TEXT,
                     created_at_ms INTEGER NOT NULL,
                     updated_at_ms INTEGER NOT NULL,
                     started_at_ms INTEGER,
@@ -162,6 +176,23 @@ class DevelopmentService:
                 self.store.db.execute(
                     "ALTER TABLE task_executions ADD COLUMN spec_path TEXT"
                 )
+            for column_name, ddl in (
+                ("candidate_sha", "TEXT"),
+                ("candidate_branch", "TEXT"),
+                ("candidate_pr", "INTEGER"),
+                ("candidate_published_at_ms", "INTEGER"),
+                ("candidate_evidence_json", "TEXT"),
+                ("delivery_merge_sha", "TEXT"),
+                ("delivery_main_sha", "TEXT"),
+                ("delivery_merged_at_ms", "INTEGER"),
+                ("delivery_job_id", "TEXT"),
+                ("delivery_deployed_at_ms", "INTEGER"),
+                ("delivery_evidence_json", "TEXT"),
+            ):
+                if column_name not in columns:
+                    self.store.db.execute(
+                        f"ALTER TABLE task_executions ADD COLUMN {column_name} {ddl}"
+                    )
             stage_columns = {
                 str(row["name"])
                 for row in self.store.db.execute(
@@ -517,14 +548,24 @@ The brief must be sufficient for a separate implementation thread to work withou
         return f"""Implement the owner-approved development specification for {project_name} at:
 {spec_path}
 
-Read the specification and current repository state first. Implement the requested product change, add/update tests, and perform the required debugging and browser/emulator checks from the spec. Prepare a reviewable branch/PR and CI evidence, but DO NOT merge, deploy, publish a release or modify production yet. Stop when the change is ready for independent quality review. Report branch/PR, tests, debugging evidence and any blocker."""
+Read the specification and current repository state first. Refresh/reconcile with the latest origin/main before declaring the candidate ready; resolve merge conflicts without dropping unrelated main work. Implement the requested product change, add/update tests, and perform the required debugging and browser/emulator checks from the spec. If the candidate changes Android/native code, ensure the project semantic version is the next unused version relative to fresh main before review so the signed main release can be published. Prepare a clean committed reviewable chatgpt/* branch; deterministic GitHub publication/CI is owned by the durable orchestrator. DO NOT merge, deploy, publish a release or modify production. Stop when the committed candidate is ready for independent quality review. Report the branch/HEAD and local evidence."""
 
     @staticmethod
-    def _review_prompt(spec_path: str, cycle: int) -> str:
+    def _review_prompt(
+        spec_path: str,
+        cycle: int,
+        validation_evidence: str = "",
+    ) -> str:
+        evidence = (
+            "\n\nDeterministic candidate/CI evidence from the durable orchestrator:\n"
+            + validation_evidence
+            if validation_evidence
+            else ""
+        )
         return f"""Review cycle {cycle} for the implementation of:
 {spec_path}
 
-You are the same quality/design thread that produced the specification. Re-read the specification, inspect the current implementation diff/PR and verification evidence, and perform an independent acceptance/code review. Check edge cases, regressions, architecture/requirements compliance, tests and required browser/emulator evidence. Do NOT implement fixes and do NOT merge/deploy/release.
+You are the same quality/design thread that produced the specification. Re-read the specification, inspect the current implementation diff/PR and verification evidence, and perform an independent acceptance/code review. Check edge cases, regressions, architecture/requirements compliance, tests and required browser/emulator evidence. Do NOT implement fixes and do NOT merge/deploy/release.{evidence}
 
 If the implementation is acceptable, end with the exact line:
 REVIEW_VERDICT: ACCEPTED
@@ -542,7 +583,7 @@ Before the verdict, give concise actionable findings."""
 Review findings:
 {review_summary}
 
-Read the updated specification and fix all material findings. Re-run the required tests/debugging/browser/emulator checks. Keep the existing implementation thread and scope. Do NOT merge, deploy or release. Stop when the change is again ready for independent review and report the updated evidence."""
+Read the updated specification and fix all material findings. Refresh/reconcile with latest origin/main and resolve any PR merge conflicts while preserving unrelated main work. If Android/native code differs from fresh main, keep the project semantic version at the next unused version before review. Re-run the available tests/debugging/browser/emulator checks. Keep the existing implementation scope and produce a clean committed chatgpt/* candidate. Deterministic push/PR/CI is owned by the durable orchestrator. Do NOT merge, deploy or release. Stop when the change is again ready for independent review and report the updated HEAD/evidence."""
 
     @staticmethod
     def _delivery_prompt(spec_path: str) -> str:
@@ -691,6 +732,24 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
     def _execution_public(self, row: Any) -> dict[str, Any]:
         item = dict(row)
         item["task_ids"] = json.loads(item.pop("task_ids_json"))
+        raw_candidate_evidence = item.pop("candidate_evidence_json", None)
+        candidate_evidence = None
+        if isinstance(raw_candidate_evidence, str) and raw_candidate_evidence:
+            try:
+                parsed_candidate = json.loads(raw_candidate_evidence)
+                candidate_evidence = parsed_candidate if isinstance(parsed_candidate, dict) else None
+            except ValueError:
+                candidate_evidence = None
+        item["candidate_evidence"] = candidate_evidence
+        raw_delivery_evidence = item.pop("delivery_evidence_json", None)
+        delivery_evidence = None
+        if isinstance(raw_delivery_evidence, str) and raw_delivery_evidence:
+            try:
+                parsed_delivery = json.loads(raw_delivery_evidence)
+                delivery_evidence = parsed_delivery if isinstance(parsed_delivery, dict) else None
+            except ValueError:
+                delivery_evidence = None
+        item["delivery_evidence"] = delivery_evidence
         item.pop("prompt", None)
         item.pop("prompt_sha256", None)
         with self.store._lock:
@@ -1104,17 +1163,791 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
         )
 
     @staticmethod
-    def _recovery_review_prompt(spec_path: str, cycle: int) -> str:
+    def _recovery_review_prompt(
+        spec_path: str,
+        cycle: int,
+        validation_evidence: str = "",
+    ) -> str:
+        evidence = (
+            "\n\nDeterministic candidate/CI evidence from the durable orchestrator:\n"
+            + validation_evidence
+            if validation_evidence
+            else ""
+        )
         return f"""Recovery review cycle {cycle} for the already-authorized implementation of:
 {spec_path}
 
-The original quality/review turn was interrupted and could not be resumed. Independently re-read the specification, inspect the current implementation diff/PR and verification evidence, and perform the same acceptance/code review. Do not implement fixes and do not merge/deploy/release.
+The original quality/review turn was interrupted and could not be resumed. Independently re-read the specification, inspect the current implementation diff/PR and verification evidence, and perform the same acceptance/code review. Do not implement fixes and do not merge/deploy/release.{evidence}
 
 If acceptable, end with the exact line:
 REVIEW_VERDICT: ACCEPTED
 
 If material fixes are required, give concrete findings and end with:
 REVIEW_VERDICT: REWORK_REQUIRED"""
+
+    @staticmethod
+    def _direct_result_data(payload: dict[str, Any]) -> dict[str, Any]:
+        results = payload.get("results")
+        if not isinstance(results, list) or not results:
+            raise DevCoveerError("DevCoveer direct operation returned no result")
+        row = results[0]
+        if not isinstance(row, dict) or row.get("status") != "ok":
+            raise DevCoveerError("DevCoveer direct operation failed")
+        data = row.get("data")
+        if not isinstance(data, dict):
+            raise DevCoveerError("DevCoveer direct operation returned no data")
+        return data
+
+    @classmethod
+    def _direct_action_data(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        if isinstance(payload.get("results"), list):
+            return cls._direct_result_data(payload)
+        if payload.get("status") in {"ok", "running", "starting", "succeeded", "reconciled"}:
+            return payload
+        raise DevCoveerError("DevCoveer direct action failed")
+
+    @staticmethod
+    def _candidate_evidence_text(item: dict[str, Any]) -> str:
+        raw = item.get("candidate_evidence_json")
+        if not isinstance(raw, str) or not raw:
+            return ""
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            return ""
+        if not isinstance(parsed, dict):
+            return ""
+        return json.dumps(
+            parsed,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )[:8000]
+
+    def _store_candidate_state(
+        self,
+        *,
+        execution_id: str,
+        sha: str,
+        branch: str,
+        pr: int | None,
+        published_at_ms: int | None,
+        evidence: dict[str, Any],
+    ) -> None:
+        now = _now_ms()
+        with self.store._lock:
+            self.store.db.execute(
+                """UPDATE task_executions
+                   SET candidate_sha=?,candidate_branch=?,candidate_pr=?,
+                       candidate_published_at_ms=?,candidate_evidence_json=?,
+                       updated_at_ms=?
+                   WHERE id=?""",
+                (
+                    sha or None,
+                    branch or None,
+                    pr,
+                    published_at_ms,
+                    json.dumps(
+                        evidence,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )[:12000],
+                    now,
+                    execution_id,
+                ),
+            )
+
+    async def _candidate_validation(
+        self,
+        *,
+        item: dict[str, Any],
+        stage: dict[str, Any],
+    ) -> dict[str, Any]:
+        project = str(item["project_hint"])
+        await self.devcoveer.direct_project_action(
+            project=project,
+            operation="git_fetch",
+            payload={
+                "remote": "origin",
+                "branch": "main",
+            },
+        )
+        git_payload = await self.devcoveer.direct_project_probe(
+            project=project,
+            operation="git_state",
+        )
+        git_state = self._direct_result_data(git_payload)
+        branch = str(git_state.get("branch") or "")
+        sha = str(git_state.get("head") or "")
+        clean = (
+            git_state.get("head_state") == "branch"
+            and branch.startswith("chatgpt/")
+            and len(sha) == 40
+            and not (git_state.get("staged") or [])
+            and not (git_state.get("unstaged") or [])
+            and not (git_state.get("untracked") or [])
+            and not (git_state.get("conflicts") or [])
+        )
+
+        if not clean:
+            evidence = {
+                "candidate_status": "not_publishable",
+                "reason": "candidate must be a clean committed chatgpt/* branch",
+                "branch": branch,
+                "sha": sha,
+                "staged": list(git_state.get("staged") or []),
+                "unstaged": list(git_state.get("unstaged") or []),
+                "untracked": list(git_state.get("untracked") or []),
+                "conflicts": list(git_state.get("conflicts") or []),
+            }
+            self._store_candidate_state(
+                execution_id=str(item["id"]),
+                sha=sha,
+                branch=branch,
+                pr=None,
+                published_at_ms=None,
+                evidence=evidence,
+            )
+            item["candidate_evidence_json"] = json.dumps(
+                evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
+            return {
+                "ready": True,
+                "successful": False,
+                "detail": "Кандидат не зафиксирован полностью; передаю точный Git state на ревью",
+                "evidence": evidence,
+            }
+
+        published_at = (
+            int(item.get("candidate_published_at_ms") or 0)
+            if str(item.get("candidate_sha") or "") == sha
+            and str(item.get("candidate_branch") or "") == branch
+            else 0
+        )
+        pr_number = (
+            int(item.get("candidate_pr"))
+            if item.get("candidate_pr") is not None
+            and str(item.get("candidate_sha") or "") == sha
+            and str(item.get("candidate_branch") or "") == branch
+            else None
+        )
+
+        if not published_at:
+            await self.devcoveer.direct_project_action(
+                project=project,
+                operation="git_push_existing",
+                payload={
+                    "expected_sha": sha,
+                    "request_key": f"{item['id']}:push:{sha[:16]}",
+                },
+            )
+            pr_payload = await self.devcoveer.direct_project_action(
+                project=project,
+                operation="github_pr_create",
+                payload={
+                    "head": branch,
+                    "base": "main",
+                    "expected_head_sha": sha,
+                    "title": f"Owner development {str(item['id'])[:32]}",
+                    "request_key": f"{item['id']}:pr:{sha[:16]}",
+                    "body": (
+                        "Durable owner-development candidate for "
+                        + str(item["id"])
+                        + ".\n\nSpecification: "
+                        + str(item.get("spec_path") or "")
+                    ),
+                },
+            )
+            pr_result = self._direct_action_data(pr_payload)
+            raw_pr = pr_result.get("number")
+            if isinstance(raw_pr, int) and raw_pr > 0:
+                pr_number = raw_pr
+            published_at = _now_ms()
+
+        status_payload = await self.devcoveer.direct_project_probe(
+            project=project,
+            operation="github_status",
+            payload=(
+                {"pr": pr_number, "failed_log_lines": 120}
+                if pr_number
+                else {"branch": branch, "failed_log_lines": 120}
+            ),
+        )
+        github = self._direct_result_data(status_payload)
+        remote_branch = github.get("branch") if isinstance(github.get("branch"), dict) else {}
+        pr_state = github.get("pr") if isinstance(github.get("pr"), dict) else {}
+        remote_sha = str(pr_state.get("head") or remote_branch.get("head") or "")
+        if pr_number is None and isinstance(pr_state.get("number"), int):
+            pr_number = int(pr_state["number"])
+        mergeable_state = str(pr_state.get("mergeable_state") or "")
+        checks = [
+            {
+                "name": str(row.get("name") or ""),
+                "status": str(row.get("status") or ""),
+                "conclusion": row.get("conclusion"),
+            }
+            for row in (github.get("checks") or [])
+            if isinstance(row, dict)
+        ]
+        workflows = [
+            {
+                "name": str(row.get("name") or ""),
+                "status": str(row.get("status") or ""),
+                "conclusion": row.get("conclusion"),
+                "run_id": row.get("id"),
+            }
+            for row in (github.get("workflow_runs") or [])
+            if isinstance(row, dict)
+        ]
+        evidence = {
+            "candidate_status": "published",
+            "branch": branch,
+            "sha": sha,
+            "remote_sha": remote_sha,
+            "pr": pr_number,
+            "pr_state": pr_state.get("state"),
+            "mergeable_state": mergeable_state,
+            "checks": checks,
+            "workflow_runs": workflows,
+        }
+        self._store_candidate_state(
+            execution_id=str(item["id"]),
+            sha=sha,
+            branch=branch,
+            pr=pr_number,
+            published_at_ms=published_at,
+            evidence=evidence,
+        )
+        item["candidate_sha"] = sha
+        item["candidate_branch"] = branch
+        item["candidate_pr"] = pr_number
+        item["candidate_published_at_ms"] = published_at
+        item["candidate_evidence_json"] = json.dumps(
+            evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+
+        if remote_sha != sha:
+            return {
+                "ready": False,
+                "successful": False,
+                "detail": "Кандидат опубликован; жду подтверждение exact SHA от GitHub",
+                "evidence": evidence,
+            }
+
+        pending = any(row["status"] != "completed" for row in checks) or any(
+            row["status"] != "completed" for row in workflows
+        )
+        if pending:
+            return {
+                "ready": False,
+                "successful": False,
+                "detail": "Кандидат опубликован; CI ещё выполняется",
+                "evidence": evidence,
+            }
+
+        if not checks and not workflows and _now_ms() - published_at < CANDIDATE_CHECK_DISCOVERY_GRACE_MS:
+            return {
+                "ready": False,
+                "successful": False,
+                "detail": "Кандидат опубликован; жду появления CI checks",
+                "evidence": evidence,
+            }
+
+        allowed_conclusions = {"success", "neutral", "skipped"}
+        terminal_rows = [*checks, *workflows]
+        successful = (
+            remote_sha == sha
+            and mergeable_state != "dirty"
+            and (
+                not terminal_rows
+                or all(
+                    str(row.get("conclusion") or "").lower()
+                    in allowed_conclusions
+                    for row in terminal_rows
+                )
+            )
+        )
+        evidence["ci_success"] = successful
+        self._store_candidate_state(
+            execution_id=str(item["id"]),
+            sha=sha,
+            branch=branch,
+            pr=pr_number,
+            published_at_ms=published_at,
+            evidence=evidence,
+        )
+        item["candidate_evidence_json"] = json.dumps(
+            evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        return {
+            "ready": True,
+            "successful": successful,
+            "detail": (
+                "Кандидат опубликован; CI зелёный и готов для независимого ревью"
+                if successful
+                else "Кандидат опубликован; terminal CI содержит ошибки"
+            ),
+            "evidence": evidence,
+        }
+
+    def _store_delivery_state(
+        self,
+        *,
+        execution_id: str,
+        merge_sha: str | None = None,
+        main_sha: str | None = None,
+        merged_at_ms: int | None = None,
+        job_id: str | None = None,
+        deployed_at_ms: int | None = None,
+        evidence: dict[str, Any] | None = None,
+    ) -> None:
+        sets: list[str] = []
+        values: list[Any] = []
+        for column, value in (
+            ("delivery_merge_sha", merge_sha),
+            ("delivery_main_sha", main_sha),
+            ("delivery_merged_at_ms", merged_at_ms),
+            ("delivery_job_id", job_id),
+            ("delivery_deployed_at_ms", deployed_at_ms),
+        ):
+            if value is not None:
+                sets.append(f"{column}=?")
+                values.append(value)
+        if evidence is not None:
+            sets.append("delivery_evidence_json=?")
+            values.append(json.dumps(
+                evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ))
+        if not sets:
+            return
+        sets.append("updated_at_ms=?")
+        values.append(_now_ms())
+        values.append(execution_id)
+        with self.store._lock:
+            self.store.db.execute(
+                f"UPDATE task_executions SET {','.join(sets)} WHERE id=?",
+                tuple(values),
+            )
+
+    @staticmethod
+    def _github_rows_success(github: dict[str, Any]) -> tuple[bool, bool]:
+        rows = [
+            row
+            for row in [
+                *(github.get("checks") or []),
+                *(github.get("workflow_runs") or []),
+            ]
+            if isinstance(row, dict)
+        ]
+        pending = any(str(row.get("status") or "") != "completed" for row in rows)
+        allowed = {"success", "neutral", "skipped"}
+        success = bool(rows) and not pending and all(
+            str(row.get("conclusion") or "").lower() in allowed
+            for row in rows
+        )
+        return pending, success
+
+    async def _start_post_merge_rework(
+        self,
+        *,
+        item: dict[str, Any],
+        evidence: dict[str, Any],
+    ) -> bool:
+        delivery_stage = self._active_stage(str(item["id"]))
+        if delivery_stage and delivery_stage.get("stage") == "delivery":
+            self._finish_stage(
+                stage_id=str(delivery_stage["id"]),
+                status="superseded",
+                summary="Main CI/release failed after merge; autonomous recovery rework started.",
+            )
+        implementation_model, implementation_effort = str(
+            item["model_profile"]
+        ).rsplit(":", 1)
+        remaining = await self._require_stage_capacity(
+            actor_id=str(item["actor_id"]),
+            workspace_id=str(item["workspace_id"]),
+            model=implementation_model,
+            reasoning_effort=implementation_effort,
+        )
+        cycle = int(item.get("review_cycle") or 0) + 1
+        marker = self._dispatch_marker(str(item["id"]), "main-ci-rework", cycle, 1)
+        prompt = f"""Autonomous post-merge recovery for already-authorized execution {item['id']}.
+Specification: {item.get('spec_path') or ''}
+
+The reviewed candidate was merged, but deterministic main CI/release evidence is not green. Refresh origin/main, create a new chatgpt/* recovery branch from the exact fresh main HEAD, inspect the failing CI/release evidence below, and fix only defects attributable to this execution. Preserve unrelated main work. If Android/native code changes or a prior release tag/version is already consumed, set the project semantic version to the next unused version. Run available deterministic local checks and commit a clean candidate.
+
+Do NOT merge, deploy or release. Stop when the clean committed recovery candidate is ready for deterministic publication and independent review.
+
+Main CI/release evidence:
+{json.dumps(evidence, ensure_ascii=False, sort_keys=True)[:8000]}"""
+        task_id, _ = await self._start_marked_codex_task(
+            project=str(item["project_hint"]),
+            marker=marker,
+            prompt=prompt,
+            model=implementation_model,
+            reasoning_effort=implementation_effort,
+            access="write",
+        )
+        self._record_stage(
+            execution_id=str(item["id"]),
+            stage="rework",
+            cycle=cycle,
+            model=implementation_model,
+            reasoning_effort=implementation_effort,
+            devcoveer_task_id=task_id,
+        )
+        now = _now_ms()
+        with self.store._lock:
+            self.store.db.execute(
+                """UPDATE task_executions
+                   SET status='running',phase='reworking',
+                       phase_detail='Исправляю terminal main CI/release failure без участия владельца',
+                       implementation_task_id=?,devcoveer_task_id=?,
+                       quota_remaining_percent=?,review_cycle=?,
+                       candidate_sha=NULL,candidate_branch=NULL,candidate_pr=NULL,
+                       candidate_published_at_ms=NULL,candidate_evidence_json=NULL,
+                       delivery_merge_sha=NULL,delivery_main_sha=NULL,
+                       delivery_merged_at_ms=NULL,delivery_job_id=NULL,
+                       delivery_deployed_at_ms=NULL,delivery_evidence_json=NULL,
+                       error_code=NULL,finished_at_ms=NULL,updated_at_ms=?
+                   WHERE id=?""",
+                (task_id, task_id, remaining, cycle, now, item["id"]),
+            )
+        return True
+
+    async def _begin_deterministic_delivery(
+        self,
+        *,
+        item: dict[str, Any],
+        review_summary: str,
+        cycle: int,
+    ) -> dict[str, Any]:
+        candidate_sha = str(item.get("candidate_sha") or "")
+        pr_number = item.get("candidate_pr")
+        if len(candidate_sha) != 40 or not isinstance(pr_number, int):
+            raise StoreError(
+                "DELIVERY_CANDIDATE_MISSING",
+                "Accepted review has no exact published candidate/PR receipt",
+            )
+        self._record_stage(
+            execution_id=str(item["id"]),
+            stage="delivery",
+            cycle=cycle,
+            model="deterministic",
+            reasoning_effort="none",
+            devcoveer_task_id=f"deterministic:{candidate_sha}",
+        )
+        now = _now_ms()
+        with self.store._lock:
+            self.store.db.execute(
+                """UPDATE task_executions
+                   SET status='running',phase='delivery_merge',
+                       phase_detail='Ревью принято; deterministic delivery объединяет exact candidate',
+                       devcoveer_task_id=?,result_summary=?,error_code=NULL,
+                       finished_at_ms=NULL,updated_at_ms=?
+                   WHERE id=?""",
+                (f"deterministic:{candidate_sha}", review_summary, now, item["id"]),
+            )
+        row = self._execution_row(
+            actor_id=str(item["actor_id"]),
+            workspace_id=str(item["workspace_id"]),
+            execution_id=str(item["id"]),
+        )
+        public = self._execution_public(row)
+        public["update_check_recommended"] = False
+        return {"execution": public}
+
+    async def _advance_deterministic_delivery_locked(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        execution_id: str,
+    ) -> bool:
+        row = self._execution_row(
+            actor_id=actor_id,
+            workspace_id=workspace_id,
+            execution_id=execution_id,
+        )
+        item = dict(row)
+        project = str(item["project_hint"])
+        candidate_sha = str(item.get("candidate_sha") or "")
+        pr_number = item.get("candidate_pr")
+        if len(candidate_sha) != 40 or not isinstance(pr_number, int):
+            raise StoreError("DELIVERY_CANDIDATE_MISSING", "Missing exact candidate receipt")
+
+        evidence: dict[str, Any] = {}
+        raw = item.get("delivery_evidence_json")
+        if isinstance(raw, str) and raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    evidence = parsed
+            except ValueError:
+                pass
+
+        main_sha = str(item.get("delivery_main_sha") or "")
+        if not main_sha:
+            merge_payload = await self.devcoveer.direct_project_action(
+                project=project,
+                operation="github_pr_merge",
+                payload={
+                    "pr": int(pr_number),
+                    "expected_head_sha": candidate_sha,
+                    "expected_base": "main",
+                    "method": "squash",
+                    "request_key": f"{execution_id}:merge:{candidate_sha[:16]}",
+                },
+            )
+            merge = self._direct_action_data(merge_payload)
+            merge_sha = str(merge.get("merge_sha") or "")
+            await self.devcoveer.direct_project_action(
+                project=project,
+                operation="git_fetch",
+                payload={
+                    "remote": "origin",
+                    "branch": "main",
+                },
+            )
+            remote_payload = await self.devcoveer.direct_project_probe(
+                project=project,
+                operation="remote_head",
+                payload={"remote": "origin", "branch": "main"},
+            )
+            remote = self._direct_result_data(remote_payload)
+            main_sha = str(
+                remote.get("fresh_remote_sha")
+                or remote.get("local_tracking_sha")
+                or merge_sha
+            )
+            if len(main_sha) != 40:
+                raise StoreError(
+                    "DELIVERY_MAIN_SHA_MISSING",
+                    "Merged PR did not yield a fresh exact main SHA",
+                )
+            merged_at = _now_ms()
+            evidence.update({
+                "candidate_sha": candidate_sha,
+                "pr": int(pr_number),
+                "merge_sha": merge_sha,
+                "main_sha": main_sha,
+            })
+            self._store_delivery_state(
+                execution_id=execution_id,
+                merge_sha=merge_sha or main_sha,
+                main_sha=main_sha,
+                merged_at_ms=merged_at,
+                evidence=evidence,
+            )
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE task_executions
+                       SET phase='delivery_main_ci',
+                           phase_detail='Exact candidate merged; жду terminal main CI/release',
+                           updated_at_ms=? WHERE id=?""",
+                    (_now_ms(), execution_id),
+                )
+            return True
+
+        await self.devcoveer.direct_project_action(
+            project=project,
+            operation="git_fetch",
+            payload={
+                "remote": "origin",
+                "branch": "main",
+            },
+        )
+        remote_payload = await self.devcoveer.direct_project_probe(
+            project=project,
+            operation="remote_head",
+            payload={"remote": "origin", "branch": "main"},
+        )
+        remote = self._direct_result_data(remote_payload)
+        current_main = str(
+            remote.get("fresh_remote_sha") or remote.get("local_tracking_sha") or ""
+        )
+        if len(current_main) == 40 and current_main != main_sha:
+            main_sha = current_main
+            evidence["main_advanced_to"] = main_sha
+            self._store_delivery_state(
+                execution_id=execution_id,
+                main_sha=main_sha,
+                evidence=evidence,
+            )
+
+        status_payload = await self.devcoveer.direct_project_probe(
+            project=project,
+            operation="github_status",
+            payload={"branch": "main", "failed_log_lines": 160},
+        )
+        github = self._direct_result_data(status_payload)
+        branch = github.get("branch") if isinstance(github.get("branch"), dict) else {}
+        observed_main = str(branch.get("head") or "")
+        pending, main_success = self._github_rows_success(github)
+        evidence["main_status"] = github
+        evidence["main_sha"] = main_sha
+        self._store_delivery_state(
+            execution_id=execution_id,
+            main_sha=main_sha,
+            evidence=evidence,
+        )
+
+        if observed_main != main_sha or pending:
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE task_executions
+                       SET status='running',phase='delivery_main_ci',
+                           phase_detail='Жду exact main SHA и завершение CI/release workflows',
+                           error_code=NULL,finished_at_ms=NULL,updated_at_ms=?
+                       WHERE id=?""",
+                    (_now_ms(), execution_id),
+                )
+            return False
+
+        merged_at = int(item.get("delivery_merged_at_ms") or 0)
+        if (
+            _now_ms() - merged_at < DELIVERY_CHECK_DISCOVERY_GRACE_MS
+            and not (github.get("checks") or github.get("workflow_runs"))
+        ):
+            return False
+
+        if not main_success:
+            await self._start_post_merge_rework(item=item, evidence=evidence)
+            return True
+
+        job_id = str(item.get("delivery_job_id") or "")
+        if not job_id:
+            delivery_stage = self._active_stage(execution_id)
+            deploy_attempt = (
+                int(delivery_stage.get("recovery_attempts") or 0) + 1
+                if delivery_stage
+                else 1
+            )
+            deploy_payload = await self.devcoveer.direct_project_action(
+                project=project,
+                operation="run_tool",
+                payload={
+                    "tool": "python_script",
+                    "path": "deploy/devcoveer_install.py",
+                    "args": ["--sha", main_sha],
+                    "timeout_seconds": 1200,
+                    "python_env": "system",
+                    "execution_mode": "job",
+                    "request_key": f"{execution_id}:deploy:{main_sha[:16]}:a{deploy_attempt}",
+                },
+            )
+            deploy = self._direct_action_data(deploy_payload)
+            job_id = str(deploy.get("job_id") or "")
+            if not job_id:
+                raise StoreError(
+                    "DELIVERY_JOB_MISSING",
+                    "Deterministic deploy did not return a durable job id",
+                )
+            evidence["deploy_job_id"] = job_id
+            self._store_delivery_state(
+                execution_id=execution_id,
+                job_id=job_id,
+                evidence=evidence,
+            )
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE task_executions
+                       SET status='running',phase='deploying',
+                           phase_detail='Main CI зелёный; выполняю durable exact-main deploy',
+                           error_code=NULL,finished_at_ms=NULL,updated_at_ms=?
+                       WHERE id=?""",
+                    (_now_ms(), execution_id),
+                )
+            return True
+
+        job_payload = await self.devcoveer.direct_project_action(
+            project=project,
+            operation="job_status",
+            payload={"job_id": job_id, "tail_lines": 80},
+        )
+        job = self._direct_action_data(job_payload)
+        job_status = str(job.get("status") or "")
+        evidence["deploy_job"] = job
+        self._store_delivery_state(
+            execution_id=execution_id,
+            job_id=job_id,
+            evidence=evidence,
+        )
+        if job_status in {"running", "starting", "initializing", "unknown"}:
+            return False
+        if job_status != "succeeded":
+            delivery_stage = self._active_stage(execution_id)
+            attempt = (
+                self._mark_recovery_attempt(str(delivery_stage["id"]))
+                if delivery_stage
+                else MAX_DELIVERY_DEPLOY_ATTEMPTS
+            )
+            if attempt < MAX_DELIVERY_DEPLOY_ATTEMPTS:
+                with self.store._lock:
+                    self.store.db.execute(
+                        """UPDATE task_executions
+                           SET delivery_job_id=NULL,status='running',phase='deploying',
+                               phase_detail='Повторяю exact-main deploy после terminal infrastructure failure',
+                               error_code='DELIVERY_DEPLOY_RETRY',
+                               finished_at_ms=NULL,updated_at_ms=?
+                           WHERE id=?""",
+                        (_now_ms(), execution_id),
+                    )
+                return True
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE task_executions
+                       SET status='failed',phase='failed',
+                           phase_detail='Deterministic deploy исчерпал bounded retry',
+                           error_code='DELIVERY_DEPLOY_FAILED',
+                           finished_at_ms=?,updated_at_ms=?
+                       WHERE id=?""",
+                    (_now_ms(), _now_ms(), execution_id),
+                )
+            return True
+
+        result = job.get("result") if isinstance(job.get("result"), dict) else {}
+        if result.get("exit_code") != 0:
+            raise StoreError(
+                "DELIVERY_DEPLOY_FAILED",
+                "Deploy job succeeded receipt has non-zero command exit",
+            )
+
+        deployed_at = _now_ms()
+        evidence["deployed_main_sha"] = main_sha
+        self._store_delivery_state(
+            execution_id=execution_id,
+            deployed_at_ms=deployed_at,
+            evidence=evidence,
+        )
+        delivery_stage = self._active_stage(execution_id)
+        if delivery_stage and delivery_stage.get("stage") == "delivery":
+            self._finish_stage(
+                stage_id=str(delivery_stage["id"]),
+                status="completed",
+                summary=f"Deterministic delivery completed for main {main_sha}.",
+            )
+        with self.store._lock:
+            self.store.db.execute(
+                """UPDATE task_executions
+                   SET status='completed',phase='ready',
+                       phase_detail='Реализация принята, main CI/release зелёные и production проверен',
+                       result_summary=?,error_code=NULL,finished_at_ms=?,updated_at_ms=?
+                   WHERE id=?""",
+                (
+                    f"Delivered exact main {main_sha}; deploy job {job_id} succeeded.",
+                    deployed_at,
+                    deployed_at,
+                    execution_id,
+                ),
+            )
+            for task_id in json.loads(item["task_ids_json"]):
+                self.store.db.execute(
+                    "UPDATE tasks SET state='done',updated_at_ms=? WHERE id=?",
+                    (deployed_at, task_id),
+                )
+        return True
 
     def _mark_recovery_attempt(self, stage_id: str) -> int:
         now = _now_ms()
@@ -1895,6 +2728,7 @@ Do NOT merge, deploy or release. Stop when the existing implementation is again 
                     prompt=self._recovery_review_prompt(
                         str(item.get("spec_path") or ""),
                         cycle,
+                        self._candidate_evidence_text(item),
                     ),
                     model=QUALITY_MODEL,
                     reasoning_effort=QUALITY_EFFORT,
@@ -2093,6 +2927,7 @@ Do NOT merge, deploy or release. Stop when the existing implementation is again 
                                 prompt=self._recovery_review_prompt(
                                     str(item.get("spec_path") or ""),
                                     cycle,
+                                    self._candidate_evidence_text(item),
                                 ),
                                 model=QUALITY_MODEL,
                                 reasoning_effort=QUALITY_EFFORT,
@@ -2235,7 +3070,127 @@ Do NOT merge, deploy or release. Stop when the existing implementation is again 
             public["update_check_recommended"] = False
             return {"execution": public}
 
+        validation_evidence = ""
+        if turn_status == "completed" and stage["stage"] in {"implementation", "rework"}:
+            try:
+                validation = await self._candidate_validation(item=item, stage=stage)
+            except (DevCoveerError, StoreError) as exc:
+                now = _now_ms()
+                with self.store._lock:
+                    self.store.db.execute(
+                        """UPDATE task_executions
+                           SET status='running',phase='validating',
+                               phase_detail='Повторяю deterministic публикацию/CI readback',
+                               error_code='DEVELOPMENT_VALIDATION_RETRY',
+                               result_summary=?,finished_at_ms=NULL,updated_at_ms=?
+                           WHERE id=?""",
+                        (summary, now, item["id"]),
+                    )
+                row = self._execution_row(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    execution_id=item["id"],
+                )
+                public = self._execution_public(row)
+                public["update_check_recommended"] = False
+                return {"execution": public}
+
+            validation_evidence = json.dumps(
+                validation["evidence"],
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )[:8000]
+            if validation.get("ready") is not True:
+                now = _now_ms()
+                with self.store._lock:
+                    self.store.db.execute(
+                        """UPDATE task_executions
+                           SET status='running',phase='validating',
+                               phase_detail=?,error_code=NULL,result_summary=?,
+                               finished_at_ms=NULL,updated_at_ms=?
+                           WHERE id=?""",
+                        (
+                            str(validation.get("detail") or "Проверяется опубликованный кандидат"),
+                            summary,
+                            now,
+                            item["id"],
+                        ),
+                    )
+                row = self._execution_row(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    execution_id=item["id"],
+                )
+                public = self._execution_public(row)
+                public["update_check_recommended"] = False
+                return {"execution": public}
+
         verdict = self._review_verdict(summary) if stage["stage"] == "review" else None
+        if stage["stage"] == "review" and verdict == "accepted":
+            try:
+                delivery_validation = await self._candidate_validation(item=item, stage=stage)
+            except (DevCoveerError, StoreError):
+                now = _now_ms()
+                with self.store._lock:
+                    self.store.db.execute(
+                        """UPDATE task_executions
+                           SET status='running',phase='validating',
+                               phase_detail='Ревью принято; повторяю deterministic delivery gate',
+                               error_code='DEVELOPMENT_VALIDATION_RETRY',
+                               result_summary=?,finished_at_ms=NULL,updated_at_ms=?
+                           WHERE id=?""",
+                        (summary, now, item["id"]),
+                    )
+                row = self._execution_row(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    execution_id=item["id"],
+                )
+                public = self._execution_public(row)
+                public["update_check_recommended"] = False
+                return {"execution": public}
+
+            if delivery_validation.get("ready") is not True:
+                now = _now_ms()
+                with self.store._lock:
+                    self.store.db.execute(
+                        """UPDATE task_executions
+                           SET status='running',phase='validating',
+                               phase_detail=?,error_code=NULL,result_summary=?,
+                               finished_at_ms=NULL,updated_at_ms=?
+                           WHERE id=?""",
+                        (
+                            str(delivery_validation.get("detail") or "Ревью принято; жду deterministic delivery gate"),
+                            summary,
+                            now,
+                            item["id"],
+                        ),
+                    )
+                row = self._execution_row(
+                    actor_id=actor_id,
+                    workspace_id=workspace_id,
+                    execution_id=item["id"],
+                )
+                public = self._execution_public(row)
+                public["update_check_recommended"] = False
+                return {"execution": public}
+
+            if delivery_validation.get("successful") is not True:
+                evidence_text = json.dumps(
+                    delivery_validation.get("evidence") or {},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )[:8000]
+                summary = (
+                    summary
+                    + "\n\nDeterministic delivery gate rejected ACCEPTED verdict. "
+                    "Fix the terminal candidate/CI failures below before delivery:\n"
+                    + evidence_text
+                )[:12000]
+                verdict = "rework_required"
+
         self._finish_stage(
             stage_id=str(stage["id"]),
             status=turn_status,
@@ -2344,7 +3299,9 @@ Do NOT merge, deploy or release. Stop when the existing implementation is again 
                         await self.devcoveer.continue_codex_task(
                             quality_task_id,
                             project=str(item["project_hint"]),
-                            prompt=self._review_prompt(spec_path, cycle),
+                            prompt=self._review_prompt(
+                                spec_path, cycle, validation_evidence or self._candidate_evidence_text(item)
+                            ),
                             access="read",
                             model=QUALITY_MODEL,
                             reasoning_effort=QUALITY_EFFORT,
@@ -2361,7 +3318,9 @@ Do NOT merge, deploy or release. Stop when the existing implementation is again 
                     quality_task_id, _ = await self._start_marked_codex_task(
                         project=str(item["project_hint"]),
                         marker=marker,
-                        prompt=self._recovery_review_prompt(spec_path, cycle),
+                        prompt=self._recovery_review_prompt(
+                            spec_path, cycle, validation_evidence or self._candidate_evidence_text(item)
+                        ),
                         model=QUALITY_MODEL,
                         reasoning_effort=QUALITY_EFFORT,
                         access="read",
@@ -2400,80 +3359,16 @@ Do NOT merge, deploy or release. Stop when the existing implementation is again 
 
             elif stage["stage"] == "review":
                 if verdict == "accepted":
-                    remaining = await self._require_stage_capacity(
+                    row = self._execution_row(
                         actor_id=actor_id,
                         workspace_id=workspace_id,
-                        model=implementation_model,
-                        reasoning_effort=implementation_effort,
-                    )
-                    implementation_task_id = str(item.get("implementation_task_id") or "").strip()
-                    delivery_task_id = implementation_task_id
-                    delivery_restarted = False
-                    if implementation_task_id:
-                        try:
-                            await self.devcoveer.continue_codex_task(
-                                implementation_task_id,
-                                project=str(item["project_hint"]),
-                                prompt=self._delivery_prompt(spec_path),
-                                access="write",
-                                model=implementation_model,
-                                reasoning_effort=implementation_effort,
-                            )
-                        except DevCoveerError:
-                            delivery_task_id = ""
-                    if not delivery_task_id:
-                        delivery_attempt = self._stage_attempt_count(
-                            str(item["id"]), "delivery", cycle=cycle
-                        ) + 1
-                        marker = self._dispatch_marker(
-                            str(item["id"]), "delivery", cycle, delivery_attempt
-                        )
-                        delivery_task_id, _ = await self._start_marked_codex_task(
-                            project=str(item["project_hint"]),
-                            marker=marker,
-                            prompt=self._recovery_write_prompt(
-                                item=item,
-                                stage={
-                                    "stage": "delivery",
-                                    "cycle": cycle,
-                                    "devcoveer_task_id": implementation_task_id,
-                                },
-                                summary=summary,
-                            ),
-                            model=implementation_model,
-                            reasoning_effort=implementation_effort,
-                            access="write",
-                        )
-                        delivery_restarted = True
-                    self._record_stage(
                         execution_id=str(item["id"]),
-                        stage="delivery",
-                        cycle=cycle,
-                        model=implementation_model,
-                        reasoning_effort=implementation_effort,
-                        devcoveer_task_id=delivery_task_id,
                     )
-                    with self.store._lock:
-                        self.store.db.execute(
-                            """UPDATE task_executions
-                               SET status='running',phase='delivering',
-                                   phase_detail=?,
-                                   devcoveer_task_id=?,quota_remaining_percent=?,
-                                   result_summary=?,error_code=NULL,
-                                   finished_at_ms=NULL,updated_at_ms=? WHERE id=?""",
-                            (
-                                (
-                                    "Ревью принято; delivery восстановлен новым continuation"
-                                    if delivery_restarted
-                                    else "Ревью принято; идёт поставка"
-                                ),
-                                delivery_task_id,
-                                remaining,
-                                summary,
-                                now,
-                                item["id"],
-                            ),
-                        )
+                    return await self._begin_deterministic_delivery(
+                        item=dict(row),
+                        review_summary=summary,
+                        cycle=cycle,
+                    )
                 elif verdict == "rework_required":
                     if cycle >= MAX_REWORK_CYCLES:
                         with self.store._lock:
@@ -2579,7 +3474,9 @@ Do NOT merge, deploy or release. Stop when the existing implementation is again 
                     )
                     restarted = await self.devcoveer.start_codex_task(
                         project=str(item["project_hint"]),
-                        prompt=self._recovery_review_prompt(spec_path, cycle),
+                        prompt=self._recovery_review_prompt(
+                            spec_path, cycle, self._candidate_evidence_text(item)
+                        ),
                         model=QUALITY_MODEL,
                         reasoning_effort=QUALITY_EFFORT,
                         access="read",
@@ -3287,6 +4184,19 @@ Before the verdict give concise findings.""",
                         advanced += 1
                     continue
                 if fresh["status"] not in ACTIVE_EXECUTION_STATES:
+                    continue
+                if str(fresh["phase"] or "") in {
+                    "delivery_merge",
+                    "delivery_main_ci",
+                    "deploying",
+                }:
+                    progressed = await self._advance_deterministic_delivery_locked(
+                        actor_id=str(candidate["actor_id"]),
+                        workspace_id=str(candidate["workspace_id"]),
+                        execution_id=str(candidate["id"]),
+                    )
+                    if progressed:
+                        advanced += 1
                     continue
                 if str(fresh["phase"] or "") in {"recovering", "capacity_wait"}:
                     latest = self._latest_stage(str(candidate["id"]))

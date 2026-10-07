@@ -35,6 +35,7 @@ class FakeSession:
             "start_task",
             "continue_task",
             "read_task",
+            "direct_ops_v2",
         ]
         return SimpleNamespace(tools=[SimpleNamespace(name=name) for name in names])
 
@@ -110,6 +111,49 @@ async def test_list_tasks_is_bounded_and_filterable():
                 "search": "ODR-fe82",
             },
         )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_direct_ops_v2_envelope_is_narrow_and_typed():
+    client = DevCoveerClient(command="/tmp/not-used")
+    captured: list[tuple[str, dict]] = []
+
+    async def fake_call(name: str, arguments: dict):
+        captured.append((name, dict(arguments)))
+        return {"status": "ok"}
+
+    client._call = fake_call  # type: ignore[method-assign]
+
+    await client.direct_project_probe(
+        project="projects-hub-owner",
+        operation="git_state",
+    )
+    await client.direct_project_action(
+        project="projects-hub-owner",
+        operation="git_push_existing",
+        payload={"expected_sha": "a" * 40},
+    )
+
+    assert captured == [
+        (
+            "direct_ops_v2",
+            {
+                "project": "projects-hub-owner",
+                "plane": "project_probe",
+                "operation": "git_state",
+                "payload": {},
+            },
+        ),
+        (
+            "direct_ops_v2",
+            {
+                "project": "projects-hub-owner",
+                "plane": "project_action",
+                "operation": "git_push_existing",
+                "payload": {"expected_sha": "a" * 40},
+            },
+        ),
     ]
 
 
