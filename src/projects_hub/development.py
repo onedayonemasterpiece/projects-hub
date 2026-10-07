@@ -1534,13 +1534,40 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
             }
 
         if not checks and not workflows:
+            if _now_ms() - published_at < CANDIDATE_CHECK_DISCOVERY_GRACE_MS:
+                return {
+                    "ready": False,
+                    "successful": False,
+                    "detail": "Кандидат опубликован; жду появления CI checks",
+                    "evidence": evidence,
+                }
+            # Once the discovery grace has expired, no-check is a failed
+            # candidate gate, not an infinite waiting state. The existing
+            # technical rework path reconciles the branch against fresh main
+            # and creates new CI evidence without requiring the owner.
+            evidence["ci_success"] = False
+            evidence["failure_reason"] = "missing_candidate_ci_checks"
+            evidence["check_discovery_grace_ms"] = CANDIDATE_CHECK_DISCOVERY_GRACE_MS
+            self._store_candidate_state(
+                execution_id=str(item["id"]),
+                sha=sha,
+                branch=branch,
+                pr=pr_number,
+                published_at_ms=published_at,
+                evidence=evidence,
+            )
+            item["candidate_evidence_json"] = json.dumps(
+                evidence,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
             return {
-                "ready": False,
+                "ready": True,
                 "successful": False,
                 "detail": (
-                    "Кандидат опубликован; жду появления CI checks"
-                    if _now_ms() - published_at < CANDIDATE_CHECK_DISCOVERY_GRACE_MS
-                    else "CI checks для кандидата ещё не появились; продолжаю deterministic ожидание"
+                    "У опубликованного кандидата не появились CI checks "
+                    "за допустимый срок; запускаю технический rework"
                 ),
                 "evidence": evidence,
             }
