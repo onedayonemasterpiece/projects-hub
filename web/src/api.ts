@@ -416,6 +416,16 @@ export type ProjectNote = {
   body: string;
   source_text: string;
   structured: Record<string, unknown> | null;
+  chatgpt_analysis?: {
+    status: "completed";
+    note_id: string;
+    route_id: string;
+    source_sha: string;
+    result_sha: string;
+    repository_path: string;
+    generated_at_utc: string;
+    markdown: string;
+  } | null;
   audience: "project";
   status: "accepted" | "processing" | "waiting_repository" | "blocked" | "ready";
   processing: {
