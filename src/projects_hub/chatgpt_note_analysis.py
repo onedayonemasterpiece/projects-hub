@@ -368,6 +368,14 @@ class ChatGPTNoteAnalysisSync:
                     result_sha = str(result.get("sha") or "")
                     if not SHA_PATTERN.fullmatch(result_sha):
                         continue
+                    # A note could be edited between the initial source GET
+                    # and reading its companion result. Reject that TOCTOU
+                    # race rather than importing an already-stale analysis.
+                    source_readback = await self._read(
+                        note=note, path=route["source_path"]
+                    )
+                    if source_readback.get("sha") != source["sha"]:
+                        continue
                     if self._register(
                         note=note,
                         route=route,
