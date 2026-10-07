@@ -628,3 +628,184 @@ async def test_queued_analysis_continuation_rechecks_requester_grant_before_disp
     finally:
         await service.close()
         store.close()
+
+
+class RepairBridge(FakeBridge):
+    def __init__(self, *, repair_valid: bool) -> None:
+        super().__init__()
+        self.analysis_payload = {
+            "executionStatus": "completed",
+            "latestTurn": {
+                "finalResponse": json.dumps(
+                    {"summary": "Provider omitted typed questions."},
+                    ensure_ascii=False,
+                )
+            },
+        }
+        self.repair_payload = {
+            "executionStatus": "completed",
+            "latestTurn": {
+                "finalResponse": json.dumps(
+                    (
+                        {
+                            "summary": "Repair produced the required typed question.",
+                            "questions": [
+                                {
+                                    "prompt": "Подтверждаем один personal timeline?",
+                                    "blocking": True,
+                                }
+                            ],
+                        }
+                        if repair_valid
+                        else {"summary": "Still missing questions."}
+                    ),
+                    ensure_ascii=False,
+                )
+            },
+        }
+
+    async def consult(self, **kwargs):
+        self.consults.append(dict(kwargs))
+        return {
+            "status": "running",
+            "taskId": (
+                "provider-analysis-1"
+                if len(self.consults) == 1
+                else "provider-repair-1"
+            ),
+        }
+
+    async def read_task(self, task_id: str):
+        self.reads.append(task_id)
+        if task_id == "provider-analysis-1":
+            return self.analysis_payload
+        if task_id == "provider-repair-1":
+            return self.repair_payload
+        raise AssertionError(task_id)
+
+
+@pytest.mark.asyncio
+async def test_invalid_kimi_question_shape_gets_one_provided_only_repair(tmp_path: Path):
+    (
+        store, collaboration, service, _bridge,
+        actor_a, actor_b, workspace_id, project_id,
+    ) = setup(tmp_path)
+    repair = RepairBridge(repair_valid=True)
+    try:
+        await service.close()
+        service = CollaborationAnalysisService(
+            store,
+            collaboration,
+            bridge=repair,  # type: ignore[arg-type]
+            poll_seconds=0.01,
+        )
+        note = await collaboration.create_note(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            command_id="cmd.note.analysis-repair",
+            title="Analysis repair",
+            body="Проверяем bounded repair невалидного сильного анализа.",
+        )
+        started = await service.start_analysis(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            note_id=note["id"],
+            addressed_to_actor_id=actor_b,
+            command_id="cmd.analysis.repair1",
+            model="kimi_k3",
+            purpose="requirements",
+            question="Сформируй минимальный контекстный вопрос.",
+        )
+        assert started["status"] == "running"
+
+        repairing = await service.refresh_analysis(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            analysis_id=started["id"],
+        )
+        assert repairing["status"] == "running"
+        assert repairing["repair_attempt_count"] == 1
+        assert repairing["repair_model"] == "deepseek"
+        assert repairing["initial_provider_task_id"] == "provider-analysis-1"
+        assert repairing["provider_task_id"] == "provider-repair-1"
+        assert len(repair.consults) == 2
+        assert repair.consults[1]["request_key"] == (
+            f"collab-analysis:{started['id']}:repair:1"
+        )
+        assert (
+            repair.consults[1]["evidence_bundle"]
+            == repair.consults[0]["evidence_bundle"]
+        )
+        assert repair.consults[1]["model"] == "deepseek"
+
+        completed = await service.refresh_analysis(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            analysis_id=started["id"],
+        )
+        assert completed["status"] == "completed"
+        assert completed["error_code"] is None
+        assert len(completed["questions"]) == 1
+        assert completed["questions"][0]["addressed_to_actor_id"] == actor_b
+        assert len(repair.consults) == 2
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_invalid_repair_fails_closed_without_third_consult(tmp_path: Path):
+    (
+        store, collaboration, service, _bridge,
+        actor_a, actor_b, workspace_id, project_id,
+    ) = setup(tmp_path)
+    repair = RepairBridge(repair_valid=False)
+    try:
+        await service.close()
+        service = CollaborationAnalysisService(
+            store,
+            collaboration,
+            bridge=repair,  # type: ignore[arg-type]
+            poll_seconds=0.01,
+        )
+        note = await collaboration.create_note(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            command_id="cmd.note.analysis-repair-fail",
+            title="Analysis repair fail",
+            body="Невалидный repair должен закончиться fail-closed.",
+        )
+        started = await service.start_analysis(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            note_id=note["id"],
+            addressed_to_actor_id=actor_b,
+            command_id="cmd.analysis.repair-fail",
+            model="kimi_k3",
+            purpose="requirements",
+            question="Сформируй вопрос.",
+        )
+        repairing = await service.refresh_analysis(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            analysis_id=started["id"],
+        )
+        assert repairing["status"] == "running"
+
+        failed = await service.refresh_analysis(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            analysis_id=started["id"],
+        )
+        assert failed["status"] == "failed"
+        assert failed["error_code"] == "ANALYTICS_INVALID_RESULT"
+        assert failed["repair_attempt_count"] == 1
+        assert len(failed["questions"]) == 0
+        assert len(repair.consults) == 2
+    finally:
+        await service.close()
+        store.close()
