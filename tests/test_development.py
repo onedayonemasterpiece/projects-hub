@@ -526,6 +526,184 @@ def setup(tmp_path: Path):
     return store, readiness, boot, project
 
 
+
+def test_development_target_prefers_external_owning_repo_over_notes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    store, readiness, boot, project = setup(tmp_path)
+    owner = boot["actor"]["id"]
+    workspace = boot["workspace"]["id"]
+    try:
+        store.bind_repository_connection(
+            actor_id=owner,
+            workspace_id=workspace,
+            repository_id=101,
+            project_id=project["id"],
+            role="external_owning_repo",
+            access_mode="read_only",
+            allowed_paths=[],
+        )
+        store.sync_github_repositories(
+            workspace_id=workspace,
+            installation_id=77,
+            repositories=[
+                {
+                    "id": 101,
+                    "full_name": "onedayonemasterpiece/projects-hub",
+                    "default_branch": "main",
+                    "private": False,
+                },
+                {
+                    "id": 102,
+                    "full_name": "onedayonemasterpiece/projects-hub-notes",
+                    "default_branch": "main",
+                    "private": True,
+                },
+            ],
+        )
+        store.bind_repository_connection(
+            actor_id=owner,
+            workspace_id=workspace,
+            repository_id=102,
+            project_id=project["id"],
+            role="project_docs",
+            access_mode="app_managed_write",
+            allowed_paths=["docs/notes"],
+        )
+        monkeypatch.setenv(
+            development_module.SELF_REPOSITORY_ENV,
+            "onedayonemasterpiece/projects-hub",
+        )
+        monkeypatch.setenv(
+            development_module.SELF_DEVCOVEER_PROJECT_ENV,
+            "projects-hub-owner",
+        )
+
+        service = DevelopmentService(
+            store,
+            readiness,
+            devcoveer=FakeDevCoveer(),
+        )
+        assert (
+            service._project_hint(
+                owner,
+                workspace,
+                project["id"],
+                project["name"],
+            )
+            == "projects-hub-owner"
+        )
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_interrupted_recovery_reconciles_stale_notes_target_to_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    store, readiness, boot, project = setup(tmp_path)
+    owner = boot["actor"]["id"]
+    workspace = boot["workspace"]["id"]
+    fake = InterruptedStageDevCoveer("none", resume_success=False)
+    try:
+        store.bind_repository_connection(
+            actor_id=owner,
+            workspace_id=workspace,
+            repository_id=101,
+            project_id=project["id"],
+            role="external_owning_repo",
+            access_mode="read_only",
+            allowed_paths=[],
+        )
+        store.sync_github_repositories(
+            workspace_id=workspace,
+            installation_id=77,
+            repositories=[
+                {
+                    "id": 101,
+                    "full_name": "onedayonemasterpiece/projects-hub",
+                    "default_branch": "main",
+                    "private": False,
+                },
+                {
+                    "id": 102,
+                    "full_name": "onedayonemasterpiece/projects-hub-notes",
+                    "default_branch": "main",
+                    "private": True,
+                },
+            ],
+        )
+        store.bind_repository_connection(
+            actor_id=owner,
+            workspace_id=workspace,
+            repository_id=102,
+            project_id=project["id"],
+            role="project_docs",
+            access_mode="app_managed_write",
+            allowed_paths=["docs/notes"],
+        )
+        monkeypatch.setenv(
+            development_module.SELF_REPOSITORY_ENV,
+            "onedayonemasterpiece/projects-hub",
+        )
+        monkeypatch.setenv(
+            development_module.SELF_DEVCOVEER_PROJECT_ENV,
+            "projects-hub-owner",
+        )
+
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=owner,
+            workspace_id=workspace,
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+        await service.advance_active_once()
+
+        stage = service._active_stage(execution_id)
+        assert stage is not None and stage["stage"] == "implementation"
+        service._finish_stage(
+            stage_id=stage["id"],
+            status="interrupted",
+            summary="Legacy continuation landed in the notes checkout.",
+        )
+        with store._lock:
+            store.db.execute(
+                """UPDATE task_executions
+                   SET project_hint='projects-hub-notes',
+                       status='running',phase='recovering',
+                       error_code='DEVELOPMENT_TARGET_CHANGED'
+                   WHERE id=?""",
+                (execution_id,),
+            )
+
+        await service.advance_active_once()
+        current = await service.status(
+            actor_id=owner,
+            workspace_id=workspace,
+            execution_id=execution_id,
+        )
+
+        assert current["execution"]["project_hint"] == "projects-hub-owner"
+        assert current["execution"]["status"] == "running"
+        assert current["execution"]["phase"] == "implementing"
+        recovery_starts = [
+            args
+            for name, args in fake.calls
+            if name == "start"
+            and args["model"] == "gpt-6.1-sol"
+            and args["task"] == fake._recovery_implementation_task
+        ]
+        assert len(recovery_starts) == 1
+        assert recovery_starts[0]["project"] == "projects-hub-owner"
+    finally:
+        await service.close()
+        store.close()
+
+
 def create_backlog(service, boot, project):
     owner = boot["actor"]["id"]
     workspace = boot["workspace"]["id"]
@@ -987,7 +1165,7 @@ async def test_self_development_retargets_design_before_implementation(
             task_ids=[task["id"]],
         )
         execution_id = started["execution"]["id"]
-        assert started["execution"]["project_hint"] == "projects-hub"
+        assert started["execution"]["project_hint"] == "Projects Hub"
 
         monkeypatch.setenv(
             "PROJECTS_HUB_SELF_REPOSITORY",
@@ -1016,7 +1194,7 @@ async def test_self_development_retargets_design_before_implementation(
         ]
         starts = [arguments for name, arguments in fake.calls if name == "start"]
         assert [item["project"] for item in starts] == [
-            "projects-hub",
+            "Projects Hub",
             "projects-hub-owner",
         ]
         assert all(item["model"] == "gpt-6-astra" for item in starts)

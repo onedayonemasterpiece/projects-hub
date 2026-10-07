@@ -387,7 +387,6 @@ class DevelopmentService:
             if item.get("project_id") == project_id
             and item.get("state") == "available"
             and item.get("installation_state") == "active"
-            and item.get("access_mode") == "app_managed_write"
         ]
         self_repository = os.getenv(SELF_REPOSITORY_ENV, "").strip()
         self_project = os.getenv(SELF_DEVCOVEER_PROJECT_ENV, "").strip()
@@ -398,13 +397,42 @@ class DevelopmentService:
                 return self_project
             return full_name.rsplit("/", 1)[-1]
 
-        if len(connections) == 1:
-            return project_hint(connections[0])
+        # Development follows the repository that owns product source, not a
+        # repository that merely grants app-managed writes for notes/docs.
+        owning = [
+            item
+            for item in connections
+            if item.get("role") == "external_owning_repo"
+        ]
+        if len(owning) == 1:
+            return project_hint(owning[0])
+
+        # The self repository is authoritative even when normal app writes are
+        # read-only. DevCoveer write access is independently owner-gated.
+        self_matches = [
+            item
+            for item in connections
+            if self_repository
+            and str(item.get("full_name") or "").strip() == self_repository
+        ]
+        if len(self_matches) == 1:
+            return project_hint(self_matches[0])
+
+        writable = [
+            item
+            for item in connections
+            if item.get("access_mode") == "app_managed_write"
+            and item.get("role") != "project_docs"
+        ]
+        if len(writable) == 1:
+            return project_hint(writable[0])
+
         normalized = "".join(ch.lower() for ch in project_name if ch.isalnum())
         exact = [
             item
             for item in connections
-            if "".join(
+            if item.get("role") != "project_docs"
+            and "".join(
                 ch.lower()
                 for ch in str(item.get("full_name") or "").rsplit("/", 1)[-1]
                 if ch.isalnum()
@@ -1443,6 +1471,31 @@ Do NOT merge, deploy or release. Stop when the existing implementation is again 
             execution_id=execution_id,
         )
         item = dict(row)
+        project_name = self._project_name(
+            actor_id,
+            workspace_id,
+            str(item["project_id"]),
+        )
+        desired_project_hint = self._project_hint(
+            actor_id,
+            workspace_id,
+            str(item["project_id"]),
+            project_name,
+        )
+        if desired_project_hint != str(item.get("project_hint") or ""):
+            now = _now_ms()
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE task_executions
+                       SET project_hint=?,status='running',phase='recovering',
+                           phase_detail='Восстанавливаю стадию в каноническом code checkout',
+                           error_code='DEVELOPMENT_TARGET_CHANGED',
+                           finished_at_ms=NULL,updated_at_ms=?
+                       WHERE id=?""",
+                    (desired_project_hint, now, execution_id),
+                )
+            item["project_hint"] = desired_project_hint
+
         stage = self._latest_stage(execution_id)
         if stage is None or str(stage.get("status") or "") not in {
             "interrupted",
