@@ -3117,7 +3117,12 @@ Do NOT merge, deploy or release. Stop when the existing implementation is again 
                 execution_id=execution_id,
             )
         public = self._execution_public(row)
-        public["update_check_recommended"] = public["status"] == "completed"
+        evidence = public.get("delivery_evidence")
+        public["update_check_recommended"] = (
+            public["status"] == "completed"
+            and isinstance(evidence, dict)
+            and evidence.get("android_update") is True
+        )
         return {"execution": public}
 
     async def _advance_execution_locked(
