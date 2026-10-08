@@ -6,7 +6,9 @@ import hmac
 import time
 
 COOKIE_NAME = "projects_hub_session"
-SESSION_TTL_SECONDS = 24 * 60 * 60
+SESSION_TTL_SECONDS = 7 * 24 * 60 * 60
+# Renew active sessions on bootstrap, while idle devices eventually reauthenticate.
+SESSION_RENEW_WINDOW_SECONDS = 3 * 24 * 60 * 60
 
 
 def _sign(payload: bytes, secret: str) -> str:
@@ -30,7 +32,10 @@ def issue_session(
     return f"{body}.{_sign(payload, secret)}"
 
 
-def parse_session(token: str | None, secret: str, now: int | None = None) -> str | None:
+def parse_session_claims(
+    token: str | None, secret: str, now: int | None = None,
+) -> tuple[str, int] | None:
+    """Validate a session before exposing its subject or expiration."""
     if not token or "." not in token:
         return None
     body, signature = token.rsplit(".", 1)
@@ -40,8 +45,13 @@ def parse_session(token: str | None, secret: str, now: int | None = None) -> str
         expires = int(expires_text)
     except (ValueError, UnicodeDecodeError):
         return None
-    if not hmac.compare_digest(signature, _sign(raw, secret)):
+    if not actor_id or not hmac.compare_digest(signature, _sign(raw, secret)):
         return None
     if expires < int(time.time() if now is None else now):
         return None
-    return actor_id
+    return actor_id, expires
+
+
+def parse_session(token: str | None, secret: str, now: int | None = None) -> str | None:
+    claims = parse_session_claims(token, secret, now)
+    return claims[0] if claims else None
