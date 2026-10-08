@@ -20,6 +20,7 @@ import android.os.Looper;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
+import android.view.WindowInsetsController;
 import android.webkit.CookieManager;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
@@ -569,11 +570,23 @@ public final class MainActivity extends Activity {
         int canvas = light ? Color.rgb(244, 245, 247) : Color.rgb(7, 7, 8);
         if (themeRoot != null) themeRoot.setBackgroundColor(canvas);
         if (webView != null) webView.setBackgroundColor(canvas);
-        getWindow().setStatusBarColor(canvas);
-        getWindow().setNavigationBarColor(canvas);
+        // Android 15 makes system bars transparent for target SDK 35. Their
+        // backdrop is the themed root/WebView, not the deprecated bar colors.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            getWindow().setStatusBarColor(canvas);
+            getWindow().setNavigationBarColor(canvas);
+        }
         int flags = getWindow().getDecorView().getSystemUiVisibility();
         int lightBars = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
         getWindow().getDecorView().setSystemUiVisibility(light ? flags | lightBars : flags & ~lightBars);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            WindowInsetsController bars = getWindow().getInsetsController();
+            if (bars != null) {
+                int appearance = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                        | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+                bars.setSystemBarsAppearance(light ? appearance : 0, appearance);
+            }
+        }
         if (updateButton != null) {
             updateButton.setTextColor(light ? Color.rgb(29, 32, 41) : Color.rgb(245, 245, 247));
             GradientDrawable background = new GradientDrawable();
