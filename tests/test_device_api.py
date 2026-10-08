@@ -269,7 +269,21 @@ def test_completed_development_notices_are_device_bound_and_cookie_free(tmp_path
                 "/api/device/development/completed",
                 headers={"authorization": "Device " + token},
             )
-            assert response.status_code == 200
-            assert response.json() == {"items": []}
+            # Workspace ownership does not grant platform-owner privileges.
+            assert response.status_code == 403
+            owner = store.ensure_platform_owner("Explicit Owner")
+            owner_device = DeviceCommandService(store).register_device(
+                actor_id=owner["actor"]["id"],
+                workspace_id=owner["workspace"]["id"],
+                display_name="Owner Android",
+                platform="android",
+                capabilities=["calendar.read_events"],
+            )
+            entitled = client.get(
+                "/api/device/development/completed",
+                headers={"authorization": "Device " + owner_device["device_token"]},
+            )
+            assert entitled.status_code == 200
+            assert entitled.json() == {"items": []}
     finally:
         store.close()
