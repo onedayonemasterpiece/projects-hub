@@ -454,6 +454,28 @@ def _functions(
     functions.extend(
         [
             {
+                "name": "collaboration_view",
+                "description": (
+                    "Show or close a READ-ONLY visual collaboration card inside the current "
+                    "personal conversation. Call ONLY when the user explicitly asks to SEE, "
+                    "OPEN or HIDE activity, questions or one specific note on screen. "
+                    "Never invoke for greetings, 'what's new', reading a brief, creating "
+                    "notes, development completion or ordinary spoken explanations. "
+                    "Default UI is clean and voice-first; do not open visual cards unasked."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "view": {
+                            "type": "string",
+                            "enum": ["activity", "questions", "note", "close"],
+                        },
+                        "note_id": {"type": "string"},
+                    },
+                    "required": ["view"],
+                },
+            },
+            {
                 "name": "project_participants_list",
                 "description": (
                     "List participants who currently have an explicit grant to the project, "
@@ -846,6 +868,9 @@ SYSTEM_INSTRUCTION = """# ROLE
 - board_navigate focus/view_all управляет только камерой текущего единственного renderer.
 
 # PROJECT COLLABORATION
+- Стартовый экран намеренно пуст от проектных виджетов. На «привет», «что нового», «что по задачам» говори голосом: прочитай личный brief, важные решения и реально завершённые работы. НЕ вызывай collaboration_view и не открывай карточки автоматически.
+- Только на явное «покажи на экране заметку / вопросы / новости» вызывай collaboration_view с нужным view; «закрой карточку» — view=close. Ответы на вопросы и заметки принимает только Мира голосом через уже существующие tools, никаких текстовых форм.
+- Не выдавай старые собственные заметки за новые сообщения команды. Отличай созданную/изменённую участником заметку от завершённого анализа ChatGPT: «ChatGPT завершил анализ заметки», а не «пользователь изменил заметку». Не перечисляй шум и тестовые объекты как реальные выполненные поручения.
 - Общая проектная заметка — first-class project object, а не копия личной переписки. Создавай её через project_note_create только по намерению пользователя сохранить/поделиться заметкой.
 - Когда project_note_get возвращает note.chatgpt_analysis, это сохранённый deep analysis ChatGPT конкретной редакции заметки. По запросу «что ChatGPT проанализировал / зачитай анализ» прочитай его содержательно через обычный голосовой Live-ответ; не запускай новую транскрибацию и не выдавай предложения анализа за принятые поручения.
 - Событие note_chatgpt_analyzed в личной сводке означает завершённую проверенную публикацию companion Markdown, но не разрешает автоматически менять проектные документы, задачи или решения.
@@ -1935,6 +1960,29 @@ class ProjectsHubLiveAdapter:
                         "token": "uif_" + command_id[-24:],
                     },
                 }
+
+        if name == "collaboration_view":
+            if self.collaboration is None:
+                raise StoreError("TOOL_NOT_AVAILABLE", "Project collaboration is unavailable")
+            view = str(args.get("view") or "")
+            if view not in {"activity", "questions", "note", "close"}:
+                raise StoreError("INVALID_ARGUMENT", "Unknown collaboration view")
+            if view == "close":
+                return {"ui_command": {"kind": "collaboration", "action": "close"}}
+            ui_command: dict[str, Any] = {
+                "kind": "collaboration", "action": "show", "view": view,
+            }
+            if view == "note":
+                note_id = str(args.get("note_id") or "")
+                if not note_id:
+                    raise StoreError("INVALID_ARGUMENT", "note_id is required to show a note")
+                # Explicit read grant must be checked before displaying a note.
+                note = self.collaboration.get_note(
+                    actor_id=actor_id, workspace_id=workspace_id, note_id=note_id,
+                )
+                ui_command["note_id"] = note_id
+                ui_command["title"] = str(note["title"])
+            return {"ui_command": ui_command}
 
         if name in {
             "project_participants_list",
