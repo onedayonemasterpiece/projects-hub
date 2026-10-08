@@ -26,17 +26,29 @@ public final class DevelopmentCompletionJob extends JobService {
     private static final long PERIOD_MS = 15 * 60 * 1000L;
     private static final String PREFS = "projects_hub_development_notices";
 
-    static void schedule(Context context) {
-        JobScheduler scheduler = context.getSystemService(JobScheduler.class);
-        if (scheduler == null) return;
-        JobInfo info = new JobInfo.Builder(
-                JOB_ID,
-                new ComponentName(context, DevelopmentCompletionJob.class))
-                .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
-                .setPersisted(true)
-                .setPeriodic(PERIOD_MS)
-                .build();
-        scheduler.schedule(info);
+    static boolean schedule(Context context) {
+        // Optional background notifications must NEVER crash normal app startup.
+        // Vendor OSes can reject persisted jobs despite the manifest permission.
+        try {
+            JobScheduler scheduler = context.getSystemService(JobScheduler.class);
+            if (scheduler == null) return false;
+            JobInfo info = new JobInfo.Builder(
+                    JOB_ID,
+                    new ComponentName(context, DevelopmentCompletionJob.class))
+                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                    .setPersisted(true)
+                    .setPeriodic(PERIOD_MS)
+                    .build();
+            int result = scheduler.schedule(info);
+            if (result != JobScheduler.RESULT_SUCCESS) {
+                Log.w("ProjectsHubDelivery", "Optional completion job was not accepted");
+            }
+            return result == JobScheduler.RESULT_SUCCESS;
+        } catch (RuntimeException failure) {
+            Log.w("ProjectsHubDelivery",
+                    "Optional completion job unavailable; normal app remains usable", failure);
+            return false;
+        }
     }
 
     @Override

@@ -665,8 +665,10 @@ public final class MainActivity extends Activity {
     }
 
     private synchronized void startDeviceLoop(String token) {
-        DevelopmentCompletionJob.schedule(this);
         if (deviceLoop != null) return;
+        // Optional notification scheduling belongs off the UI thread:
+        // it must not hold the app open or crash a previously paired device.
+        io.execute(() -> DevelopmentCompletionJob.schedule(getApplicationContext()));
         deviceLoop = new DeviceCommandLoop(
                 api,
                 token,
