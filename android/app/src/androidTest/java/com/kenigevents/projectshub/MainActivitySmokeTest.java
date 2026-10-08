@@ -49,6 +49,9 @@ public class MainActivitySmokeTest {
                 }
             });
             // Intercept the prepared page locally but keep the actual HTTPS origin.
+            // The activity starts loading the real PWA in onCreate. Stop that
+            // in-flight navigation before loading this isolated exact-origin fixture.
+            view.stopLoading();
             view.loadUrl(url);
         });
         assertTrue("exact theme fixture must load before posting to bridge",
@@ -72,7 +75,7 @@ public class MainActivitySmokeTest {
 
     @Test public void trustedPageAppliesBothPalettesWithoutReplacingWebView() throws Exception {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
-            page(scenario, BuildConfig.HUB_URL);
+            page(scenario, BuildConfig.HUB_URL + "__theme_fixture__");
             final WebView[] original = new WebView[1];
             scenario.onActivity(activity -> original[0] = activity.themeWebView());
             message(scenario, "light", 1);
@@ -89,7 +92,7 @@ public class MainActivitySmokeTest {
                 assertEquals(0, activity.getWindow().getDecorView().getSystemUiVisibility()
                         & View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
             });
-            page(scenario, "https://foreign.invalid/");
+            page(scenario, "https://foreign.invalid/__theme_fixture__");
             CountDownLatch checked = new CountDownLatch(1);
             scenario.onActivity(activity -> activity.themeWebView().evaluateJavascript(
                     "typeof projectsHubTheme", value -> { assertEquals("\"undefined\"", value); checked.countDown(); }));
