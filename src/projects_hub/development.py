@@ -1995,6 +1995,35 @@ Main CI/release evidence:
         )
         job = self._direct_action_data(job_payload)
         job_status = str(job.get("status") or "")
+        if job_status == "succeeded":
+            # A green command exit alone does not prove the requested version
+            # is running. The existing exact-SHA installer already emits a
+            # structured health/readback receipt; consume it, do not invent
+            # another deployment verifier or claim delivery from agent prose.
+            result = job.get("result") if isinstance(job.get("result"), dict) else {}
+            tail = job.get("output_tail") if isinstance(job.get("output_tail"), dict) else {}
+            output = str(result.get("stdout") or tail.get("stdout") or "").strip()
+            try:
+                receipt = json.loads(output)
+            except (TypeError, ValueError):
+                receipt = {}
+            health = receipt.get("health") if isinstance(receipt, dict) else {}
+            if not isinstance(health, dict):
+                health = {}
+            verified = (
+                isinstance(receipt, dict)
+                and result.get("exit_code") == 0
+                and receipt.get("ok") is True
+                and receipt.get("verified_main_sha") == main_sha
+                and receipt.get("release_sha") == main_sha
+                and health.get("ok") is True
+                and health.get("release_sha") == main_sha
+            )
+            evidence["deploy_receipt_verified"] = verified
+            if not verified:
+                # Existing bounded retry handles a wrong/missing receipt just
+                # like a failed deploy. Never mark the backlog done.
+                job_status = "receipt_unverified"
         evidence["deploy_job"] = job
         self._store_delivery_state(
             execution_id=execution_id,
@@ -2033,13 +2062,6 @@ Main CI/release evidence:
                     (_now_ms(), _now_ms(), execution_id),
                 )
             return True
-
-        result = job.get("result") if isinstance(job.get("result"), dict) else {}
-        if result.get("exit_code") != 0:
-            raise StoreError(
-                "DELIVERY_DEPLOY_FAILED",
-                "Deploy job succeeded receipt has non-zero command exit",
-            )
 
         deployed_at = _now_ms()
         evidence["deployed_main_sha"] = main_sha
