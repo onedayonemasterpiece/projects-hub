@@ -119,7 +119,18 @@ try {
     await page.locator('button').first().focus();
     await page.evaluate(()=>window.fixtureButton=document.activeElement);
     await page.getByRole('button',{name:'Начать голосовой разговор',exact:true}).click();
-    await page.waitForFunction(()=>{const button=document.querySelector('.voice-orb');return button && !button.disabled && button.getAttribute('aria-label')==='Остановить разговор';});
+    try {
+      await page.waitForFunction(()=>{const button=document.querySelector('.voice-orb');return button && !button.disabled && button.getAttribute('aria-label')==='Остановить разговор';},null,{timeout:15000});
+    } catch (error) {
+      const debug=await page.evaluate(()=>({
+        button:document.querySelector('.voice-orb')?.outerHTML?.slice(0,500),
+        message:document.body.innerText.slice(-1200),
+        readyState:document.readyState,
+        mediaCaptures:window.fixtureCaptures,
+      }));
+      console.error('THEME_VOICE_START_DIAGNOSTICS',JSON.stringify({debug,sessionStarts,websocketRoute:!!socket,errors}));
+      throw error;
+    }
     assert.ok(socket);
     const captureCount=await page.evaluate(()=>window.fixtureCaptures);
     assert.ok(captureCount>0);
