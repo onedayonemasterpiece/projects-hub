@@ -991,12 +991,20 @@ def create_app(
         device = app.state.device_commands.authenticate(
             request.headers.get("authorization")
         )
+        recent = app.state.development.recent_completions(
+            actor_id=device["actor_id"],
+            workspace_id=device["workspace_id"],
+            days=7,
+        )
         return {
-            "items": app.state.development.recent_completions(
-                actor_id=device["actor_id"],
-                workspace_id=device["workspace_id"],
-                days=7,
-            )
+            "items": [
+                {
+                    "id": item["id"],
+                    "titles": item["titles"],
+                    "finished_at_ms": item["finished_at_ms"],
+                }
+                for item in recent
+            ]
         }
 
     @app.get("/api/development/executions/latest")
