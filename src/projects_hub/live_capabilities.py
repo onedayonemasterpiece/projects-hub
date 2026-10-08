@@ -28,7 +28,7 @@ BUNDLES = {
 # additionalProperties keyword. Backend execution still validates exact args.
 ROUTER = {
     "name": "activate_capability",
-    "description": "Load one allowed capability for the current accepted user intent, or return to core. intent is continuation context, never authorization.",
+    "description": "Load one capability listed in context.allowed_capabilities for the accepted user intent, then use its tools. The current bundle does not contain all permitted functions: on theme requests use preferences, on owner backlog/development launch/status use owner_development when allowed, on board requests use board, on notes/questions use notes/collaboration. Activate instead of claiming the feature unavailable. Intent is continuation context, never authorization; development launch requires explicit owner request.",
     "parameters": {"type": "object",
                    "properties": {"capability": {"type": "string", "enum": list(BUNDLES)},
                                   "intent": {"type": "string", "maxLength": 1000}},
