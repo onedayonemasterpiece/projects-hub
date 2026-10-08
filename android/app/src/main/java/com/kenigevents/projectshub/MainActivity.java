@@ -665,6 +665,7 @@ public final class MainActivity extends Activity {
     }
 
     private synchronized void startDeviceLoop(String token) {
+        DevelopmentCompletionJob.schedule(this);
         if (deviceLoop != null) return;
         deviceLoop = new DeviceCommandLoop(
                 api,

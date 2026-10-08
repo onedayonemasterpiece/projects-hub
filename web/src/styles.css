@@ -1221,3 +1221,40 @@ button:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition: none !important; } }
+
+/* Owner deliveries: a brief Mira greeting and the existing backlog's recent history. */
+.development-arrival {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 6px 12px 10px;
+  padding: 12px 16px;
+  color: var(--ink, #f1f1f3);
+}
+.development-arrival p {
+  margin: 4px 0 0;
+  line-height: 1.4;
+}
+.development-arrival-actions { display: flex; align-items: center; gap: 6px; }
+.completed-developments {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0 20px;
+}
+.completed-developments h3 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+.completed-development-row {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, rgba(200, 200, 210, 0.25));
+  border-radius: 12px;
+}
+.completed-development-row span { font-size: 0.84rem; opacity: 0.82; }
+@media (max-width: 440px) {
+  .development-arrival { flex-wrap: wrap; }
+  .development-arrival-actions { width: 100%; justify-content: flex-end; }
+}

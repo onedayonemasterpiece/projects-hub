@@ -20,7 +20,7 @@ TERMINAL_EXECUTION_STATES = {"completed", "failed", "cancelled", "blocked"}
 DEFAULT_CODEX_PROFILE = "gpt-6.1-medium"
 QUALITY_MODEL = "gpt-6-astra"
 QUALITY_EFFORT = "high"
-MAX_REWORK_CYCLES = 12
+MAX_REWORK_CYCLES = 2
 MAX_INTERRUPTED_RESUME_ATTEMPTS = 1
 MAX_INTERRUPTED_DESIGN_ATTEMPTS = 3
 MAX_INTERRUPTED_REVIEW_ATTEMPTS = 4
@@ -49,7 +49,11 @@ class DevelopmentService:
         readiness: ReadinessService,
         *,
         devcoveer: DevCoveerClient | None = None,
+        pipeline_mode: str = "codex_owner",
     ) -> None:
+        if pipeline_mode not in {"codex_owner", "legacy"}:
+            raise ValueError("Unknown owner-development pipeline")
+        self.pipeline_mode = pipeline_mode
         self.store = store
         self.readiness = readiness
         self.devcoveer = devcoveer or DevCoveerClient()
@@ -152,6 +156,11 @@ class DevelopmentService:
                     "PRAGMA table_info(task_executions)"
                 ).fetchall()
             }
+            if "pipeline_mode" not in columns:
+                # Existing in-flight deliveries keep their original resume path.
+                self.store.db.execute(
+                    "ALTER TABLE task_executions ADD COLUMN pipeline_mode TEXT NOT NULL DEFAULT 'legacy'"
+                )
             if "phase" not in columns:
                 self.store.db.execute(
                     "ALTER TABLE task_executions ADD COLUMN phase TEXT NOT NULL DEFAULT 'queued'"
@@ -554,7 +563,7 @@ The brief must be sufficient for a separate implementation thread to work withou
         return f"""Implement the owner-approved development specification for {project_name} at:
 {spec_path}
 
-Read the specification and current repository state first. Refresh/reconcile with the latest origin/main before declaring the candidate ready; resolve merge conflicts without dropping unrelated main work. Implement the requested product change, add/update tests, and perform the required debugging and browser/emulator checks from the spec. If the candidate changes Android/native code, ensure the project semantic version is the next unused version relative to fresh main before review so the signed main release can be published. Prepare a clean committed reviewable chatgpt/* branch whose name contains the stable execution marker {marker} (for example chatgpt/ownerdev-{marker}-short-topic); deterministic GitHub publication/CI is owned by the durable orchestrator. DO NOT merge, deploy, publish a release or modify production. Stop when the committed candidate is ready for independent quality review. Report the branch/HEAD and local evidence."""
+Read the specification and current repository state first. Refresh/reconcile with the latest origin/main before declaring the candidate ready; resolve merge conflicts without dropping unrelated main work. Implement the requested product change, add/update tests, and perform the required debugging and browser/emulator checks from the spec. If the candidate changes Android/native code, ensure the project semantic version is the next unused version relative to fresh main before review so the signed main release can be published. Prepare a clean committed reviewable chatgpt/* branch whose name contains the stable execution marker {marker} (for example chatgpt/ownerdev-{marker}-short-topic); You own development, local tests, candidate publication and existing CI as an intelligent Codex engineer: commit/push the execution-specific branch, open or update its GitHub PR, check actual CI results, fix failing checks within scope and verify the PR is reviewable. Do NOT merge, deploy, publish a release or modify production until the independent quality reviewer accepts it. Do not create a new CI system. Stop after ready for review and report IMPLEMENTATION_READY with PR URL, exact branch/SHA, actual tests/CI results and remaining concerns."""
 
     @staticmethod
     def _review_prompt(
@@ -589,14 +598,18 @@ Before the verdict, give concise actionable findings."""
 Review findings:
 {review_summary}
 
-Read the updated specification and fix all material findings. Refresh/reconcile with latest origin/main and resolve any PR merge conflicts while preserving unrelated main work. If Android/native code differs from fresh main, keep the project semantic version at the next unused version before review. Re-run the available tests/debugging/browser/emulator checks. Keep the existing implementation scope and produce a clean committed chatgpt/* candidate. Deterministic push/PR/CI is owned by the durable orchestrator. Do NOT merge, deploy or release. Stop when the change is again ready for independent review and report the updated HEAD/evidence."""
+Read the updated specification and fix all material findings. Refresh/reconcile with latest origin/main and resolve any PR merge conflicts while preserving unrelated main work. If Android/native code differs from fresh main, keep the project semantic version at the next unused version before review. Re-run the available tests/debugging/browser/emulator checks. Keep the existing implementation scope and produce a clean committed chatgpt/* candidate. As the Native Codex engineer, commit/push the updated candidate, inspect the existing GitHub PR and run/check the project's normal CI. Do not merge, deploy or release until an independent ACCEPTED review. Never create a separate CI system. Stop once the updated PR and evidence are reviewable."""
 
     @staticmethod
     def _delivery_prompt(spec_path: str) -> str:
-        return f"""Independent quality review ACCEPTED the implementation of:
+        return f"""The independent quality reviewer ACCEPTED the implementation of:
 {spec_path}
 
-Now finish delivery using the repository's normal path. Merge/publish only the accepted implementation and wait for the required CI. Never deploy a branch-only/worktree-only commit. For Projects Hub production, refresh origin/main after merge and deploy only the exact merged SHA from fresh origin/main history through the canonical installer. Verify that the running service, static assets and release metadata all resolve to that same immutable release. If native Android changed, produce the normal signed Android release/update manifest and verify the release; if only backend/PWA changed, deploy and verify that path instead. Do not broaden scope. Report the actual delivered version/release, production verification and any genuine blocker."""
+You are the Native Codex engineer responsible for the ENTIRE final delivery. Read this project's own release/deploy instructions and AGENTS.md, then perform its existing normal delivery process yourself. Merge only the reviewed candidate. Check real GitHub CI through successful terminal results, resolve deployment problems within scope, and verify the actual published/live result through authoritative readback. Do not create a new CI/workflow/orchestrator. Never deploy a branch-only or worktree-only commit. For Projects Hub, deploy the exact merged SHA from fresh origin/main history; verify the running service, static assets and release metadata all match that immutable release, check health release_sha, and when Android native code changed publish the normal signed APK/update manifest and verify the release. For other projects use their own documented delivery path; do not invent a Projects Hub-specific pipeline.
+
+Only if actual delivery succeeded, end your final answer with one single line:
+DELIVERY_RECEIPT: {{"status":"delivered","ci":"passed","main_sha":"<40 lowercase hex digits>","evidence_url":"<actual GitHub CI or release URL>","verification":"<what you personally checked and where>","android_update":false,"android_release_url":null}}
+Set android_update=true and android_release_url to the existing signed APK release URL ONLY if an Android app version actually changed. The facts must be checked, not guessed. If a step failed or remains ambiguous, do not emit DELIVERY_RECEIPT; report the concrete blocker for a bounded retry or truthful failure."""
 
     @staticmethod
     def _review_verdict(summary: str) -> str | None:
@@ -979,6 +992,12 @@ Now finish delivery using the repository's normal path. Merge/publish only the a
                 ),
             )
 
+        with self.store._lock:
+            self.store.db.execute(
+                "UPDATE task_executions SET pipeline_mode=? WHERE id=?",
+                (self.pipeline_mode, execution_id),
+            )
+
         try:
             result = await self.devcoveer.start_codex_task(
                 project=project_hint,
@@ -1294,9 +1313,23 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
         git_state = self._direct_result_data(git_payload)
         current_branch = str(git_state.get("branch") or "")
         current_sha = str(git_state.get("head") or "").lower()
+        # A clean chatgpt/* checkout may belong to a different concurrent
+        # development run. Reuse only this execution's marker or its already
+        # persisted exact branch/SHA; never publish an unrelated HEAD.
+        marker = self._candidate_branch_marker(str(item["id"]))
+        stored_branch = str(item.get("candidate_branch") or "").strip()
+        stored_sha = str(item.get("candidate_sha") or "").lower()
+        def owns_candidate(branch: str, sha: str) -> bool:
+            return bool(
+                branch.startswith("chatgpt/")
+                and (
+                    marker in branch
+                    or (branch == stored_branch and sha == stored_sha and len(stored_sha) == 40)
+                )
+            )
         current_clean = (
             git_state.get("head_state") == "branch"
-            and current_branch.startswith("chatgpt/")
+            and owns_candidate(current_branch, current_sha)
             and re.fullmatch(r"[0-9a-f]{40}", current_sha) is not None
             and not (git_state.get("staged") or [])
             and not (git_state.get("unstaged") or [])
@@ -1309,8 +1342,6 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
         candidate_source = "current_checkout" if current_clean else ""
         local_candidates: list[dict[str, Any]] = []
         if not current_clean:
-            stored_branch = str(item.get("candidate_branch") or "").strip()
-            marker = self._candidate_branch_marker(str(item["id"]))
             probe_payload: dict[str, Any] = {
                 "prefix": "chatgpt/",
                 "limit": 50,
@@ -1332,7 +1363,7 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
                         continue
                     candidate_branch = str(raw.get("branch") or "")
                     candidate_sha = str(raw.get("sha") or "").lower()
-                    if not candidate_branch.startswith("chatgpt/"):
+                    if not owns_candidate(candidate_branch, candidate_sha):
                         continue
                     if re.fullmatch(r"[0-9a-f]{40}", candidate_sha) is None:
                         continue
@@ -1983,6 +2014,35 @@ Main CI/release evidence:
         )
         job = self._direct_action_data(job_payload)
         job_status = str(job.get("status") or "")
+        if job_status == "succeeded":
+            # A green command exit alone does not prove the requested version
+            # is running. The existing exact-SHA installer already emits a
+            # structured health/readback receipt; consume it, do not invent
+            # another deployment verifier or claim delivery from agent prose.
+            result = job.get("result") if isinstance(job.get("result"), dict) else {}
+            tail = job.get("output_tail") if isinstance(job.get("output_tail"), dict) else {}
+            output = str(result.get("stdout") or tail.get("stdout") or "").strip()
+            try:
+                receipt = json.loads(output)
+            except (TypeError, ValueError):
+                receipt = {}
+            health = receipt.get("health") if isinstance(receipt, dict) else {}
+            if not isinstance(health, dict):
+                health = {}
+            verified = (
+                isinstance(receipt, dict)
+                and result.get("exit_code") == 0
+                and receipt.get("ok") is True
+                and receipt.get("verified_main_sha") == main_sha
+                and receipt.get("release_sha") == main_sha
+                and health.get("ok") is True
+                and health.get("release_sha") == main_sha
+            )
+            evidence["deploy_receipt_verified"] = verified
+            if not verified:
+                # Existing bounded retry handles a wrong/missing receipt just
+                # like a failed deploy. Never mark the backlog done.
+                job_status = "receipt_unverified"
         evidence["deploy_job"] = job
         self._store_delivery_state(
             execution_id=execution_id,
@@ -2022,13 +2082,6 @@ Main CI/release evidence:
                 )
             return True
 
-        result = job.get("result") if isinstance(job.get("result"), dict) else {}
-        if result.get("exit_code") != 0:
-            raise StoreError(
-                "DELIVERY_DEPLOY_FAILED",
-                "Deploy job succeeded receipt has non-zero command exit",
-            )
-
         deployed_at = _now_ms()
         evidence["deployed_main_sha"] = main_sha
         self._store_delivery_state(
@@ -2062,6 +2115,333 @@ Main CI/release evidence:
                     "UPDATE tasks SET state='done',updated_at_ms=? WHERE id=?",
                     (deployed_at, task_id),
                 )
+        return True
+
+    @staticmethod
+    def _codex_delivery_receipt(summary: str) -> dict[str, Any] | None:
+        """Parse Codex's final evidence, not a worker-generated CI simulation."""
+        for line in reversed(summary.splitlines()):
+            if not line.startswith("DELIVERY_RECEIPT: "):
+                continue
+            try:
+                receipt = json.loads(line.removeprefix("DELIVERY_RECEIPT: ").strip())
+            except (ValueError, TypeError):
+                return None
+            if not isinstance(receipt, dict):
+                return None
+            main_sha = str(receipt.get("main_sha") or "").lower()
+            evidence_url = str(receipt.get("evidence_url") or "")
+            verification = str(receipt.get("verification") or "")
+            android_update = receipt.get("android_update")
+            android_url = receipt.get("android_release_url")
+            if (
+                receipt.get("status") != "delivered"
+                or receipt.get("ci") != "passed"
+                or re.fullmatch(r"[0-9a-f]{40}", main_sha) is None
+                or not evidence_url.startswith("https://")
+                or len(verification.strip()) < 24
+                or not isinstance(android_update, bool)
+                or (android_update and (
+                    not isinstance(android_url, str)
+                    or not android_url.startswith("https://")
+                ))
+            ):
+                return None
+            return receipt
+        return None
+
+    def recent_completions(
+        self, *, actor_id: str, workspace_id: str, days: int = 7, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """Actor-private completed executions across projects; read only."""
+        self._authorize_owner(actor_id, workspace_id)
+        since_ms = _now_ms() - min(30, max(1, days)) * 86_400_000
+        with self.store._lock:
+            runs = self.store.db.execute(
+                """SELECT id,project_id,task_ids_json,finished_at_ms,
+                          delivery_main_sha,result_summary,delivery_evidence_json
+                   FROM task_executions
+                   WHERE actor_id=? AND workspace_id=?
+                     AND status='completed' AND finished_at_ms>=?
+                   ORDER BY finished_at_ms DESC LIMIT ?""",
+                (actor_id, workspace_id, since_ms, min(30, max(1, limit))),
+            ).fetchall()
+            task_ids = list(dict.fromkeys(
+                str(task_id)
+                for run in runs
+                for task_id in json.loads(run["task_ids_json"])
+            ))
+            task_titles: dict[str, str] = {}
+            if task_ids:
+                placeholders = ",".join("?" for _ in task_ids)
+                tasks = self.store.db.execute(
+                    f"SELECT id,title FROM tasks WHERE id IN ({placeholders})",
+                    task_ids,
+                ).fetchall()
+                task_titles = {str(row["id"]): str(row["title"]) for row in tasks}
+        projects = {
+            str(project["id"]): str(project["name"])
+            for project in self.store.list_projects(actor_id, workspace_id)
+        }
+        return [{
+            "id": str(run["id"]),
+            "project_id": str(run["project_id"]),
+            "project_name": projects.get(str(run["project_id"]), "Проект"),
+            "titles": [
+                task_titles[task_id]
+                for task_id in json.loads(run["task_ids_json"])
+                if task_id in task_titles
+            ],
+            "finished_at_ms": int(run["finished_at_ms"]),
+            "main_sha": str(run["delivery_main_sha"] or ""),
+            "summary": str(run["result_summary"] or "")[:500],
+            "android_update": bool(
+                self._decode_development_delivery(run["delivery_evidence_json"])
+                .get("android_update") is True
+            ),
+        } for run in runs]
+
+    @staticmethod
+    def _decode_development_delivery(raw: Any) -> dict[str, Any]:
+        try:
+            value = json.loads(raw) if raw else {}
+        except (ValueError, TypeError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    async def _advance_codex_owner_locked(
+        self, *, actor_id: str, workspace_id: str, execution_id: str
+    ) -> bool:
+        """One active Codex turn, one next-stage dispatch. No separate CI/deploy engine."""
+        row = self._execution_row(
+            actor_id=actor_id, workspace_id=workspace_id, execution_id=execution_id
+        )
+        item = dict(row)
+        if item["status"] not in ACTIVE_EXECUTION_STATES:
+            return False
+        stage = self._active_stage(execution_id)
+        if stage is None:
+            now = _now_ms()
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE task_executions
+                       SET status='failed',phase='failed',
+                           phase_detail='Нет подтверждённой стадии Codex',
+                           error_code='DEVELOPMENT_STAGE_MISSING',
+                           finished_at_ms=?,updated_at_ms=? WHERE id=?""",
+                    (now, now, execution_id),
+                )
+            return True
+
+        task_id = str(stage["devcoveer_task_id"] or "")
+        response = await self.devcoveer.read_task(
+            task_id, project=str(item["project_hint"]), detail="summary"
+        )
+        state = self._task_status_from_result(response)
+        latest = response.get("latestTurn")
+        latest = latest if isinstance(latest, dict) else {}
+        summary = str(
+            response.get("finalResponse") or latest.get("finalResponse")
+            or response.get("content") or ""
+        ).strip()[:12000]
+        name = str(stage["stage"])
+        if state == "running":
+            return False
+        now = _now_ms()
+        usage = self._token_usage(response)
+
+        if state == "interrupted":
+            attempts = self._mark_recovery_attempt(str(stage["id"]))
+            if attempts <= 1:
+                await self._require_stage_capacity(
+                    actor_id=actor_id, workspace_id=workspace_id,
+                    model=str(stage["model"]), reasoning_effort=str(stage["reasoning_effort"]),
+                )
+                await self.devcoveer.continue_codex_task(
+                    task_id, project=str(item["project_hint"]),
+                    prompt=self._interrupted_resume_prompt(name),
+                    access="read" if name in {"design", "review"} else "write",
+                )
+                with self.store._lock:
+                    self.store.db.execute(
+                        """UPDATE task_executions SET status='running',phase=?,
+                           phase_detail='Codex возобновил прерванный этап',
+                           error_code=NULL,finished_at_ms=NULL,updated_at_ms=?
+                           WHERE id=?""",
+                        ({"design":"designing","review":"reviewing",
+                          "rework":"reworking","delivery":"delivering"}
+                         .get(name, "implementing"), now, execution_id),
+                    )
+                return True
+            state = "failed"
+        if state in {"failed", "cancelled"}:
+            self._finish_stage(
+                stage_id=str(stage["id"]), status=state,
+                summary=summary or "Codex stage ended unsuccessfully",
+                token_usage=usage,
+            )
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE task_executions SET status=?,phase='failed',
+                       phase_detail='Codex не завершил этап',
+                       error_code='DEVCOVEER_STAGE_FAILED',
+                       result_summary=?,finished_at_ms=?,updated_at_ms=? WHERE id=?""",
+                    ("failed", summary, now, now, execution_id),
+                )
+            return True
+        if state != "completed":
+            return False
+
+        model, effort = str(item["model_profile"]).rsplit(":", 1)
+        project = str(item["project_hint"])
+        spec = str(item["spec_path"] or "")
+        cycle = int(stage["cycle"] or 0)
+        followup: tuple[str, int, str, str, str, str, str] | None = None
+        receipt: dict[str, Any] | None = None
+        if name == "design":
+            followup = (
+                "implementation", 0, model, effort, "write",
+                self._implementation_prompt(
+                    self._project_name(actor_id, workspace_id, str(item["project_id"])),
+                    spec, execution_id,
+                ),
+                "implementing",
+            )
+        elif name in {"implementation", "rework"}:
+            followup = (
+                "review", cycle, QUALITY_MODEL, QUALITY_EFFORT, "read",
+                self._review_prompt(spec, cycle, summary),
+                "reviewing",
+            )
+        elif name == "review":
+            verdict = self._review_verdict(summary)
+            if verdict == "accepted":
+                followup = (
+                    "delivery", cycle, model, effort, "write",
+                    self._delivery_prompt(spec), "delivering",
+                )
+            elif verdict == "rework_required" and cycle < MAX_REWORK_CYCLES:
+                followup = (
+                    "rework", cycle + 1, model, effort, "write",
+                    self._rework_prompt(spec, summary, cycle + 1), "reworking",
+                )
+            elif verdict is None and self._stage_attempt_count(
+                execution_id, "review", cycle=cycle
+            ) < 2:
+                self._mark_recovery_attempt(str(stage["id"]))
+                followup = (
+                    "review", cycle, QUALITY_MODEL, QUALITY_EFFORT, "read",
+                    "Please complete your independent review and end with exactly "
+                    "REVIEW_VERDICT: ACCEPTED or REVIEW_VERDICT: REWORK_REQUIRED. "
+                    "Do not change code. Original specification: " + spec,
+                    "reviewing",
+                )
+        elif name == "delivery":
+            receipt = self._codex_delivery_receipt(summary)
+            if receipt is None and cycle < 1:
+                followup = (
+                    "delivery", cycle + 1, model, effort, "write",
+                    "Complete the existing authorized delivery or report the exact "
+                    "blocking failure. Confirm real merged main, successful CI, live/"
+                    "published verification and signed Android release if necessary. "
+                    "Finish with the exact verified DELIVERY_RECEIPT JSON line specified "
+                    "earlier ONLY after all checks really passed. Do not create a CI engine.",
+                    "delivering",
+                )
+        else:
+            return False
+
+        if followup is not None:
+            next_name, next_cycle, next_model, next_effort, access, prompt, phase = followup
+            await self._require_stage_capacity(
+                actor_id=actor_id, workspace_id=workspace_id,
+                model=next_model, reasoning_effort=next_effort,
+            )
+            if name == "design":
+                started = await self.devcoveer.start_codex_task(
+                    project=project, prompt=prompt, model=next_model,
+                    reasoning_effort=next_effort, access=access,
+                )
+                next_task = str(started.get("taskId") or started.get("taskReference") or "")
+                if not next_task:
+                    raise StoreError("DEVCOVEER_INVALID_RESPONSE", "No implementation task reference")
+            else:
+                next_task = (
+                    str(item.get("quality_task_id") or "")
+                    if next_name == "review"
+                    else str(item.get("implementation_task_id") or "")
+                )
+                if not next_task:
+                    raise StoreError("DEVCOVEER_INVALID_RESPONSE", "Existing Codex thread missing")
+                await self.devcoveer.continue_codex_task(
+                    next_task, project=project, prompt=prompt,
+                    access=access, model=next_model, reasoning_effort=next_effort,
+                )
+            self._finish_stage(
+                stage_id=str(stage["id"]), status="completed",
+                summary=summary, review_verdict=(
+                    self._review_verdict(summary) if name == "review" else None
+                ), token_usage=usage,
+            )
+            self._record_stage(
+                execution_id=execution_id, stage=next_name, cycle=next_cycle,
+                model=next_model, reasoning_effort=next_effort,
+                devcoveer_task_id=next_task,
+            )
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE task_executions SET status='running',phase=?,
+                       phase_detail=?,devcoveer_task_id=?,
+                       quality_task_id=COALESCE(?,quality_task_id),
+                       implementation_task_id=COALESCE(?,implementation_task_id),
+                       review_cycle=?,error_code=NULL,result_summary=?,
+                       finished_at_ms=NULL,updated_at_ms=? WHERE id=?""",
+                    (phase, {
+                        "implementing":"Codex разрабатывает и проверяет кандидат",
+                        "reviewing":"Astra High проверяет результат",
+                        "reworking":"Codex исправляет замечания ревью",
+                        "delivering":"Codex выполняет CI, merge, релиз и проверку поставки",
+                    }[phase], next_task,
+                     next_task if next_name == "review" else None,
+                     next_task if next_name in {"implementation", "rework"} else None,
+                     next_cycle, summary, now, execution_id),
+                )
+            return True
+
+        self._finish_stage(
+            stage_id=str(stage["id"]), status="completed",
+            summary=summary, review_verdict=(
+                self._review_verdict(summary) if name == "review" else None
+            ), token_usage=usage,
+        )
+        if name == "delivery" and receipt is not None:
+            # This is a Codex-delivered readback: no parallel CI/deploy service.
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE task_executions SET status='completed',phase='ready',
+                       phase_detail='Codex поставил и проверил результат',
+                       result_summary=?,delivery_main_sha=?,
+                       delivery_deployed_at_ms=?,delivery_evidence_json=?,
+                       error_code=NULL,finished_at_ms=?,updated_at_ms=?
+                       WHERE id=?""",
+                    (summary[:6000], receipt["main_sha"], now,
+                     json.dumps(receipt, ensure_ascii=False), now, now, execution_id),
+                )
+                for task_id in json.loads(item["task_ids_json"]):
+                    self.store.db.execute(
+                        "UPDATE tasks SET state='done',updated_at_ms=? WHERE id=?",
+                        (now, task_id),
+                    )
+            return True
+        error = "REVIEW_REWORK_LIMIT" if name == "review" else "DELIVERY_UNVERIFIED"
+        with self.store._lock:
+            self.store.db.execute(
+                """UPDATE task_executions SET status='failed',phase='failed',
+                   phase_detail='Не пройдена приёмка или поставка не подтверждена',
+                   error_code=?,result_summary=?,finished_at_ms=?,updated_at_ms=?
+                   WHERE id=?""",
+                (error, summary, now, now, execution_id),
+            )
         return True
 
     def _mark_recovery_attempt(self, stage_id: str) -> int:
@@ -2739,7 +3119,14 @@ Do NOT merge, deploy or release. Stop when the existing implementation is again 
                 execution_id=execution_id,
             )
         public = self._execution_public(row)
-        public["update_check_recommended"] = public["status"] == "completed"
+        evidence = public.get("delivery_evidence")
+        public["update_check_recommended"] = (
+            public["status"] == "completed"
+            and (
+                row["pipeline_mode"] != "codex_owner"
+                or (isinstance(evidence, dict) and evidence.get("android_update") is True)
+            )
+        )
         return {"execution": public}
 
     async def _advance_execution_locked(
@@ -4625,6 +5012,23 @@ Before the verdict give concise findings.""",
                         (candidate["id"],),
                     ).fetchone()
                 if not fresh:
+                    continue
+                # New owner executions use Codex for the entire delivery and
+                # real CI. Retain the old deterministic path only to recover
+                # pre-existing in-flight runs from earlier releases.
+                with self.store._lock:
+                    mode_row = self.store.db.execute(
+                        "SELECT pipeline_mode FROM task_executions WHERE id=?",
+                        (candidate["id"],),
+                    ).fetchone()
+                if mode_row and mode_row["pipeline_mode"] == "codex_owner":
+                    if fresh["status"] in ACTIVE_EXECUTION_STATES:
+                        if await self._advance_codex_owner_locked(
+                            actor_id=str(candidate["actor_id"]),
+                            workspace_id=str(candidate["workspace_id"]),
+                            execution_id=str(candidate["id"]),
+                        ):
+                            advanced += 1
                     continue
                 if (
                     fresh["status"] == "blocked"

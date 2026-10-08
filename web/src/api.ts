@@ -123,6 +123,17 @@ export type DevelopmentExecution = {
   update_check_recommended?: boolean;
 };
 
+export type CompletedDevelopment = {
+  id: string;
+  project_id: string;
+  project_name: string;
+  titles: string[];
+  finished_at_ms: number;
+  main_sha: string;
+  summary: string;
+  android_update: boolean;
+};
+
 export type CodexStatus = {
   status: string | null;
   observed_at: string | null;
@@ -340,6 +351,13 @@ export const getDevelopmentBacklog = (workspaceId: string, projectId?: string | 
 export const getDevelopmentCodexStatus = (workspaceId: string) => {
   const params = new URLSearchParams({ workspace_id: workspaceId });
   return api<CodexStatus>(`/api/development/codex-status?${params}`);
+};
+
+export const getRecentCompletedDevelopment = (workspaceId: string) => {
+  const params = new URLSearchParams({ workspace_id: workspaceId, days: "7" });
+  return api<{ items: CompletedDevelopment[] }>(
+    `/api/development/completed?${params}`,
+  );
 };
 
 export const getLatestDevelopmentExecution = (workspaceId: string, sync = true) => {

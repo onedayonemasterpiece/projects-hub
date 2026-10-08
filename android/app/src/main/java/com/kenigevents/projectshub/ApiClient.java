@@ -98,6 +98,15 @@ final class ApiClient {
         );
     }
 
+    JSONArray recentDevelopmentCompletions(String deviceToken) throws Exception {
+        JSONObject response = request(
+                "GET", "api/device/development/completed",
+                null, "Device " + deviceToken, null, false, 15000
+        );
+        return response.optJSONArray("items") == null
+                ? new JSONArray() : response.getJSONArray("items");
+    }
+
     ClaimedCommand nextCommand(String deviceToken, int waitMs) throws Exception {
         JSONObject payload = request(
                 "GET",
