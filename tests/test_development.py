@@ -2849,7 +2849,7 @@ class CodexDeliveryFake(FakeDevCoveer):
             if not self.valid_receipt:
                 return self._completed("CI pending; release not yet verified", 35)
             return self._completed(
-                'Published merged main and verified production.\\n'
+                'Published merged main and verified production.\n'
                 'DELIVERY_RECEIPT: {"status":"delivered","ci":"passed",'
                 '"main_sha":"' + self.main_head + '",'
                 '"evidence_url":"https://github.com/onedayonemasterpiece/projects-hub/actions/runs/777",'
