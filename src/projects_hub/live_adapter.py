@@ -454,6 +454,28 @@ def _functions(
     functions.extend(
         [
             {
+                "name": "collaboration_view",
+                "description": (
+                    "Show or close a READ-ONLY visual collaboration card inside the current "
+                    "personal conversation. Call ONLY when the user explicitly asks to SEE, "
+                    "OPEN or HIDE activity, questions or one specific note on screen. "
+                    "Never invoke for greetings, 'what's new', reading a brief, creating "
+                    "notes, development completion or ordinary spoken explanations. "
+                    "Default UI is clean and voice-first; do not open visual cards unasked."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "view": {
+                            "type": "string",
+                            "enum": ["activity", "questions", "note", "close"],
+                        },
+                        "note_id": {"type": "string"},
+                    },
+                    "required": ["view"],
+                },
+            },
+            {
                 "name": "project_participants_list",
                 "description": (
                     "List participants who currently have an explicit grant to the project, "
@@ -846,6 +868,9 @@ SYSTEM_INSTRUCTION = """# ROLE
 - board_navigate focus/view_all управляет только камерой текущего единственного renderer.
 
 # PROJECT COLLABORATION
+- Стартовый экран намеренно пуст от проектных виджетов. На «привет», «что нового», «что по задачам» говори голосом: прочитай личный brief, важные решения и реально завершённые работы. НЕ вызывай collaboration_view и не открывай карточки автоматически.
+- Только на явное «покажи на экране заметку / вопросы / новости» вызывай collaboration_view с нужным view; «закрой карточку» — view=close. Ответы на вопросы и заметки принимает только Мира голосом через уже существующие tools, никаких текстовых форм.
+- Не выдавай старые собственные заметки за новые сообщения команды. Отличай созданную/изменённую участником заметку от завершённого анализа ChatGPT: «ChatGPT завершил анализ заметки», а не «пользователь изменил заметку». Не перечисляй шум и тестовые объекты как реальные выполненные поручения.
 - Общая проектная заметка — first-class project object, а не копия личной переписки. Создавай её через project_note_create только по намерению пользователя сохранить/поделиться заметкой.
 - Когда project_note_get возвращает note.chatgpt_analysis, это сохранённый deep analysis ChatGPT конкретной редакции заметки. По запросу «что ChatGPT проанализировал / зачитай анализ» прочитай его содержательно через обычный голосовой Live-ответ; не запускай новую транскрибацию и не выдавай предложения анализа за принятые поручения.
 - Событие note_chatgpt_analyzed в личной сводке означает завершённую проверенную публикацию companion Markdown, но не разрешает автоматически менять проектные документы, задачи или решения.
@@ -853,12 +878,15 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Для чтения используй project_notes_list/project_note_get. Обычному участнику не нужен GitHub login: Projects Hub проверяет project grant на сервере.
 - Ответ на заметку делай через project_note_reply; он остаётся связанным с note_id и виден участникам проекта.
 - На общий старт вроде «привет»/«что нового» сначала используй collaboration_personal_brief: лично адресованное важнее общего. Если пользователь сразу дал конкретную задачу, выполняй её и не вставляй приветственную сводку перед ней.
+- После личной сводки в таком общем разговоре обязательно проверь collaboration_questions_inbox: сильная модель могла сформировать адресованные пользователю вопросы аналитики. Если есть открытые вопросы, задай голосом ОДИН наиболее существенный вопрос с необходимым контекстом и дождись ответа. При нескольких вопросах кратко назови их число; следующие задавай последовательно, а не зачитывай весь список. Не вызывай визуальный collaboration_view без отдельной просьбы показать вопросы.
+- У каждого вопроса четыре законных исхода: обычный содержательный ответ — disposition=answer с точными словами человека; «не знаю» — unknown; «пропустить» — skip; «позже» — later. Не подставляй выдуманный ответ, не путай skip с answer и не снимай блокирующую зависимость без фактического ответа. Для вопросов из одного analysis используй collaboration_questions_answer; owner_development — collaboration_question_respond. Состояние и продолжение проверяй по receipt backend.
+- Завершённый анализ ChatGPT называй завершённой аналитической работой, а не заметкой, которую якобы отредактировал участник. Для новостей команды отличай действительно новые заметки/ответы других людей от собственных старых заметок. Голосовое сообщение важнее визуальной карточки.
 - После того как фактически озвучила/показала элементы brief, вызови collaboration_brief_seen с соответствующим through_id, чтобы reconnect/следующий hello не повторял то же самое.
 - Общие новости только предлагай как необязательное продолжение. Если пользователь отказывается от них в целом, collaboration_general_news_set enabled=false; это не скрывает лично адресованные вопросы/результаты.
 - Не создавай отдельный чат на проект: focus проекта меняется внутри одной личной timeline.
 - Перед адресованным вопросом прочитай project_participants_list и используй реальный actor_id/role, а не свободный текст роли.
 - Для сильного анализа заметки используй project_note_analyze: он получает только frozen note/reply evidence через provided-only bridge. Не превращай analysis в development.
-- Когда вопросы адресованы текущему человеку, collaboration_questions_inbox даёт их общий контекст. Пользователь может одной репликой ответить на несколько; передай их одним collaboration_questions_answer.
+- Когда вопросы адресованы текущему человеку, collaboration_questions_inbox даёт их общий контекст. Мира спрашивает их голосом при общем старте/запросе вопросов, не ждёт, пока пользователь найдёт форму. Пользователь может одной репликой ответить на несколько; передай их одним collaboration_questions_answer.
 - answer, unknown, skip и later — разные состояния. Blocking continuation запускается только когда все blocking questions получили disposition=answer. later сохраняет отложенную зависимость; unknown/skip не выдумывают решение и не снимают blocker.
 - Простое чтение статуса/вопроса никогда не продвигает worker.
 - Если collaboration_questions_inbox возвращает source_kind=owner_development, отвечай через collaboration_question_respond. Только platform owner сможет реально resume; backend продолжит тот же execution/thread и не создаст новую разработку.
@@ -1935,6 +1963,29 @@ class ProjectsHubLiveAdapter:
                         "token": "uif_" + command_id[-24:],
                     },
                 }
+
+        if name == "collaboration_view":
+            if self.collaboration is None:
+                raise StoreError("TOOL_NOT_AVAILABLE", "Project collaboration is unavailable")
+            view = str(args.get("view") or "")
+            if view not in {"activity", "questions", "note", "close"}:
+                raise StoreError("INVALID_ARGUMENT", "Unknown collaboration view")
+            if view == "close":
+                return {"ui_command": {"kind": "collaboration", "action": "close"}}
+            ui_command: dict[str, Any] = {
+                "kind": "collaboration", "action": "show", "view": view,
+            }
+            if view == "note":
+                note_id = str(args.get("note_id") or "")
+                if not note_id:
+                    raise StoreError("INVALID_ARGUMENT", "note_id is required to show a note")
+                # Explicit read grant must be checked before displaying a note.
+                note = self.collaboration.get_note(
+                    actor_id=actor_id, workspace_id=workspace_id, note_id=note_id,
+                )
+                ui_command["note_id"] = note_id
+                ui_command["title"] = str(note["title"])
+            return {"ui_command": ui_command}
 
         if name in {
             "project_participants_list",

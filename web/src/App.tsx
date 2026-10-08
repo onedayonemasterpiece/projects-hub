@@ -62,6 +62,8 @@ import {
 } from "./offlineSources";
 
 type WaitState = null | { elapsed_ms: number; stage: string; can_restart: boolean };
+type CollaborationCard = { view: "activity" | "questions" | "note"; noteId?: string };
+type CollaborationUiCommand = { kind: "collaboration"; action: "show" | "close"; view?: CollaborationCard["view"]; note_id?: string };
 type ChatRole = "user" | "assistant";
 type ChatMessage = {
   id: string;
@@ -100,10 +102,8 @@ function defaultWidgetMessage(conversationId: string): ChatMessage {
     sourceId: null,
     transcriptRevision: 0,
     revision: 1,
-    blocks: [
-      { kind: "collaboration_timeline" },
-      { kind: "collaboration_questions" },
-    ],
+    // Never manufacture UI cards on app launch.
+    blocks: [],
   };
 }
 
@@ -261,6 +261,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
   const [collaborationRefresh, setCollaborationRefresh] = useState(0);
   const [boardProjectId, setBoardProjectId] = useState<string | null>(null);
   const [boardCommand, setBoardCommand] = useState<BoardUiCommand | null>(null);
+  const [collaborationCard, setCollaborationCard] = useState<CollaborationCard | null>(null);
   const [interimInputTranscript, setInterimInputTranscript] = useState("");
   const [inputTranscriptSeen, setInputTranscriptSeen] = useState(false);
   const [speechActive, setSpeechActive] = useState(false);
@@ -277,7 +278,6 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
   const [developmentExecution, setDevelopmentExecution] = useState<DevelopmentExecution | null>(null);
   const [completedDevelopment, setCompletedDevelopment] = useState<CompletedDevelopment[]>([]);
   const [completedDevelopmentActor, setCompletedDevelopmentActor] = useState<string | null>(null);
-  const [dismissedDelivery, setDismissedDelivery] = useState<string | null>(null);
   const [developmentAccess, setDevelopmentAccess] = useState<boolean | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
@@ -304,8 +304,8 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
     void themeRef.current.reset();
     setCompletedDevelopment([]);
     setCompletedDevelopmentActor(null);
-    setDismissedDelivery(null);
     setBoot(null); setConversation(null); conversationRef.current = null;
+    setCollaborationCard(null);
     resetIdentity();
   }, [resetIdentity, setAndroidVoiceAudioFocus]);
   useEffect(() => {
@@ -439,7 +439,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
     const element = chatScrollRef.current;
     if (!element || !chatFollowRef.current) return;
     element.scrollTop = element.scrollHeight;
-  }, [chatMessages, interimInputTranscript]);
+  }, [chatMessages, interimInputTranscript, collaborationCard]);
 
   const focusProject = useMemo(() => {
     if (!boot) return null;
@@ -816,7 +816,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
         toolResult?.ui_command && typeof toolResult.ui_command === "object"
           ? toolResult.ui_command
           : null
-      ) as BoardUiCommand | null;
+      ) as BoardUiCommand | CollaborationUiCommand | null;
       if (uiCommand && uiCommand.kind === "board") {
         if (uiCommand.action === "close") {
           updateWidgetBlocks(blocks => blocks.map(block =>
@@ -833,6 +833,14 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
           setBoardCommand(uiCommand);
         }
       }
+      if (uiCommand?.kind === "collaboration") {
+        if (uiCommand.action === "close") setCollaborationCard(null);
+        else if (
+          uiCommand.action === "show"
+          && ["activity", "questions", "note"].includes(uiCommand.view ?? "")
+          && (uiCommand.view !== "note" || uiCommand.note_id)
+        ) setCollaborationCard({ view: uiCommand.view!, noteId: uiCommand.note_id });
+      }
       if ([
         "project_note_create",
         "project_note_reply",
@@ -840,7 +848,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
         setCollaborationRefresh(value => value + 1);
       }
       if (event.name === "memory_commit_voice_source") {
-        void loadMemories().then(() => setMemoryOpen(true));
+        void loadMemories();
       }
       if ([
         "calendar_create_event_on_device",
@@ -848,11 +856,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
         "task_create_follow_up",
         "task_set_state",
       ].includes(event.name ?? "")) {
-        void loadEventCards().then(() => {
-          setEventOpen(true);
-          setMemoryOpen(false);
-          setBacklogOpen(false);
-        });
+        void loadEventCards();
         if (["task_create_follow_up", "task_set_state"].includes(event.name ?? "")) {
           void loadBacklog();
         }
@@ -862,11 +866,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
         "development_execution_status",
         "development_codex_status",
       ].includes(event.name ?? "")) {
-        void loadBacklog().then(() => {
-          setBacklogOpen(true);
-          setEventOpen(false);
-          setMemoryOpen(false);
-        });
+        void loadBacklog();
       }
       if (event.name === "conversation_set_focus" && conversationRef.current) {
         void getConversation(conversationRef.current.id).then(setConversation);
@@ -898,37 +898,9 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
         const persisted = new Map<string, string>();
         restored.forEach(message => persisted.set(message.id, timelineFingerprint(message)));
 
-        const widgetId = widgetMessageId(conversationId);
-        const widgetIndex = restored.findIndex(message => message.id === widgetId);
-        if (widgetIndex < 0) {
-          restored.push(defaultWidgetMessage(conversationId));
-        } else {
-          const widget = restored[widgetIndex];
-          const requiredKinds = new Set(widget.blocks.map(block => block.kind));
-          const missing: PersonalTimelineBlock[] = [];
-          if (!requiredKinds.has("collaboration_timeline")) {
-            missing.push({ kind: "collaboration_timeline" });
-          }
-          if (!requiredKinds.has("collaboration_questions")) {
-            missing.push({ kind: "collaboration_questions" });
-          }
-          if (missing.length) {
-            restored[widgetIndex] = {
-              ...widget,
-              blocks: [...widget.blocks, ...missing],
-              revision: widget.revision + 1,
-            };
-          }
-        }
-
-        const activeBoard = restored
-          .flatMap(message => message.blocks)
-          .find(block => block.kind === "board" && block.mode === "active");
-        setBoardProjectId(
-          activeBoard && activeBoard.kind === "board"
-            ? activeBoard.project_id
-            : null,
-        );
+        // Preserve durable timeline history, but never resurrect presentation widgets.
+        setCollaborationCard(null);
+        setBoardProjectId(null);
         setBoardCommand(null);
         userTranscriptIndex.current = -1;
         assistantTranscriptIndex.current = -1;
@@ -1698,29 +1670,6 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
 
   return (
     <main className="shell">
-      {boot.role === "owner" && developmentAccess === true
-        && completedDevelopmentActor === boot.actor.id && completedDevelopment.length > 0
-        && dismissedDelivery !== completedDevelopment[0].id
-        && localStorage.getItem("projects-hub-delivery-dismissed:" + boot.actor.id) !== completedDevelopment[0].id && (
-        <section className="island development-arrival" role="status" aria-label="Мира: готовая задача">
-          <div>
-            <strong>Мира · Готово к проверке</strong>
-            <p>{completedDevelopment[0].project_name}: {completedDevelopment[0].titles.join(", ") || "Разработка завершена"}</p>
-          </div>
-          <div className="development-arrival-actions">
-            <button className="mini-action" onClick={() => {
-              void loadBacklog().then(() => setBacklogOpen(true));
-            }}>Посмотреть</button>
-            <button className="quiet-button" onClick={() => {
-              setDismissedDelivery(completedDevelopment[0].id);
-              localStorage.setItem(
-                "projects-hub-delivery-dismissed:" + boot.actor.id,
-                completedDevelopment[0].id,
-              );
-            }} aria-label="Закрыть сообщение Миры">×</button>
-          </div>
-        </section>
-      )}
       <header className="context-wrap">
         <button
           className={"island context-island" + (contextOpen ? " is-open" : "")}
@@ -1865,7 +1814,13 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
             }}
           >
             <div className="chat-stack">
-              {chatMessages.map(message => (
+              {chatMessages.filter(message =>
+                Boolean(message.text || message.deliveryNote)
+                || message.blocks.some(block =>
+                  block.kind === "board" && block.mode === "active"
+                  && boardProjectId === block.project_id
+                )
+              ).map(message => (
                 <div className={"chat-row " + message.role} key={message.id}>
                   <div className={"chat-message " + message.role}>
                     {message.text && (
@@ -1886,26 +1841,8 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
                       <span className="message-delivery-note">{message.deliveryNote}</span>
                     )}
                     {boot && message.blocks.map(block => {
-                      if (block.kind === "collaboration_timeline") {
-                        return (
-                          <CollaborationTimeline
-                            key={block.kind}
-                            workspaceId={boot.workspace.id}
-                            actorId={boot.actor.id}
-                            refreshKey={collaborationRefresh}
-                          />
-                        );
-                      }
-                      if (block.kind === "collaboration_questions") {
-                        return (
-                          <CollaborationQuestions
-                            key={block.kind}
-                            workspaceId={boot.workspace.id}
-                            refreshKey={collaborationRefresh}
-                            onChanged={() => setCollaborationRefresh(value => value + 1)}
-                          />
-                        );
-                      }
+                      if (block.kind === "collaboration_timeline"
+                        || block.kind === "collaboration_questions") return null;
                       if (
                         block.kind === "board"
                         && block.mode === "active"
@@ -1932,21 +1869,33 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
                           />
                         );
                       }
-                      if (block.kind === "board") {
-                        const projectName = boot.projects.find(
-                          project => project.id === block.project_id
-                        )?.name ?? "Проект";
-                        return (
-                          <div className="board-reference" key={"board:" + block.project_id}>
-                            Доска · {projectName}
-                          </div>
-                        );
-                      }
                       return null;
                     })}
                   </div>
                 </div>
               ))}
+              {collaborationCard && boot && (
+                <div className="chat-row assistant requested-card-row" aria-label="Карточка по просьбе Мире">
+                  <div className="chat-message assistant">
+                    <section className="collaboration-requested">
+                      <div className="collaboration-requested-heading">
+                        <strong>{collaborationCard.view === "questions" ? "Вопросы аналитики"
+                          : collaborationCard.view === "note" ? "Проектная заметка"
+                          : "Новости команды и результаты"}</strong>
+                        <button className="quiet-button" onClick={() => setCollaborationCard(null)}
+                          aria-label="Закрыть карточку">Закрыть</button>
+                      </div>
+                      {collaborationCard.view === "questions"
+                        ? <CollaborationQuestions workspaceId={boot.workspace.id}
+                            refreshKey={collaborationRefresh} />
+                        : <CollaborationTimeline workspaceId={boot.workspace.id}
+                            actorId={boot.actor.id} refreshKey={collaborationRefresh}
+                            mode={collaborationCard.view === "note" ? "note" : "activity"}
+                            noteId={collaborationCard.noteId} />}
+                    </section>
+                  </div>
+                </div>
+              )}
               {interimInputTranscript && (
                 <div className="chat-row user interim" aria-live="polite">
                   <div

@@ -125,6 +125,7 @@ def attach_collaboration_routes(
         request: Request,
         after_id: int = 0,
         limit: int = 50,
+        latest: bool = False,
     ) -> dict[str, Any]:
         return {
             "items": service.timeline(
@@ -132,6 +133,7 @@ def attach_collaboration_routes(
                 workspace_id=workspace_id,
                 after_id=after_id,
                 limit=limit,
+                latest=latest,
             )
         }
 
