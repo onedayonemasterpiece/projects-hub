@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 
 import pytest
@@ -249,6 +250,11 @@ class FakeDevCoveer:
         access: str = "write",
     ):
         task_id = self._quality_task if model == "gpt-6-astra" else self._implementation_task
+        # Simulate the branch associated with the owner execution's stable ID.
+        if model != "gpt-6-astra" and self.candidate_branch == "chatgpt/test-owner-development":
+            marker = re.search(r"devrun-[a-f0-9]{8}", prompt)
+            if marker:
+                self.candidate_branch = "chatgpt/test-" + marker.group(0)
         self.calls.append(
             (
                 "start",
@@ -1457,6 +1463,43 @@ async def test_completed_write_publishes_exact_candidate_and_waits_for_ci(
 
 
 @pytest.mark.asyncio
+async def test_foreign_clean_checkout_never_becomes_owner_candidate(tmp_path: Path):
+    """A concurrent clean chatgpt/* checkout cannot be published as our task."""
+    store, readiness, boot, project = setup(tmp_path)
+    fake = FakeDevCoveer()
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+        await service.advance_active_once()  # design -> implementation
+        assert service._candidate_branch_marker(execution_id) in fake.candidate_branch
+
+        # Switch away to an unrelated branch during implementation.
+        fake.candidate_branch = "chatgpt/other-execution-clean-branch"
+        await service.advance_active_once()
+        current = await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        )
+        assert current["execution"]["candidate_pr"] is None
+        assert current["execution"]["status"] == "running"
+        assert not [
+            args for action, args in fake.calls
+            if action == "direct_action"
+            and args["operation"] in {"git_push_existing", "github_pr_create", "github_pr_merge"}
+        ]
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
 async def test_missing_candidate_ci_after_grace_starts_technical_rework(
     tmp_path: Path,
 ):
@@ -2375,14 +2418,14 @@ async def test_old_review_limit_block_auto_resumes_same_write_thread(tmp_path: P
         )
         with store._lock:
             store.db.execute(
-                "UPDATE task_execution_stages SET cycle=2 WHERE id=?",
+                "UPDATE task_execution_stages SET cycle=1 WHERE id=?",
                 (review["id"],),
             )
             store.db.execute(
                 """UPDATE task_executions
                    SET status='blocked',phase='needs_owner',
-                       phase_detail='Legacy two-cycle cap',
-                       review_cycle=2,result_summary=?,
+                       phase_detail='Legacy prematurely blocked',
+                       review_cycle=1,result_summary=?,
                        error_code='REVIEW_REWORK_LIMIT',
                        finished_at_ms=123,updated_at_ms=123
                    WHERE id=?""",
@@ -2401,7 +2444,7 @@ async def test_old_review_limit_block_auto_resumes_same_write_thread(tmp_path: P
         assert advanced == 1
         assert current["execution"]["status"] == "running"
         assert current["execution"]["phase"] == "reworking"
-        assert current["execution"]["review_cycle"] == 3
+        assert current["execution"]["review_cycle"] == 2
         assert current["execution"]["error_code"] is None
         assert current["execution"]["finished_at_ms"] is None
         assert len([1 for name, _ in fake.calls if name == "start"]) == starts_before
@@ -2412,11 +2455,11 @@ async def test_old_review_limit_block_auto_resumes_same_write_thread(tmp_path: P
         assert len(continuation_calls) == continues_before + 1
         assert continuation_calls[-1]["task"] == fake._implementation_task
         assert continuation_calls[-1]["access"] == "write"
-        assert "rework cycle 3" in continuation_calls[-1]["prompt"].lower()
+        assert "rework cycle 2" in continuation_calls[-1]["prompt"].lower()
 
         last_stage = current["execution"]["stages"][-1]
         assert last_stage["stage"] == "rework"
-        assert last_stage["cycle"] == 3
+        assert last_stage["cycle"] == 2
         assert last_stage["status"] == "running"
         assert last_stage["devcoveer_task_id"] == fake._implementation_task
     finally:
