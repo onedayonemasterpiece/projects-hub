@@ -242,6 +242,10 @@ try {
     saved={theme:'light',revision:11};
     await page.reload();
     await page.waitForFunction(()=>document.documentElement.dataset.theme==='light');
+    // Verify real keyboard focus on a mounted control after reload. The first
+    // Tab target is browser-dependent when focus starts on document.body.
+    await page.locator('.voice-orb').focus();
+    await page.keyboard.press('Shift+Tab');
     await page.keyboard.press('Tab');
     assert.equal(await page.evaluate(()=>document.activeElement?.tagName),'BUTTON');
     await page.locator('.context-island').click();
