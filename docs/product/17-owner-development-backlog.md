@@ -39,7 +39,8 @@ One execution is linked to one or more existing `tasks(kind=development)`.
    - add/update tests;
    - debug locally;
    - run required browser/emulator checks;
-   - prepare a reviewable result, but do not merge/deploy before review.
+   - run tests and the project's **existing** CI, publish its candidate PR and inspect real evidence;
+   - prepare a reviewable result, but do not merge/deploy before review; no second CI controller is created.
    - If the owner profile is unavailable, execution fails closed and asks the owner to choose an exact available native model/effort. No silent substitution.
 
 3. **Independent review / acceptance** — same quality thread, `gpt-6-astra high`
@@ -50,11 +51,12 @@ One execution is linked to one or more existing `tasks(kind=development)`.
    - review findings go back to implementation;
    - retest;
    - return to independent review;
-   - bounded review/rework cycles, currently maximum 2.
+   - bounded review/rework cycles, currently maximum 2 (not the previous code's drift to 12).
 
 5. **Delivery**
    - only after accepted review;
-   - implementation thread performs normal project merge/publish/test/deploy/release path;
+   - Native Codex in the implementation thread receives a delivery continuation and performs the **existing** merge/CI/deploy/release process itself;
+   - Codex verifies the live/published result and reports actual CI and delivery evidence. The durable worker only records the terminal receipt, not an independent CI/deploy system;
    - backlog tasks become done only after terminal successful delivery.
 
 Two long-lived execution threads are intentionally reused: one quality thread and one implementation thread. This preserves context/cache and avoids spawning a new model session for every phase.
@@ -139,3 +141,25 @@ An execution that needs a human decision emits typed addressed questions with th
 Execution progress belongs to a bounded durable backend worker, independent of browser polling and Live session lifetime. `status` is read-only. Answer plus continuation intent are persisted together; retries/restarts use leases, idempotency keys and external receipt/readback. The MCP connection worker introduced in PR #114/#115 is transport lifecycle management and must be preserved; it does not replace durable product orchestration.
 
 Keep the existing design/implementation/review/rework/delivery path above and the reviewed model profiles. The separate Codex consultation ladder in [20](20-basic-collaboration-and-personal-timeline.md) does not silently replace the owner quality pipeline. The nearest prototype includes one actual resumed owner execution plus ordinary project collaboration; it does not build a generic workflow designer.
+
+## 8 October clarification: native Codex delivery and owner results
+
+Tasks explicitly launched through Mira use **Native Codex only**. The
+`gpt-6-astra high` quality thread and the implementation thread stay distinct;
+design, implementation, independent review, bounded rework and delivery are
+mandatory. Mira never treats a discussion or backlog creation as launch
+authorization. New runs use Codex to publish the candidate, run the project's
+existing CI and deliver after accepted review. There is no parallel
+Projects Hub CI controller. Existing pre-upgrade runs retain their previous
+recovery route to preserve in-flight work. Each target project controls its
+own CI, artifacts and release steps; the orchestrator remains cross-project.
+
+The owner can inspect the latest run independently of an open Live connection
+and see completed tasks across all projects from the past seven days by default.
+Completed work is presented at app re-entry and passed to the same Live Mira
+for a natural greeting. The Android native client shows a system completion
+notification via a battery-friendly persisted OS job using its already paired
+device credential, nominally every 15 minutes (OS delays possible). This is
+not instant FCM push; it is a minimal first-party notification path without a
+new vendor/backend. Notifications never start the microphone, and only a real
+signed Android version bump triggers an update prompt.
