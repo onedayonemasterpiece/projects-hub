@@ -950,6 +950,60 @@ SYSTEM_INSTRUCTION = """# ROLE
 """
 
 
+# Keep all established Mira rules verbatim, but send only relevant sections
+# with each progressively loaded capability. The shared resource guard bills
+# UTF-8 setup JSON bytes, so sending every inactive domain's rules at start
+# can exceed the authoritative setup budget before a microphone turn exists.
+_SHARED_INSTRUCTION_SECTIONS = (
+    "ROLE", "DIALOGUE", "TRUTH AND SECURITY", "RUNTIME VERSION", "CAPABILITY TOUR",
+)
+_CAPABILITY_INSTRUCTION_SECTIONS = {
+    "core": ("ROUTER AND PERSONAL THEME",),
+    "preferences": ("ROUTER AND PERSONAL THEME",),
+    "board": ("BOARD",),
+    "collaboration": ("PROJECT COLLABORATION",),
+    "notes": ("PROJECT COLLABORATION",),
+    "memory": ("MEMORY",),
+    "repositories": ("SECURITY",),
+    "calendar": ("SECURITY",),
+    "readiness": ("EVENT READINESS",),
+    "knowledge": ("REGIONAL KNOWLEDGE",),
+    "expert_reviews": ("EXPERT REVIEWS",),
+    "owner_development": ("BACKLOG AND OWNER DEVELOPMENT", "PROJECT COLLABORATION"),
+}
+
+_CORE_COLLABORATION_ROUTING = """
+# VOICE-FIRST PERSONAL OPENING
+На общий «привет», «что нового», «какие задачи или вопросы аналитики» сначала
+активируй capability collaboration через activate_capability (если она доступна).
+После переключения прочитай collaboration_personal_brief, затем проверь
+collaboration_questions_inbox; если вопрос открыт, задай голосом один важный
+вопрос с контекстом. Допустимы answer, unknown, skip, later: не снимай blocker
+без содержательного answer. Не открывай карточку/форму без просьбы «покажи».
+Конкретная команда пользователя приоритетнее приветствия и сводки.
+На «покажи вопросы» активируй collaboration; на «покажи заметку» — notes.
+Создание backlog не запускает разработку: нужен явный запрос владельца.
+"""
+
+
+def _live_instruction(capability: str) -> str:
+    """Bounded product-owned prompt overlay; no extra semantic router."""
+    if capability not in BUNDLES:
+        raise ValueError("Unknown Mira capability")
+    sections: dict[str, str] = {}
+    for block in ("\n" + SYSTEM_INSTRUCTION.strip()).split("\n# ")[1:]:
+        heading, _newline, content = block.partition("\n")
+        sections[heading] = "# " + heading + "\n" + content.strip()
+    requested = (
+        *_SHARED_INSTRUCTION_SECTIONS,
+        *_CAPABILITY_INSTRUCTION_SECTIONS[capability],
+    )
+    result = "\n\n".join(sections[name] for name in requested)
+    if capability == "core":
+        result += "\n" + _CORE_COLLABORATION_ROUTING
+    return result
+
+
 class ProjectsHubLiveAdapter:
     def __init__(
         self,
@@ -1252,7 +1306,7 @@ class ProjectsHubLiveAdapter:
                 )
             except StoreError:
                 pass
-        system_instruction = SYSTEM_INSTRUCTION + "\n" + OVERLAYS["core"]
+        system_instruction = _live_instruction("core") + "\n" + OVERLAYS["core"]
         if recent_owner_completions:
             # This is server-verified owner-only context. The SAME Live Mira
             # should naturally mention it at greeting, not a TTS side agent.
@@ -1429,7 +1483,7 @@ class ProjectsHubLiveAdapter:
         declarations = _functions(expert_reviews=True, regional_knowledge=True, owner_development=True) + PREFERENCES
         configuration = {**session.state["_base_configuration"],
                          "functions": [ROUTER, *[f for f in declarations if f["name"] in BUNDLES[capability]]],
-                         "system_instruction": SYSTEM_INSTRUCTION + "\n" + OVERLAYS[capability]}
+                         "system_instruction": _live_instruction(capability) + "\n" + OVERLAYS[capability]}
         if session.state.get("audio_mode") == "buffered":
             configuration["system_instruction"] += "\nПосле просьбы перейди в memory для disposition. Там используй commit для долговечного или finish для эфемерного source; после commit не finish."
         conversation = self.store.get_conversation(session.state["actor_id"], session.state["conversation_id"])

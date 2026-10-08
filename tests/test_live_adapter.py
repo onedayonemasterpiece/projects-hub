@@ -80,6 +80,91 @@ async def test_live_adapter_persists_audio_transcript_and_verified_memory(tmp_pa
         store.close()
 
 
+
+def test_initial_live_setup_has_bounded_authoritative_budget_and_core_routing(tmp_path: Path):
+    import json
+    from live_interaction.provider import setup_config
+    from projects_hub.live_adapter import _live_instruction, _functions
+    from projects_hub.live_capabilities import BUNDLES, OVERLAYS, ROUTER, PREFERENCES
+
+    store = DurableStore(tmp_path)
+    try:
+        boot = store.ensure_dev_workspace("Live budget")
+        actor = boot["actor"]["id"]
+        workspace = boot["workspace"]["id"]
+        conversation = store.create_conversation(actor, workspace, boot["projects"][0]["id"])
+        adapter = ProjectsHubLiveAdapter(store)
+        initialized = adapter.initialize(
+            resource_id=ConversationScope(workspace, actor, conversation["id"]).resource_binding(),
+            actor={"subject": actor, "tenant_id": workspace},
+            model="gemini-3.8-live",
+            conversation_id=conversation["id"],
+        )
+        startup = initialized["configuration"]["system_instruction"]
+        assert "collaboration_questions_inbox" in startup
+        assert "задай голосом" in startup
+        assert all(word in startup for word in ("answer", "unknown", "skip", "later"))
+        assert "# BOARD" not in startup
+        assert "# BACKLOG AND OWNER DEVELOPMENT" not in startup
+        setup = setup_config(
+            "gemini-3.8-live",
+            initialized["context"],
+            configuration=initialized["configuration"],
+        )
+        # ai-resource-control counts setup JSON UTF-8 bytes, not provider tokens.
+        estimated_units = len(json.dumps(setup, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+        assert estimated_units < 16000, estimated_units
+
+        domain_checks = {
+            "board": "# BOARD",
+            "collaboration": "# PROJECT COLLABORATION",
+            "notes": "# PROJECT COLLABORATION",
+            "memory": "# MEMORY",
+            "repositories": "# SECURITY",
+            "calendar": "# SECURITY",
+            "readiness": "# EVENT READINESS",
+            "knowledge": "# REGIONAL KNOWLEDGE",
+            "expert_reviews": "# EXPERT REVIEWS",
+            "owner_development": "# BACKLOG AND OWNER DEVELOPMENT",
+            "preferences": "# ROUTER AND PERSONAL THEME",
+        }
+        for capability, section in domain_checks.items():
+            instruction = _live_instruction(capability)
+            assert section in instruction
+            assert "# ROLE" in instruction
+            assert "# CAPABILITY TOUR" in instruction
+            if capability != "board":
+                assert "# BOARD" not in instruction
+            if capability != "owner_development":
+                assert "# BACKLOG AND OWNER DEVELOPMENT" not in instruction
+            declarations = [
+                *(_functions(
+                    expert_reviews=True, regional_knowledge=True, owner_development=True
+                )),
+                *PREFERENCES,
+            ]
+            function_bundle = [ROUTER, *(
+                item for item in declarations if item["name"] in BUNDLES[capability]
+            )]
+            switched = {
+                **initialized["configuration"],
+                "functions": function_bundle,
+                "system_instruction": instruction + "\n" + OVERLAYS[capability],
+            }
+            switched_setup = setup_config(
+                "gemini-3.8-live",
+                initialized["context"],
+                configuration=switched,
+            )
+            switched_units = len(json.dumps(
+                switched_setup, ensure_ascii=False, separators=(",", ":"),
+            ).encode("utf-8"))
+            assert switched_units < 25000, (capability, switched_units)
+        assert "не снимай blocker" in _live_instruction("core")
+    finally:
+        store.close()
+
+
 def test_system_instruction_has_runtime_scoped_capability_tour(tmp_path: Path):
     store = DurableStore(tmp_path)
     try:
