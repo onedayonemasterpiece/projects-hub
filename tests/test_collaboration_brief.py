@@ -136,3 +136,29 @@ def test_personal_first_cursor_and_quiet_general_news(tmp_path: Path):
         assert quiet_with_personal["general_available"] is False
     finally:
         store.close()
+
+
+
+def test_requested_activity_fetches_recent_records_without_changing_cursor_semantics(tmp_path: Path):
+    store, service, actor_a, actor_b, workspace, project = setup(tmp_path)
+    try:
+        for index in range(125):
+            add_event(
+                store, workspace=workspace, project=project,
+                actor=actor_b if index % 2 else actor_a, addressed_to=None,
+                kind="note_created", object_id=f"note_{index}",
+                summary=f"Заметка {index}",
+            )
+        old_cursor = service.timeline(
+            actor_id=actor_a, workspace_id=workspace, limit=3,
+        )
+        assert [x["object_id"] for x in old_cursor] == ["note_0", "note_1", "note_2"]
+        recent = service.timeline(
+            actor_id=actor_a, workspace_id=workspace, limit=3, latest=True,
+        )
+        assert [x["object_id"] for x in recent] == ["note_122", "note_123", "note_124"]
+        # The latest preview does not advance personal brief read cursors.
+        state = service.personal_brief(actor_id=actor_a, workspace_id=workspace)
+        assert state["general_available"] is True
+    finally:
+        store.close()
