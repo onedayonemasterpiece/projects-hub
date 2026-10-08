@@ -15,6 +15,7 @@ type Props = {
 export default function CollaborationQuestions({ workspaceId, refreshKey, onChanged }: Props) {
   const [questions, setQuestions] = useState<CollaborationQuestion[]>([]);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [manualAnswerId, setManualAnswerId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -77,6 +78,7 @@ export default function CollaborationQuestions({ workspaceId, refreshKey, onChan
         );
       }
       setAnswers(previous => ({ ...previous, [question.id]: "" }));
+      setManualAnswerId(null);
       await load();
       onChanged?.();
     } catch (error) {
@@ -108,23 +110,33 @@ export default function CollaborationQuestions({ workspaceId, refreshKey, onChan
           {question.state === "deferred" && (
             <small>Отложено — вопрос остаётся незакрытым.</small>
           )}
-          <textarea
-            value={answers[question.id] ?? ""}
-            onChange={event => setAnswers(previous => ({
-              ...previous,
-              [question.id]: event.target.value,
-            }))}
-            placeholder="Ответ на этот вопрос…"
-            maxLength={12000}
-          />
+          <small>Ответьте Мире голосом. Также можно сказать «не знаю», «пропустить» или «позже».</small>
+          {manualAnswerId === question.id && (
+            <textarea
+              value={answers[question.id] ?? ""}
+              onChange={event => setAnswers(previous => ({
+                ...previous,
+                [question.id]: event.target.value,
+              }))}
+              placeholder="Необязательный текстовый ответ…"
+              maxLength={12000}
+              aria-label="Необязательный текстовый ответ"
+            />
+          )}
           <div className="question-actions">
-            <button
-              className="mini-action"
-              disabled={busyId === question.id}
-              onClick={() => void respond(question, "answer")}
-            >
-              Ответить
+            <button className="mini-action"
+              onClick={() => setManualAnswerId(previous =>
+                previous === question.id ? null : question.id)}
+              disabled={busyId === question.id}>
+              {manualAnswerId === question.id ? "Скрыть ввод" : "Ответить текстом"}
             </button>
+            {manualAnswerId === question.id && (
+              <button className="mini-action"
+                disabled={busyId === question.id || !(answers[question.id] ?? "").trim()}
+                onClick={() => void respond(question, "answer")}>
+                Отправить ответ
+              </button>
+            )}
             <button
               className="mini-action"
               disabled={busyId === question.id}
