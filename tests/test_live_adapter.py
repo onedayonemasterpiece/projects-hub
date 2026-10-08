@@ -165,6 +165,33 @@ def test_initial_live_setup_has_bounded_authoritative_budget_and_core_routing(tm
         store.close()
 
 
+def test_live_tool_declarations_exclude_google_unsupported_json_schema_keywords():
+    from projects_hub.live_adapter import _functions
+    from projects_hub.live_capabilities import PREFERENCES, ROUTER
+
+    declarations = [
+        ROUTER, *PREFERENCES,
+        *_functions(
+            expert_reviews=True,
+            regional_knowledge=True,
+            owner_development=True,
+        ),
+    ]
+    forbidden = {"additionalProperties", "uniqueItems", "patternProperties",
+                 "oneOf", "const", "$ref", "$schema"}
+    def check(value):
+        if isinstance(value, dict):
+            assert not (set(value) & forbidden), value
+            for child in value.values():
+                check(child)
+        elif isinstance(value, list):
+            for child in value:
+                check(child)
+
+    for declaration in declarations:
+        check(declaration["parameters"])
+
+
 def test_system_instruction_has_runtime_scoped_capability_tour(tmp_path: Path):
     store = DurableStore(tmp_path)
     try:
