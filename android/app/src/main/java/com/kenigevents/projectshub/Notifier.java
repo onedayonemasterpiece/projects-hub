@@ -32,6 +32,11 @@ final class Notifier {
         notify(102, "Доступно обновление Projects Hub", version);
     }
 
+    void developmentCompleted(String executionId, String title) {
+        notify(20000 + Math.floorMod(executionId.hashCode(), 500000),
+                "Задача готова к проверке", title);
+    }
+
     private void notify(int id, String title, String text) {
         if (Build.VERSION.SDK_INT >= 33
                 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
