@@ -1,13 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  getCollaborationBrief,
   getCollaborationTimeline,
-  markCollaborationBriefSeen,
-  setCollaborationGeneralNews,
   getProjectNote,
   getProjectNoteReplies,
   postProjectNoteReply,
-  type CollaborationBrief,
   type CollaborationEvent,
   type ProjectNote,
   type ProjectReply,
@@ -17,90 +13,85 @@ type Props = {
   workspaceId: string;
   actorId: string;
   refreshKey: number;
+  mode?: "activity" | "note";
+  noteId?: string;
 };
 
-function noteIdFor(event: CollaborationEvent) {
+function relatedNoteId(event: CollaborationEvent): string | null {
   if (event.object_kind === "note") return event.object_id;
   if (event.object_kind === "reply") return event.parent_object_id;
+  if (event.object_kind === "analysis") return event.parent_object_id;
   return null;
 }
 
-export default function CollaborationTimeline({ workspaceId, actorId, refreshKey }: Props) {
+function activityLabel(event: CollaborationEvent): string {
+  if (event.kind === "note_chatgpt_analyzed") return "ChatGPT завершил анализ заметки";
+  if (event.kind === "continuation_completed") return "Завершено продолжение аналитики";
+  if (event.kind === "note_replied") return "Участник ответил на заметку";
+  return "Участник добавил заметку";
+}
+
+export default function CollaborationTimeline({
+  workspaceId, actorId, refreshKey, mode = "activity", noteId,
+}: Props) {
   const [events, setEvents] = useState<CollaborationEvent[]>([]);
-  const [brief, setBrief] = useState<CollaborationBrief | null>(null);
-  const [showGeneral, setShowGeneral] = useState(false);
   const [opened, setOpened] = useState<ProjectNote | null>(null);
   const [replies, setReplies] = useState<ProjectReply[]>([]);
+  const [manualReply, setManualReply] = useState(false);
   const [replyText, setReplyText] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    const [value, nextBrief] = await Promise.all([
-      getCollaborationTimeline(workspaceId),
-      getCollaborationBrief(workspaceId),
-    ]);
-    setEvents(value.items);
-    setBrief(nextBrief);
-  }, [workspaceId]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const run = async () => {
-      try {
-        const [value, nextBrief] = await Promise.all([
-          getCollaborationTimeline(workspaceId),
-          getCollaborationBrief(workspaceId),
-        ]);
-        if (!cancelled) {
-          setEvents(value.items);
-          setBrief(nextBrief);
-        }
-      } catch {
-        // Main conversation remains usable when collaboration refresh is unavailable.
-      }
-    };
-    void run();
-    const timer = window.setInterval(run, 5000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [workspaceId, refreshKey]);
-
-  const personal = useMemo(
-    () => events.filter(item =>
-      item.actor_id === actorId || item.addressed_to_actor_id === actorId
-    ),
-    [actorId, events],
-  );
-  const general = useMemo(
-    () => events.filter(item =>
-      item.actor_id !== actorId && item.addressed_to_actor_id == null
-    ),
-    [actorId, events],
-  );
-  const visible = showGeneral ? [...personal, ...general] : personal;
-  visible.sort((a, b) => a.id - b.id);
-
-  const openEvent = useCallback(async (event: CollaborationEvent) => {
-    const noteId = noteIdFor(event);
-    if (!noteId) return;
+  const openNote = useCallback(async (id: string) => {
     setBusy(true);
     setNotice(null);
     try {
       const [note, thread] = await Promise.all([
-        getProjectNote(workspaceId, noteId),
-        getProjectNoteReplies(workspaceId, noteId),
+        getProjectNote(workspaceId, id),
+        getProjectNoteReplies(workspaceId, id),
       ]);
       setOpened(note);
       setReplies(thread.items);
+      setManualReply(false);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Не удалось открыть заметку.");
     } finally {
       setBusy(false);
     }
   }, [workspaceId]);
+
+  useEffect(() => {
+    if (mode !== "activity") return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const result = await getCollaborationTimeline(workspaceId);
+        if (!cancelled) setEvents(result.items);
+      } catch {
+        // A read-only auxiliary view must not interrupt Mira's conversation.
+      }
+    };
+    void load();
+    const timer = window.setInterval(load, 30000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [workspaceId, mode, refreshKey]);
+
+  useEffect(() => {
+    if (mode !== "note") return;
+    setOpened(null);
+    if (noteId) void openNote(noteId);
+  }, [mode, noteId, openNote]);
+
+  // The explicit team view is a concise outcome feed, not every prior self-note,
+  // internal question, or historical test event in the durable event log.
+  const meaningful = useMemo(() =>
+    events.filter(event =>
+      event.kind === "note_chatgpt_analyzed"
+      || (event.kind === "continuation_completed" && event.addressed_to_actor_id === actorId)
+      || (["note_created", "note_replied"].includes(event.kind) && event.actor_id !== actorId)
+    ).slice(-30),
+    [events, actorId],
+  );
 
   const sendReply = useCallback(async () => {
     if (!opened || !replyText.trim()) return;
@@ -109,101 +100,39 @@ export default function CollaborationTimeline({ workspaceId, actorId, refreshKey
     try {
       await postProjectNoteReply(workspaceId, opened.id, replyText.trim());
       setReplyText("");
-      const thread = await getProjectNoteReplies(workspaceId, opened.id);
-      setReplies(thread.items);
-      await refresh();
+      setManualReply(false);
+      const next = await getProjectNoteReplies(workspaceId, opened.id);
+      setReplies(next.items);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Не удалось отправить ответ.");
     } finally {
       setBusy(false);
     }
-  }, [opened, refresh, replyText, workspaceId]);
-
-  const markPersonalSeen = useCallback(async () => {
-    if (!brief?.personal_through_id) return;
-    await markCollaborationBriefSeen(
-      workspaceId,
-      brief.personal_through_id,
-      undefined,
-    );
-    await refresh();
-  }, [brief?.personal_through_id, refresh, workspaceId]);
-
-  const revealGeneral = useCallback(async () => {
-    setShowGeneral(true);
-    if (brief?.general_through_id) {
-      await markCollaborationBriefSeen(
-        workspaceId,
-        undefined,
-        brief.general_through_id,
-      );
-      await refresh();
-    }
-  }, [brief?.general_through_id, refresh, workspaceId]);
-
-  const setGeneralNews = useCallback(async (enabled: boolean) => {
-    await setCollaborationGeneralNews(workspaceId, enabled);
-    setShowGeneral(false);
-    await refresh();
-  }, [refresh, workspaceId]);
-
-  if (!events.length) return null;
+  }, [opened, replyText, workspaceId]);
 
   return (
     <div className="collaboration-inline" aria-label="Совместная работа">
-      {brief && brief.personal_unread_count > 0 && (
-        <div className="collaboration-attention">
-          <strong>Для вас · {brief.personal_unread_count}</strong>
-          <button className="mini-action" onClick={() => void markPersonalSeen()}>
-            Просмотрено
-          </button>
-        </div>
-      )}
-      {visible.map(event => (
-        <article
-          className={"collaboration-widget " + (
-            event.addressed_to_actor_id === actorId ? "addressed" : ""
+      {mode === "activity" && (
+        <>
+          {meaningful.length === 0 && (
+            <p className="empty-copy">Нет новых заметок участников или завершённых результатов аналитики.</p>
           )}
-          key={event.id}
-        >
-          <div className="collaboration-widget-head">
-            <span>{event.project_name}</span>
-            <small>{event.kind === "note_chatgpt_analyzed" ? "Глубокий анализ ChatGPT" : event.kind === "note_replied" ? "Ответ на заметку" : "Проектная заметка"}</small>
-          </div>
-          <strong>{event.summary}</strong>
-          {noteIdFor(event) && (
-            <button
-              className="mini-action"
-              disabled={busy}
-              onClick={() => void openEvent(event)}
-            >
-              Открыть
-            </button>
-          )}
-        </article>
-      ))}
-      {!showGeneral && brief?.general_news_enabled && general.length > 0 && (
-        <button className="collaboration-general-toggle" onClick={() => void revealGeneral()}>
-          Общие новости · {brief.general_count || general.length}
-        </button>
-      )}
-      {showGeneral && general.length > 0 && (
-        <div className="collaboration-general-controls">
-          <button className="collaboration-general-toggle" onClick={() => setShowGeneral(false)}>
-            Скрыть общие новости
-          </button>
-          <button className="quiet-button" onClick={() => void setGeneralNews(false)}>
-            Не показывать общие новости
-          </button>
-        </div>
-      )}
-      {brief && !brief.general_news_enabled && (
-        <div className="collaboration-general-controls">
-          <small>Общие новости скрыты. Лично адресованное остаётся включено.</small>
-          <button className="quiet-button" onClick={() => void setGeneralNews(true)}>
-            Включить общие новости
-          </button>
-        </div>
+          {meaningful.map(event => (
+            <article className="collaboration-widget" key={event.id}>
+              <div className="collaboration-widget-head">
+                <span>{event.project_name}</span>
+                <small>{activityLabel(event)}</small>
+              </div>
+              <strong>{event.summary}</strong>
+              {relatedNoteId(event) && (
+                <button className="mini-action" disabled={busy}
+                  onClick={() => void openNote(relatedNoteId(event)!)}>
+                  Открыть заметку
+                </button>
+              )}
+            </article>
+          ))}
+        </>
       )}
       {opened && (
         <article className="collaboration-thread">
@@ -215,8 +144,8 @@ export default function CollaborationTimeline({ workspaceId, actorId, refreshKey
           <p>{opened.body}</p>
           {opened.chatgpt_analysis && (
             <details className="collaboration-chatgpt-analysis">
-              <summary>Глубокий анализ ChatGPT · {opened.chatgpt_analysis.generated_at_utc.slice(0, 16)}</summary>
-              <p className="question-context">Отдельная аналитика, не принятое решение. Версия исходника: {opened.chatgpt_analysis.source_sha.slice(0, 12)}.</p>
+              <summary>Анализ ChatGPT · {opened.chatgpt_analysis.generated_at_utc.slice(0, 16)}</summary>
+              <p className="question-context">Аналитические предложения, не принятые автоматически решения. Редакция: {opened.chatgpt_analysis.source_sha.slice(0, 12)}.</p>
               <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
                 {opened.chatgpt_analysis.markdown}
               </div>
@@ -230,21 +159,28 @@ export default function CollaborationTimeline({ workspaceId, actorId, refreshKey
               </div>
             ))}
           </div>
-          <div className="collaboration-reply-box">
-            <textarea
-              value={replyText}
-              onChange={event => setReplyText(event.target.value)}
-              placeholder="Ответить в обсуждении…"
-              maxLength={12000}
-            />
-            <button className="mini-action" onClick={() => void sendReply()} disabled={busy || !replyText.trim()}>
-              Ответить
+          <small>Можно ответить Мире голосом, назвав заметку.</small>
+          <button className="quiet-button" onClick={() => setManualReply(value => !value)}>
+            {manualReply ? "Скрыть ввод" : "Ответить текстом"}
+          </button>
+          {manualReply && (
+            <div className="collaboration-reply-box">
+              <textarea value={replyText}
+                onChange={event => setReplyText(event.target.value)}
+                placeholder="Необязательный ответ текстом…" maxLength={12000} />
+              <button className="mini-action" onClick={() => void sendReply()}
+                disabled={busy || !replyText.trim()}>Отправить ответ</button>
+            </div>
+          )}
+          {mode === "activity" && (
+            <button className="quiet-button" onClick={() => setOpened(null)}>
+              Вернуться к новостям
             </button>
-          </div>
-          {notice && <span className="message-delivery-note">{notice}</span>}
-          <button className="quiet-button" onClick={() => setOpened(null)}>Закрыть</button>
+          )}
         </article>
       )}
+      {mode === "note" && !opened && !notice && <p className="empty-copy">Загружаю заметку…</p>}
+      {notice && <span className="message-delivery-note">{notice}</span>}
     </div>
   );
 }
