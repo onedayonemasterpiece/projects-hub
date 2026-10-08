@@ -507,6 +507,7 @@ export const getCollaborationTimeline = (workspaceId: string, afterId = 0) => {
     workspace_id: workspaceId,
     after_id: String(afterId),
     limit: "100",
+    latest: "true", // Explicitly opened activity is newest-first, not historical backlog.
   });
   return api<{ items: CollaborationEvent[] }>(`/api/collaboration/timeline?${params}`);
 };
