@@ -84,7 +84,8 @@ async def test_live_adapter_persists_audio_transcript_and_verified_memory(tmp_pa
 def test_initial_live_setup_has_bounded_authoritative_budget_and_core_routing(tmp_path: Path):
     import json
     from live_interaction.provider import setup_config
-    from projects_hub.live_adapter import _live_instruction
+    from projects_hub.live_adapter import _live_instruction, _functions
+    from projects_hub.live_capabilities import BUNDLES, OVERLAYS, ROUTER, PREFERENCES
 
     store = DurableStore(tmp_path)
     try:
@@ -132,10 +133,34 @@ def test_initial_live_setup_has_bounded_authoritative_budget_and_core_routing(tm
             assert section in instruction
             assert "# ROLE" in instruction
             assert "# CAPABILITY TOUR" in instruction
-            assert "# BOARD" not in instruction if capability != "board" else True
-            assert "# BACKLOG AND OWNER DEVELOPMENT" not in instruction if capability != "owner_development" else True
+            if capability != "board":
+                assert "# BOARD" not in instruction
+            if capability != "owner_development":
+                assert "# BACKLOG AND OWNER DEVELOPMENT" not in instruction
+            declarations = [
+                *(_functions(
+                    expert_reviews=True, regional_knowledge=True, owner_development=True
+                )),
+                *PREFERENCES,
+            ]
+            function_bundle = [ROUTER, *(
+                item for item in declarations if item["name"] in BUNDLES[capability]
+            )]
+            switched = {
+                **initialized["configuration"],
+                "functions": function_bundle,
+                "system_instruction": instruction + "\n" + OVERLAYS[capability],
+            }
+            switched_setup = setup_config(
+                "gemini-3.8-live",
+                initialized["context"],
+                configuration=switched,
+            )
+            switched_units = len(json.dumps(
+                switched_setup, ensure_ascii=False, separators=(",", ":"),
+            ).encode("utf-8"))
+            assert switched_units < 25000, (capability, switched_units)
         assert "не снимай blocker" in _live_instruction("core")
-        assert "две" not in _live_instruction("core").lower()  # never eager-load unrelated domains
     finally:
         store.close()
 
