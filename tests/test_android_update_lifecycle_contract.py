@@ -46,7 +46,7 @@ def test_android_completion_job_survives_activity_close_without_microphone_or_se
     assert 'new SecureStore(context).getDeviceToken()' in job
     assert "isUserUnlocked()" in job
     assert '"api/device/development/completed"' in (root / "ApiClient.java").read_text(encoding="utf-8")
-    assert "DevelopmentCompletionJob.schedule(this)" in main
+    assert "io.execute(() -> DevelopmentCompletionJob.schedule(getApplicationContext()))" in main
     assert 'android:name=".DevelopmentCompletionJob"' in manifest
     assert "RECEIVE_BOOT_COMPLETED" in manifest
     assert "RECORD_AUDIO" not in job
