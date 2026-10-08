@@ -2,7 +2,10 @@ package com.kenigevents.projectshub;
 
 import static org.junit.Assert.*;
 import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.WindowInsetsController;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.webkit.WebResourceRequest;
@@ -50,6 +53,11 @@ public class MainActivitySmokeTest {
                 loaded.await(15, TimeUnit.SECONDS));
     }
 
+    private int themedRootColor(MainActivity activity) {
+        ViewGroup content = activity.findViewById(android.R.id.content);
+        return ((ColorDrawable) content.getChildAt(0).getBackground()).getColor();
+    }
+
     private void message(ActivityScenario<MainActivity> scenario, String theme, int revision) throws Exception {
         CountDownLatch acknowledged = new CountDownLatch(1);
         scenario.onActivity(activity -> activity.themeWebView().evaluateJavascript(
@@ -73,14 +81,26 @@ public class MainActivitySmokeTest {
             message(scenario, "light", 1);
             scenario.onActivity(activity -> {
                 assertSame(original[0], activity.themeWebView());
-                assertEquals(Color.rgb(244,245,247), activity.getWindow().getStatusBarColor());
+                assertEquals(Color.rgb(244,245,247), themedRootColor(activity));
+                if (android.os.Build.VERSION.SDK_INT < 35) {
+                    assertEquals(Color.rgb(244,245,247), activity.getWindow().getStatusBarColor());
+                } else {
+                    assertTrue((activity.getWindow().getInsetsController().getSystemBarsAppearance()
+                            & WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS) != 0);
+                }
                 assertTrue((activity.getWindow().getDecorView().getSystemUiVisibility()
                         & View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR) != 0);
             });
             message(scenario, "dark", 2);
             scenario.onActivity(activity -> {
                 assertSame(original[0], activity.themeWebView());
-                assertEquals(Color.rgb(7,7,8), activity.getWindow().getNavigationBarColor());
+                assertEquals(Color.rgb(7,7,8), themedRootColor(activity));
+                if (android.os.Build.VERSION.SDK_INT < 35) {
+                    assertEquals(Color.rgb(7,7,8), activity.getWindow().getNavigationBarColor());
+                } else {
+                    assertEquals(0, activity.getWindow().getInsetsController().getSystemBarsAppearance()
+                            & WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
+                }
                 assertEquals(0, activity.getWindow().getDecorView().getSystemUiVisibility()
                         & View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
             });
