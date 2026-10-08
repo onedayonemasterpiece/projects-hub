@@ -1876,7 +1876,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
                 </div>
               ))}
               {collaborationCard && boot && (
-                <div className="chat-row assistant" aria-label="Карточка по просьбе Мире">
+                <div className="chat-row assistant requested-card-row" aria-label="Карточка по просьбе Мире">
                   <div className="chat-message assistant">
                     <section className="collaboration-requested">
                       <div className="collaboration-requested-heading">
