@@ -1,3 +1,4 @@
+from live_tools import execute, bundle_setup
 import asyncio
 import hashlib
 import time
@@ -150,7 +151,8 @@ async def test_live_function_waits_for_same_android_receipt(tmp_path: Path):
             model="gemini-3.8-live",
             conversation_id=conversation["id"],
         )
-        names = {item["name"] for item in initialized["configuration"]["functions"]}
+        selected, _ = bundle_setup(adapter, initialized, "calendar")
+        names = {item["name"] for item in selected["functions"]}
         assert "devices_list_capabilities" in names
         assert "calendar_create_event_on_device" in names
         assert "calendar_list_events_on_device" in names
@@ -165,7 +167,7 @@ async def test_live_function_waits_for_same_android_receipt(tmp_path: Path):
                 "device_id": registration["device"]["id"],
             },
         }
-        task = asyncio.create_task(adapter.execute_tool(session, call))
+        task = asyncio.create_task(execute(adapter, session, call))
         claimed = None
         for _ in range(20):
             claimed = await service.next_command(
@@ -360,7 +362,7 @@ async def test_calendar_live_tool_returns_pending_without_40_second_voice_stall(
 
         service.wait_for_terminal = return_claimed
         session = SimpleNamespace(state=initialized["state"])
-        result = await adapter.execute_tool(
+        result = await execute(adapter,
             session,
             {
                 "name": "calendar_create_event_on_device",

@@ -36,3 +36,12 @@ jobs:
         working-directory: web
       - run: npm run build
         working-directory: web
+      - name: Install isolated browser test dependency
+        run: npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund playwright@1.62.1
+        working-directory: web
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: web
+      - name: Theme rendering on desktop and mobile
+        run: node tests/theme-browser.mjs
+        working-directory: web

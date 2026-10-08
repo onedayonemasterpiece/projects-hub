@@ -185,9 +185,15 @@ async def test_mira_board_tools_share_same_live_surface_and_viewport_context(tmp
             conversation_id=conversation["id"],
             client_instance_id="client-board-tab-001",
         )
-        session = SimpleNamespace(state=initialized["state"])
+        session = SimpleNamespace(state=initialized["state"], capability="board")
         names = {item["name"] for item in initialized["configuration"]["functions"]}
-        assert {"board_navigate", "board_query", "board_edit", "board_history"} <= names
+        assert "activate_capability" in names
+        assert "board" in initialized["state"]["allowed_capabilities"]
+        # This is the post-router capability context; board mutations remain
+        # Mira-only and are not eagerly exposed in the small default bundle.
+        assert {"board_navigate", "board_query", "board_edit", "board_history"} <= set(
+            __import__("projects_hub.live_capabilities", fromlist=["BUNDLES"]).BUNDLES["board"]
+        )
 
         opened = await adapter.execute_tool(
             session,

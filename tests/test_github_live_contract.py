@@ -1,3 +1,4 @@
+from live_tools import execute, bundle_setup
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -89,7 +90,8 @@ async def test_live_only_sees_bound_repository_catalogue_and_cannot_change_githu
             model="gemini-3.8-live",
             conversation_id=conversation["id"],
         )
-        names = {item["name"] for item in initialized["configuration"]["functions"]}
+        selected, _ = bundle_setup(adapter, initialized, "repositories")
+        names = {item["name"] for item in selected["functions"]}
         assert "github_repositories_list" in names
         assert "github_repository_read" in names
         assert not any(
@@ -103,7 +105,7 @@ async def test_live_only_sees_bound_repository_catalogue_and_cannot_change_githu
         )
 
         session = SimpleNamespace(state=initialized["state"])
-        result = await adapter.execute_tool(
+        result = await execute(adapter,
             session,
             {
                 "name": "github_repositories_list",
@@ -126,7 +128,7 @@ async def test_live_only_sees_bound_repository_catalogue_and_cannot_change_githu
         }
         assert "installation_id" not in str(result)
         assert "token" not in str(result).lower()
-        read = await adapter.execute_tool(
+        read = await execute(adapter,
             session,
             {
                 "name": "github_repository_read",

@@ -42,12 +42,15 @@ async def test_mira_dispatches_brief_seen_and_general_news_tools(tmp_path):
             model="gemini-3.8-live",
             conversation_id=conversation["id"],
         )
-        session = SimpleNamespace(state=initialized["state"])
+        session = SimpleNamespace(state=initialized["state"], capability="collaboration")
         names = {
             item["name"] for item in initialized["configuration"]["functions"]
         }
-        assert "collaboration_brief_seen" in names
-        assert "collaboration_general_news_set" in names
+        assert "activate_capability" in names
+        assert "collaboration" in initialized["state"]["allowed_capabilities"]
+        assert {"collaboration_brief_seen", "collaboration_general_news_set"} <= set(
+            __import__("projects_hub.live_capabilities", fromlist=["BUNDLES"]).BUNDLES["collaboration"]
+        )
 
         disabled = await adapter.execute_tool(
             session,
