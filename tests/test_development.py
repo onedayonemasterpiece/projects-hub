@@ -745,6 +745,7 @@ def test_development_target_prefers_external_owning_repo_over_notes(
             store,
             readiness,
             devcoveer=FakeDevCoveer(),
+            pipeline_mode="legacy",
         )
         assert (
             service._project_hint(
@@ -814,7 +815,7 @@ async def test_interrupted_recovery_reconciles_stale_notes_target_to_owner(
             "projects-hub-owner",
         )
 
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=owner,
@@ -893,7 +894,7 @@ async def test_codex_status_reports_live_capacity_and_gpt61_profile(tmp_path: Pa
     store, readiness, boot, _project = setup(tmp_path)
     fake = FakeDevCoveer()
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         result = await service.codex_status(
             actor_id=boot["actor"]["id"],
             workspace_id=boot["workspace"]["id"],
@@ -913,7 +914,7 @@ async def test_start_fails_closed_when_owner_profile_is_unavailable(tmp_path: Pa
     store, readiness, boot, project = setup(tmp_path)
     fake = FakeDevCoveer(profile_available=False)
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         tasks = create_backlog(service, boot, project)
         result = await service.start(
             actor_id=boot["actor"]["id"],
@@ -933,7 +934,7 @@ async def test_owner_runs_two_thread_quality_pipeline_to_delivery(tmp_path: Path
     store, readiness, boot, project = setup(tmp_path)
     fake = FakeDevCoveer()
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         tasks = create_backlog(service, boot, project)
         execution = await service.start(
             actor_id=boot["actor"]["id"],
@@ -1047,7 +1048,7 @@ async def test_wrong_deployed_sha_never_completes_owner_development(tmp_path: Pa
     fake = FakeDevCoveer()
     fake.deploy_receipt_sha = "e" * 40
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=boot["actor"]["id"],
@@ -1095,7 +1096,7 @@ async def test_running_implementation_exposes_testing_phase(tmp_path: Path):
     store, readiness, boot, project = setup(tmp_path)
     fake = FakeDevCoveer(hold_implementation=True)
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         execution = await service.start(
             actor_id=boot["actor"]["id"],
@@ -1131,7 +1132,7 @@ async def test_review_reuses_two_threads_and_reworks_before_delivery(tmp_path: P
     store, readiness, boot, project = setup(tmp_path)
     fake = FakeDevCoveer(rework_once=True)
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         execution = await service.start(
             actor_id=boot["actor"]["id"],
@@ -1181,7 +1182,7 @@ async def test_codex_reserve_blocks_start(tmp_path: Path):
     store, readiness, boot, project = setup(tmp_path)
     fake = FakeDevCoveer(remaining=10.0)
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         with pytest.raises(StoreError) as error:
             await service.start(
@@ -1210,7 +1211,7 @@ async def test_non_platform_owner_cannot_read_or_start_development(tmp_path: Pat
             "INSERT INTO memberships(actor_id,workspace_id,role) VALUES(?,?,?)",
             (member, workspace, "owner"),
         )
-        service = DevelopmentService(store, readiness, devcoveer=FakeDevCoveer())
+        service = DevelopmentService(store, readiness, devcoveer=FakeDevCoveer(), pipeline_mode="legacy")
         with pytest.raises(StoreError) as error:
             await service.codex_status(actor_id=member, workspace_id=workspace)
         assert error.value.code == "FORBIDDEN"
@@ -1225,7 +1226,7 @@ async def test_status_read_does_not_advance_running_execution(tmp_path: Path):
     store, readiness, boot, project = setup(tmp_path)
     fake = FakeDevCoveer()
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=boot["actor"]["id"],
@@ -1271,7 +1272,7 @@ async def test_status_poll_during_start_never_creates_missing_stage(tmp_path: Pa
     store, readiness, boot, project = setup(tmp_path)
     fake = SlowStartDevCoveer()
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         launch = asyncio.create_task(
             service.start(
@@ -1317,7 +1318,7 @@ async def test_background_worker_progresses_without_status_reads(tmp_path: Path)
     store, readiness, boot, project = setup(tmp_path)
     fake = FakeDevCoveer()
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         service._background_interval_seconds = 0.01
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
@@ -1362,7 +1363,7 @@ async def test_backlog_overview_keeps_running_execution_visible_after_reopen(
     store, readiness, boot, project = setup(tmp_path)
     fake = FakeDevCoveer()
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=boot["actor"]["id"],
@@ -1393,7 +1394,7 @@ async def test_self_development_retargets_design_before_implementation(
     store, readiness, boot, project = setup(tmp_path)
     fake = FakeDevCoveer()
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=boot["actor"]["id"],
@@ -1448,7 +1449,7 @@ async def test_completed_write_publishes_exact_candidate_and_waits_for_ci(
     fake = FakeDevCoveer()
     fake.ci_pending_once = True
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=boot["actor"]["id"],
@@ -1528,7 +1529,7 @@ async def test_foreign_clean_checkout_never_becomes_owner_candidate(tmp_path: Pa
     store, readiness, boot, project = setup(tmp_path)
     fake = FakeDevCoveer()
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=boot["actor"]["id"],
@@ -1568,7 +1569,7 @@ async def test_missing_candidate_ci_after_grace_starts_technical_rework(
     fake.ci_absent = True
     fake.pr_mergeable_state = "unknown"
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=boot["actor"]["id"],
@@ -1650,7 +1651,7 @@ async def test_completed_legacy_review_reconciles_candidate_without_active_stage
     fake.checkout_candidate = False
     fake.pr_mergeable_state = "dirty"
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=boot["actor"]["id"],
@@ -1756,7 +1757,7 @@ async def test_legacy_dirty_candidate_recovers_before_quality_review(tmp_path: P
     fake.checkout_candidate = False
     fake.pr_mergeable_state = "dirty"
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=boot["actor"]["id"],
@@ -1830,7 +1831,7 @@ async def test_legacy_evidence_loop_recovers_noncurrent_candidate_branch(
     fake.candidate_branch = "chatgpt/voice-theme-devrun-fe82f497-20261006"
     fake.candidate_head = "b" * 40
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=boot["actor"]["id"],
@@ -1938,7 +1939,7 @@ async def test_failed_deterministic_ci_enters_write_recovery_before_review(tmp_p
     fake = InterruptedStageDevCoveer("none", resume_success=False)
     fake.ci_failure = True
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=boot["actor"]["id"],
@@ -1993,7 +1994,7 @@ async def test_dirty_pr_enters_conflict_recovery_before_review(tmp_path: Path):
     fake = InterruptedStageDevCoveer("none", resume_success=False)
     fake.pr_mergeable_state = "dirty"
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=boot["actor"]["id"],
@@ -2039,7 +2040,7 @@ async def test_absent_ci_checks_never_count_as_success_after_grace(tmp_path: Pat
     fake = FakeDevCoveer()
     fake.ci_absent = True
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=boot["actor"]["id"],
@@ -2095,7 +2096,7 @@ async def test_interrupted_design_uses_verified_brief_readback_without_restart(
     store, readiness, boot, project = setup(tmp_path)
     fake = InterruptedStageDevCoveer("design", cwd=cwd)
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=boot["actor"]["id"],
@@ -2147,7 +2148,7 @@ async def test_interrupted_review_resumes_same_quality_thread_once(tmp_path: Pat
     store, readiness, boot, project = setup(tmp_path)
     fake = InterruptedStageDevCoveer("review", resume_success=True)
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=boot["actor"]["id"],
@@ -2196,7 +2197,7 @@ async def test_interrupted_review_falls_back_to_one_read_only_review(tmp_path: P
     store, readiness, boot, project = setup(tmp_path)
     fake = InterruptedStageDevCoveer("review", resume_success=False)
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=boot["actor"]["id"],
@@ -2240,7 +2241,7 @@ async def test_interrupted_implementation_starts_safe_continuation(tmp_path: Pat
     store, readiness, boot, project = setup(tmp_path)
     fake = InterruptedStageDevCoveer("implementation", resume_success=False)
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=boot["actor"]["id"],
@@ -2319,7 +2320,7 @@ async def test_lost_recovery_dispatch_is_reconciled_without_duplicate_write(
     store, readiness, boot, project = setup(tmp_path)
     fake = LostRecoveryDispatchDevCoveer()
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=boot["actor"]["id"],
@@ -2359,7 +2360,7 @@ async def test_legacy_interrupted_block_is_unblocked_by_worker(tmp_path: Path):
     store, readiness, boot, project = setup(tmp_path)
     fake = InterruptedStageDevCoveer("none", resume_success=False)
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=boot["actor"]["id"],
@@ -2412,7 +2413,7 @@ async def test_capacity_wait_retries_without_owner_action(tmp_path: Path):
     store, readiness, boot, project = setup(tmp_path)
     fake = FakeDevCoveer()
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=boot["actor"]["id"],
@@ -2455,7 +2456,7 @@ async def test_old_review_limit_block_auto_resumes_same_write_thread(tmp_path: P
     store, readiness, boot, project = setup(tmp_path)
     fake = FakeDevCoveer()
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=boot["actor"]["id"],
@@ -2532,7 +2533,7 @@ async def test_review_rework_limit_remains_bounded_at_new_maximum(tmp_path: Path
     store, readiness, boot, project = setup(tmp_path)
     fake = FakeDevCoveer()
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=boot["actor"]["id"],
@@ -2612,7 +2613,7 @@ async def test_missing_review_verdict_restarts_read_only_review(tmp_path: Path):
     store, readiness, boot, project = setup(tmp_path)
     fake = MissingVerdictDevCoveer()
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=boot["actor"]["id"],
@@ -2659,7 +2660,7 @@ async def test_marked_dispatch_without_task_id_reconciles_history(tmp_path: Path
     store, readiness, boot, project = setup(tmp_path)
     fake = FakeDevCoveer()
     try:
-        service = DevelopmentService(store, readiness, devcoveer=fake)
+        service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
         marker = "ODR-no-id-reconcile"
         existing = "dvt_" + "n" * 32
         calls = 0
@@ -2775,7 +2776,7 @@ def test_owner_development_tools_are_not_exposed_to_ordinary_users():
 async def test_pending_unknown_owner_resume_blocks_new_development_start(tmp_path: Path):
     store, readiness, boot, project = setup(tmp_path)
     fake = FakeDevCoveer()
-    service = DevelopmentService(store, readiness, devcoveer=fake)
+    service = DevelopmentService(store, readiness, devcoveer=fake, pipeline_mode="legacy")
     try:
         tasks = create_backlog(service, boot, project)
         first = await service.start(
@@ -2829,6 +2830,152 @@ async def test_pending_unknown_owner_resume_blocks_new_development_start(tmp_pat
         assert exc.value.code == "DEVELOPMENT_EXECUTION_ACTIVE"
         # The guard fires before quota/model/provider admission or any new task.
         assert fake.calls == calls_before
+    finally:
+        await service.close()
+        store.close()
+
+class CodexDeliveryFake(FakeDevCoveer):
+    def __init__(self, *, valid_receipt: bool = True, rework_once: bool = False):
+        super().__init__(rework_once=rework_once)
+        self.valid_receipt = valid_receipt
+
+    async def read_task(self, task_id: str, *, project=None, detail="summary"):
+        # After the implementation and any rework turn, native Codex handles
+        # merge, GitHub CI, deploy and release as its own authorized delivery.
+        if task_id == self._implementation_task and self._implementation_reads >= (
+            2 if self.rework_once else 1
+        ):
+            self._implementation_reads += 1
+            if not self.valid_receipt:
+                return self._completed("CI pending; release not yet verified", 35)
+            return self._completed(
+                'Published merged main and verified production.\\n'
+                'DELIVERY_RECEIPT: {"status":"delivered","ci":"passed",'
+                '"main_sha":"' + self.main_head + '",'
+                '"evidence_url":"https://github.com/onedayonemasterpiece/projects-hub/actions/runs/777",'
+                '"verification":"Checked live healthy service and exact merged main SHA",'
+                '"android_update":false,"android_release_url":null}',
+                70,
+            )
+        return await super().read_task(task_id, project=project, detail=detail)
+
+
+@pytest.mark.asyncio
+async def test_mira_codex_owner_pipeline_delivers_without_secondary_ci_controller(tmp_path: Path):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = CodexDeliveryFake()
+    try:
+        owner = boot["actor"]["id"]
+        workspace = boot["workspace"]["id"]
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=owner, workspace_id=workspace, task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+        assert started["execution"]["pipeline_mode"] == "codex_owner"
+        assert started["execution"]["phase"] == "designing"
+
+        # Simulate closing and reopening the application. Status reads do not
+        # advance work; the backend's durable worker does, without any client.
+        assert (await service.status(
+            actor_id=owner, workspace_id=workspace, execution_id=execution_id
+        ))["execution"]["phase"] == "designing"
+
+        for _ in range(4):
+            await service.advance_active_once()
+        final = (await service.status(
+            actor_id=owner, workspace_id=workspace, execution_id=execution_id,
+        ))["execution"]
+        assert final["status"] == "completed"
+        assert final["phase"] == "ready"
+        assert final["update_check_recommended"] is False
+        assert final["delivery_main_sha"] == fake.main_head
+        assert [stage["stage"] for stage in final["stages"]] == [
+            "design", "implementation", "review", "delivery",
+        ]
+        assert len([name for name, _ in fake.calls if name == "start"]) == 2
+        assert {args["task"] for name, args in fake.calls if name == "continue"} == {
+            fake._quality_task, fake._implementation_task,
+        }
+        assert not [
+            x for x in fake.calls if x[0] in {"direct_probe", "direct_action"}
+        ]
+        assert service.list_backlog(
+            actor_id=owner, workspace_id=workspace, project_id=project["id"],
+        )[0]["state"] == "done"
+        assert service.recent_completions(
+            actor_id=owner, workspace_id=workspace,
+        )[0]["titles"] == [task["title"]]
+
+        reopened = DevelopmentService(store, readiness, devcoveer=fake)
+        persisted = (await reopened.status(
+            actor_id=owner, workspace_id=workspace, execution_id=execution_id
+        ))["execution"]
+        assert persisted["status"] == "completed"
+        assert persisted["delivery_main_sha"] == fake.main_head
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_mira_codex_review_rework_and_delivery_use_same_threads(tmp_path: Path):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = CodexDeliveryFake(rework_once=True)
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        for _ in range(6):
+            await service.advance_active_once()
+        result = (await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=started["execution"]["id"],
+        ))["execution"]
+        assert result["status"] == "completed"
+        assert [stage["stage"] for stage in result["stages"]] == [
+            "design", "implementation", "review", "rework", "review", "delivery",
+        ]
+        assert len([name for name, _ in fake.calls if name == "start"]) == 2
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_mira_codex_unverified_delivery_fails_bounded_without_false_done(tmp_path: Path):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = CodexDeliveryFake(valid_receipt=False)
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        for _ in range(5):
+            await service.advance_active_once()
+        status = (await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=started["execution"]["id"],
+        ))["execution"]
+        assert status["status"] == "failed"
+        assert status["error_code"] == "DELIVERY_UNVERIFIED"
+        assert [stage["stage"] for stage in status["stages"]][-2:] == [
+            "delivery", "delivery",
+        ]
+        assert service.list_backlog(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"], project_id=project["id"],
+        )[0]["state"] != "done"
     finally:
         await service.close()
         store.close()
