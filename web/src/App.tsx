@@ -478,15 +478,19 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
     }
 
     try {
-      const [capacity, latest, completed] = await Promise.all([
-        getDevelopmentCodexStatus(boot.workspace.id),
+      const [latest, completed] = await Promise.all([
         getLatestDevelopmentExecution(boot.workspace.id, true),
         getRecentCompletedDevelopment(boot.workspace.id),
       ]);
       setDevelopmentAccess(true);
-      setCodexStatus(capacity);
       setDevelopmentExecution(latest.execution);
       setCompletedDevelopment(completed.items);
+      // Quota availability must never hide durable work or completed results.
+      try {
+        setCodexStatus(await getDevelopmentCodexStatus(boot.workspace.id));
+      } catch {
+        setCodexStatus(null);
+      }
     } catch (error) {
       if (error instanceof ApiError && error.status === 403) {
         setDevelopmentAccess(false);
@@ -2041,9 +2045,9 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
                   <button className="quiet-button" onClick={() => setBacklogOpen(false)}>Закрыть</button>
                 </div>
 
-                {developmentAccess === true && codexStatus && (
+                {developmentAccess === true && (
                   <section className="development-status">
-                    <div className="development-heading">
+                    {codexStatus && <div className="development-heading">
                       <div>
                         <span>Codex</span>
                         <strong>
@@ -2055,8 +2059,8 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
                       <span className={codexStatus.eligible ? "readiness-badge is-ok" : "readiness-badge"}>
                         {codexStatus.eligible ? "можно запускать" : "резерв / недоступен"}
                       </span>
-                    </div>
-                    {!codexStatus.profile.catalog_available && codexStatus.models.length > 0 && (
+                    </div>}
+                    {codexStatus && !codexStatus.profile.catalog_available && codexStatus.models.length > 0 && (
                       <div className="model-list">
                         <span>Owner profile сейчас недоступен. Доступны:</span>
                         {codexStatus.models.slice(0, 6).map(model => (
