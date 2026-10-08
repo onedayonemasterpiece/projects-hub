@@ -165,6 +165,50 @@ def test_initial_live_setup_has_bounded_authoritative_budget_and_core_routing(tm
         store.close()
 
 
+def test_voice_first_router_advertises_authorized_owner_development_and_theme(tmp_path: Path):
+    from projects_hub.live_adapter import _live_instruction
+    from projects_hub.live_capabilities import BUNDLES, ROUTER
+
+    store = DurableStore(tmp_path)
+    try:
+        boot = store.ensure_platform_owner("Owner")
+        actor = boot["actor"]["id"]
+        workspace = boot["workspace"]["id"]
+        conversation = store.create_conversation(
+            actor, workspace, boot["projects"][0]["id"],
+        )
+        adapter = ProjectsHubLiveAdapter(store)
+        state = adapter.initialize(
+            resource_id=ConversationScope(
+                workspace, actor, conversation["id"],
+            ).resource_binding(),
+            actor={"subject": actor, "tenant_id": workspace},
+            model="gemini-3.8-live",
+            conversation_id=conversation["id"],
+        )
+        core = state["configuration"]
+        allowed = state["context"]["allowed_capabilities"]
+        active_tools = {tool["name"] for tool in core["functions"]}
+        assert "owner_development" in allowed
+        assert "preferences" in allowed
+        assert "activate_capability" in active_tools
+        assert "development_execute_backlog" not in active_tools
+        assert "preferences_set_theme" not in active_tools
+        # A missing tool in the *active* bundle must not cause a false refusal.
+        assert "owner_development" in core["system_instruction"]
+        assert "development_execute_backlog" in core["system_instruction"]
+        assert "preferences_set_theme" in core["system_instruction"]
+        assert "не могу" in core["system_instruction"]
+        assert "activate_capability" in ROUTER["description"]
+        assert "owner_development" in ROUTER["description"]
+        assert "development_execute_backlog" in BUNDLES["owner_development"]
+        assert "backlog_list" in BUNDLES["owner_development"]
+        assert "BACKLOG AND OWNER DEVELOPMENT" in _live_instruction("owner_development")
+        assert "BACKLOG AND OWNER DEVELOPMENT" not in _live_instruction("core")
+    finally:
+        store.close()
+
+
 def test_live_tool_declarations_exclude_google_unsupported_json_schema_keywords():
     from projects_hub.live_adapter import _functions
     from projects_hub.live_capabilities import PREFERENCES, ROUTER
