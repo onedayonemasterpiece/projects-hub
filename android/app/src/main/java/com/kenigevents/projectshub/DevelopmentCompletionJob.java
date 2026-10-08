@@ -60,6 +60,10 @@ public final class DevelopmentCompletionJob extends JobService {
     }
 
     static void checkAndNotify(Context context) throws Exception {
+        android.os.UserManager userManager = context.getSystemService(android.os.UserManager.class);
+        // AndroidKeyStore may be unavailable before the first unlock after
+        // reboot; never accidentally clear a valid pairing credential.
+        if (userManager != null && !userManager.isUserUnlocked()) return;
         String token = new SecureStore(context).getDeviceToken();
         if (token == null || token.isBlank()) return;
         JSONArray recent = new ApiClient(BuildConfig.HUB_URL)
