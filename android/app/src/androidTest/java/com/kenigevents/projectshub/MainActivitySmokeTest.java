@@ -26,35 +26,27 @@ public class MainActivitySmokeTest {
 
     private void page(ActivityScenario<MainActivity> scenario, String url) throws Exception {
         CountDownLatch loaded = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<String> location =
+                new java.util.concurrent.atomic.AtomicReference<>("no navigation");
         scenario.onActivity(activity -> {
             WebView view = activity.themeWebView();
+            view.stopLoading();
             view.setWebViewClient(new WebViewClient() {
-                @Override public WebResourceResponse shouldInterceptRequest(
-                        WebView page, WebResourceRequest request) {
-                    // A genuine HTTPS main-frame URL is essential: loadDataWithBaseURL
-                    // may expose an opaque/about:blank URL to the privileged bridge,
-                    // which is correctly denied by the production origin guard.
-                    if (request.isForMainFrame() && url.equals(request.getUrl().toString())) {
-                        byte[] body = "<html><body>Theme bridge fixture</body></html>"
-                                .getBytes(StandardCharsets.UTF_8);
-                        return new WebResourceResponse("text/html", "UTF-8",
-                                new ByteArrayInputStream(body));
-                    }
-                    return super.shouldInterceptRequest(page, request);
-                }
                 @Override public void onPageFinished(WebView page, String finished) {
+                    location.set(finished + " (current=" + page.getUrl() + ")");
                     page.evaluateJavascript(
                             "document.body?.textContent?.includes('Theme bridge fixture')===true",
                             value -> { if ("true".equals(value)) loaded.countDown(); });
                 }
             });
-            // Intercept the prepared page locally but keep the actual HTTPS origin.
-            // The activity starts loading the real PWA in onCreate. Stop that
-            // in-flight navigation before loading this isolated exact-origin fixture.
-            view.stopLoading();
-            view.loadUrl(url);
+            // Deterministic local HTML with the exact HTTPS base AND history URL.
+            // No external network fixture is required; production still enforces
+            // its strict origin and current-page checks for the native bridge.
+            view.loadDataWithBaseURL(url,
+                    "<!doctype html><html><body>Theme bridge fixture</body></html>",
+                    "text/html", "UTF-8", url);
         });
-        assertTrue("exact theme fixture must load before posting to bridge",
+        assertTrue("exact theme fixture must load before posting to bridge: " + location.get(),
                 loaded.await(15, TimeUnit.SECONDS));
     }
 
