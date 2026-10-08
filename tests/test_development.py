@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from pathlib import Path
 
@@ -47,6 +48,7 @@ class FakeDevCoveer:
         self.deploy_job_id = "job_" + "1" * 24
         self.deploy_job_status = "succeeded"
         self.deploy_exit_code = 0
+        self.deploy_receipt_sha = self.main_head
 
     async def status(self):
         self.calls.append(("status", {}))
@@ -236,7 +238,15 @@ class FakeDevCoveer:
         if operation == "job_status":
             result = {"status": self.deploy_job_status, "action": "job_status", "job_id": self.deploy_job_id}
             if self.deploy_job_status == "succeeded":
-                result["result"] = {"exit_code": self.deploy_exit_code}
+                result["result"] = {
+                    "exit_code": self.deploy_exit_code,
+                    "stdout": json.dumps({
+                        "ok": True,
+                        "release_sha": self.deploy_receipt_sha,
+                        "verified_main_sha": self.deploy_receipt_sha,
+                        "health": {"ok": True, "release_sha": self.deploy_receipt_sha},
+                    }),
+                }
             return result
         raise AssertionError(operation)
 
@@ -1027,6 +1037,56 @@ async def test_owner_runs_two_thread_quality_pipeline_to_delivery(tmp_path: Path
         )
         assert {item["state"] for item in current} == {"done"}
     finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_wrong_deployed_sha_never_completes_owner_development(tmp_path: Path):
+    """Green CI and a succeeded job do not prove the requested SHA was deployed."""
+    store, readiness, boot, project = setup(tmp_path)
+    fake = FakeDevCoveer()
+    fake.deploy_receipt_sha = "e" * 40
+    try:
+        service = DevelopmentService(store, readiness, devcoveer=fake)
+        task = create_backlog(service, boot, project)[0]
+        started = await service.start(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            task_ids=[task["id"]],
+        )
+        execution_id = started["execution"]["id"]
+        for _ in range(7):
+            await service.advance_active_once()
+
+        not_delivered = (await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        ))["execution"]
+        assert not_delivered["status"] == "running"
+        assert not_delivered["delivery_deployed_at_ms"] is None
+        assert not_delivered["delivery_evidence"]["deploy_receipt_verified"] is False
+        assert service.list_backlog(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            project_id=project["id"],
+        )[0]["state"] == "accepted"
+
+        # A fresh bounded retry may recover once a valid exact readback exists.
+        fake.deploy_receipt_sha = fake.main_head
+        for _ in range(3):
+            await service.advance_active_once()
+        delivered = (await service.status(
+            actor_id=boot["actor"]["id"],
+            workspace_id=boot["workspace"]["id"],
+            execution_id=execution_id,
+        ))["execution"]
+        assert delivered["status"] == "completed"
+        assert delivered["phase"] == "ready"
+        assert delivered["delivery_main_sha"] == fake.main_head
+        assert delivered["delivery_evidence"]["deploy_receipt_verified"] is True
+    finally:
+        await service.close()
         store.close()
 
 
