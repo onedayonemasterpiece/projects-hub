@@ -969,6 +969,36 @@ def create_app(
             )
         }
 
+    @app.get("/api/development/completed")
+    async def development_recent_completed(
+        request: Request,
+        workspace_id: str,
+        days: int = 7,
+    ) -> dict[str, Any]:
+        return {
+            "items": app.state.development.recent_completions(
+                actor_id=actor_id_from_request(request),
+                workspace_id=workspace_id,
+                days=days,
+            )
+        }
+
+    @app.get("/api/device/development/completed")
+    async def device_development_recent_completed(request: Request) -> dict[str, Any]:
+        # Bound by the existing verified Android device credential, NOT a
+        # caller-supplied actor/workspace. Only the explicit platform owner
+        # receives owner-development completion notices.
+        device = app.state.device_commands.authenticate(
+            request.headers.get("authorization")
+        )
+        return {
+            "items": app.state.development.recent_completions(
+                actor_id=device["actor_id"],
+                workspace_id=device["workspace_id"],
+                days=7,
+            )
+        }
+
     @app.get("/api/development/executions/latest")
     async def development_execution_latest(
         request: Request,
