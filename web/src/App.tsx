@@ -25,6 +25,7 @@ import {
   getDevelopmentBacklog,
   getDevelopmentCodexStatus,
   getLatestDevelopmentExecution,
+  getRecentCompletedDevelopment,
   getAuthConfig,
   exchangeInvite,
   login,
@@ -41,6 +42,7 @@ import {
   type EventCard,
   type TaskItem,
   type DevelopmentExecution,
+  type CompletedDevelopment,
   type CodexStatus,
 } from "./api";
 import { replayLocalVoiceSource } from "./bufferedReplay";
@@ -273,6 +275,8 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
   const [backlogTasks, setBacklogTasks] = useState<TaskItem[]>([]);
   const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null);
   const [developmentExecution, setDevelopmentExecution] = useState<DevelopmentExecution | null>(null);
+  const [completedDevelopment, setCompletedDevelopment] = useState<CompletedDevelopment[]>([]);
+  const [dismissedDelivery, setDismissedDelivery] = useState<string | null>(null);
   const [developmentAccess, setDevelopmentAccess] = useState<boolean | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
@@ -469,22 +473,26 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
       setDevelopmentAccess(false);
       setCodexStatus(null);
       setDevelopmentExecution(null);
+      setCompletedDevelopment([]);
       return;
     }
 
     try {
-      const [capacity, latest] = await Promise.all([
+      const [capacity, latest, completed] = await Promise.all([
         getDevelopmentCodexStatus(boot.workspace.id),
         getLatestDevelopmentExecution(boot.workspace.id, true),
+        getRecentCompletedDevelopment(boot.workspace.id),
       ]);
       setDevelopmentAccess(true);
       setCodexStatus(capacity);
       setDevelopmentExecution(latest.execution);
+      setCompletedDevelopment(completed.items);
     } catch (error) {
       if (error instanceof ApiError && error.status === 403) {
         setDevelopmentAccess(false);
         setCodexStatus(null);
         setDevelopmentExecution(null);
+        setCompletedDevelopment([]);
         return;
       }
       throw error;
@@ -523,10 +531,14 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
 
     const syncDevelopment = async () => {
       try {
-        const latest = await getLatestDevelopmentExecution(boot.workspace.id, true);
+        const [latest, completed] = await Promise.all([
+          getLatestDevelopmentExecution(boot.workspace.id, true),
+          getRecentCompletedDevelopment(boot.workspace.id),
+        ]);
         if (cancelled) return;
         setDevelopmentAccess(true);
         setDevelopmentExecution(latest.execution);
+        setCompletedDevelopment(completed.items);
         const execution = latest.execution;
         if (
           execution
@@ -546,15 +558,23 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
         if (error instanceof ApiError && error.status === 403) {
           setDevelopmentAccess(false);
           setDevelopmentExecution(null);
+          setCompletedDevelopment([]);
         }
       }
     };
 
+    const syncOnForeground = () => {
+      if (document.visibilityState === "visible") void syncDevelopment();
+    };
     void syncDevelopment();
     const timer = window.setInterval(syncDevelopment, 15_000);
+    window.addEventListener("focus", syncOnForeground);
+    document.addEventListener("visibilitychange", syncOnForeground);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+      window.removeEventListener("focus", syncOnForeground);
+      document.removeEventListener("visibilitychange", syncOnForeground);
     };
   }, [boot, developmentAccess, isAndroidApp]);
 
@@ -1668,6 +1688,28 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
 
   return (
     <main className="shell">
+      {boot.role === "owner" && developmentAccess === true && completedDevelopment.length > 0
+        && dismissedDelivery !== completedDevelopment[0].id
+        && localStorage.getItem("projects-hub-delivery-dismissed:" + boot.actor.id) !== completedDevelopment[0].id && (
+        <section className="island development-arrival" role="status" aria-label="Мира: готовая задача">
+          <div>
+            <strong>Мира · Готово к проверке</strong>
+            <p>{completedDevelopment[0].project_name}: {completedDevelopment[0].titles.join(", ") || "Разработка завершена"}</p>
+          </div>
+          <div className="development-arrival-actions">
+            <button className="mini-action" onClick={() => {
+              void loadBacklog().then(() => setBacklogOpen(true));
+            }}>Посмотреть</button>
+            <button className="quiet-button" onClick={() => {
+              setDismissedDelivery(completedDevelopment[0].id);
+              localStorage.setItem(
+                "projects-hub-delivery-dismissed:" + boot.actor.id,
+                completedDevelopment[0].id,
+              );
+            }} aria-label="Закрыть сообщение Миры">×</button>
+          </div>
+        </section>
+      )}
       <header className="context-wrap">
         <button
           className={"island context-island" + (contextOpen ? " is-open" : "")}
@@ -2083,6 +2125,19 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
                         )}
                       </div>
                     )}
+                  </section>
+                )}
+
+                {developmentAccess === true && (
+                  <section className="completed-developments" aria-label="Готовые задачи за последние семь дней">
+                    <h3>Готовые задачи · 7 дней</h3>
+                    {completedDevelopment.length ? completedDevelopment.map(item => (
+                      <div className="completed-development-row" key={item.id}>
+                        <strong>{item.titles.join(", ") || "Разработка"}</strong>
+                        <span>{item.project_name} · {new Date(item.finished_at_ms).toLocaleDateString("ru-RU")}</span>
+                        <span>{item.android_update ? "Обновление приложения выпущено" : "Результат готов к проверке"}</span>
+                      </div>
+                    )) : <p className="empty-copy">За последнюю неделю нет завершённых разработок.</p>}
                   </section>
                 )}
 
