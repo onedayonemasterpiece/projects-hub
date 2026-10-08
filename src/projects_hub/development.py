@@ -20,7 +20,7 @@ TERMINAL_EXECUTION_STATES = {"completed", "failed", "cancelled", "blocked"}
 DEFAULT_CODEX_PROFILE = "gpt-6.1-medium"
 QUALITY_MODEL = "gpt-6-astra"
 QUALITY_EFFORT = "high"
-MAX_REWORK_CYCLES = 12
+MAX_REWORK_CYCLES = 2
 MAX_INTERRUPTED_RESUME_ATTEMPTS = 1
 MAX_INTERRUPTED_DESIGN_ATTEMPTS = 3
 MAX_INTERRUPTED_REVIEW_ATTEMPTS = 4
@@ -1294,9 +1294,23 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
         git_state = self._direct_result_data(git_payload)
         current_branch = str(git_state.get("branch") or "")
         current_sha = str(git_state.get("head") or "").lower()
+        # A clean chatgpt/* checkout may belong to a different concurrent
+        # development run. Reuse only this execution's marker or its already
+        # persisted exact branch/SHA; never publish an unrelated HEAD.
+        marker = self._candidate_branch_marker(str(item["id"]))
+        stored_branch = str(item.get("candidate_branch") or "").strip()
+        stored_sha = str(item.get("candidate_sha") or "").lower()
+        def owns_candidate(branch: str, sha: str) -> bool:
+            return bool(
+                branch.startswith("chatgpt/")
+                and (
+                    marker in branch
+                    or (branch == stored_branch and sha == stored_sha and len(stored_sha) == 40)
+                )
+            )
         current_clean = (
             git_state.get("head_state") == "branch"
-            and current_branch.startswith("chatgpt/")
+            and owns_candidate(current_branch, current_sha)
             and re.fullmatch(r"[0-9a-f]{40}", current_sha) is not None
             and not (git_state.get("staged") or [])
             and not (git_state.get("unstaged") or [])
@@ -1309,8 +1323,6 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
         candidate_source = "current_checkout" if current_clean else ""
         local_candidates: list[dict[str, Any]] = []
         if not current_clean:
-            stored_branch = str(item.get("candidate_branch") or "").strip()
-            marker = self._candidate_branch_marker(str(item["id"]))
             probe_payload: dict[str, Any] = {
                 "prefix": "chatgpt/",
                 "limit": 50,
@@ -1332,7 +1344,7 @@ REVIEW_VERDICT: REWORK_REQUIRED"""
                         continue
                     candidate_branch = str(raw.get("branch") or "")
                     candidate_sha = str(raw.get("sha") or "").lower()
-                    if not candidate_branch.startswith("chatgpt/"):
+                    if not owns_candidate(candidate_branch, candidate_sha):
                         continue
                     if re.fullmatch(r"[0-9a-f]{40}", candidate_sha) is None:
                         continue
