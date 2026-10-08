@@ -598,7 +598,7 @@ Before the verdict, give concise actionable findings."""
 Review findings:
 {review_summary}
 
-Read the updated specification and fix all material findings. Refresh/reconcile with latest origin/main and resolve any PR merge conflicts while preserving unrelated main work. If Android/native code differs from fresh main, keep the project semantic version at the next unused version before review. Re-run the available tests/debugging/browser/emulator checks. Keep the existing implementation scope and produce a clean committed chatgpt/* candidate. Deterministic push/PR/CI is owned by the durable orchestrator. Do NOT merge, deploy or release. Stop when the change is again ready for independent review and report the updated HEAD/evidence."""
+Read the updated specification and fix all material findings. Refresh/reconcile with latest origin/main and resolve any PR merge conflicts while preserving unrelated main work. If Android/native code differs from fresh main, keep the project semantic version at the next unused version before review. Re-run the available tests/debugging/browser/emulator checks. Keep the existing implementation scope and produce a clean committed chatgpt/* candidate. As the Native Codex engineer, commit/push the updated candidate, inspect the existing GitHub PR and run/check the project's normal CI. Do not merge, deploy or release until an independent ACCEPTED review. Never create a separate CI system. Stop once the updated PR and evidence are reviewable."""
 
     @staticmethod
     def _delivery_prompt(spec_path: str) -> str:
@@ -2325,7 +2325,9 @@ Main CI/release evidence:
                     "rework", cycle + 1, model, effort, "write",
                     self._rework_prompt(spec, summary, cycle + 1), "reworking",
                 )
-            elif verdict is None and int(stage.get("recovery_attempts") or 0) < 1:
+            elif verdict is None and self._stage_attempt_count(
+                execution_id, "review", cycle=cycle
+            ) < 2:
                 self._mark_recovery_attempt(str(stage["id"]))
                 followup = (
                     "review", cycle, QUALITY_MODEL, QUALITY_EFFORT, "read",
