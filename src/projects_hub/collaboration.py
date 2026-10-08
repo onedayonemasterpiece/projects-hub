@@ -985,19 +985,26 @@ class CollaborationService:
         workspace_id: str,
         after_id: int = 0,
         limit: int = 50,
+        latest: bool = False,
     ) -> list[dict[str, Any]]:
         self.store._membership(actor_id, workspace_id)
         bounded = max(1, min(int(limit), 100))
+        # Existing ascending cursor reads remain unchanged. The explicit
+        # visual "recent activity" view needs the newest items, not the first
+        # hundred historical test events.
+        order = "DESC" if latest else "ASC"
         with self.store._lock:
             rows = self.store.db.execute(
-                """SELECT e.*,p.name AS project_name
+                f"""SELECT e.*,p.name AS project_name
                    FROM collaboration_events e
                    JOIN projects p ON p.id=e.project_id
                    JOIN project_grants g ON g.project_id=e.project_id AND g.actor_id=?
                    WHERE e.workspace_id=? AND e.id>? AND g.revoked_at_ms IS NULL
-                   ORDER BY e.id ASC LIMIT ?""",
+                   ORDER BY e.id {order} LIMIT ?""",
                 (actor_id, workspace_id, max(0, int(after_id)), bounded),
             ).fetchall()
+        if latest:
+            rows = list(reversed(rows))
         return [
             {
                 "id": int(row["id"]),
