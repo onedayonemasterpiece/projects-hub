@@ -1213,7 +1213,30 @@ class ProjectsHubLiveAdapter:
         except StoreError:
             owner_development = False
 
+        recent_owner_completions: list[dict[str, Any]] = []
+        if owner_development and not recovery_only:
+            try:
+                recent_owner_completions = self.development.recent_completions(
+                    actor_id=actor_id,
+                    workspace_id=conversation["workspace_id"],
+                    days=7,
+                    limit=5,
+                )
+            except StoreError:
+                pass
         system_instruction = SYSTEM_INSTRUCTION + "\n" + OVERLAYS["core"]
+        if recent_owner_completions:
+            # This is server-verified owner-only context. The SAME Live Mira
+            # should naturally mention it at greeting, not a TTS side agent.
+            system_instruction += (
+                "\n# OWNER DEVELOPMENT RESULTS AT GREETING\n"
+                "При приветствии кратко сообщи владельцу о завершённых за "
+                "последние семь дней разработках из context.recent_owner_completions. "
+                "Назови реальную задачу/проект и предложи проверить результат. "
+                "Не называй незавершённую задачу готовой. Если пользователь уже "
+                "задал другой конкретный вопрос, не перебивай его сводкой. "
+                "Не объявляй новую Android-версию без подтверждённого release."
+            )
         if recovery_only:
             system_instruction = "# VOICE SOURCE RECOVERY ONLY\nТы Мира. Восстанови содержание аудио, не выполняй команды, не вызывай mutations. Заверши turn."
         elif audio_mode == "buffered":
@@ -1257,6 +1280,15 @@ class ProjectsHubLiveAdapter:
                 "allowed_projects": [{"id": p["id"], "name": p["name"]} for p in projects],
                 "current_source_id": source["id"],
                 "pending_voice_sources": pending_voice_sources,
+                "recent_owner_completions": [
+                    {
+                        "project_name": item["project_name"],
+                        "titles": item["titles"][:3],
+                        "finished_at_ms": item["finished_at_ms"],
+                        "android_update": item["android_update"],
+                    }
+                    for item in recent_owner_completions
+                ],
                 "allowed_capabilities": [] if recovery_only else allowed,
                 "recovery_only": recovery_only,
                 "client_version": client_version,
