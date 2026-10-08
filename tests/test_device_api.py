@@ -239,3 +239,37 @@ def test_public_device_receipt_is_not_browser_origin_bound_but_still_device_auth
             assert accepted.json()["status"] == "applied"
     finally:
         store.close()
+
+
+def test_completed_development_notices_are_device_bound_and_cookie_free(tmp_path: Path):
+    store = DurableStore(tmp_path / "data")
+    app = create_app(dev_settings(tmp_path), store=store)
+    try:
+        with TestClient(app, base_url="http://localhost") as client:
+            boot = client.post("/api/dev/login", json={}).json()
+            registered = client.post(
+                "/api/devices/register",
+                json={
+                    "workspace_id": boot["workspace"]["id"],
+                    "display_name": "Private Android",
+                    "platform": "android",
+                    "capabilities": ["calendar.read_events"],
+                },
+            ).json()
+            token = registered["device_token"]
+            client.cookies.clear()
+            assert client.get("/api/development/completed",
+                              params={"workspace_id": boot["workspace"]["id"]}).status_code == 401
+            assert client.get("/api/device/development/completed").status_code == 401
+            assert client.get(
+                "/api/device/development/completed",
+                headers={"authorization": "Device wrong.invalid"},
+            ).status_code == 401
+            response = client.get(
+                "/api/device/development/completed",
+                headers={"authorization": "Device " + token},
+            )
+            assert response.status_code == 200
+            assert response.json() == {"items": []}
+    finally:
+        store.close()
