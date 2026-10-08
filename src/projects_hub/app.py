@@ -13,7 +13,10 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from .auth import COOKIE_NAME, SESSION_TTL_SECONDS, issue_session, parse_session
+from .auth import (
+    COOKIE_NAME, SESSION_RENEW_WINDOW_SECONDS, SESSION_TTL_SECONDS,
+    issue_session, parse_session, parse_session_claims,
+)
 from .board import BoardService
 from .board_api import attach_board_routes
 from .board_view_context import BoardViewContextStore
@@ -824,8 +827,23 @@ def create_app(
         return result
 
     @app.get("/api/bootstrap")
-    async def bootstrap(request: Request) -> dict[str, Any]:
-        return store.bootstrap(actor_id_from_request(request))
+    async def bootstrap(request: Request, response: Response) -> dict[str, Any]:
+        # Refresh only a valid, fully authorized session. An active Android
+        # device should not need a fresh Telegram invite every 24 hours.
+        actor_id = actor_id_from_request(request)
+        value = store.bootstrap(actor_id)
+        claims = parse_session_claims(request.cookies.get(COOKIE_NAME), settings.session_secret)
+        if claims and claims[0] == actor_id and claims[1] - int(time.time()) <= SESSION_RENEW_WINDOW_SECONDS:
+            response.set_cookie(
+                COOKIE_NAME,
+                issue_session(actor_id, settings.session_secret),
+                httponly=True,
+                secure=settings.cookie_secure,
+                samesite="lax",
+                max_age=SESSION_TTL_SECONDS,
+                path="/",
+            )
+        return value
 
     @app.post("/api/conversations")
     async def create_conversation(payload: ConversationCreate, request: Request) -> dict[str, Any]:

@@ -1,5 +1,9 @@
 from pathlib import Path
 
+import time
+
+from projects_hub.auth import COOKIE_NAME, SESSION_TTL_SECONDS, issue_session, parse_session
+
 from fastapi.testclient import TestClient
 
 from projects_hub.app import create_app
@@ -141,3 +145,44 @@ def test_dev_owner_invite_is_loopback_only(tmp_path: Path):
             assert blocked.status_code == 404
     finally:
         store.close()
+
+
+def test_active_device_cookie_renews_without_telegram_code(tmp_path: Path):
+    store = DurableStore(tmp_path / "data")
+    owner = store.ensure_platform_owner("Owner")
+    actor = owner["actor"]["id"]
+    app = create_app(public_settings(tmp_path), store=store)
+    now = int(time.time())
+    assert SESSION_TTL_SECONDS == 7 * 24 * 60 * 60
+
+    # Existing 24-hour cookies remain compatible and silently migrate on reopen.
+    old_cookie = issue_session(actor, "s" * 48, now=now - 15 * 60 * 60, ttl_seconds=24 * 60 * 60)
+    with TestClient(app, base_url=PUBLIC_ORIGIN) as client:
+        renewed = client.get("/api/bootstrap", headers={"Cookie": f"{COOKIE_NAME}={old_cookie}"})
+        assert renewed.status_code == 200
+        assert renewed.json()["actor"]["id"] == actor
+        assert "set-cookie" in renewed.headers
+        new_cookie = renewed.cookies.get(COOKIE_NAME)
+        assert new_cookie and new_cookie != old_cookie
+        assert parse_session(new_cookie, "s" * 48) == actor
+        assert f"Max-Age={SESSION_TTL_SECONDS}" in renewed.headers["set-cookie"]
+        assert "Secure" in renewed.headers["set-cookie"]
+        assert "HttpOnly" in renewed.headers["set-cookie"]
+
+        # Fresh sessions are not unnecessarily reissued on each request.
+        fresh = client.get("/api/bootstrap", headers={"Cookie": f"{COOKIE_NAME}={new_cookie}"})
+        assert fresh.status_code == 200
+        assert "set-cookie" not in fresh.headers
+
+        # An idle, expired cookie remains unauthorized: do not renew without proof.
+        expired = issue_session(actor, "s" * 48, now=now - 9 * 24 * 60 * 60)
+        blocked = client.get("/api/bootstrap", headers={"Cookie": f"{COOKIE_NAME}={expired}"})
+        assert blocked.status_code == 401
+        assert "set-cookie" not in blocked.headers
+
+        # A forged cookie must not become a valid cookie.
+        forged = old_cookie[:-1] + ("a" if old_cookie[-1] != "a" else "b")
+        denied = client.get("/api/bootstrap", headers={"Cookie": f"{COOKIE_NAME}={forged}"})
+        assert denied.status_code == 401
+        assert "set-cookie" not in denied.headers
+    store.close()
