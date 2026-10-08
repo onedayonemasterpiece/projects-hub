@@ -276,6 +276,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
   const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null);
   const [developmentExecution, setDevelopmentExecution] = useState<DevelopmentExecution | null>(null);
   const [completedDevelopment, setCompletedDevelopment] = useState<CompletedDevelopment[]>([]);
+  const [completedDevelopmentActor, setCompletedDevelopmentActor] = useState<string | null>(null);
   const [dismissedDelivery, setDismissedDelivery] = useState<string | null>(null);
   const [developmentAccess, setDevelopmentAccess] = useState<boolean | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
@@ -301,6 +302,9 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
     clientRef.current?.stop({ reason });
     setAndroidVoiceAudioFocus(false);
     void themeRef.current.reset();
+    setCompletedDevelopment([]);
+    setCompletedDevelopmentActor(null);
+    setDismissedDelivery(null);
     setBoot(null); setConversation(null); conversationRef.current = null;
     resetIdentity();
   }, [resetIdentity, setAndroidVoiceAudioFocus]);
@@ -485,6 +489,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
       setDevelopmentAccess(true);
       setDevelopmentExecution(latest.execution);
       setCompletedDevelopment(completed.items);
+      setCompletedDevelopmentActor(boot.actor.id);
       // Quota availability must never hide durable work or completed results.
       try {
         setCodexStatus(await getDevelopmentCodexStatus(boot.workspace.id));
@@ -543,6 +548,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
         setDevelopmentAccess(true);
         setDevelopmentExecution(latest.execution);
         setCompletedDevelopment(completed.items);
+      setCompletedDevelopmentActor(boot.actor.id);
         const execution = latest.execution;
         if (
           execution
@@ -1692,7 +1698,8 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
 
   return (
     <main className="shell">
-      {boot.role === "owner" && developmentAccess === true && completedDevelopment.length > 0
+      {boot.role === "owner" && developmentAccess === true
+        && completedDevelopmentActor === boot.actor.id && completedDevelopment.length > 0
         && dismissedDelivery !== completedDevelopment[0].id
         && localStorage.getItem("projects-hub-delivery-dismissed:" + boot.actor.id) !== completedDevelopment[0].id && (
         <section className="island development-arrival" role="status" aria-label="Мира: готовая задача">
@@ -2132,7 +2139,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
                   </section>
                 )}
 
-                {developmentAccess === true && (
+                {developmentAccess === true && completedDevelopmentActor === boot.actor.id && (
                   <section className="completed-developments" aria-label="Готовые задачи за последние семь дней">
                     <h3>Готовые задачи · 7 дней</h3>
                     {completedDevelopment.length ? completedDevelopment.map(item => (
