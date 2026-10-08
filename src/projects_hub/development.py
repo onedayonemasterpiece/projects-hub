@@ -605,7 +605,7 @@ Read the updated specification and fix all material findings. Refresh/reconcile 
         return f"""The independent quality reviewer ACCEPTED the implementation of:
 {spec_path}
 
-You are the Native Codex engineer responsible for the ENTIRE final delivery. Read this project's own release/deploy instructions and AGENTS.md, then perform its existing normal delivery process yourself. Merge only the reviewed candidate. Check real GitHub CI through successful terminal results, resolve deployment problems within scope, and verify the actual published/live result through authoritative readback. Do not create a new CI/workflow/orchestrator. For Projects Hub, deploy only fresh merged main (never a worktree or candidate), check health release_sha, and when Android native code changed publish the normal signed APK/update manifest and verify the release. For other projects use their own documented delivery path; do not invent a Projects Hub-specific pipeline.
+You are the Native Codex engineer responsible for the ENTIRE final delivery. Read this project's own release/deploy instructions and AGENTS.md, then perform its existing normal delivery process yourself. Merge only the reviewed candidate. Check real GitHub CI through successful terminal results, resolve deployment problems within scope, and verify the actual published/live result through authoritative readback. Do not create a new CI/workflow/orchestrator. Never deploy a branch-only or worktree-only commit. For Projects Hub, deploy the exact merged SHA from fresh origin/main history; verify the running service, static assets and release metadata all match that immutable release, check health release_sha, and when Android native code changed publish the normal signed APK/update manifest and verify the release. For other projects use their own documented delivery path; do not invent a Projects Hub-specific pipeline.
 
 Only if actual delivery succeeded, end your final answer with one single line:
 DELIVERY_RECEIPT: {{"status":"delivered","ci":"passed","main_sha":"<40 lowercase hex digits>","evidence_url":"<actual GitHub CI or release URL>","verification":"<what you personally checked and where>","android_update":false,"android_release_url":null}}
@@ -3122,8 +3122,10 @@ Do NOT merge, deploy or release. Stop when the existing implementation is again 
         evidence = public.get("delivery_evidence")
         public["update_check_recommended"] = (
             public["status"] == "completed"
-            and isinstance(evidence, dict)
-            and evidence.get("android_update") is True
+            and (
+                row["pipeline_mode"] != "codex_owner"
+                or (isinstance(evidence, dict) and evidence.get("android_update") is True)
+            )
         )
         return {"execution": public}
 
