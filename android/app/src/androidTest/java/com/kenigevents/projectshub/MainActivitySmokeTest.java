@@ -27,6 +27,25 @@ public class MainActivitySmokeTest {
         }
     }
 
+    @Test public void completionSchedulingCannotBreakStartupOrReopen() {
+        // The prior launch smoke never exercised the new post-pairing Android
+        // JobScheduler registration. Scheduling may fail on vendor ROMs but
+        // must not tear down the WebView or the Activity.
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            scenario.onActivity(activity -> {
+                assertNotNull(activity.themeWebView());
+                DevelopmentCompletionJob.schedule(activity.getApplicationContext());
+                assertNotNull(activity.themeWebView());
+            });
+            scenario.recreate();
+            scenario.onActivity(activity -> {
+                assertNotNull(activity.themeWebView());
+                DevelopmentCompletionJob.schedule(activity.getApplicationContext());
+                assertNotNull(activity.themeWebView());
+            });
+        }
+    }
+
     private void page(ActivityScenario<MainActivity> scenario, String url) throws Exception {
         CountDownLatch loaded = new CountDownLatch(1);
         java.util.concurrent.atomic.AtomicReference<String> location =
