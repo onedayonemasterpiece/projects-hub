@@ -304,7 +304,6 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
     void themeRef.current.reset();
     setCompletedDevelopment([]);
     setCompletedDevelopmentActor(null);
-    setDismissedDelivery(null);
     setBoot(null); setConversation(null); conversationRef.current = null;
     setCollaborationCard(null);
     resetIdentity();
