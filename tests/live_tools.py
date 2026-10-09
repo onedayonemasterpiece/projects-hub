@@ -20,8 +20,15 @@ def activate(adapter, session, capability):
     if spec is None:
         raise StoreError('TOOL_NOT_AVAILABLE', 'Router rejected capability')
     names = {f['name'] for f in spec['configuration']['functions']}
-    assert names == {'activate_capability', *BUNDLES[capability]}
-    assert len(names) <= 6
+    if capability == 'core':
+        from projects_hub.live_adapter import _startup_functions
+        owner = 'owner_development' in adapter._allowed_capabilities(session)
+        assert names == {
+            f['name'] for f in _startup_functions(owner_development=owner)
+        }
+    else:
+        assert names == {'activate_capability', *BUNDLES[capability]}
+    assert len(names) <= (9 if capability == 'core' else 6)
     session.capability = spec['capability']
     return spec
 
