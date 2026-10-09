@@ -497,7 +497,11 @@ class CollaborationAnalysisService:
                         ).fetchall()
                     ],
                 }
-            self.store.db.execute("BEGIN IMMEDIATE")
+            # SAVEPOINT is valid both as a top-level atomic boundary and
+            # when this path is entered while the shared SQLite connection
+            # already has a durable transaction in progress.
+            savepoint = "collaboration_materialize_questions"
+            self.store.db.execute(f"SAVEPOINT {savepoint}")
             try:
                 for index, raw in enumerate(raw_questions):
                     if not isinstance(raw, dict):
@@ -559,9 +563,10 @@ class CollaborationAnalysisService:
                             _canonical({"answers": answers}), now, now,
                         ),
                     )
-                self.store.db.execute("COMMIT")
+                self.store.db.execute(f"RELEASE SAVEPOINT {savepoint}")
             except Exception:
-                self.store.db.execute("ROLLBACK")
+                self.store.db.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                self.store.db.execute(f"RELEASE SAVEPOINT {savepoint}")
                 raise
             created = [
                 self._question_public(item)

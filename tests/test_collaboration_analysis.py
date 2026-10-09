@@ -501,6 +501,57 @@ async def test_durable_worker_materializes_initial_analysis_without_status_refre
 
 
 @pytest.mark.asyncio
+async def test_analysis_materialization_is_safe_inside_existing_sqlite_transaction(tmp_path: Path):
+    (
+        store, collaboration, service, _bridge,
+        actor_a, actor_b, workspace_id, project_id,
+    ) = setup(tmp_path)
+    try:
+        note = await collaboration.create_note(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            command_id="cmd.note.nested-tx",
+            title="Nested transaction",
+            body="Question materialization must be atomic inside an existing store transaction.",
+        )
+        started = await service.start_analysis(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            note_id=note["id"],
+            addressed_to_actor_id=actor_b,
+            command_id="cmd.analysis.nestedtx1",
+            model="kimi_k3",
+            purpose="requirements",
+            question="Сформируй вопросы.",
+        )
+        store.db.execute("BEGIN IMMEDIATE")
+        try:
+            completed = await service.refresh_analysis(
+                actor_id=actor_a,
+                workspace_id=workspace_id,
+                analysis_id=started["id"],
+            )
+            assert completed["status"] == "completed"
+            assert len(completed["questions"]) == 2
+            assert store.db.in_transaction is True
+        finally:
+            store.db.execute("ROLLBACK")
+
+        after_rollback = service.get_analysis(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            analysis_id=started["id"],
+        )
+        assert after_rollback["status"] == "running"
+        assert after_rollback["questions"] == []
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
 async def test_revoked_project_grant_hides_addressed_questions_and_denies_answer(tmp_path: Path):
     (
         store, collaboration, service, _bridge,
