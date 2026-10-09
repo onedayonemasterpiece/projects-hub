@@ -163,3 +163,21 @@ device credential, nominally every 15 minutes (OS delays possible). This is
 not instant FCM push; it is a minimal first-party notification path without a
 new vendor/backend. Notifications never start the microphone, and only a real
 signed Android version bump triggers an update prompt.
+
+
+## 9 October: direct owner voice tools at startup
+
+Physical Samsung acceptance after PR #148 showed a repeated false inability to
+create development tasks and change theme. The Live model understood and answered
+the requests but did not invoke the progressive router. The product fix is to
+expose the most frequently used tools directly in the **initial** Live function
+bundle, still capped at nine provider declarations. Theme read/set are available
+for signed-in users; backlog list/create/execute are included only for verified
+platform + workspace owners. Every call rechecks current owner authorization,
+and creating a backlog item is not development authorization: executing it still
+requires the owner's explicit instruction, backend quota/model checks and the
+existing durable two-thread Native Codex pipeline.
+
+The other domain capabilities remain progressive. This is not a second semantic
+router, a new scheduler or a bypass of the AI resource authority. Provider-backed
+and Samsung physical acceptance remain separately required.
