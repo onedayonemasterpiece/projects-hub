@@ -19,6 +19,7 @@ QUESTION_STATES = {"open", "resolved", "skipped", "unknown", "deferred"}
 DISPOSITIONS = {"answer", "skip", "unknown", "later"}
 ANALYSIS_MODELS = {"kimi_k3", "deepseek"}
 MAX_ANALYSIS_REPAIR_ATTEMPTS = 1
+DEFAULT_ANALYSIS_PROVIDER_STALL_SECONDS = 75.0
 PURPOSES = {"requirements", "edge_cases", "architecture", "code_review", "ideas"}
 JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.S)
 
@@ -50,12 +51,16 @@ class CollaborationAnalysisService:
         bridge: AnalyticsBridgeClient | None = None,
         development: DevelopmentService | None = None,
         poll_seconds: float = 2.0,
+        provider_stall_seconds: float = DEFAULT_ANALYSIS_PROVIDER_STALL_SECONDS,
     ) -> None:
         self.store = store
         self.collaboration = collaboration
         self.bridge = bridge or AnalyticsBridgeClient()
         self.development = development
         self.poll_seconds = max(0.5, min(float(poll_seconds), 30.0))
+        self.provider_stall_ms = int(
+            max(5.0, min(float(provider_stall_seconds), 600.0)) * 1000
+        )
         self._task: asyncio.Task[None] | None = None
         self._stop: asyncio.Event | None = None
         self._lock = asyncio.Lock()
@@ -82,6 +87,7 @@ class CollaborationAnalysisService:
                     input_sha256 TEXT NOT NULL,
                     status TEXT NOT NULL,
                     provider_task_id TEXT,
+                    provider_dispatched_at_ms INTEGER,
                     initial_provider_task_id TEXT,
                     repair_attempt_count INTEGER NOT NULL DEFAULT 0,
                     repair_model_alias TEXT,
@@ -187,6 +193,11 @@ class CollaborationAnalysisService:
                     "PRAGMA table_info(collaboration_analyses)"
                 ).fetchall()
             }
+            if "provider_dispatched_at_ms" not in analysis_columns:
+                self.store.db.execute(
+                    "ALTER TABLE collaboration_analyses "
+                    "ADD COLUMN provider_dispatched_at_ms INTEGER"
+                )
             if "initial_provider_task_id" not in analysis_columns:
                 self.store.db.execute(
                     "ALTER TABLE collaboration_analyses "
@@ -370,6 +381,7 @@ class CollaborationAnalysisService:
             "input_sha256": row["input_sha256"],
             "status": row["status"],
             "provider_task_id": row["provider_task_id"],
+            "provider_dispatched_at_ms": row["provider_dispatched_at_ms"],
             "initial_provider_task_id": row["initial_provider_task_id"],
             "repair_attempt_count": int(row["repair_attempt_count"] or 0),
             "repair_model": row["repair_model_alias"],
@@ -675,9 +687,11 @@ class CollaborationAnalysisService:
         with self.store._lock:
             self.store.db.execute(
                 """UPDATE collaboration_analyses
-                   SET provider_task_id=?,status=?,error_code=NULL,updated_at_ms=? WHERE id=?""",
+                   SET provider_task_id=?,provider_dispatched_at_ms=?,
+                       status=?,error_code=NULL,updated_at_ms=? WHERE id=?""",
                 (
                     str(task_id) if isinstance(task_id, str) else None,
+                    _now_ms(),
                     "running" if status in {"running", "completed"} else status,
                     _now_ms(), analysis_id,
                 ),
@@ -706,6 +720,7 @@ class CollaborationAnalysisService:
         *,
         snapshot: dict[str, Any],
         invalid_markdown: str,
+        reason: str = "invalid_result",
     ) -> dict[str, Any]:
         attempt = int(snapshot.get("repair_attempt_count") or 0) + 1
         if attempt > MAX_ANALYSIS_REPAIR_ATTEMPTS:
@@ -732,10 +747,21 @@ class CollaborationAnalysisService:
         )
 
         repair_model = self._repair_model(str(snapshot["model_alias"]))
+        if reason == "provider_stalled":
+            repair_intro = (
+                "The previous strong-analysis provider did not reach a terminal "
+                "state within the bounded product window. Re-run the same frozen "
+                "analysis with the alternate strong model. "
+            )
+        else:
+            repair_intro = (
+                "The previous strong-analysis response did not satisfy the required "
+                "typed question schema. Re-run the analysis from the supplied frozen "
+                "evidence. "
+            )
         repair_prompt = (
-            "The previous strong-analysis response did not satisfy the required "
-            "typed question schema. Re-run the analysis from the supplied frozen "
-            "evidence. Return STRICT JSON and nothing else with this exact shape: "
+            repair_intro
+            + "Return STRICT JSON and nothing else with this exact shape: "
             '{"summary":"shared context <=1200 chars","questions":['
             '{"prompt":"one contextual question","blocking":true}]}. '
             "Return 1-4 minimal questions whose answers materially affect the "
@@ -788,6 +814,7 @@ class CollaborationAnalysisService:
                            initial_provider_task_id,provider_task_id
                        ),
                        provider_task_id=?,
+                       provider_dispatched_at_ms=?,
                        repair_attempt_count=?,
                        repair_model_alias=?,
                        status=?,
@@ -799,6 +826,7 @@ class CollaborationAnalysisService:
                    WHERE id=?""",
                 (
                     str(task_id) if isinstance(task_id, str) else None,
+                    now,
                     attempt,
                     repair_model,
                     "running" if status in {"running", "completed"} else status,
@@ -856,6 +884,32 @@ class CollaborationAnalysisService:
             payload.get("executionStatus") or payload.get("status") or "running"
         )
         now = _now_ms()
+        dispatched_at_ms = int(
+            snapshot.get("provider_dispatched_at_ms")
+            or snapshot.get("created_at_ms")
+            or now
+        )
+        if (
+            provider_status not in {"completed", "failed", "cancelled", "interrupted"}
+            and now - dispatched_at_ms >= self.provider_stall_ms
+        ):
+            if int(snapshot.get("repair_attempt_count") or 0) < MAX_ANALYSIS_REPAIR_ATTEMPTS:
+                return await self._dispatch_analysis_repair(
+                    snapshot=snapshot,
+                    invalid_markdown=str(snapshot.get("result_markdown") or ""),
+                    reason="provider_stalled",
+                )
+            with self.store._lock:
+                self.store.db.execute(
+                    """UPDATE collaboration_analyses
+                       SET status='failed',
+                           error_code='ANALYTICS_PROVIDER_STALLED',
+                           updated_at_ms=?,finished_at_ms=?
+                       WHERE id=?""",
+                    (now, now, analysis_id),
+                )
+                row = self._analysis_row(analysis_id)
+            return self._analysis_public(actor_id, workspace_id, row)
 
         if provider_status == "completed":
             markdown = self._extract_markdown(payload)

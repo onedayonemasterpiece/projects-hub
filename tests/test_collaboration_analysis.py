@@ -869,3 +869,187 @@ async def test_explicit_refresh_serializes_with_background_analysis_worker(tmp_p
     finally:
         await service.close()
         store.close()
+
+
+class StalledAnalysisBridge(FakeBridge):
+    def __init__(self, *, fallback_completes: bool) -> None:
+        super().__init__()
+        self.fallback_completes = fallback_completes
+        self.fallback_payload = {
+            "executionStatus": "completed" if fallback_completes else "running",
+            "latestTurn": {
+                "finalResponse": json.dumps(
+                    {
+                        "summary": "Fallback produced one bounded question.",
+                        "questions": [
+                            {
+                                "prompt": "Подтверждаем продолжение текущего scope?",
+                                "blocking": True,
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                )
+            },
+        }
+
+    async def consult(self, **kwargs):
+        self.consults.append(dict(kwargs))
+        return {
+            "status": "running",
+            "taskId": (
+                "provider-stalled-kimi"
+                if len(self.consults) == 1
+                else "provider-fallback-deepseek"
+            ),
+        }
+
+    async def read_task(self, task_id: str):
+        self.reads.append(task_id)
+        if task_id == "provider-stalled-kimi":
+            return {"executionStatus": "running"}
+        if task_id == "provider-fallback-deepseek":
+            return self.fallback_payload
+        raise AssertionError(task_id)
+
+
+@pytest.mark.asyncio
+async def test_stalled_kimi_dispatches_one_alternate_model_with_same_frozen_evidence(tmp_path: Path):
+    (
+        store, collaboration, service, _bridge,
+        actor_a, actor_b, workspace_id, project_id,
+    ) = setup(tmp_path)
+    bridge = StalledAnalysisBridge(fallback_completes=True)
+    try:
+        await service.close()
+        service = CollaborationAnalysisService(
+            store,
+            collaboration,
+            bridge=bridge,  # type: ignore[arg-type]
+            poll_seconds=0.01,
+            provider_stall_seconds=5.0,
+        )
+        note = await collaboration.create_note(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            command_id="cmd.note.stalled-kimi",
+            title="Stalled Kimi",
+            body="Зависший strong analysis должен перейти на bounded alternate model.",
+        )
+        started = await service.start_analysis(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            note_id=note["id"],
+            addressed_to_actor_id=actor_b,
+            command_id="cmd.analysis.stalled-kimi",
+            model="kimi_k3",
+            purpose="requirements",
+            question="Сформируй минимальный вопрос.",
+        )
+        assert started["provider_task_id"] == "provider-stalled-kimi"
+        with store._lock:
+            store.db.execute(
+                """UPDATE collaboration_analyses
+                   SET provider_dispatched_at_ms=?
+                   WHERE id=?""",
+                (1, started["id"]),
+            )
+
+        repairing = await service.refresh_analysis(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            analysis_id=started["id"],
+        )
+        assert repairing["status"] == "running"
+        assert repairing["initial_provider_task_id"] == "provider-stalled-kimi"
+        assert repairing["provider_task_id"] == "provider-fallback-deepseek"
+        assert repairing["repair_attempt_count"] == 1
+        assert repairing["repair_model"] == "deepseek"
+        assert len(bridge.consults) == 2
+        assert bridge.consults[1]["model"] == "deepseek"
+        assert bridge.consults[1]["request_key"] == (
+            f"collab-analysis:{started['id']}:repair:1"
+        )
+        assert bridge.consults[1]["evidence_bundle"] == bridge.consults[0]["evidence_bundle"]
+
+        completed = await service.refresh_analysis(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            analysis_id=started["id"],
+        )
+        assert completed["status"] == "completed"
+        assert completed["error_code"] is None
+        assert len(completed["questions"]) == 1
+        assert len(bridge.consults) == 2
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_stalled_fallback_fails_terminal_without_third_consult(tmp_path: Path):
+    (
+        store, collaboration, service, _bridge,
+        actor_a, actor_b, workspace_id, project_id,
+    ) = setup(tmp_path)
+    bridge = StalledAnalysisBridge(fallback_completes=False)
+    try:
+        await service.close()
+        service = CollaborationAnalysisService(
+            store,
+            collaboration,
+            bridge=bridge,  # type: ignore[arg-type]
+            poll_seconds=0.01,
+            provider_stall_seconds=5.0,
+        )
+        note = await collaboration.create_note(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            command_id="cmd.note.stalled-fallback",
+            title="Stalled fallback",
+            body="Второй зависший strong provider должен завершиться fail-closed.",
+        )
+        started = await service.start_analysis(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            note_id=note["id"],
+            addressed_to_actor_id=actor_b,
+            command_id="cmd.analysis.stalled-fallback",
+            model="kimi_k3",
+            purpose="requirements",
+            question="Сформируй минимальный вопрос.",
+        )
+        with store._lock:
+            store.db.execute(
+                "UPDATE collaboration_analyses SET provider_dispatched_at_ms=1 WHERE id=?",
+                (started["id"],),
+            )
+        repairing = await service.refresh_analysis(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            analysis_id=started["id"],
+        )
+        assert repairing["provider_task_id"] == "provider-fallback-deepseek"
+        assert len(bridge.consults) == 2
+
+        with store._lock:
+            store.db.execute(
+                "UPDATE collaboration_analyses SET provider_dispatched_at_ms=1 WHERE id=?",
+                (started["id"],),
+            )
+        failed = await service.refresh_analysis(
+            actor_id=actor_a,
+            workspace_id=workspace_id,
+            analysis_id=started["id"],
+        )
+        assert failed["status"] == "failed"
+        assert failed["error_code"] == "ANALYTICS_PROVIDER_STALLED"
+        assert failed["repair_attempt_count"] == 1
+        assert len(bridge.consults) == 2
+    finally:
+        await service.close()
+        store.close()
