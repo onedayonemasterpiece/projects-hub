@@ -974,7 +974,7 @@ _CAPABILITY_INSTRUCTION_SECTIONS = {
 
 _CORE_COLLABORATION_ROUTING = """
 # VOICE-FIRST CAPABILITY ROUTING
-Главная функция этого стартового набора — activate_capability. При просьбе,
+В текущем наборе могут быть сразу доступны функции preferences_get, preferences_set_theme, backlog_list, backlog_create и development_execute_backlog. Если они есть в configuration.functions, ВЫЗЫВАЙ ИХ НАПРЯМУЮ, без activate_capability. Для остальных возможностей служит activate_capability. При просьбе,
 которая требует разрешённой context.allowed_capabilities, СНАЧАЛА вызови
 activate_capability с конкретным capability и intent, затем используй
 загруженные функции. Не отвечай «не могу», «нет доступа» или «это невозможно»
@@ -1021,6 +1021,25 @@ def _live_instruction(capability: str) -> str:
     if capability == "core":
         result += "\n" + _CORE_COLLABORATION_ROUTING
     return result
+
+# The few high-frequency voice actions must be actual tools at session start.
+# A pure routing hint proved insufficient on physical Android: Mira could say
+# "I cannot" without ever calling activate_capability.
+_OWNER_CORE_DIRECT = frozenset({
+    "backlog_list", "backlog_create", "development_execute_backlog",
+})
+_CORE_DIRECT_PREFERENCES = frozenset(BUNDLES["preferences"])
+
+
+def _startup_functions(*, owner_development: bool) -> list[dict[str, Any]]:
+    names = set(BUNDLES["core"]) | _CORE_DIRECT_PREFERENCES
+    if owner_development:
+        names.update(_OWNER_CORE_DIRECT)
+    declarations = _functions(owner_development=owner_development) + PREFERENCES
+    exposed = [ROUTER, *(item for item in declarations if item["name"] in names)]
+    if len(exposed) > 9:
+        raise RuntimeError("Mira startup tool bundle exceeds Live transport limit")
+    return exposed
 
 
 class ProjectsHubLiveAdapter:
@@ -1401,9 +1420,9 @@ class ProjectsHubLiveAdapter:
             },
             "configuration": {
                 "system_instruction": system_instruction,
-                "functions": [] if recovery_only else [ROUTER, *[
-                    f for f in _functions() if f["name"] in BUNDLES["core"]
-                ]],
+                "functions": [] if recovery_only else _startup_functions(
+                    owner_development=owner_development,
+                ),
                 "voice": "Aoede",
                 "input_audio_transcription": {
                     "languageCodes": ["ru-RU", "en-US"],
@@ -1501,7 +1520,9 @@ class ProjectsHubLiveAdapter:
         self._mark_semantic_observed(session, committed=True, evidence="capability_intent")
         declarations = _functions(expert_reviews=True, regional_knowledge=True, owner_development=True) + PREFERENCES
         configuration = {**session.state["_base_configuration"],
-                         "functions": [ROUTER, *[f for f in declarations if f["name"] in BUNDLES[capability]]],
+                         "functions": (_startup_functions(owner_development="owner_development" in allowed)
+                                       if capability == "core" else
+                                       [ROUTER, *[f for f in declarations if f["name"] in BUNDLES[capability]]]),
                          "system_instruction": _live_instruction(capability) + "\n" + OVERLAYS[capability]}
         if session.state.get("audio_mode") == "buffered":
             configuration["system_instruction"] += "\nПосле просьбы перейди в memory для disposition. Там используй commit для долговечного или finish для эфемерного source; после commit не finish."
@@ -1852,7 +1873,16 @@ class ProjectsHubLiveAdapter:
             except (ValueError, TypeError):
                 raise StoreError("INVALID_ARGUMENT", "Invalid preference arguments")
         capability = getattr(session, "capability", "core")
-        if capability not in self._allowed_capabilities(session) or name not in BUNDLES.get(capability, []):
+        allowed_capabilities = self._allowed_capabilities(session)
+        core_preference = capability == "core" and name in _CORE_DIRECT_PREFERENCES
+        core_owner = (
+            capability == "core"
+            and name in _OWNER_CORE_DIRECT
+            and "owner_development" in allowed_capabilities
+        )
+        if (capability not in allowed_capabilities
+                or not (name in BUNDLES.get(capability, [])
+                        or core_preference or core_owner)):
             raise StoreError("TOOL_NOT_AVAILABLE", "Function not in active capability")
         if name == "preferences_get":
             if args:
