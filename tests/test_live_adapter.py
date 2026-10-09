@@ -165,7 +165,8 @@ def test_initial_live_setup_has_bounded_authoritative_budget_and_core_routing(tm
         store.close()
 
 
-def test_owner_core_startup_exposes_theme_and_backlog_without_router(tmp_path: Path):
+@pytest.mark.asyncio
+async def test_owner_core_startup_exposes_theme_and_backlog_without_router(tmp_path: Path):
     from projects_hub.live_adapter import _startup_functions
     from projects_hub.live_capabilities import BUNDLES, ROUTER
     from projects_hub.store import StoreError
