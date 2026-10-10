@@ -1029,15 +1029,30 @@ Set android_update=true and android_release_url to the existing signed APK relea
             )
 
         try:
-            quality_task_id, _ = await self._start_marked_codex_task(
-                project=project_hint,
-                marker=self._dispatch_marker(execution_id, "design", 0, 1),
-                prompt=prompt,
-                model=QUALITY_MODEL,
-                reasoning_effort=QUALITY_EFFORT,
-                access="read",
-                codex_user_opt_in=codex_user_opt_in,
-            )
+            if self.pipeline_mode == "codex_owner":
+                quality_task_id, _ = await self._start_marked_codex_task(
+                    project=project_hint,
+                    marker=self._dispatch_marker(execution_id, "design", 0, 1),
+                    prompt=prompt,
+                    model=QUALITY_MODEL,
+                    reasoning_effort=QUALITY_EFFORT,
+                    access="read",
+                    codex_user_opt_in=codex_user_opt_in,
+                )
+            else:
+                # Preserve pre-upgrade legacy start and its existing recovery.
+                result = await self.devcoveer.start_codex_task(
+                    project=project_hint,
+                    prompt=prompt,
+                    model=QUALITY_MODEL,
+                    reasoning_effort=QUALITY_EFFORT,
+                )
+                quality_task_id = str(
+                    result.get("taskId") or result.get("taskReference") or ""
+                ).strip()
+                if not quality_task_id:
+                    raise StoreError("DEVCOVEER_INVALID_RESPONSE",
+                                     "DevCoveer did not return a quality task id")
             now = _now_ms()
             with self.store._lock:
                 self.store.db.execute(
