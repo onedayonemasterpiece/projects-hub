@@ -39,7 +39,7 @@ test("Projects Hub renders both sides of the Live conversation as a bounded mess
   const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(source, /event\.type === "input_transcript"[\s\S]*mergeChatMessage\("user"/);
   assert.match(source, /event\.type === "output_transcript"[\s\S]*mergeChatMessage\("assistant"/);
-  assert.match(source, /import \{ mergeTranscript, resolveTerminalVoiceState, selectProvisionalCaption, speechStartsNewUserBubble \} from "\.\/voiceUiContract\.js"/);
+  assert.match(source, /import \{ mergeTranscript, resolveTerminalVoiceState, selectProvisionalCaption, speechStartsNewUserBubble, voiceStartupFailureNotice \} from "\.\/voiceUiContract\.js"/);
   assert.match(source, /mergeTranscript\(current\.text, clean\)/);
   assert.match(source, /getPersonalTimeline\(/);
   assert.match(source, /upsertPersonalTimelineMessage\(/);
@@ -335,4 +335,15 @@ test("restart adopts only unresolved server utterance verdicts", async () => {
   assert.match(source, /adoptPendingVoiceRecovery\(started\)/);
   assert.doesNotMatch(source, /verdict === "turn_committed"[\s\S]*setRecoverableSourceId/);
   assert.match(source, /Восстановить фразу/);
+});
+test("a Live 503 never looks like a completed development task or hides voice recovery", async () => {
+  const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  assert.match(source, /kind === "start_error" && voiceStartupFailureNotice\(error\)/);
+  assert.match(source, /setVoiceState\("provider_failure"\)/);
+  assert.match(source, /setNotice\(voiceStartupFailureNotice\(error\)\)/);
+  assert.match(source, /setNotice\(previous => previous \|\| "Не удалось восстановить Live/);
+  // This is inside .chat-status, not behind showWork (hidden with chat history).
+  const chatStatus = source.slice(source.indexOf('className="chat-status" role={notice'));
+  assert.match(chatStatus, /recoverableSourceId && networkOnline && !voiceActive/);
+  assert.match(chatStatus, /Восстановить фразу/);
 });
