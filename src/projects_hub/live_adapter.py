@@ -997,7 +997,11 @@ preferences_get, затем preferences_set_theme только по явной �
 «Открой доску» — board; «покажи заметку» — notes; «покажи вопросы» —
 collaboration. Это те же личная переписка и текущая Live-сессия.
 
-На общий «привет», «что нового», «какие задачи или вопросы аналитики» сначала
+На простое «Мира, привет» без другого запроса ответь СРАЗУ голосом в этой
+Live-сессии. НЕ вызывай activate_capability и не переключай конфигурацию.
+Если context.recent_owner_completions содержит подтверждённые результаты,
+можешь кратко назвать один. Не утверждай, что новых вопросов нет, пока не
+проверен inbox. На «что нового», «какие задачи или вопросы аналитики» сначала
 активируй collaboration, если разрешено: collaboration_personal_brief, затем
 collaboration_questions_inbox, задай голосом один существенный ожидающий вопрос.
 Доступны answer, unknown, skip, later; не снимай blocker без содержательного
@@ -1575,6 +1579,10 @@ class ProjectsHubLiveAdapter:
         allowed = self._allowed_capabilities(session)
         if capability not in allowed:
             raise StoreError("TOOL_NOT_AVAILABLE", "Capability unavailable")
+        if capability == getattr(session, "capability", "core"):
+            # The bundle is already loaded. Reconfiguring here closes a live
+            # provider socket and re-bills its full setup even for a no-op.
+            return None
         turn_id = self._accepted_theme_turn(session)
         session.state["_capability_turn_id"] = turn_id
         session.state.pop("_capability_ready", None)
@@ -1946,6 +1954,13 @@ class ProjectsHubLiveAdapter:
                 raise StoreError("INVALID_ARGUMENT", "Invalid preference arguments")
         capability = getattr(session, "capability", "core")
         allowed_capabilities = self._allowed_capabilities(session)
+        if name == "activate_capability":
+            if args.get("capability") not in allowed_capabilities:
+                raise StoreError("TOOL_NOT_AVAILABLE", "Capability unavailable")
+            if args.get("capability") != capability:
+                raise StoreError("TOOL_NOT_AVAILABLE", "Capability must be activated")
+            self._accepted_theme_turn(session)
+            return {"capability": capability, "status": "ready", "already_active": True}
         core_preference = capability == "core" and name in _CORE_DIRECT_PREFERENCES
         core_owner = (
             capability == "core"
