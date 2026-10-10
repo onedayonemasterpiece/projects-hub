@@ -1491,7 +1491,10 @@ class ProjectsHubLiveAdapter:
         """Verbatim bounded excerpt of the accepted current owner voice turn."""
         utterance = self._current_utterance(session)
         selected_id = str(session.state.get("_capability_turn_id") or "")
-        if selected_id:
+        # A route transition may retain the prior turn id. If another voice
+        # utterance has started, never reuse earlier Codex consent for a
+        # different task, even if the old transition has not yet completed.
+        if selected_id and utterance is None:
             utterance = next(
                 (u for u in session.state.get("_utterances", [])
                  if isinstance(u, dict) and u.get("id") == selected_id), None,
