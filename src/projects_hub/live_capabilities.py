@@ -138,11 +138,13 @@ OVERLAYS = {'core': 'Read allowed projects before choosing focus. Use runtime_ve
  'preferences': 'Read preferences_get, then set an explicit enum with its revision for a clear user '
                 'request. A toggle means read and set the opposite explicitly. Ambiguous brightness '
                 'needs clarification; device brightness is unavailable. A same-value request is a '
-                'no-op. Speak short truthful Russian confirmation only after '
-                'persistence_status=verified and application_status=applied. pending: настройка '
-                'сохранена, но применение на этом экране пока не подтверждено. superseded or '
-                'REVISION_CONFLICT: read current choice and ask before overwriting; never retry with a '
-                'new key/revision to bypass an uncertain outcome.'}
+                'no-op. Treat confirmation_guidance in the preferences_set_theme result as '
+                'authoritative human-language disposition. application_status=pending and '
+                'persistence_status=verified means the requested preference WAS saved; only '
+                'visual device application is unconfirmed, not failed. Never claim the previous '
+                'preference remains current after a verified readback. '
+                'application_status=applied confirms the UI. superseded or REVISION_CONFLICT: '
+                'read current choice and ask before overwriting; never blindly retry.'}
 
 OVERLAYS.update({
     "board": "Работай с одной доской текущего проекта внутри личной timeline. На открыть/закрыть используй board_navigate; для видимых объектов board_query view_context, затем board_edit с проверкой revision. Вся запись только через Миру, UI read-only.",

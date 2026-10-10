@@ -135,6 +135,7 @@ async def test_application_ack_and_late_transcription_duplicate(context):
     call = {'name': 'preferences_set_theme', 'id': 'provider-one', 'args': {'theme': 'light', 'expected_revision': 0}}
     result = await adapter.execute_tool(session, call)
     assert result['application_status'] == 'applied'
+    assert "применение подтверждено" in result["confirmation_guidance"]
     adapter.on_event(session, {'type': 'input_transcript', 'text': 'late canonical'})
     again = await adapter.execute_tool(session, {**call, 'id': 'provider-two'})
     assert again == result and len(events) == 1
@@ -165,7 +166,7 @@ async def test_missing_ack_pending_stop_and_no_store_lock(context):
 
 @pytest.mark.asyncio
 async def test_ack_timeout_is_bounded_and_truthful(context):
-    _, _, adapter, session, _ = context
+    store, _, adapter, session, _ = context
     activate(adapter, session, 'preferences')
     adapter.emit = lambda *_: None
     before = asyncio.get_running_loop().time()
@@ -174,6 +175,9 @@ async def test_ack_timeout_is_bounded_and_truthful(context):
     assert 2.9 <= elapsed < 3.5
     assert result['application_status'] == 'pending'
     assert result['persistence_status'] == 'verified'
+    assert "Настройка сохранена" in result["confirmation_guidance"]
+    assert "пока не подтверждено" in result["confirmation_guidance"]
+    assert store.get_preferences(session.state["actor_id"])["theme"] == "light"
 
 
 @pytest.mark.asyncio
