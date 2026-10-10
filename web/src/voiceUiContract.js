@@ -67,3 +67,20 @@ export function resolveTerminalVoiceState(state, detail) {
 export function speechStartsNewUserBubble(event) {
   return event === "speech_start";
 }
+/**
+ * Translate a failed Live *session start* into user-facing status. A provider
+ * capacity refusal is not a lost chat, completed task or failed development.
+ * The voice model cannot speak while its session cannot be established.
+ * @param {unknown} error
+ * @returns {string|null}
+ */
+export function voiceStartupFailureNotice(error) {
+  const status = error && typeof error === "object" && "status" in error
+    ? Number(error.status)
+    : null;
+  const message = error instanceof Error ? error.message : "";
+  if (status !== 503 && !/\bHTTP\s+503\b/i.test(message)) return null;
+  return "Голосовая модель Миры временно недоступна (503). Переписка сохранена. "
+    + "Попробуйте подключиться позже. Если фраза прервалась, её запись можно "
+    + "восстановить в этом же диалоге.";
+}
