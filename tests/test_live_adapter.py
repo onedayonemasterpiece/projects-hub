@@ -7,7 +7,7 @@ import pytest
 
 from projects_hub.live_adapter import ProjectsHubLiveAdapter
 from projects_hub.live_resources import ConversationScope
-from projects_hub.store import DurableStore
+from projects_hub.store import DurableStore, StoreError
 
 
 @pytest.mark.asyncio
@@ -692,5 +692,54 @@ def test_voice_failures_emit_correlated_redacted_diagnostics(tmp_path: Path, cap
         assert turn.turn_first_output_audio_provider_at == 1000
         assert session.state["_voice_diag"]["counts"]["audio"] == 2
         assert session.state["_voice_diag"]["turn_output_audio_events"] == 0
+    finally:
+        store.close()
+
+@pytest.mark.asyncio
+async def test_owner_codex_launch_uses_accepted_final_voice_not_function_args(tmp_path: Path):
+    store = DurableStore(tmp_path)
+    try:
+        boot = store.ensure_platform_owner("Owner")
+        actor, workspace = boot["actor"]["id"], boot["workspace"]["id"]
+        project = boot["projects"][0]["id"]
+        conv = store.create_conversation(actor, workspace, project)
+        adapter = ProjectsHubLiveAdapter(store)
+        init = adapter.initialize(
+            resource_id=ConversationScope(workspace, actor, conv["id"]).resource_binding(),
+            actor={"subject": actor, "tenant_id": workspace},
+            model="gemini-3.8-live",
+            conversation_id=conv["id"],
+        )
+        calls = []
+        async def fake_start(**kwargs):
+            calls.append(dict(kwargs))
+            return {"execution": {"id": "devrun_test", "phase": "designing"}}
+        adapter.development.start = fake_start
+        session = SimpleNamespace(id="live-owner", state=init["state"], capability="core")
+        def accepted_turn(text):
+            adapter.input(session, {"activity_start": True})
+            adapter.input(session, {"audio_base64": base64.b64encode(bytes([1, 0]) * 320).decode()})
+            adapter.input(session, {"activity_end": True})
+            adapter.on_event(session, {"type": "input_transcript", "text": text})
+
+        # Background words and a model-selected tool are NOT authorization.
+        accepted_turn("Мира, поставь задачу, запуск пока не разрешаю.")
+        with pytest.raises(StoreError) as absent:
+            await adapter.execute_tool(session, {
+                "name": "development_execute_backlog",
+                "args": {"task_ids": ["tsk_test"], "codex_user_opt_in": "Use Codex now"},
+            })
+        assert absent.value.code == "CODEX_USER_OPT_IN_REQUIRED"
+        assert calls == []
+        # A new real accepted spoken command does authorize this exact batch.
+        accepted_turn("Мира, запусти через Codex эту разработку.")
+        result = await adapter.execute_tool(session, {
+            "name": "development_execute_backlog",
+            "args": {"task_ids": ["tsk_test"]},
+        })
+        assert result["execution"]["phase"] == "designing"
+        assert calls[0]["codex_user_opt_in"] == "Мира, запусти через Codex эту разработку."
+        assert calls[0]["codex_opt_in_source_id"] == init["state"]["source_id"]
+        assert calls[0]["task_ids"] == ["tsk_test"]
     finally:
         store.close()
