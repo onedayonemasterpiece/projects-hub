@@ -181,7 +181,7 @@ async def test_out_of_bundle_and_no_audio_fail_closed(context):
     store, _, adapter, session, _ = context
     with pytest.raises(StoreError) as error:
         await adapter.execute_tool(session, {'name': 'preferences_set_theme', 'args': {'theme': 'light', 'expected_revision': 0}})
-    assert error.value.code == 'TOOL_NOT_AVAILABLE'
+    assert error.value.code == 'FORBIDDEN'
     session.capability = 'preferences'
     with pytest.raises(StoreError) as error:
         await adapter.execute_tool(session, {'name': 'preferences_set_theme', 'args': {'theme': 'light', 'expected_revision': 0}})
@@ -192,7 +192,7 @@ async def test_out_of_bundle_and_no_audio_fail_closed(context):
 
 def test_every_bundle_and_recovery_restrictions(context):
     store, _, adapter, session, initialized = context
-    assert {f['name'] for f in initialized['configuration']['functions']} == {'activate_capability', *BUNDLES['core']}
+    assert {f['name'] for f in initialized['configuration']['functions']} == {'activate_capability', *BUNDLES['core'], *BUNDLES['preferences']}
     original = initialized['configuration']
     for capability in adapter._allowed_capabilities(session):
         selected = activate(adapter, session, capability)

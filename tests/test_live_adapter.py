@@ -113,7 +113,7 @@ def test_initial_live_setup_has_bounded_authoritative_budget_and_core_routing(tm
         )
         # ai-resource-control counts setup JSON UTF-8 bytes, not provider tokens.
         estimated_units = len(json.dumps(setup, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
-        assert estimated_units < 16000, estimated_units
+        assert estimated_units < 21000, estimated_units
 
         domain_checks = {
             "board": "# BOARD",
@@ -165,6 +165,80 @@ def test_initial_live_setup_has_bounded_authoritative_budget_and_core_routing(tm
         store.close()
 
 
+@pytest.mark.asyncio
+async def test_owner_core_startup_exposes_theme_and_backlog_without_router(tmp_path: Path):
+    from projects_hub.live_adapter import _startup_functions
+    from projects_hub.live_capabilities import BUNDLES, ROUTER
+    from projects_hub.store import StoreError
+    from types import SimpleNamespace
+
+    store = DurableStore(tmp_path)
+    try:
+        owner = store.ensure_platform_owner("Platform owner")
+        actor_id, workspace_id = owner["actor"]["id"], owner["workspace"]["id"]
+        conversation = store.create_conversation(
+            actor_id, workspace_id, owner["projects"][0]["id"],
+        )
+        adapter = ProjectsHubLiveAdapter(store)
+        init = adapter.initialize(
+            resource_id=ConversationScope(
+                workspace_id, actor_id, conversation["id"],
+            ).resource_binding(),
+            actor={"subject": actor_id, "tenant_id": workspace_id},
+            model="gemini-3.8-live",
+            conversation_id=conversation["id"],
+        )
+        names = {item["name"] for item in init["configuration"]["functions"]}
+        assert len(init["configuration"]["functions"]) == 9
+        assert {"preferences_get", "preferences_set_theme",
+                "backlog_list", "backlog_create",
+                "development_execute_backlog"} <= names
+        assert set(BUNDLES["core"]) <= names
+        assert "activate_capability" in names
+        assert "development_execution_status" not in names
+        assert init["response"]["owner_development_enabled"] is True
+        session = SimpleNamespace(state=init["state"], capability="core")
+        assert (await adapter.execute_tool(
+            session, {"name": "preferences_get", "args": {}},
+        ))["theme"] in {"light", "dark"}
+        overview = await adapter.execute_tool(
+            session, {"name": "backlog_list", "args": {}},
+        )
+        assert isinstance(overview.get("tasks"), list)
+        assert "latest_execution" in overview
+
+        # No privilege escalation through the session's exposed function names.
+        dev = store.ensure_dev_workspace("Non owner")
+        other = dev["actor"]["id"]
+        other_workspace = dev["workspace"]["id"]
+        other_conversation = store.create_conversation(
+            other, other_workspace, dev["projects"][0]["id"],
+        )
+        other_init = adapter.initialize(
+            resource_id=ConversationScope(
+                other_workspace, other, other_conversation["id"],
+            ).resource_binding(),
+            actor={"subject": other, "tenant_id": other_workspace},
+            model="gemini-3.8-live",
+            conversation_id=other_conversation["id"],
+        )
+        other_names = {
+            item["name"] for item in other_init["configuration"]["functions"]
+        }
+        assert {"preferences_get", "preferences_set_theme"} <= other_names
+        assert not ({"backlog_list", "backlog_create",
+                     "development_execute_backlog"} & other_names)
+        other_session = SimpleNamespace(
+            state=other_init["state"], capability="core",
+        )
+        with pytest.raises(StoreError, match="Function not in active capability"):
+            await adapter.execute_tool(
+                other_session, {"name": "backlog_list", "args": {}},
+            )
+    finally:
+        store.close()
+
+
 def test_voice_first_router_advertises_authorized_owner_development_and_theme(tmp_path: Path):
     from projects_hub.live_adapter import _live_instruction
     from projects_hub.live_capabilities import BUNDLES, ROUTER
@@ -192,8 +266,8 @@ def test_voice_first_router_advertises_authorized_owner_development_and_theme(tm
         assert "owner_development" in allowed
         assert "preferences" in allowed
         assert "activate_capability" in active_tools
-        assert "development_execute_backlog" not in active_tools
-        assert "preferences_set_theme" not in active_tools
+        assert "development_execute_backlog" in active_tools
+        assert "preferences_set_theme" in active_tools
         # A missing tool in the *active* bundle must not cause a false refusal.
         assert "owner_development" in core["system_instruction"]
         assert "development_execute_backlog" in core["system_instruction"]
