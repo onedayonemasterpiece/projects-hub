@@ -6,6 +6,7 @@ import {
   resolveTerminalVoiceState,
   selectProvisionalCaption,
   speechStartsNewUserBubble,
+  voiceStartupFailureNotice,
 } from "../src/voiceUiContract.js";
 
 test("long transcript merge is lossless beyond 4000 chars", () => {
@@ -59,4 +60,14 @@ test("speech start opens a new user bubble even without provider interim text", 
   assert.equal(speechStartsNewUserBubble("speech_start"), true);
   assert.equal(speechStartsNewUserBubble("speech_end"), false);
   assert.equal(speechStartsNewUserBubble("input_transcript"), false);
+});
+test("a rejected Live setup shows useful recoverable status instead of raw HTTP 503", () => {
+  const error = Object.assign(new Error("HTTP 503"), { status: 503 });
+  const message = voiceStartupFailureNotice(error);
+  assert.match(message, /Голосовая модель Миры временно недоступна/);
+  assert.match(message, /Переписка сохранена/);
+  assert.match(message, /восстановить/);
+  assert.equal(voiceStartupFailureNotice(new Error("HTTP 503")), message);
+  assert.equal(voiceStartupFailureNotice(Object.assign(new Error("HTTP 401"), {status:401})), null);
+  assert.equal(voiceStartupFailureNotice(new Error("MICROPHONE_UNAVAILABLE")), null);
 });

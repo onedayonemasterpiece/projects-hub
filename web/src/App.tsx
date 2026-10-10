@@ -50,7 +50,7 @@ import CollaborationTimeline from "./CollaborationTimeline";
 import CollaborationQuestions from "./CollaborationQuestions";
 import InlineBoard, { type BoardUiCommand } from "./InlineBoard";
 import { recoverServerVoiceSource } from "./serverRecovery";
-import { mergeTranscript, resolveTerminalVoiceState, selectProvisionalCaption, speechStartsNewUserBubble } from "./voiceUiContract.js";
+import { mergeTranscript, resolveTerminalVoiceState, selectProvisionalCaption, speechStartsNewUserBubble, voiceStartupFailureNotice } from "./voiceUiContract.js";
 import {
   acknowledgeDeliveredSource,
   createLocalPersistSink,
@@ -198,6 +198,8 @@ function formatWait(wait: NonNullable<WaitState>) {
 }
 
 function friendlyStartError(error: unknown) {
+  const liveNotice = voiceStartupFailureNotice(error);
+  if (liveNotice) return liveNotice;
   const name = error && typeof error === "object" && "name" in error
     ? String((error as { name?: unknown }).name ?? "")
     : "";
@@ -1200,6 +1202,12 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
         } else if (kind === "provider_failure") {
           if (userTurnAwaitingFinalRef.current) settleCurrentVoiceBubble(undefined, true);
           setNotice("Live-провайдер завершил сессию с ошибкой. Уже принятый голосовой источник сохранён.");
+        } else if (kind === "start_error" && voiceStartupFailureNotice(error)) {
+          // A failed new Live setup has not failed the user's task or erased
+          // their conversation. Keep the existing chat and recovery action.
+          setVoiceState("provider_failure");
+          setAndroidVoiceAudioFocus(false);
+          setNotice(voiceStartupFailureNotice(error));
         } else if (kind === "capture_error") {
           if (userTurnAwaitingFinalRef.current) settleCurrentVoiceBubble(undefined, true);
           setNotice("Запись с микрофона прервалась. Уже подтверждённая часть источника сохранена.");
@@ -1401,9 +1409,10 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
       if (typeof started?.source_id === "string") currentSourceIdRef.current = started.source_id;
       adoptPendingVoiceRecovery(started);
       if (client.sessionId) setNotice("Разговор восстановлен.");
+      else setNotice(previous => previous || "Не удалось восстановить Live. Нажмите микрофон, чтобы повторить подключение.");
     } catch {
       setAndroidVoiceAudioFocus(false);
-      setNotice("Не удалось автоматически восстановить Live. Нажмите микрофон, чтобы продолжить.");
+      setNotice(previous => previous || "Не удалось восстановить Live. Нажмите микрофон, чтобы повторить подключение.");
     }
   }
 
@@ -1917,6 +1926,11 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
               {(wait || notice) && (
                 <div className="chat-status" role={notice ? "alert" : undefined}>
                   {notice ?? (wait?.stage === "action" ? "Мира выполняет действие…" : "Мира думает…")}
+                  {recoverableSourceId && networkOnline && !voiceActive && (
+                    <button className="mini-action" onClick={recoverFailedVoiceSource} disabled={busy}>
+                      Восстановить фразу
+                    </button>
+                  )}
                   {microphoneSettingsAvailable && (
                     <button className="mini-action microphone-settings-action" onClick={openAndroidMicrophoneSettings}>
                       Открыть настройки микрофона
