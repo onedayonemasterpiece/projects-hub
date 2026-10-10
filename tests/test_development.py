@@ -3011,3 +3011,78 @@ async def test_codex_owner_requires_explicit_owner_quote_before_dispatch(tmp_pat
     finally:
         await service.close()
         store.close()
+
+@pytest.mark.asyncio
+async def test_owner_native_threads_reconcile_lost_start_reply_without_duplicates(tmp_path: Path):
+    """Reuse the existing durable marker/history path for BOTH Codex starts."""
+
+    class LostStartReply(CodexDeliveryFake):
+        def __init__(self):
+            super().__init__()
+            self.started = []
+
+        async def list_codex_tasks(self, *, project, search=None, limit=20):
+            self.calls.append(("list_tasks", {"project": project, "search": search}))
+            return {
+                "status": "ok",
+                "tasks": [
+                    {
+                        "taskId": ref,
+                        "name": title,
+                        "backend": "codex",
+                        "model": model,
+                        "access": access,
+                    }
+                    for ref, title, model, access in self.started
+                    if search is None or search in title
+                ],
+            }
+
+        async def start_codex_task(self, *, project, prompt, model,
+                                   reasoning_effort, access="write",
+                                   codex_user_opt_in=None):
+            result = await super().start_codex_task(
+                project=project, prompt=prompt, model=model,
+                reasoning_effort=reasoning_effort, access=access,
+                codex_user_opt_in=codex_user_opt_in,
+            )
+            assert prompt.startswith("ODR-")
+            assert codex_user_opt_in == "Запусти через Codex"
+            self.started.append(
+                (result["taskId"], prompt.splitlines()[0], model, access)
+            )
+            # The task EXISTS in DevCoveer even if its start reply was lost.
+            raise DevCoveerError("Native task started; reply lost")
+
+    store, readiness, boot, project = setup(tmp_path)
+    fake = LostStartReply()
+    service = DevelopmentService(store, readiness, devcoveer=fake)
+    try:
+        task = create_backlog(service, boot, project)[0]
+        actor, workspace = boot["actor"]["id"], boot["workspace"]["id"]
+        launched = await service.start(
+            actor_id=actor, workspace_id=workspace, task_ids=[task["id"]],
+            codex_user_opt_in="Запусти через Codex",
+        )
+        run_id = launched["execution"]["id"]
+        assert launched["execution"]["phase"] == "designing"
+        assert len(fake.started) == 1
+        for _ in range(4):
+            await service.advance_active_once()
+        result = (await service.status(
+            actor_id=actor, workspace_id=workspace,
+            execution_id=run_id,
+        ))["execution"]
+        assert result["status"] == "completed"
+        assert result["phase"] == "ready"
+        assert len(fake.started) == 2
+        assert [stage["stage"] for stage in result["stages"]] == [
+            "design", "implementation", "review", "delivery",
+        ]
+        assert all(record[1].startswith("ODR-") for record in fake.started)
+        assert "codex_user_opt_in" not in result
+    finally:
+        await service.close()
+        store.close()
+
+
