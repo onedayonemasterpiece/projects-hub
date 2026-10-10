@@ -1029,21 +1029,15 @@ Set android_update=true and android_release_url to the existing signed APK relea
             )
 
         try:
-            result = await self.devcoveer.start_codex_task(
+            quality_task_id, _ = await self._start_marked_codex_task(
                 project=project_hint,
+                marker=self._dispatch_marker(execution_id, "design", 0, 1),
                 prompt=prompt,
                 model=QUALITY_MODEL,
                 reasoning_effort=QUALITY_EFFORT,
-                **({"codex_user_opt_in": codex_user_opt_in}
-                   if codex_user_opt_in is not None else {}),
+                access="read",
+                codex_user_opt_in=codex_user_opt_in,
             )
-            quality_task_id = str(
-                result.get("taskId")
-                or result.get("taskReference")
-                or ""
-            ).strip()
-            if not quality_task_id:
-                raise StoreError("DEVCOVEER_INVALID_RESPONSE", "DevCoveer did not return a quality task id")
             now = _now_ms()
             with self.store._lock:
                 self.store.db.execute(
@@ -2390,14 +2384,15 @@ Main CI/release evidence:
                 model=next_model, reasoning_effort=next_effort,
             )
             if name == "design":
-                started = await self.devcoveer.start_codex_task(
-                    project=project, prompt=prompt, model=next_model,
-                    reasoning_effort=next_effort, access=access,
+                next_task, _ = await self._start_marked_codex_task(
+                    project=project,
+                    marker=self._dispatch_marker(execution_id, "implementation", 0, 1),
+                    prompt=prompt,
+                    model=next_model,
+                    reasoning_effort=next_effort,
+                    access=access,
                     codex_user_opt_in=str(item.get("codex_user_opt_in") or "") or None,
                 )
-                next_task = str(started.get("taskId") or started.get("taskReference") or "")
-                if not next_task:
-                    raise StoreError("DEVCOVEER_INVALID_RESPONSE", "No implementation task reference")
             else:
                 next_task = (
                     str(item.get("quality_task_id") or "")
@@ -2647,6 +2642,7 @@ Main CI/release evidence:
         model: str,
         reasoning_effort: str,
         access: str,
+        codex_user_opt_in: str | None = None,
     ) -> tuple[str, dict[str, Any]]:
         try:
             existing = await self._find_marked_task(
@@ -2675,8 +2671,12 @@ Main CI/release evidence:
                 model=model,
                 reasoning_effort=reasoning_effort,
                 access=access,
+                **({"codex_user_opt_in": codex_user_opt_in}
+                   if codex_user_opt_in is not None else {}),
             )
         except DevCoveerError as exc:
+            if exc.code == "CODEX_USER_OPT_IN_REQUIRED":
+                raise StoreError(exc.code, str(exc)) from exc
             try:
                 reconciled = await self._find_marked_task(
                     project=project,
