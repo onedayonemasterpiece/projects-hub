@@ -1893,7 +1893,25 @@ class ProjectsHubLiveAdapter:
             receipt = self.store.preference_receipt(session.state["actor_id"], result["command_id"])
             self._mark_semantic_observed(session, committed=True, evidence="theme_receipt",
                                          utterance_id=receipt["turn_id"])
-            return result
+            # Mechanical receipt interpretation, not an alternative semantic
+            # agent: give Live a truthful short status for the exact outcome.
+            # In particular pending means saved, NOT failed or still old theme.
+            choice = "светлая" if result["theme"] == "light" else "тёмная"
+            application = result.get("application_status")
+            if application == "applied":
+                guidance = f"Настройка сохранена, применение подтверждено: {choice} тема."
+            elif application == "pending" and result.get("persistence_status") == "verified":
+                guidance = (
+                    f"Настройка сохранена: выбрана {choice} тема. "
+                    "Применение на экране устройства пока не подтверждено. "
+                    "Не говори, что сохранение не удалось или что осталась прежняя тема."
+                )
+            else:
+                guidance = (
+                    "Эта команда не подтверждена как применённая. "
+                    "Прочитай current и не заявляй успех или неудачу без проверки."
+                )
+            return {**result, "confirmation_guidance": guidance}
         self._mark_semantic_observed(session, committed=True, evidence=f"tool_call:{name}")
         state = session.state
         actor_id = state["actor_id"]
