@@ -834,3 +834,51 @@ async def test_mira_backlog_and_execution_results_are_bounded_with_long_history(
         assert len(json.dumps(launched, ensure_ascii=False).encode()) < 2500
     finally:
         store.close()
+
+@pytest.mark.asyncio
+async def test_simple_greeting_stays_in_core_without_expensive_live_transition(tmp_path: Path):
+    from projects_hub.live_adapter import _live_instruction
+
+    core = _live_instruction("core")
+    assert 'На простое «Мира, привет»' in core
+    assert "ответь СРАЗУ голосом" in core
+    assert "НЕ вызывай activate_capability" in core
+    assert "collaboration_questions_inbox" in core
+
+    store = DurableStore(tmp_path)
+    try:
+        boot = store.ensure_platform_owner("Owner")
+        actor = boot["actor"]["id"]
+        workspace = boot["workspace"]["id"]
+        conv = store.create_conversation(actor, workspace, boot["projects"][0]["id"])
+        adapter = ProjectsHubLiveAdapter(store)
+        result = adapter.initialize(
+            resource_id=ConversationScope(workspace, actor, conv["id"]).resource_binding(),
+            actor={"subject": actor, "tenant_id": workspace},
+            model="gemini-3.8-live",
+            conversation_id=conv["id"],
+        )
+        session = SimpleNamespace(id="same-capability", state=result["state"], capability="core")
+        # Existing approved speech means a redundant activation should return
+        # in-band success instead of opening another expensive Google socket.
+        adapter.input(session, {"activity_start": True})
+        adapter.input(session, {
+            "audio_base64": base64.b64encode(bytes([1, 0]) * 320).decode()
+        })
+        adapter.input(session, {"activity_end": True})
+        call = {"name": "activate_capability",
+                "args": {"capability": "core", "intent": "привет"}}
+        assert adapter.resolve_capability(session, call) is None
+        same = await adapter.execute_tool(session, call)
+        assert same == {
+            "capability": "core", "status": "ready", "already_active": True,
+        }
+        # The same rule also prevents redundant reloads of the 26 KB
+        # collaboration configuration.
+        session.capability = "board"
+        call["args"]["capability"] = "board"
+        assert adapter.resolve_capability(session, call) is None
+        same = await adapter.execute_tool(session, call)
+        assert same["already_active"] is True
+    finally:
+        store.close()

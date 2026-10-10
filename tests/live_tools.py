@@ -14,9 +14,20 @@ def activate(adapter, session, capability):
         adapter.input(session, {'activity_start': True})
         adapter.input(session, {'audio_base64': base64.b64encode(b'\x01\x00' * 320).decode()})
         adapter.input(session, {'activity_end': True})
-    spec = adapter.resolve_capability(session, {
-        'name': 'activate_capability', 'args': {'capability': capability, 'intent': 'Fixture accepted domain request'},
-    })
+    if capability == 'core' and getattr(session, 'capability', 'core') == 'core':
+        # A redundant core activation is an in-band success, not a provider
+        # reconfiguration; the test helper uses the same existing setup.
+        result = {'name': 'activate_capability',
+                  'args': {'capability': 'core', 'intent': 'Fixture accepted domain request'}}
+        spec = {
+            'configuration': session.state['_base_configuration'],
+            'context': session.state['_product_context'],
+            'capability': 'core',
+        }
+    else:
+        spec = adapter.resolve_capability(session, {
+            'name': 'activate_capability', 'args': {'capability': capability, 'intent': 'Fixture accepted domain request'},
+        })
     if spec is None:
         raise StoreError('TOOL_NOT_AVAILABLE', 'Router rejected capability')
     names = {f['name'] for f in spec['configuration']['functions']}
