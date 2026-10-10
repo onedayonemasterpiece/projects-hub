@@ -166,7 +166,7 @@ async def test_missing_ack_pending_stop_and_no_store_lock(context):
 
 @pytest.mark.asyncio
 async def test_ack_timeout_is_bounded_and_truthful(context):
-    _, _, adapter, session, _ = context
+    store, _, adapter, session, _ = context
     activate(adapter, session, 'preferences')
     adapter.emit = lambda *_: None
     before = asyncio.get_running_loop().time()
