@@ -1,5 +1,6 @@
 from live_tools import execute, bundle_setup
 import base64
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -741,5 +742,95 @@ async def test_owner_codex_launch_uses_accepted_final_voice_not_function_args(tm
         assert calls[0]["codex_user_opt_in"] == "Мира, запусти через Codex эту разработку."
         assert calls[0]["codex_opt_in_source_id"] == init["state"]["source_id"]
         assert calls[0]["task_ids"] == ["tsk_test"]
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_mira_backlog_and_execution_results_are_bounded_with_long_history(tmp_path: Path):
+    """Regression for production: 30 historic review stages caused a 59 KB tool reply."""
+    store = DurableStore(tmp_path)
+    try:
+        boot = store.ensure_platform_owner("Owner")
+        actor, workspace = boot["actor"]["id"], boot["workspace"]["id"]
+        project = boot["projects"][0]["id"]
+        conversation = store.create_conversation(actor, workspace, project)
+        adapter = ProjectsHubLiveAdapter(store)
+        initialized = adapter.initialize(
+            resource_id=ConversationScope(workspace, actor, conversation["id"]).resource_binding(),
+            actor={"subject": actor, "tenant_id": workspace},
+            model="gemini-3.8-live",
+            conversation_id=conversation["id"],
+        )
+        session = SimpleNamespace(id="history-acceptance", state=initialized["state"], capability="core")
+        stages = [
+            {"stage": "review", "status": "completed", "model": "gpt-6-astra",
+             "cycle": i, "review_verdict": "rework_required",
+             "summary": "Развёрнутый исторический отчёт. " * 90}
+            for i in range(30)
+        ]
+        full = {
+            "id": "devrun_old", "status": "completed", "phase": "ready",
+            "model_profile": "gpt-6.1-sol:medium",
+            "task_ids": ["tsk_theme"], "project_id": project,
+            "phase_detail": "Предыдущая разработка завершена",
+            "stages": stages,
+            "token_usage_by_model": {"gpt-6-astra": {"totalTokens": 60000}},
+        }
+        tasks = [
+            {"id": f"tsk_{index}", "project_id": project,
+             "title": f"Доработка плавающего острова {index}",
+             "description": "Условия реализации " * 220,
+             "state": "proposed"}
+            for index in range(5)
+        ]
+        old_overview = {
+            "tasks": tasks, "latest_execution": full,
+            "backlog_state_semantics": "Backlog state accepted means approved/eligible.",
+        }
+        assert len(json.dumps(old_overview, ensure_ascii=False).encode()) > 50000
+        adapter.development.backlog_overview = lambda **_kwargs: old_overview
+
+        answer = await adapter.execute_tool(
+            session, {"name": "backlog_list", "args": {}},
+        )
+        assert len(json.dumps(answer, ensure_ascii=False).encode()) < 4000
+        assert [t["id"] for t in answer["tasks"]] == [t["id"] for t in tasks]
+        assert all(len(t["description"]) <= 160 for t in answer["tasks"])
+        assert answer["latest_execution"]["id"] == "devrun_old"
+        assert answer["latest_execution"]["stage_count"] == 30
+        assert len(answer["latest_execution"]["recent_stages"]) == 2
+        assert "stages" not in answer["latest_execution"]
+        assert len(old_overview["latest_execution"]["stages"]) == 30
+
+        async def fake_status(**_kwargs):
+            return {"execution": full}
+        session.capability = "owner_development"
+        adapter.development.status = fake_status
+        readback = await adapter.execute_tool(
+            session, {"name": "development_execution_status", "args": {}},
+        )
+        assert readback["execution"]["id"] == "devrun_old"
+        assert len(json.dumps(readback, ensure_ascii=False).encode()) < 2500
+
+        async def fake_start(**_kwargs):
+            return {"execution": full}
+        adapter.development.start = fake_start
+        session.capability = "core"
+        adapter.input(session, {"activity_start": True})
+        adapter.input(session, {
+            "audio_base64": base64.b64encode(bytes([1, 0]) * 480).decode(),
+        })
+        adapter.input(session, {"activity_end": True})
+        adapter.on_event(session, {
+            "type": "input_transcript",
+            "text": "Мира, запусти через Codex существующую разработку.",
+        })
+        launched = await adapter.execute_tool(
+            session, {"name": "development_execute_backlog",
+                      "args": {"task_ids": ["tsk_island"]}},
+        )
+        assert launched["execution"]["id"] == "devrun_old"
+        assert len(json.dumps(launched, ensure_ascii=False).encode()) < 2500
     finally:
         store.close()
