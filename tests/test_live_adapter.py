@@ -875,8 +875,8 @@ async def test_simple_greeting_stays_in_core_without_expensive_live_transition(t
         }
         # The same rule also prevents redundant reloads of the 26 KB
         # collaboration configuration.
-        session.capability = "collaboration"
-        call["args"]["capability"] = "collaboration"
+        session.capability = "board"
+        call["args"]["capability"] = "board"
         assert adapter.resolve_capability(session, call) is None
         same = await adapter.execute_tool(session, call)
         assert same["already_active"] is True
