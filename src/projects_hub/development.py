@@ -1034,7 +1034,8 @@ Set android_update=true and android_release_url to the existing signed APK relea
                 prompt=prompt,
                 model=QUALITY_MODEL,
                 reasoning_effort=QUALITY_EFFORT,
-                codex_user_opt_in=codex_user_opt_in,
+                **({"codex_user_opt_in": codex_user_opt_in}
+                   if codex_user_opt_in is not None else {}),
             )
             quality_task_id = str(
                 result.get("taskId")
