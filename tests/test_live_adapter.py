@@ -741,5 +741,16 @@ async def test_owner_codex_launch_uses_accepted_final_voice_not_function_args(tm
         assert calls[0]["codex_user_opt_in"] == "Мира, запусти через Codex эту разработку."
         assert calls[0]["codex_opt_in_source_id"] == init["state"]["source_id"]
         assert calls[0]["task_ids"] == ["tsk_test"]
+
+        # Old route state must not authorize an unrelated new spoken turn.
+        session.state["_capability_turn_id"] = session.state["_utterances"][-1]["id"]
+        accepted_turn("Мира, здесь просто расскажи статус, новую разработку не запускай.")
+        with pytest.raises(StoreError) as stale:
+            await adapter.execute_tool(session, {
+                "name": "development_execute_backlog",
+                "args": {"task_ids": ["tsk_another"]},
+            })
+        assert stale.value.code == "CODEX_USER_OPT_IN_REQUIRED"
+        assert len(calls) == 1
     finally:
         store.close()
