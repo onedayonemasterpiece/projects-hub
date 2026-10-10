@@ -1043,6 +1043,40 @@ def _startup_functions(*, owner_development: bool) -> list[dict[str, Any]]:
     return exposed
 
 
+def _voice_execution_brief(item: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Bounded projection for Live only; durable execution history stays intact."""
+    if not isinstance(item, dict):
+        return None
+    keys = (
+        "id", "project_id", "project_hint", "status", "phase", "error_code",
+        "model_profile", "task_ids", "review_cycle", "updated_at_ms",
+        "delivery_main_sha", "update_check_recommended",
+    )
+    brief = {key: item[key] for key in keys if key in item}
+    brief["phase_detail"] = str(item.get("phase_detail") or "")[:400]
+    stages = item.get("stages")
+    if isinstance(stages, list):
+        brief["stage_count"] = len(stages)
+        brief["recent_stages"] = [
+            {
+                **{key: stage[key] for key in (
+                    "stage", "status", "model", "reasoning_effort",
+                    "review_verdict", "cycle",
+                ) if key in stage},
+                "summary": str(stage.get("summary") or "")[:280],
+            }
+            for stage in stages[-2:] if isinstance(stage, dict)
+        ]
+    evidence = item.get("delivery_evidence")
+    if isinstance(evidence, dict):
+        brief["delivery_evidence"] = {
+            key: evidence[key] for key in (
+                "status", "ci", "main_sha", "android_update", "android_release_url",
+            ) if key in evidence
+        }
+    return brief
+
+
 class ProjectsHubLiveAdapter:
     def __init__(
         self,
@@ -2324,12 +2358,28 @@ class ProjectsHubLiveAdapter:
                 limit = int(args.get("limit", 20))
             except (TypeError, ValueError):
                 limit = 20
-            return self.development.backlog_overview(
+            # Never feed decades of stage summaries back to Live. A previous
+            # 30-stage completed execution made this result ~59 KB and the
+            # AI resource guard rejected it repeatedly as a tool_response.
+            overview = self.development.backlog_overview(
                 actor_id=actor_id,
                 workspace_id=workspace_id,
                 project_id=project_id,
-                limit=limit,
+                limit=max(1, min(limit, 20)),
             )
+            return {
+                "tasks": [
+                    {**{key: task[key] for key in (
+                        "id", "project_id", "title", "state",
+                    ) if key in task},
+                     "description": str(task.get("description") or "")[:240]}
+                    for task in overview["tasks"]
+                ],
+                "latest_execution": _voice_execution_brief(
+                    overview.get("latest_execution")
+                ),
+                "backlog_state_semantics": overview["backlog_state_semantics"],
+            }
 
         if name == "backlog_create":
             self.store.require_platform_owner(actor_id)
@@ -2372,7 +2422,7 @@ class ProjectsHubLiveAdapter:
             raw_ids = args.get("task_ids")
             if not isinstance(raw_ids, list):
                 raise StoreError("INVALID_ARGUMENT", "task_ids must be a list")
-            return await self.development.start(
+            launched = await self.development.start(
                 actor_id=actor_id,
                 workspace_id=workspace_id,
                 task_ids=[str(item) for item in raw_ids],
@@ -2381,15 +2431,21 @@ class ProjectsHubLiveAdapter:
                 codex_user_opt_in=self._owner_codex_opt_in(session),
                 codex_opt_in_source_id=str(session.state["source_id"]),
             )
+            if isinstance(launched.get("execution"), dict):
+                launched = {**launched,
+                            "execution": _voice_execution_brief(launched["execution"])}
+            return launched
 
         if name == "development_execution_status":
             execution_id = str(args.get("execution_id") or "") or None
-            return await self.development.status(
+            status = await self.development.status(
                 actor_id=actor_id,
                 workspace_id=workspace_id,
                 execution_id=execution_id,
                 sync=True,
             )
+            return {**status,
+                    "execution": _voice_execution_brief(status.get("execution"))}
 
         if name == "github_repositories_list":
             rows = self.store.list_repository_connections(actor_id, workspace_id)
