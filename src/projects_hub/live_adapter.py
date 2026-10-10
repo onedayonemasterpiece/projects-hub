@@ -1063,7 +1063,7 @@ def _voice_execution_brief(item: dict[str, Any] | None) -> dict[str, Any] | None
                     "stage", "status", "model", "reasoning_effort",
                     "review_verdict", "cycle",
                 ) if key in stage},
-                "summary": str(stage.get("summary") or "")[:280],
+                "summary": str(stage.get("summary") or "")[:160],
             }
             for stage in stages[-2:] if isinstance(stage, dict)
         ]
@@ -2372,7 +2372,7 @@ class ProjectsHubLiveAdapter:
                     {**{key: task[key] for key in (
                         "id", "project_id", "title", "state",
                     ) if key in task},
-                     "description": str(task.get("description") or "")[:240]}
+                     "description": str(task.get("description") or "")[:160]}
                     for task in overview["tasks"]
                 ],
                 "latest_execution": _voice_execution_brief(
