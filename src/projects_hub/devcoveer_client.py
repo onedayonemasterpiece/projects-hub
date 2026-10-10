@@ -11,7 +11,9 @@ from mcp.client.stdio import stdio_client
 
 
 class DevCoveerError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, code: str = "DEVCOVEER_OPERATION_FAILED") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class DevCoveerClient:
@@ -46,7 +48,23 @@ class DevCoveerClient:
     @staticmethod
     def _payload(result: Any) -> dict[str, Any]:
         if getattr(result, "is_error", False):
-            raise DevCoveerError("DevCoveer operation failed")
+            # Preserve only allowlisted, actionable denial categories; do not
+            # echo untrusted provider text or potentially sensitive payloads.
+            structured = getattr(result, "structured_content", None)
+            if not isinstance(structured, dict):
+                structured = {}
+            category = str(structured.get("errorCategory") or "")
+            body = " ".join(str(getattr(item, "text", ""))[:350]
+                            for item in (getattr(result, "content", []) or [])[:2])
+            if category == "codex_explicit_opt_in_required" or (
+                "explicit current-user opt-in" in body
+                or "current-user excerpt containing" in body
+            ):
+                raise DevCoveerError(
+                    "Native Codex requires explicit consent in the current owner request",
+                    code="CODEX_USER_OPT_IN_REQUIRED",
+                )
+            raise DevCoveerError("DevCoveer refused the operation")
         structured = getattr(result, "structured_content", None)
         if isinstance(structured, dict):
             return structured
@@ -227,18 +245,21 @@ class DevCoveerClient:
         model: str,
         reasoning_effort: str,
         access: str = "write",
+        codex_user_opt_in: str | None = None,
     ) -> dict[str, Any]:
-        return await self._call(
-            "start_task",
-            {
-                "project": project,
-                "prompt": prompt,
-                "access": access,
-                "provider": "codex",
-                "model": model,
-                "reasoning_effort": reasoning_effort,
-            },
-        )
+        # The native task must carry an independently verified current-owner
+        # Codex request, not merely provider/model names.
+        payload = {
+            "project": project,
+            "prompt": prompt,
+            "access": access,
+            "provider": "codex",
+            "model": model,
+            "reasoning_effort": reasoning_effort,
+        }
+        if codex_user_opt_in is not None:
+            payload["codex_user_opt_in"] = codex_user_opt_in
+        return await self._call("start_task", payload)
 
     async def continue_codex_task(
         self,

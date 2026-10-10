@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import logging
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any, Callable
@@ -1486,6 +1487,32 @@ class ProjectsHubLiveAdapter:
             pass
         return allowed
 
+    def _owner_codex_opt_in(self, session: Any) -> str:
+        """Verbatim bounded excerpt of the accepted current owner voice turn."""
+        utterance = self._current_utterance(session)
+        selected_id = str(session.state.get("_capability_turn_id") or "")
+        if selected_id:
+            utterance = next(
+                (u for u in session.state.get("_utterances", [])
+                 if isinstance(u, dict) and u.get("id") == selected_id), None,
+            )
+        if (not utterance or not utterance.get("pcm_accepted")
+                or not utterance.get("activity_end")):
+            raise StoreError(
+                "CODEX_USER_OPT_IN_REQUIRED",
+                "Подтвердите запуск голосом: «Запусти через Codex».",
+            )
+        transcript = str(utterance.get("canonical_text") or "")
+        match = re.search(r"(?<![A-Za-z0-9_-])codex(?![A-Za-z0-9_-])",
+                          transcript, re.I)
+        if match is None:
+            raise StoreError(
+                "CODEX_USER_OPT_IN_REQUIRED",
+                "Для запуска Native Codex явно скажите «Запусти через Codex». "
+                "Без этого Мира может только подготовить задачу.",
+            )
+        return transcript[max(0, match.start()-160):min(len(transcript), match.end()+280)]
+
     def _accepted_theme_turn(self, session: Any) -> str:
         current = self._current_utterance(session)
         if not current or not current.get("pcm_accepted"):
@@ -1643,6 +1670,17 @@ class ProjectsHubLiveAdapter:
         diag = state.setdefault("_voice_diag", {})
         counts = diag.setdefault("counts", {})
         if kind == "input_transcript":
+            # Only the Live provider's final transcript can attest an owner's
+            # current voice request; never take consent from LLM tool arguments.
+            canonical = event.get("text")
+            if isinstance(canonical, str) and canonical.strip():
+                for utterance in reversed(state.get("_utterances", [])):
+                    if (isinstance(utterance, dict)
+                            and utterance.get("pcm_accepted")
+                            and utterance.get("activity_end")
+                            and "canonical_text" not in utterance):
+                        utterance["canonical_text"] = canonical[:4000]
+                        break
             self._mark_semantic_observed(
                 session,
                 committed=True,
@@ -2340,6 +2378,8 @@ class ProjectsHubLiveAdapter:
                 task_ids=[str(item) for item in raw_ids],
                 model=str(args.get("model") or "") or None,
                 reasoning_effort=str(args.get("reasoning_effort") or "") or None,
+                codex_user_opt_in=self._owner_codex_opt_in(session),
+                codex_opt_in_source_id=str(session.state["source_id"]),
             )
 
         if name == "development_execution_status":

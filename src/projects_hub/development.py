@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from pathlib import Path
 import re
 import time
@@ -156,6 +157,14 @@ class DevelopmentService:
                     "PRAGMA table_info(task_executions)"
                 ).fetchall()
             }
+            if "codex_user_opt_in" not in columns:
+                self.store.db.execute(
+                    "ALTER TABLE task_executions ADD COLUMN codex_user_opt_in TEXT"
+                )
+            if "codex_opt_in_source_id" not in columns:
+                self.store.db.execute(
+                    "ALTER TABLE task_executions ADD COLUMN codex_opt_in_source_id TEXT"
+                )
             if "pipeline_mode" not in columns:
                 # Existing in-flight deliveries keep their original resume path.
                 self.store.db.execute(
@@ -771,6 +780,9 @@ Set android_update=true and android_release_url to the existing signed APK relea
         item["delivery_evidence"] = delivery_evidence
         item.pop("prompt", None)
         item.pop("prompt_sha256", None)
+        # Verbatim consent is private authorization provenance, never UI data.
+        item.pop("codex_user_opt_in", None)
+        item.pop("codex_opt_in_source_id", None)
         with self.store._lock:
             stage_rows = self.store.db.execute(
                 """SELECT * FROM task_execution_stages
@@ -856,6 +868,8 @@ Set android_update=true and android_release_url to the existing signed APK relea
         task_ids: list[str],
         model: str | None = None,
         reasoning_effort: str | None = None,
+        codex_user_opt_in: str | None = None,
+        codex_opt_in_source_id: str | None = None,
     ) -> dict[str, Any]:
         async with self._transition_guard():
             return await self._start_locked(
@@ -864,6 +878,8 @@ Set android_update=true and android_release_url to the existing signed APK relea
                 task_ids=task_ids,
                 model=model,
                 reasoning_effort=reasoning_effort,
+                codex_user_opt_in=codex_user_opt_in,
+                codex_opt_in_source_id=codex_opt_in_source_id,
             )
 
     async def _start_locked(
@@ -874,8 +890,20 @@ Set android_update=true and android_release_url to the existing signed APK relea
         task_ids: list[str],
         model: str | None = None,
         reasoning_effort: str | None = None,
+        codex_user_opt_in: str | None = None,
+        codex_opt_in_source_id: str | None = None,
     ) -> dict[str, Any]:
         self._authorize_owner(actor_id, workspace_id)
+        if self.pipeline_mode == "codex_owner":
+            if (not isinstance(codex_user_opt_in, str)
+                    or not 5 <= len(codex_user_opt_in.strip()) <= 500
+                    or re.search(r"(?<![A-Za-z0-9_-])codex(?![A-Za-z0-9_-])",
+                                 codex_user_opt_in, re.I) is None):
+                raise StoreError(
+                    "CODEX_USER_OPT_IN_REQUIRED",
+                    "Чтобы запустить реализацию, явно скажите: «Запусти через Codex». "
+                    "Создание и обсуждение задачи сами по себе не разрешают запуск.",
+                )
         tasks, project_id = self._selected_tasks(
             actor_id=actor_id,
             workspace_id=workspace_id,
@@ -994,8 +1022,10 @@ Set android_update=true and android_release_url to the existing signed APK relea
 
         with self.store._lock:
             self.store.db.execute(
-                "UPDATE task_executions SET pipeline_mode=? WHERE id=?",
-                (self.pipeline_mode, execution_id),
+                """UPDATE task_executions SET pipeline_mode=?,codex_user_opt_in=?,
+                   codex_opt_in_source_id=? WHERE id=?""",
+                (self.pipeline_mode, codex_user_opt_in, codex_opt_in_source_id,
+                 execution_id),
             )
 
         try:
@@ -1004,6 +1034,8 @@ Set android_update=true and android_release_url to the existing signed APK relea
                 prompt=prompt,
                 model=QUALITY_MODEL,
                 reasoning_effort=QUALITY_EFFORT,
+                **({"codex_user_opt_in": codex_user_opt_in}
+                   if codex_user_opt_in is not None else {}),
             )
             quality_task_id = str(
                 result.get("taskId")
@@ -1040,7 +1072,7 @@ Set android_update=true and android_release_url to the existing signed APK relea
             )
         except Exception as exc:
             now = _now_ms()
-            code = exc.code if isinstance(exc, StoreError) else type(exc).__name__
+            code = exc.code if isinstance(exc, (StoreError, DevCoveerError)) else type(exc).__name__
             with self.store._lock:
                 self.store.db.execute(
                     """UPDATE task_executions
@@ -2361,6 +2393,7 @@ Main CI/release evidence:
                 started = await self.devcoveer.start_codex_task(
                     project=project, prompt=prompt, model=next_model,
                     reasoning_effort=next_effort, access=access,
+                    codex_user_opt_in=str(item.get("codex_user_opt_in") or "") or None,
                 )
                 next_task = str(started.get("taskId") or started.get("taskReference") or "")
                 if not next_task:
@@ -4154,7 +4187,7 @@ Do NOT merge, deploy or release. Stop when the existing implementation is again 
 
         except Exception as exc:
             now = _now_ms()
-            code = exc.code if isinstance(exc, StoreError) else type(exc).__name__
+            code = exc.code if isinstance(exc, (StoreError, DevCoveerError)) else type(exc).__name__
             retryable_capacity = code in {
                 "CODEX_CAPACITY_RESERVED",
                 "CODEX_MODEL_UNAVAILABLE",
@@ -4298,7 +4331,7 @@ Do NOT merge, deploy or release. Stop when the existing implementation is again 
             )
         except Exception as exc:
             now = _now_ms()
-            code = exc.code if isinstance(exc, StoreError) else type(exc).__name__
+            code = exc.code if isinstance(exc, (StoreError, DevCoveerError)) else type(exc).__name__
             self._record_stage(
                 execution_id=execution_id,
                 stage="rework",
