@@ -258,6 +258,7 @@ class FakeDevCoveer:
         model: str,
         reasoning_effort: str,
         access: str = "write",
+        codex_user_opt_in: str | None = None,
     ):
         task_id = self._quality_task if model == "gpt-6-astra" else self._implementation_task
         # Simulate the branch associated with the owner execution's stable ID.
@@ -275,6 +276,8 @@ class FakeDevCoveer:
                     "reasoning_effort": reasoning_effort,
                     "access": access,
                     "task": task_id,
+                    **({"codex_user_opt_in": codex_user_opt_in}
+                       if codex_user_opt_in else {}),
                 },
             )
         )
@@ -2871,6 +2874,7 @@ async def test_mira_codex_owner_pipeline_delivers_without_secondary_ci_controlle
         task = create_backlog(service, boot, project)[0]
         started = await service.start(
             actor_id=owner, workspace_id=workspace, task_ids=[task["id"]],
+            codex_user_opt_in="Разработай через Codex",
         )
         execution_id = started["execution"]["id"]
         assert started["execution"]["pipeline_mode"] == "codex_owner"
@@ -2894,7 +2898,11 @@ async def test_mira_codex_owner_pipeline_delivers_without_secondary_ci_controlle
         assert [stage["stage"] for stage in final["stages"]] == [
             "design", "implementation", "review", "delivery",
         ]
-        assert len([name for name, _ in fake.calls if name == "start"]) == 2
+        starts = [args for name, args in fake.calls if name == "start"]
+        assert len(starts) == 2
+        assert all(args["codex_user_opt_in"] == "Разработай через Codex" for args in starts)
+        assert "codex_user_opt_in" not in final
+        assert "codex_opt_in_source_id" not in final
         assert {args["task"] for name, args in fake.calls if name == "continue"} == {
             fake._quality_task, fake._implementation_task,
         }
@@ -2930,6 +2938,7 @@ async def test_mira_codex_review_rework_and_delivery_use_same_threads(tmp_path: 
             actor_id=boot["actor"]["id"],
             workspace_id=boot["workspace"]["id"],
             task_ids=[task["id"]],
+            codex_user_opt_in="Разработай через Codex",
         )
         for _ in range(6):
             await service.advance_active_once()
@@ -2959,6 +2968,7 @@ async def test_mira_codex_unverified_delivery_fails_bounded_without_false_done(t
             actor_id=boot["actor"]["id"],
             workspace_id=boot["workspace"]["id"],
             task_ids=[task["id"]],
+            codex_user_opt_in="Разработай через Codex",
         )
         for _ in range(5):
             await service.advance_active_once()
@@ -2976,6 +2986,28 @@ async def test_mira_codex_unverified_delivery_fails_bounded_without_false_done(t
             actor_id=boot["actor"]["id"],
             workspace_id=boot["workspace"]["id"], project_id=project["id"],
         )[0]["state"] != "done"
+    finally:
+        await service.close()
+        store.close()
+
+@pytest.mark.asyncio
+async def test_codex_owner_requires_explicit_owner_quote_before_dispatch(tmp_path: Path):
+    store, readiness, boot, project = setup(tmp_path)
+    fake = CodexDeliveryFake()
+    service = DevelopmentService(store, readiness, devcoveer=fake)
+    try:
+        task = create_backlog(service, boot, project)[0]
+        with pytest.raises(StoreError) as denied:
+            await service.start(
+                actor_id=boot["actor"]["id"],
+                workspace_id=boot["workspace"]["id"],
+                task_ids=[task["id"]],
+            )
+        assert denied.value.code == "CODEX_USER_OPT_IN_REQUIRED"
+        assert not any(name == "start" for name, _ in fake.calls)
+        assert service.list_executions(
+            actor_id=boot["actor"]["id"], workspace_id=boot["workspace"]["id"]
+        ) == []
     finally:
         await service.close()
         store.close()
