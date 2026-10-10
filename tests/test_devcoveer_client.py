@@ -192,6 +192,7 @@ async def test_start_task_remains_explicit_native_codex_write(
             prompt="canary",
             model="gpt-6.1-sol",
             reasoning_effort="medium",
+            codex_user_opt_in="Запусти разработку через Codex",
         )
     finally:
         await client.close()
@@ -207,6 +208,7 @@ async def test_start_task_remains_explicit_native_codex_write(
                 "provider": "codex",
                 "model": "gpt-6.1-sol",
                 "reasoning_effort": "medium",
+                "codex_user_opt_in": "Запусти разработку через Codex",
             },
         )
     ]
@@ -229,6 +231,7 @@ async def test_start_task_can_be_explicit_native_codex_read():
         model="gpt-6-astra",
         reasoning_effort="high",
         access="read",
+        codex_user_opt_in="Проверь через Codex",
     )
 
     assert result["taskId"] == "dvt_read"
@@ -242,6 +245,7 @@ async def test_start_task_can_be_explicit_native_codex_read():
                 "provider": "codex",
                 "model": "gpt-6-astra",
                 "reasoning_effort": "high",
+                "codex_user_opt_in": "Проверь через Codex",
             },
         )
     ]
@@ -295,3 +299,15 @@ def test_command_uses_production_env_without_overriding_explicit_command(
         DevCoveerClient(command="/tmp/direct-codex-mcp").command
         == "/tmp/direct-codex-mcp"
     )
+
+def test_bridge_native_opt_in_denial_is_actionable_and_bounded():
+    from projects_hub.devcoveer_client import DevCoveerError
+    result = SimpleNamespace(
+        is_error=True,
+        structured_content={"status": "denied", "errorCategory": "codex_explicit_opt_in_required"},
+        content=[SimpleNamespace(text="native Codex requires an explicit current-user opt-in excerpt")],
+    )
+    with pytest.raises(DevCoveerError) as failure:
+        DevCoveerClient._payload(result)
+    assert failure.value.code == "CODEX_USER_OPT_IN_REQUIRED"
+    assert "explicit consent" in str(failure.value)
