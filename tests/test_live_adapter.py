@@ -796,7 +796,7 @@ async def test_mira_backlog_and_execution_results_are_bounded_with_long_history(
         )
         assert len(json.dumps(answer, ensure_ascii=False).encode()) < 4000
         assert [t["id"] for t in answer["tasks"]] == [t["id"] for t in tasks]
-        assert all(len(t["description"]) <= 240 for t in answer["tasks"])
+        assert all(len(t["description"]) <= 160 for t in answer["tasks"])
         assert answer["latest_execution"]["id"] == "devrun_old"
         assert answer["latest_execution"]["stage_count"] == 30
         assert len(answer["latest_execution"]["recent_stages"]) == 2
