@@ -12,6 +12,9 @@ from projects_hub.store import DurableStore
 
 
 class AppliedCalendarDevice:
+    def recent_calendar_commands(self, **_kwargs):
+        return []
+
     def list_devices(self, *, actor_id: str, workspace_id: str):
         return [
             {

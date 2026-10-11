@@ -34,3 +34,20 @@ def test_json_formatter_keeps_voice_output_audio_turn_telemetry():
     assert payload["max_stdin_delay_ms"] == 17
     assert payload["max_ws_send_ms"] == 9
     assert payload["audio_stream_end_sent_at"] == 123456999
+
+
+
+def test_device_receipt_diagnostics_keep_ids_not_private_payloads():
+    record = logging.LogRecord("projects_hub.api", logging.WARNING, __file__, 1,
+                               "device command receipt rejected", (), None)
+    record.command_id = "cmd_test"
+    record.device_id = "dev_test"
+    record.capability = "calendar.create_event"
+    record.retry_after_ms = 3000
+    record.code = "INVALID_ARGUMENT"
+    record.result_payload = {"title": "private event", "claim_token": "secret"}
+    payload = json.loads(JsonFormatter().format(record))
+    assert payload["command_id"] == "cmd_test"
+    assert payload["retry_after_ms"] == 3000
+    assert "result_payload" not in payload
+    assert "private event" not in json.dumps(payload)

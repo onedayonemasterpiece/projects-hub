@@ -225,10 +225,12 @@ def _http_for_code(code: str) -> int:
 
 def _error(exc: Exception) -> HTTPException:
     code = str(getattr(exc, "code", type(exc).__name__))
-    return HTTPException(
-        status_code=_http_for_code(code),
-        detail={"code": code, "message": str(exc)[:500]},
-    )
+    detail = {"code": code, "message": str(exc)[:500]}
+    retry_after_ms = getattr(exc, "retry_after_ms", None)
+    if (isinstance(retry_after_ms, (int, float)) and not isinstance(retry_after_ms, bool)
+            and 0 <= retry_after_ms <= 86_400_000):
+        detail["retry_after_ms"] = int(retry_after_ms)
+    return HTTPException(status_code=_http_for_code(code), detail=detail)
 
 
 def _loopback_dev_request(request: Request) -> bool:
@@ -806,14 +808,21 @@ def create_app(
         payload: DeviceReceipt,
         request: Request,
     ) -> dict[str, Any]:
-        result = app.state.device_commands.receipt(
-            authorization=request.headers.get("authorization"),
-            command_id=command_id,
-            claim_token=payload.claim_token,
-            payload_sha256=payload.payload_sha256,
-            status=payload.status,
-            result=payload.result,
-        )
+        try:
+            result = app.state.device_commands.receipt(
+                authorization=request.headers.get("authorization"),
+                command_id=command_id,
+                claim_token=payload.claim_token,
+                payload_sha256=payload.payload_sha256,
+                status=payload.status,
+                result=payload.result,
+            )
+        except StoreError as exc:
+            log.warning("device command receipt rejected", extra={
+                "event": "device_command_receipt", "command_id": command_id,
+                "result": "rejected", "code": exc.code,
+            })
+            raise
         log.info(
             "device command receipt",
             extra={
@@ -1176,6 +1185,7 @@ def create_app(
                     "result": "start_failed",
                     "code": code,
                     "exception_type": type(exc).__name__,
+                    "retry_after_ms": getattr(exc, "retry_after_ms", None),
                 },
             )
             raise _error(exc) from exc

@@ -112,6 +112,7 @@ async def test_calendar_command_claim_receipt_and_idempotent_readback(tmp_path: 
                 "readback_verified": True,
                 "event_id": "calendar-event-42",
                 "provider_status": "present",
+                "calendar_id": 1,
             },
         )
         assert receipt["status"] == "applied"
@@ -128,6 +129,7 @@ async def test_calendar_command_claim_receipt_and_idempotent_readback(tmp_path: 
                 "readback_verified": True,
                 "event_id": "calendar-event-42",
                 "provider_status": "present",
+                "calendar_id": 1,
             },
         )
         assert repeated == receipt
@@ -190,6 +192,7 @@ async def test_live_function_waits_for_same_android_receipt(tmp_path: Path):
                 "readback_verified": True,
                 "event_id": "event-99",
                 "provider_status": "present",
+                "calendar_id": 1,
             },
         )
         result = await asyncio.wait_for(task, timeout=2)
@@ -304,6 +307,7 @@ async def test_calendar_read_command_returns_bounded_device_events(tmp_path: Pat
             result={
                 "readback_verified": True,
                 "provider_status": "present",
+                "calendar_id": 1,
                 "count": 1,
                 "events": [{
                     "event_id": "42",
@@ -357,7 +361,7 @@ async def test_calendar_live_tool_returns_pending_without_40_second_voice_stall(
                 "device_id": registration["device"]["id"],
                 "capability": "calendar.create_event",
                 "status": "claimed",
-                "pending_device_confirmation": True,
+                "awaiting_device_result": True,
             }
 
         service.wait_for_terminal = return_claimed
@@ -376,6 +380,102 @@ async def test_calendar_live_tool_returns_pending_without_40_second_voice_stall(
         )
         assert seen["timeout_seconds"] == 8.0
         assert result["status"] == "claimed"
-        assert result["pending_device_confirmation"] is True
+        assert result["awaiting_device_result"] is True
+    finally:
+        store.close()
+
+
+
+@pytest.mark.asyncio
+async def test_late_android_readback_survives_restart_without_recreating_event(tmp_path):
+    store, _boot, actor, workspace, project, service, registration = setup(tmp_path)
+    try:
+        conversation = store.create_conversation(actor, workspace, project)
+        other = store.create_conversation(actor, workspace, project)
+        command = service.create_calendar_command(
+            actor_id=actor, workspace_id=workspace, project_id=project,
+            command_id='cmd_' + 'd' * 40, args={**CALENDAR_ARGS, 'event_type': 'podcast'},
+            conversation_id=conversation['id'],
+        )
+        auth = 'Device ' + registration['device_token']
+        claimed = await service.next_command(authorization=auth, wait_ms=0)
+        pending = await service.calendar_command_status(
+            actor_id=actor, workspace_id=workspace, conversation_id=conversation['id'],
+            command_id=command['id'], timeout_seconds=0,
+        )
+        assert pending['status'] == 'claimed'
+        # Expire the claim, then actually close/reopen durable SQLite state.
+        store.db.execute('UPDATE device_commands SET claimed_at_ms=? WHERE id=?',
+                         (round(time.time() * 1000) - 130_000, command['id']))
+        store.close()
+        store = DurableStore(tmp_path)
+        service = DeviceCommandService(store)
+        unknown = await service.calendar_command_status(
+            actor_id=actor, workspace_id=workspace, conversation_id=conversation['id'],
+            command_id=command['id'], timeout_seconds=0,
+        )
+        assert unknown['status'] == 'outcome_unknown'
+        args = dict(authorization=auth, command_id=command['id'],
+                    claim_token=claimed['claim_token'],
+                    payload_sha256=claimed['command']['payload_sha256'], status='applied',
+                    result={'event_id': 'device-event-7', 'calendar_id': 1,
+                            'readback_verified': True, 'provider_status': 'present'})
+        with pytest.raises(StoreError) as bad_claim:
+            service.receipt(**{**args, 'claim_token': 'wrong-claim-' * 4})
+        assert bad_claim.value.code == 'DEVICE_COMMAND_CLAIM_INVALID'
+        receipt = service.receipt(**args)
+        assert receipt['status'] == 'applied'
+        assert service.receipt(**args) == receipt
+        adapter = ProjectsHubLiveAdapter(store, device_commands=service)
+        binding = ConversationScope(workspace, actor, conversation['id']).resource_binding()
+        initialized = adapter.initialize(
+            resource_id=binding, actor={'subject': actor, 'tenant_id': workspace},
+            model='gemini-3.8-live', conversation_id=conversation['id'])
+        session = SimpleNamespace(state=initialized['state'])
+        readback = await execute(adapter, session, {
+            'name': 'calendar_command_status', 'id': 'late-status',
+            'args': {'command_id': command['id']}})
+        replay = await execute(adapter, session, {
+            'name': 'calendar_command_status', 'id': 'late-status-again',
+            'args': {'command_id': command['id']}})
+        assert readback['status'] == 'applied'
+        assert readback['event_card']['event_type'] == 'podcast'
+        assert readback['event_card']['id'] == replay['event_card']['id']
+        assert (await service.next_command(authorization=auth, wait_ms=0))['command'] is None
+        with pytest.raises(StoreError) as foreign_conversation:
+            await service.calendar_command_status(
+                actor_id=actor, workspace_id=workspace, conversation_id=other['id'],
+                command_id=command['id'], timeout_seconds=0,
+            )
+        assert foreign_conversation.value.code == 'DEVICE_COMMAND_NOT_FOUND'
+        recent = service.recent_calendar_commands(
+            actor_id=actor, workspace_id=workspace, conversation_id=conversation['id'])
+        assert len(recent) == 1 and recent[0]['status'] == 'applied'
+        rows = store.db.execute('SELECT text FROM conversation_timeline_messages WHERE conversation_id=?',
+                                (conversation['id'],)).fetchall()
+        assert len(rows) == 1 and 'Проверено чтением' in rows[0]['text']
+        assert store.db.execute('SELECT count(*) FROM device_commands').fetchone()[0] == 1
+        assert service.recent_calendar_commands(
+            actor_id=actor, workspace_id=workspace, conversation_id=other['id']) == []
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('calendar_id', [True, -1, '1', 2**63, {'id': 1}])
+async def test_calendar_receipt_metadata_does_not_weaken_readback_validation(tmp_path, calendar_id):
+    store, _boot, actor, workspace, project, service, registration = setup(tmp_path)
+    try:
+        command = service.create_calendar_command(
+            actor_id=actor, workspace_id=workspace, project_id=project,
+            command_id='cmd_' + 'e' * 40, args=CALENDAR_ARGS)
+        auth = 'Device ' + registration['device_token']
+        claimed = await service.next_command(authorization=auth, wait_ms=0)
+        with pytest.raises(StoreError) as rejected:
+            service.receipt(authorization=auth, command_id=command['id'],
+                claim_token=claimed['claim_token'],
+                payload_sha256=claimed['command']['payload_sha256'], status='applied',
+                result={'event_id': '7', 'readback_verified': True, 'calendar_id': calendar_id})
+        assert rejected.value.code == 'INVALID_ARGUMENT'
     finally:
         store.close()

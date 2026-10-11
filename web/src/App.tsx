@@ -50,7 +50,7 @@ import CollaborationTimeline from "./CollaborationTimeline";
 import CollaborationQuestions from "./CollaborationQuestions";
 import InlineBoard, { type BoardUiCommand } from "./InlineBoard";
 import { recoverServerVoiceSource } from "./serverRecovery";
-import { mergeTranscript, resolveTerminalVoiceState, selectProvisionalCaption, speechStartsNewUserBubble, voiceStartupFailureNotice } from "./voiceUiContract.js";
+import { mergeTranscript, resolveTerminalVoiceState, selectProvisionalCaption, speechStartsNewUserBubble, voiceStartupFailureNotice, voiceStartupFailureState } from "./voiceUiContract.js";
 import {
   acknowledgeDeliveredSource,
   createLocalPersistSink,
@@ -1198,14 +1198,14 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
           setNotice("Связь с Live нестабильна. Пытаюсь переподключиться…");
         } else if (kind === "resource_denial") {
           if (userTurnAwaitingFinalRef.current) settleCurrentVoiceBubble(undefined, true);
-          setNotice("Live остановилась из-за ресурсного лимита. Уже принятый голосовой источник сохранён и доступен для восстановления.");
+          setNotice(voiceStartupFailureNotice(error) ?? "Live остановилась из-за ресурсного лимита. Уже принятый голосовой источник сохранён и доступен для восстановления.");
         } else if (kind === "provider_failure") {
           if (userTurnAwaitingFinalRef.current) settleCurrentVoiceBubble(undefined, true);
           setNotice("Live-провайдер завершил сессию с ошибкой. Уже принятый голосовой источник сохранён.");
         } else if (kind === "start_error" && voiceStartupFailureNotice(error)) {
           // A failed new Live setup has not failed the user's task or erased
           // their conversation. Keep the existing chat and recovery action.
-          setVoiceState("provider_failure");
+          setVoiceState(voiceStartupFailureState(error));
           setAndroidVoiceAudioFocus(false);
           setNotice(voiceStartupFailureNotice(error));
         } else if (kind === "capture_error") {

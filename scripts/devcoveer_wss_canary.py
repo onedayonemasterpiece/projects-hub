@@ -143,6 +143,8 @@ async def recv_until(
         remaining = max(0.1, deadline - time.monotonic())
         raw = await asyncio.wait_for(ws.recv(), min(10.0, remaining))
         if isinstance(raw, bytes):
+            if len(raw) >= 12:
+                result["cursor"] = max(result.get("cursor", 0), struct.unpack("!III", raw[:12])[1])
             result["event_types"].append("audio_binary")
             if predicate("audio_binary", {}):
                 return
@@ -151,6 +153,7 @@ async def recv_until(
         kind = str(payload.get("type") or "")
         if kind == "event":
             event = payload.get("event") or {}
+            result["cursor"] = max(result.get("cursor", 0), int(event.get("seq") or 0))
             event_kind = str(event.get("type") or "")
             if event_kind:
                 result["event_types"].append(event_kind)
@@ -447,8 +450,89 @@ async def concurrency(args) -> dict[str, Any]:
                 pass
 
 
+async def reconnect(args) -> dict[str, Any]:
+    """Real same-session reattachment; synthetic PCM, never microphone acceptance."""
+    http = HttpSession(args.http_base)
+    _, conversation_id = login_and_conversation(http, args.display_name)
+    started = start_live(http, conversation_id, "deployed_wss_reconnect")
+    result: dict[str, Any] = {
+        "ok": False, "mode": "reconnect", "session_id": started["session_id"],
+        "physical_microphone_acceptance": "not_run", "cursor": 0, "event_types": [],
+        "initial_turn_complete": False, "deliberate_socket_close": False,
+        "ticket_rotated": False, "same_session": False, "reconnect_hello_ack": False,
+        "fresh_pcm_ack": False, "fresh_response": False, "server_closed_after_stop": False,
+    }
+
+    async def fresh_turn(ws, seq: int, word: str) -> bool:
+        # New prepared silence, not replay of audio captured before disconnection.
+        await ws.send(json.dumps({"type": "input", "message": {"activity_start": True}}))
+        await ws.send(struct.pack("!III", INPUT_MAGIC, seq, 0) + b"\x00\x00" * 1600)
+        await recv_until(ws, result, lambda kind, event: kind == "audio_ack"
+                         and event.get("seq") == seq, timeout=10)
+        await ws.send(json.dumps({"type": "input", "message": {"activity_end": True}}))
+        await ws.send(json.dumps({"type": "input", "message": {"text":
+            "Служебный canary транспорта. Не сохраняй ничего и не вызывай инструменты. "
+            "Ответь одним словом: " + word + "."}}, ensure_ascii=False))
+        seen = {"transcript": False, "audio": False}
+        transcript = []
+
+        def completed(kind, event):
+            # A different marker on each turn rejects a stale replayed completion.
+            if kind == "output_transcript":
+                transcript.append(str(event.get("text") or ""))
+                seen["transcript"] |= word.casefold() in "".join(transcript).casefold()
+            if kind == "audio_binary":
+                seen["audio"] = True
+            return kind == "turn_complete" and all(seen.values())
+
+        await recv_until(ws, result, completed, timeout=args.timeout)
+        return True
+
+    try:
+        async with await open_socket(started=started, cookie_header=http.cookie_header(),
+                                     ws_base=args.ws_base, origin=args.origin) as ws:
+            await hello(ws, started)
+            result["initial_turn_complete"] = await fresh_turn(ws, 1, "готово")
+            await ws.close(code=1000, reason="canary controlled socket interruption")
+        result["deliberate_socket_close"] = True
+        _, renewed = http.request("POST",
+            f"/api/live/{conversation_id}/sessions/{started['session_id']}/socket-ticket", {})
+        if renewed.get("session_id", started["session_id"]) != started["session_id"]:
+            raise RuntimeError("Ticket renewal changed the Live session")
+        result["ticket_rotated"] = renewed.get("socket_ticket") != started["socket_ticket"]
+        if not result["ticket_rotated"] or not renewed.get("socket_ticket"):
+            raise RuntimeError("Ticket renewal did not issue a fresh ticket")
+        attached = {**started, **renewed}
+        if attached["socket_url"] != started["socket_url"]:
+            raise RuntimeError("Ticket renewal changed the socket resource")
+        async with await open_socket(started=attached, cookie_header=http.cookie_header(),
+                                     ws_base=args.ws_base, origin=args.origin) as ws:
+            await ws.send(json.dumps({"type": "hello", "protocol": "wl-live-v1",
+                "attempt_id": started["attempt_id"], "connection_generation": 2,
+                "cursor": result["cursor"]}))
+            # Replayed events may precede hello_ack. Keep their sequence cursor.
+            await recv_until(ws, result, lambda kind, _: kind == "hello_ack", timeout=10)
+            result["reconnect_hello_ack"] = True
+            result["same_session"] = attached["session_id"] == started["session_id"]
+            result["fresh_response"] = await fresh_turn(ws, 1, "связь")
+            result["fresh_pcm_ack"] = True
+            await ws.send(json.dumps({"type": "stop", "reason": "deployed_wss_reconnect"}))
+            result["server_closed_after_stop"] = await wait_server_close(ws)
+        result["ok"] = all(result[key] for key in (
+            "initial_turn_complete", "deliberate_socket_close", "ticket_rotated", "same_session",
+            "reconnect_hello_ack", "fresh_pcm_ack", "fresh_response", "server_closed_after_stop"))
+        return result
+    finally:
+        try:
+            http.request("POST", f"/api/live/{conversation_id}/sessions/{started['session_id']}/stop",
+                         {}, timeout=10)
+        except Exception:
+            pass
+
+
 async def async_main(args) -> int:
-    result = await (roundtrip(args) if args.mode == "roundtrip" else concurrency(args))
+    runner = {"roundtrip": roundtrip, "concurrency": concurrency, "reconnect": reconnect}[args.mode]
+    result = await runner(args)
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0 if result.get("ok") else 2
 
@@ -458,7 +542,7 @@ def main() -> int:
     parser.add_argument("--http-base", default="http://127.0.0.1:8196")
     parser.add_argument("--ws-base")
     parser.add_argument("--origin")
-    parser.add_argument("--mode", choices=("roundtrip", "concurrency"), default="roundtrip")
+    parser.add_argument("--mode", choices=("roundtrip", "concurrency", "reconnect"), default="roundtrip")
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--display-name", default="Pilot user")
     args = parser.parse_args()

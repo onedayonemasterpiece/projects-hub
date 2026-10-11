@@ -2048,6 +2048,25 @@ class DurableStore:
                 raise StoreError("DEVICE_COMMAND_NOT_FOUND", "Device command is unavailable")
             return self._device_command_public(row)
 
+    def list_conversation_device_commands(
+        self, *, actor_id: str, workspace_id: str, conversation_id: str,
+    ) -> list[dict[str, Any]]:
+        conversation = self.get_conversation(actor_id, conversation_id)
+        if conversation["workspace_id"] != workspace_id:
+            raise StoreError("CONVERSATION_NOT_FOUND", "Conversation is not available")
+        with self._lock:
+            self._membership(actor_id, workspace_id)
+            self._refresh_device_command_timeouts()
+            rows = self.db.execute(
+                """SELECT * FROM device_commands
+                   WHERE actor_id=? AND workspace_id=? AND capability='calendar.create_event'
+                     AND json_extract(payload_json,'$.conversation_id')=?
+                     AND created_at_ms>=?
+                   ORDER BY created_at_ms DESC LIMIT 8""",
+                (actor_id, workspace_id, conversation_id, _now_ms() - 86_400_000),
+            ).fetchall()
+            return [self._device_command_public(row) for row in rows]
+
     def complete_device_command(
         self,
         *,
@@ -2092,12 +2111,18 @@ class DurableStore:
                     "DEVICE_COMMAND_CONFLICT",
                     "Device command already has another terminal result",
                 )
-            if row["status"] == "outcome_unknown":
+            verified_late_receipt = (
+                row["status"] == "outcome_unknown" and status == "applied"
+                and row["capability"] == "calendar.create_event"
+                and result.get("readback_verified") is True
+                and bool(str(result.get("event_id") or "").strip())
+            )
+            if row["status"] == "outcome_unknown" and not verified_late_receipt:
                 raise StoreError(
                     "DEVICE_COMMAND_OUTCOME_UNKNOWN",
                     "Device command outcome must be reconciled explicitly",
                 )
-            if row["status"] != "claimed" or row["claim_hash"] != claim_hash:
+            if (row["status"] != "claimed" and not verified_late_receipt) or row["claim_hash"] != claim_hash:
                 raise StoreError(
                     "DEVICE_COMMAND_CLAIM_INVALID",
                     "Device command claim is invalid",
