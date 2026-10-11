@@ -330,6 +330,7 @@ def prune_old_releases(
     previous_target: str | None,
     *,
     keep_count: int = RELEASE_RETENTION_COUNT,
+    preserve_all: bool = False,
 ) -> dict[str, list[str]]:
     """Best-effort release retention after successful production readback.
 
@@ -352,6 +353,9 @@ def prune_old_releases(
         and entry.is_dir()
         and SHA_RE.fullmatch(entry.name)
     ]
+    if preserve_all:
+        return {"removed": [], "skipped": [],
+                "preserved": sorted({current_sha, *(entry.name for entry in entries)})}
     preserve = {current_sha}
     previous_sha = _release_sha_from_link_target(previous_target)
     if previous_sha:
@@ -641,7 +645,7 @@ def wait_healthy(sha: str, seconds: float = 30.0) -> dict[str, Any]:
     raise DeployError(f"Projects Hub did not become healthy: {last}")
 
 
-def _deploy_serialized(sha: str) -> dict[str, Any]:
+def _deploy_serialized(sha: str, *, preserve_releases: bool = False) -> dict[str, Any]:
     sha = resolve_sha(sha)
     main_sha = require_main_history(sha)
     release = _build_release(sha)
@@ -667,7 +671,7 @@ def _deploy_serialized(sha: str) -> dict[str, Any]:
     if status["active"] != "active" or status["substate"] != "running":
         raise DeployError(f"service state is {status['active']}/{status['substate']}")
     try:
-        release_retention = prune_old_releases(sha, previous)
+        release_retention = prune_old_releases(sha, previous, preserve_all=preserve_releases)
     except Exception as exc:
         release_retention = {
             "removed": [],
@@ -692,17 +696,19 @@ def _deploy_serialized(sha: str) -> dict[str, Any]:
     }
 
 
-def deploy(sha: str) -> dict[str, Any]:
+def deploy(sha: str, *, preserve_releases: bool = False) -> dict[str, Any]:
     with deployment_lock():
-        return _deploy_serialized(sha)
+        return _deploy_serialized(sha, preserve_releases=preserve_releases)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sha", required=True)
+    parser.add_argument("--preserve-releases", action="store_true",
+                        help="Preserve all existing rollback releases during an incident")
     args = parser.parse_args()
     try:
-        result = deploy(args.sha)
+        result = deploy(args.sha, preserve_releases=args.preserve_releases)
     except DeployError as exc:
         print(json.dumps({"ok": False, "error": _safe_output(str(exc))}, separators=(",", ":")))
         return 1

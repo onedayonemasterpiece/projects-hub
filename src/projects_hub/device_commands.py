@@ -228,6 +228,7 @@ class DeviceCommandService:
         project_id: str | None,
         command_id: str,
         args: dict[str, Any],
+        conversation_id: str | None = None,
     ) -> dict[str, Any]:
         capability = "calendar.create_event"
         requested_device = str(args.get("device_id") or "").strip() or None
@@ -258,6 +259,15 @@ class DeviceCommandService:
                 "No bound Android device can create calendar events",
             )
         payload = self._calendar_payload(args)
+        event_type = str(args.get("event_type") or "generic")
+        if event_type not in {"generic", "podcast"}:
+            raise StoreError("INVALID_ARGUMENT", "Calendar event type is invalid")
+        payload["event_type"] = event_type
+        if conversation_id is not None:
+            conversation = self.store.get_conversation(actor_id, conversation_id)
+            if conversation["workspace_id"] != workspace_id:
+                raise StoreError("FORBIDDEN", "Calendar conversation scope mismatch")
+            payload["conversation_id"] = conversation_id
         encoded = json.dumps(
             payload,
             ensure_ascii=False,
@@ -276,6 +286,31 @@ class DeviceCommandService:
             command_id=command_id,
             expires_at_ms=round((self.now() + 10 * 60) * 1000),
         )
+
+    async def calendar_command_status(
+        self, *, actor_id: str, workspace_id: str, conversation_id: str,
+        command_id: str, timeout_seconds: float = 20.0,
+    ) -> dict[str, Any]:
+        command = self.store.get_device_command(
+            actor_id=actor_id, workspace_id=workspace_id, command_id=command_id,
+        )
+        if (command["capability"] != "calendar.create_event"
+                or command["payload"].get("conversation_id") != conversation_id):
+            raise StoreError("DEVICE_COMMAND_NOT_FOUND", "Calendar command is unavailable")
+        return await self.wait_for_terminal(
+            actor_id=actor_id, workspace_id=workspace_id, command_id=command_id,
+            timeout_seconds=timeout_seconds,
+        )
+
+    def recent_calendar_commands(
+        self, *, actor_id: str, workspace_id: str, conversation_id: str,
+    ) -> list[dict[str, Any]]:
+        commands = self.store.list_conversation_device_commands(
+            actor_id=actor_id, workspace_id=workspace_id, conversation_id=conversation_id,
+        )
+        return [{**self._tool_result(item), "title": item["payload"].get("title"),
+                 "starts_at": item["payload"].get("starts_at")}
+                for item in commands]
 
     def create_calendar_read_command(
         self,
@@ -363,7 +398,7 @@ class DeviceCommandService:
         if isinstance(result, dict):
             response["result"] = result
         if command["status"] in {"pending", "claimed"}:
-            response["pending_device_confirmation"] = True
+            response["awaiting_device_result"] = True
         if command["status"] == "outcome_unknown":
             response["reconciliation_required"] = True
         return response
@@ -435,6 +470,7 @@ class DeviceCommandService:
         allowed_result_keys = {
             "readback_verified",
             "event_id",
+            "calendar_id",
             "provider_status",
             "error_code",
             "events",
@@ -442,6 +478,11 @@ class DeviceCommandService:
         }
         if any(key not in allowed_result_keys for key in result):
             raise StoreError("INVALID_ARGUMENT", "Device command result contains unknown fields")
+        if "calendar_id" in result:
+            calendar_id = result["calendar_id"]
+            if (isinstance(calendar_id, bool) or not isinstance(calendar_id, int)
+                    or calendar_id < 0 or calendar_id > 2**63 - 1):
+                raise StoreError("INVALID_ARGUMENT", "Calendar id must be a nonnegative integer")
         if status == "applied":
             if result.get("readback_verified") is not True:
                 raise StoreError(
@@ -471,4 +512,19 @@ class DeviceCommandService:
             status=status,
             result=result,
         )
+        conversation_id = command["payload"].get("conversation_id")
+        if (conversation_id and command["capability"] == "calendar.create_event"
+                and command["status"] == "applied"
+                and command["result"].get("readback_verified") is True):
+            # Durable, same-command readback survives a closed Live session.
+            # Replayed receipts upsert the same message, never another event.
+            self.store.upsert_conversation_timeline_message(
+                actor_id=device["actor_id"], workspace_id=device["workspace_id"],
+                conversation_id=conversation_id,
+                message_id="msg_calendar_" + command["id"][4:],
+                turn_id="turn_calendar_" + command["id"][4:], role="assistant",
+                text="Событие «" + str(command["payload"].get("title") or "")
+                     + "» создано. Проверено чтением календаря на устройстве.",
+                source_id=None, transcript_revision=0, revision=1, blocks=[],
+            )
         return self._tool_result(command)

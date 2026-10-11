@@ -72,9 +72,21 @@ export function speechStartsNewUserBubble(event) {
  * capacity refusal is not a lost chat, completed task or failed development.
  * The voice model cannot speak while its session cannot be established.
  * @param {unknown} error
- * @returns {string|null}
+ * @returns {"resource_denial"|"provider_failure"}
  */
+export function voiceStartupFailureState(error) {
+  const code = error && typeof error === "object" && "code" in error ? String(error.code ?? "") : "";
+  return code.startsWith("RESOURCE_") ? "resource_denial" : "provider_failure";
+}
+
 export function voiceStartupFailureNotice(error) {
+  if (voiceStartupFailureState(error) === "resource_denial") {
+    const retry = error && typeof error === "object" && "retry_after_ms" in error ? error.retry_after_ms : null;
+    const wait = typeof retry === "number" && Number.isFinite(retry) && retry > 0
+      ? ` Повторите подключение не раньше чем через ${Math.ceil(Math.min(86400000, retry) / 1000)} с.`
+      : " Повторите подключение позже.";
+    return "Подключение Миры отклонено ресурсным лимитом. Переписка сохранена." + wait;
+  }
   const status = error && typeof error === "object" && "status" in error
     ? Number(error.status)
     : null;

@@ -180,7 +180,7 @@ def test_deploy_wraps_entire_transaction_in_process_lock(monkeypatch):
     monkeypatch.setattr(
         deploy,
         "_deploy_serialized",
-        lambda sha: events.append(f"deploy:{sha}") or {"release_sha": sha},
+        lambda sha, **kwargs: events.append(f"deploy:{sha}") or {"release_sha": sha},
     )
 
     result = deploy.deploy("1" * 40)
@@ -246,3 +246,16 @@ def test_runtime_paths_are_release_specific_not_current_symlink():
     )
     assert 'CURRENT_LINK / "source/web/dist"' not in source
     assert 'f"WorkingDirectory={CURRENT_LINK}/source"' not in source
+
+
+
+def test_incident_retention_preserves_all_release_history(tmp_path, monkeypatch):
+    releases = tmp_path / "releases"
+    releases.mkdir()
+    shas = [str(i) * 40 for i in range(1, 5)]
+    for i, sha in enumerate(shas):
+        _release_dir(releases, sha, mtime_ns=(i + 1) * 1000)
+    monkeypatch.setattr(deploy, "RELEASES_ROOT", releases)
+    result = prune_old_releases(shas[0], str(releases / shas[1]), preserve_all=True)
+    assert result == {"removed": [], "skipped": [], "preserved": shas}
+    assert sorted(p.name for p in releases.iterdir()) == shas

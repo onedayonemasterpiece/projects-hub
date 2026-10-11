@@ -17,7 +17,7 @@ BUNDLES = {
     ],
     "memory": ["memory_read_project", "voice_source_read", "memory_commit_voice_source", "memory_finish_ephemeral"],
     "repositories": ["github_repositories_list", "github_repository_read"],
-    "calendar": ["devices_list_capabilities", "calendar_create_event_on_device", "calendar_list_events_on_device"],
+    "calendar": ["devices_list_capabilities", "calendar_create_event_on_device", "calendar_list_events_on_device", "calendar_command_status"],
     "readiness": ["event_cards_list", "event_readiness_set", "task_create_follow_up", "task_set_state"],
     "knowledge": ["knowledge_search"],
     "expert_reviews": ["expert_reviews_list_assigned", "expert_reviews_get", "expert_reviews_accept", "expert_reviews_resolve", "expert_reviews_request_research"],
@@ -68,7 +68,8 @@ OVERLAYS = {'core': 'Read allowed projects before choosing focus. Use runtime_ve
                  '- Для чтения текущего проекта используй github_repository_read: сначала '
                  'корень/каталог, затем нужный текстовый файл. Не утверждай, что прочитала repository, '
                  'пока tool result не вернул фактический content.',
- 'calendar': '- Device-local действие всё равно вызывается здесь, в backend-owned Live session. Android '
+ 'calendar': '- При pending/claimed сама вызови calendar_command_status с тем же command_id (не более двух ожиданий подряд); не проси пользователя проверять календарь. outcome_unknown требует чтения окна через calendar_list_events_on_device, а не повторного создания.\n'
+             '- Device-local действие всё равно вызывается здесь, в backend-owned Live session. Android '
              '— только исполнитель typed command.\n'
              '- Для календаря сначала используй devices_list_capabilities, если подходящий телефон '
              'неоднозначен. Для вопросов о расписании используй calendar_list_events_on_device; для '
@@ -81,8 +82,8 @@ OVERLAYS = {'core': 'Read allowed projects before choosing focus. Use runtime_ve
              'Android и возвращает ограниченное окно до 31 дня. Не придумывай события, если device '
              'readback не вернулся.\n'
              '- Говори «событие создано» только если calendar_create_event_on_device вернул '
-             'status=applied и device readback. pending/claimed означает, что подтверждение на телефоне '
-             'ещё ожидается; outcome_unknown означает, что итог надо сверить.',
+             'или calendar_command_status вернул status=applied и device readback. pending/claimed означает, что итог устройства '
+             'ещё ожидается, а не что пользователь обязан подтвердить создание.',
  'readiness': '- После подтверждённого calendar event backend автоматически создаёт event card. Для '
               'записи подкаста передавай event_type=podcast, иначе generic.\n'
               '- Перед событием используй event_cards_list и называй только фактические незакрытые '

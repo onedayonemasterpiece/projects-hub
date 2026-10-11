@@ -21,6 +21,10 @@ class JsonFormatter(logging.Formatter):
         for key in (
             "event",
             "request_id",
+            "command_id",
+            "device_id",
+            "capability",
+            "retry_after_ms",
             "method",
             "path",
             "status",

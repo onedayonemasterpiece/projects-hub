@@ -202,6 +202,13 @@ def _functions(
             },
         },
         {
+            "name": "calendar_command_status",
+            "description": "Read the durable outcome of an existing calendar creation in this conversation. Wait up to 20 seconds for the same device receipt; never creates or retries an event.",
+            "parameters": {"type": "object", "properties": {
+                "command_id": {"type": "string"}
+            }, "required": ["command_id"]},
+        },
+        {
             "name": "calendar_list_events_on_device",
             "description": "Read a bounded local-time window from the user's personal Android calendar. For today/tomorrow/this week, use context.client_timezone and RFC3339 offsets matching it. Set timezone_explicit=true only when the user explicitly named another timezone.",
             "parameters": {
@@ -910,7 +917,7 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Для календаря сначала используй devices_list_capabilities, если подходящий телефон неоднозначен. Для вопросов о расписании используй calendar_list_events_on_device; для создания — calendar_create_event_on_device.
 - context.client_timezone — локальная timezone устройства. Слова «сегодня», «завтра», «в 13:45» без явно названной timezone всегда интерпретируй в context.client_timezone. Никогда не подменяй локальное время UTC. Если пользователь явно назвал другую timezone, передай её и timezone_explicit=true.
 - calendar_list_events_on_device только читает локальный CalendarContract выбранного Android и возвращает ограниченное окно до 31 дня. Не придумывай события, если device readback не вернулся.
-- Говори «событие создано» только если calendar_create_event_on_device вернул status=applied и device readback. pending/claimed означает, что подтверждение на телефоне ещё ожидается; outcome_unknown означает, что итог надо сверить.
+- Говори «событие создано» только если calendar_create_event_on_device или calendar_command_status вернул status=applied и device readback. pending/claimed означает, что итог устройства ещё ожидается, а не что пользователь обязан что-то подтвердить. Сама вызови calendar_command_status с тем же command_id; если всё ещё pending/claimed, не более двух ожиданий подряд. Не проси пользователя проверять календарь. Для outcome_unknown сама прочитай нужное окно calendar_list_events_on_device; не повторяй создание. context.recent_calendar_commands сохраняет исходы после переподключения; сверяй существующую команду.
 - Если tool отказал, объясни результат и продолжи разговор, не выдумывая успешное действие.
 
 # REGIONAL KNOWLEDGE
@@ -1439,6 +1446,10 @@ class ProjectsHubLiveAdapter:
                 "allowed_projects": [{"id": p["id"], "name": p["name"]} for p in projects],
                 "current_source_id": source["id"],
                 "pending_voice_sources": pending_voice_sources,
+                "recent_calendar_commands": [] if recovery_only else self.device_commands.recent_calendar_commands(
+                    actor_id=actor_id, workspace_id=conversation["workspace_id"],
+                    conversation_id=conversation_id,
+                ),
                 "recent_owner_completions": [
                     {
                         "project_name": item["project_name"],
@@ -2513,6 +2524,30 @@ class ProjectsHubLiveAdapter:
                 ]
             }
 
+        if name == "calendar_command_status":
+            command_id = str(args.get("command_id") or "")
+            result = await self.device_commands.calendar_command_status(
+                actor_id=actor_id, workspace_id=workspace_id, conversation_id=conversation_id,
+                command_id=command_id,
+            )
+            if (result.get("status") == "applied"
+                    and isinstance(result.get("result"), dict)
+                    and result["result"].get("readback_verified") is True):
+                command = self.store.get_device_command(
+                    actor_id=actor_id, workspace_id=workspace_id, command_id=command_id,
+                )
+                payload = command["payload"]
+                event_card = self.readiness.record_calendar_event(
+                    actor_id=actor_id, workspace_id=workspace_id,
+                    project_id=command.get("project_id"), command_id=command_id,
+                    title=str(payload.get("title") or ""),
+                    starts_at=str(payload.get("starts_at") or ""),
+                    event_type=str(payload.get("event_type") or "generic"),
+                    device_event_id=str(result["result"].get("event_id") or "") or None,
+                )
+                result = {**result, "event_card": event_card}
+            return result
+
         if name == "calendar_list_events_on_device":
             args = self._calendar_args_for_client(state, args)
             project_id = str(args.get("project_id") or "") or None
@@ -2558,6 +2593,7 @@ class ProjectsHubLiveAdapter:
                 ).get("focus_project_id")
             command_id, _args_sha = self._command_id(session, name, args)
             command = self.device_commands.create_calendar_command(
+                conversation_id=conversation_id,
                 actor_id=actor_id,
                 workspace_id=workspace_id,
                 project_id=project_id,
@@ -2570,7 +2606,7 @@ class ProjectsHubLiveAdapter:
                 command_id=command["id"],
                 timeout_seconds=8.0,
             )
-            if (                result.get("status") == "applied"
+            if (result.get("status") == "applied"
                 and isinstance(result.get("result"), dict)
                 and result["result"].get("readback_verified") is True
             ):
