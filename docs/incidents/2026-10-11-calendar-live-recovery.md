@@ -1,6 +1,6 @@
 # Calendar readback and Live reconnect incident
 
-Status: candidate repair verified with real provider; stable pin and APK delivery in progress.
+Status: Android 0.1.58 published; owner confirmed calendar creation and addition confirmation. Owner-device reconnect and background/return checks remain untested. Earlier candidate verification is recorded below.
 
 ## User-visible impact
 
@@ -44,3 +44,43 @@ Stable framework `0.3.28` is published at immutable source `3e675077e30b06002fe6
 Final product release gates: exact deployed SHA health, signed APK/update manifest integrity, and automatic-update workflow result. Release delivery results are recorded in incident `inc_66519d591551a6b378dabd44`.
 
 Rollback: restore the last known-good product release if health, provider recovery or update delivery fails. Preserve prior release directories during incident acceptance. No quota expansion, credential changes, or other consumer deployment is part of this repair.
+
+## Owner check on 11 October 2026
+
+Release context: [Projects Hub Android 0.1.58 / android-v58](https://github.com/onedayonemasterpiece/projects-hub/releases/tag/android-v58),
+published from `c6184266f7d7a77699628e3be0d3cc2ac2d064c9`.
+The release record identifies the delivered candidate; the owner did not
+independently name a commit/version in the feedback.
+
+Owner-reported checks:
+- **Calendar creation and confirmation of addition: confirmed.** The owner
+  explicitly reported that creating the event and confirming its addition to the
+  calendar work. This records that scenario only; it does not claim every calendar
+  edge case or every feature in the release was tested.
+- **Live reconnect on the owner's device: not checked.** No owner acceptance is
+  inferred from the controlled provider canary above.
+- **Backgrounding / switching away on the owner's device: not checked.** The
+  owner explicitly said the rest had not been inspected. This is not evidence
+  of background microphone reliability.
+
+Feedback source: owner message in Slack channel `C0C8E6Z7TK3`, thread
+`1791702873.274629`, message `1791727032.613509`. The request to retain these
+scoped owner-check marks on tasks/features was confirmed in message
+`1791732478.302239` in the same thread.
+
+Optional later checks, when the owner chooses to inspect the remaining results:
+1. Reconnect: during a harmless Live conversation, briefly interrupt connectivity,
+   restore it and speak a fresh phrase. Expected: either the supported reconnect
+   succeeds and the fresh response is heard without replaying old audio, or a
+   truthful actionable state is shown. Record the actual device/version and result;
+   the test does not authorize repeating calendar creation.
+2. Return from another app: switch away during a harmless conversation and return.
+   Expected: the microphone/session state matches reality and the user can resume
+   through the supported path. Do not assume that continuous background recording
+   is supported or required; record actual behavior and any failure to resume.
+
+These checks are available for later review, not new release blockers. Engineering
+verification and owner feedback remain separate. The scoped calendar confirmation
+does not close the untested reconnect/background scenarios or erase the earlier
+cause/evidence limitations. The shared design rule is in
+[owner-check tracking on existing task results](../product/17-owner-development-backlog.md#11-october-owner-check-tracking-on-existing-task-results).
