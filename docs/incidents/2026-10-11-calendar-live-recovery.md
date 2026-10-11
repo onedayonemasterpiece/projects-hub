@@ -1,6 +1,6 @@
 # Calendar readback and Live reconnect incident
 
-Status: repair candidate; release and real-provider acceptance pending.
+Status: candidate repair verified with real provider; stable pin and APK delivery in progress.
 
 ## User-visible impact
 
@@ -35,6 +35,12 @@ Android calendar creation could succeed locally while Mira kept waiting for conf
 
 Automated gates cover Android-shaped receipt validation, actual database close/reopen, wrong claim rejection, conversation isolation, one creation command, idempotent timeline/event card, resource-error HTTP/UI mapping, shared sender/socket races, and retained release history.
 
-Before completion: green full backend/browser/native CI, exact deployed SHA health, bounded real-provider WSS disconnect/renew/fresh-turn/Stop proof, signed APK and update manifest integrity, and automatic-update workflow result. Do not claim a physical handset background test from an emulator or protocol canary.
+Verified candidate gates: 311 backend tests, 67 browser tests, production TypeScript/Vite build, framework contracts/native CI, and Projects Hub PR158 CI. The candidate deployed at exact SHA `458259295e7530a7b3526922ac45f3e016c2e01d` with framework `0.3.28rc1` at `f1ef688de8d2ce3813ce50716727e443771c2b45`.
+
+The real-provider reconnect canary passed: completed first turn, controlled socket close, rotated ticket for the same session, generation-2 attach with cursor, fresh synthetic PCM ACK and distinct transcript/audio response, then Stop/server close. Durable receipt: `job_3ea4352630604f0d8154a941`. This is protocol continuity using prepared silence plus text, not a physical microphone or handset background test.
+
+Stable framework `0.3.28` is published at immutable source `3e675077e30b06002fe6477d8cdd5fbae6c1331e`; its functional code is unchanged from the accepted candidate. Archive SHA256: `90d8161b267c9b52aa7edc43c966b4f3a317ebf7e88835a9f98f0d8de6b86a04`. Framework PR50 and final source CI run38138904434 passed.
+
+Final product release gates: exact deployed SHA health, signed APK/update manifest integrity, and automatic-update workflow result. Release delivery results are recorded in incident `inc_66519d591551a6b378dabd44`.
 
 Rollback: restore the last known-good product release if health, provider recovery or update delivery fails. Preserve prior release directories during incident acceptance. No quota expansion, credential changes, or other consumer deployment is part of this repair.
