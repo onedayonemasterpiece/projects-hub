@@ -181,3 +181,51 @@ existing durable two-thread Native Codex pipeline.
 The other domain capabilities remain progressive. This is not a second semantic
 router, a new scheduler or a bypass of the AI resource authority. Provider-backed
 and Samsung physical acceptance remain separately required.
+
+## 11 October: owner-check tracking on existing task results
+
+Status: owner-approved design addition, not an implemented task/UI capability.
+This applies to results produced by a person, Mira/ChatGPT, direct MCP work or a
+coding agent. It does not require the owner-development pipeline above.
+
+Keep released results that the owner has not personally checked discoverable on
+the existing task, with an optional feature reference. Reuse result metadata when
+sufficient; do not introduce a second backlog, QA entity or mandatory task type.
+
+The small owner-check record identifies:
+- the concrete result/scenario and its task/optional feature reference;
+- release version, commit or artifact link;
+- state: `unknown`, `not_checked`, `confirmed` or `issue`;
+- the exact scope checked, the reporting person, time and source message reference;
+- a link to short verification steps and the expected result in an existing
+  GitHub result/specification document.
+
+`unknown` means there is no reliable report of a personal check; silence does
+not prove that the owner never tried it. `not_checked` records explicit knowledge
+that the scenario has not been checked. `confirmed` requires the owner's explicit
+report about that scenario. `issue` records a reported difficulty and does not
+invent its technical cause.
+
+Engineering checks, release delivery and owner confirmation remain separate.
+One scenario's confirmation never accepts every feature in the release. A task
+may be done for its agreed delivered outcome and still appear in the owner-check
+list. Owner acceptance blocks that task only when it was explicitly part of its
+agreed outcome; it is not a new gate on every release.
+
+The model should associate delivery and later owner feedback with the same
+result, keeping the source and scope. Proposed queries include “what is already
+released but I have not checked?” and filtering by project or version. Include
+both `unknown` and `not_checked`, even for completed tasks; show reported issues
+separately. This list must not disappear with the existing seven-day completion
+view. Group technical commits into meaningful user scenarios.
+
+Keep historical confirmation tied to its checked candidate. Do not silently
+transfer it to a changed result, or require every unchanged scenario to be
+retested after every release. Prefer the current available result for a later
+check while retaining the old evidence. No automatic reminders or new mandatory
+review process are implied.
+
+Document bodies and test instructions stay in GitHub. The database stores
+references, versions and check metadata, not a second editable specification.
+A concrete scoped example is recorded in the
+[calendar recovery incident](../incidents/2026-10-11-calendar-live-recovery.md#owner-check-on-11-october-2026).
