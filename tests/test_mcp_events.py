@@ -8,6 +8,7 @@ import hmac
 import json
 import secrets
 import socket
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from fastapi.testclient import TestClient
@@ -315,13 +316,14 @@ def test_sdk_discovery_catalog_subscription_tools_and_csrf(setup, tmp_path):
         assert subscribed.status_code == 200, subscribed.text
         assert subscribed.json()['result']['id'].startswith('sub_')
         request = app.state.mcp_events.create_request(grant['actor_id'], grant['project_id'], 'sdk-contract-test')
-        read = rpc(client, token, 'tools/call', {'name': 'get_test_request', 'arguments': {'request_id': request['request_id']}}).json()['result']
+        context = {'request_id': request['request_id'], 'project_id': request['project_id'], 'actor_id': request['actor_id']}
+        read = rpc(client, token, 'tools/call', {'name': 'get_test_request', 'arguments': context}).json()['result']
         assert read['structuredContent']['project_id'] == grant['project_id']
         nonce = read['structuredContent']['nonce']
-        saved = rpc(client, token, 'tools/call', {'name': 'record_test_response', 'arguments': {'request_id': request['request_id'], 'nonce': nonce, 'response': 'ACK'}}).json()['result']
+        saved = rpc(client, token, 'tools/call', {'name': 'record_test_response', 'arguments': {**context, 'nonce': nonce, 'response': 'ACK'}}).json()['result']
         assert saved['structuredContent']['state'] == 'completed'
-        spoof = rpc(client, token, 'tools/call', {'name': 'record_test_response', 'arguments': {'request_id': request['request_id'], 'nonce': nonce, 'response': 'ACK', 'actor_id': 'other'}})
-        assert 'error' in spoof.json()
+        spoof = rpc(client, token, 'tools/call', {'name': 'record_test_response', 'arguments': {**context, 'nonce': nonce, 'response': 'ACK', 'actor_id': 'other'}})
+        assert spoof.json()['result']['isError'] is True
         bad_sub = rpc(client, token, 'events/subscribe', dict(name=EVENT, arguments={'project_id': grant['project_id']}, delivery={**DELIVERY, 'secret': 'bad'}))
         assert bad_sub.json()['error']['code'] == -32602
         client.cookies.set(COOKIE_NAME, issue_session(grant['actor_id'], 's'*48))
@@ -333,42 +335,189 @@ def test_sdk_discovery_catalog_subscription_tools_and_csrf(setup, tmp_path):
         assert stopped.status_code == 200 and stopped.json()['result']['resultType'] == 'complete'
 
 
-def test_oauth_http_consent_pkce_replay_and_revocation(setup, tmp_path):
-    store, _, _, _, grant, _ = setup
+@pytest.mark.parametrize('authentication', ['basic', 'post'])
+def test_oauth_http_service_pkce_secret_replay_and_revocation(setup, tmp_path, authentication):
+    store, _, _, receiver, grant, _ = setup
     app = create_app(Settings(data_dir=store.data_dir, static_dir=tmp_path/'no-ui',
                             session_secret='s'*48, public_origin=ORIGIN), store=store)
+    app.state.mcp_events.sender = receiver
     with TestClient(app, base_url=ORIGIN) as client:
+        auth = app.state.mcp_auth
+        registered = auth.provision_service(grant['actor_id'], 'ph_service_chatgpt', [REDIRECT])
         metadata = client.get('/.well-known/oauth-authorization-server').json()
         assert metadata['code_challenge_methods_supported'] == ['S256']
-        assert metadata['token_endpoint_auth_methods_supported'] == ['none']
+        assert metadata['token_endpoint_auth_methods_supported'] == ['client_secret_basic', 'client_secret_post']
+        assert 'registration_endpoint' not in metadata
         assert metadata['authorization_response_iss_parameter_supported'] is True
         resource = client.get('/.well-known/oauth-protected-resource/mcp').json()['resource']
-        registered = client.post('/mcp/oauth/register', json={'redirect_uris': [REDIRECT]}, headers=edge_headers()).json()
+        assert client.post('/mcp/oauth/register', json={'redirect_uris': [REDIRECT]}, headers=edge_headers()).status_code == 400
         params = dict(client_id=registered['client_id'], redirect_uri=REDIRECT, response_type='code',
                       code_challenge=challenge('v'*43), code_challenge_method='S256', resource=resource, scope=SCOPE, state='opaque-state')
-        assert client.get('/mcp/oauth/authorize', params=params).status_code == 401
-        assert store.db.execute('SELECT COUNT(*) FROM mcp_grants').fetchone()[0] == 1
-        client.cookies.set(COOKIE_NAME, issue_session(grant['actor_id'], 's'*48))
-        page = client.get('/mcp/oauth/authorize', params=params)
-        assert page.status_code == 200 and 'Разрешить подключение' in page.text
-        import re
-        flow = re.search(r'name="flow_id" value="([^"]+)"', page.text)[1]
-        headers = {**edge_headers(), 'Origin': ORIGIN}
-        accepted = client.post('/mcp/oauth/consent', data={'flow_id': flow, 'project_id': grant['project_id']}, headers=headers, follow_redirects=False)
+        # No login invite, owner cookie, or per-user consent. Only a provisioned
+        # integration can obtain tokens, by proving its configured secret.
+        accepted = client.get('/mcp/oauth/authorize', params=params, follow_redirects=False)
         assert accepted.status_code == 303
         callback = parse_qs(urlsplit(accepted.headers['location']).query)
         assert callback['state'] == ['opaque-state'] and callback['iss'] == [ORIGIN]
         exchange = dict(grant_type='authorization_code', client_id=params['client_id'], resource=resource,
                         code=callback['code'][0], redirect_uri=REDIRECT, code_verifier='v'*43)
+        assert client.post('/mcp/oauth/token', data=exchange, headers=edge_headers()).status_code == 401
+        assert client.post('/mcp/oauth/token', data={**exchange, 'client_secret': 'wrong'}, headers=edge_headers()).status_code == 401
+        headers = edge_headers()
+        if authentication == 'basic':
+            headers['Authorization'] = 'Basic '+base64.b64encode((registered['client_id']+':'+registered['client_secret']).encode()).decode()
+        else:
+            exchange['client_secret'] = registered['client_secret']
         for altered in [{**exchange, 'code_verifier': 'w'*43}, {**exchange, 'resource': ORIGIN}, {**exchange, 'client_id': 'other'}]:
-            assert client.post('/mcp/oauth/token', data=altered, headers=edge_headers()).status_code == 400
-        token = client.post('/mcp/oauth/token', data=exchange, headers=edge_headers()).json()['access_token']
-        assert client.post('/mcp/oauth/token', data=exchange, headers=edge_headers()).status_code == 400
+            assert client.post('/mcp/oauth/token', data=altered, headers=headers).status_code in (400, 401)
+        issued = client.post('/mcp/oauth/token', data=exchange, headers=headers).json()
+        token = issued['access_token']
+        assert client.post('/mcp/oauth/token', data=exchange, headers=headers).status_code == 400
         assert rpc(client, token, 'server/discover').status_code == 200
-        granted = app.state.mcp_auth.authenticate('Bearer '+token)
-        revoked = client.post('/api/mcp/grants/'+granted['id']+'/revoke', json={}, headers=headers)
+        granted = auth.authenticate('Bearer '+token)
+        assert granted['principal_type'] == 'service' and granted['actor_id'] != grant['actor_id']
+        assert store.db.execute('SELECT 1 FROM memberships WHERE actor_id=?', (granted['actor_id'],)).fetchone() is None
+        assert store.db.execute('SELECT 1 FROM login_invites WHERE actor_id=?', (granted['actor_id'],)).fetchone() is None
+        subscription = rpc(client, token, 'events/subscribe', dict(name=EVENT, arguments={'project_id': grant['project_id']}, delivery=DELIVERY))
+        assert subscription.status_code == 200 and 'id' in subscription.json()['result']
+        created = app.state.mcp_events.create_request(grant['actor_id'], grant['project_id'], 'http-service-test')
+        context = {key: created[key] for key in ('request_id', 'project_id', 'actor_id')}
+        read = rpc(client, token, 'tools/call', dict(name='get_test_request', arguments=context)).json()['result']['structuredContent']
+        assert read['actor_id'] == grant['actor_id']
+        assert rpc(client, token, 'tools/call', dict(name='get_test_request', arguments={**context, 'project_id': 'wrong'})).json()['result']['isError']
+        saved = rpc(client, token, 'tools/call', dict(name='record_test_response', arguments={**context, 'nonce': read['nonce'], 'response': 'ACK'})).json()['result']['structuredContent']
+        assert saved['response_actor_id'] == granted['actor_id'] and saved['actor_id'] == grant['actor_id']
+        refresh = dict(grant_type='refresh_token', refresh_token=issued['refresh_token'], client_id=registered['client_id'], resource=resource)
+        if authentication == 'post':
+            refresh['client_secret'] = registered['client_secret']
+        refreshed = client.post('/mcp/oauth/token', data=refresh, headers=headers).json()
+        assert rpc(client, refreshed['access_token'], 'server/discover').status_code == 200
+        revoke = dict(token=refreshed['access_token'], client_id=registered['client_id'])
+        assert client.post('/mcp/oauth/revoke', data=revoke, headers=edge_headers()).status_code == 401
+        if authentication == 'post':
+            revoke['client_secret'] = registered['client_secret']
+        revoked = client.post('/mcp/oauth/revoke', data=revoke, headers=headers)
         assert revoked.status_code == 200
         assert rpc(client, token, 'server/discover').status_code == 401
+        assert rpc(client, refreshed['access_token'], 'server/discover').status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_service_scope_future_projects_response_author_and_disable(setup):
+    store, auth, events, receiver, owner_grant, _ = setup
+    owner_id = owner_grant['actor_id']
+    registered = auth.provision_service(owner_id, 'ph_service_future', [REDIRECT])
+    result = auth.authorize_service(dict(client_id=registered['client_id'], redirect_uri=REDIRECT, response_type='code',
+        state='service-test', code_challenge=challenge('v'*43), code_challenge_method='S256', resource=auth.resource, scope=SCOPE))
+    tokens = auth.exchange(dict(grant_type='authorization_code', client_id=registered['client_id'], client_secret=registered['client_secret'],
+        code=result['code'], redirect_uri=REDIRECT, code_verifier='v'*43, resource=auth.resource))
+    service = auth.authenticate('Bearer '+tokens['access_token'])
+    assert registered['client_secret'] not in str([dict(r) for r in store.db.execute('SELECT * FROM mcp_service_clients')])
+    # Another tenant/project is created after linking; no individual user login
+    # or grant is needed. Only active projects and the test tools are in scope.
+    other = store.ensure_dev_workspace('Other tenant')
+    project = other['projects'][0]['id']
+    await events.subscribe(service['id'], EVENT, {'project_id': project}, DELIVERY)
+    request = events.create_request(other['actor']['id'], project, 'service-future-project')
+    read = events.get_request(service['id'], request['request_id'])
+    saved = events.record_response(service['id'], request['request_id'], read['nonce'], 'ACK '+read['nonce'])
+    assert saved['response_actor_id'] == service['actor_id']
+    assert saved['response_actor_id'] not in (owner_id, other['actor']['id'])
+    # A separate pending intent is cancelled after global integration revocation.
+    pending = events.create_request(other['actor']['id'], project, 'service-before-disable')
+    with pytest.raises(StoreError):
+        auth.disable_service(other['actor']['id'], registered['client_id'])
+    auth.disable_service(owner_id, registered['client_id'])
+    with pytest.raises(StoreError):
+        auth.authenticate('Bearer '+tokens['access_token'])
+    with pytest.raises(StoreError):
+        events.get_request(service['id'], pending['request_id'])
+    while await events.deliver_one():
+        pass
+    assert not receiver.events
+    assert store.db.execute('SELECT state FROM mcp_outbox WHERE request_id=?', (pending['request_id'],)).fetchone()[0] == 'cancelled'
+
+
+def test_service_registration_is_admin_only_stable_and_not_browser_identity(setup):
+    store, auth, _, _, grant, _ = setup
+    other = store.ensure_dev_workspace('Other')
+    with pytest.raises(StoreError):
+        auth.provision_service(other['actor']['id'], 'ph_service_chatgpt', [REDIRECT])
+    registered = auth.provision_service(grant['actor_id'], 'ph_service_chatgpt', [REDIRECT])
+    with pytest.raises(StoreError, match='already exists'):
+        auth.provision_service(grant['actor_id'], registered['client_id'], [REDIRECT])
+    auth.validate_service_secret(registered['client_id'], registered['client_secret'])
+    params = dict(client_id=registered['client_id'], redirect_uri=REDIRECT, response_type='code',
+        state='state', code_challenge=challenge('v'*43), code_challenge_method='S256', resource=auth.resource, scope=SCOPE)
+    for change in [{'client_id': grant['client_id']}, {'redirect_uri': 'https://evil.example.com'}, {'scope': 'all'}, {'resource': ORIGIN}]:
+        with pytest.raises(StoreError):
+            auth.authorize_service({**params, **change})
+    with pytest.raises(StoreError):
+        store.require_platform_owner(auth.service_client(registered['client_id'])['actor_id'])
+
+
+@pytest.mark.asyncio
+async def test_saved_user_context_is_parameter_not_login_and_cannot_be_substituted(setup):
+    store, auth, events, receiver, owner, _ = setup
+    registered = auth.provision_service(owner['actor_id'], 'ph_service_context', [REDIRECT])
+    result = auth.authorize_service(dict(client_id=registered['client_id'], redirect_uri=REDIRECT, response_type='code',
+        state='service-context', code_challenge=challenge('v'*43), code_challenge_method='S256', resource=auth.resource, scope=SCOPE))
+    tokens = auth.exchange(dict(grant_type='authorization_code', client_id=registered['client_id'], client_secret=registered['client_secret'],
+        code=result['code'], redirect_uri=REDIRECT, code_verifier='v'*43, resource=auth.resource))
+    service = auth.authenticate('Bearer '+tokens['access_token'])
+    user = store.ensure_dev_workspace('Context participant')['actor']['id']
+    project = owner['project_id']
+    workspace = store.db.execute('SELECT workspace_id FROM projects WHERE id=?', (project,)).fetchone()[0]
+    store.db.execute('INSERT INTO memberships VALUES(?,?,?)', (user, workspace, 'viewer'))
+    store.grant_project_access(actor_id=owner['actor_id'], workspace_id=workspace, project_id=project, target_actor_id=user, role='viewer')
+    await events.subscribe(service['id'], EVENT, {'project_id': project}, DELIVERY)
+    request = events.create_request(owner['actor_id'], project, 'context-user-test', context_actor_id=user)
+    assert await events.deliver_one()
+    assert receiver.events[0][0]['data']['actor_id'] == user
+    context = {'project_id': project, 'actor_id': user}
+    read = events.get_request(service['id'], request['request_id'], **context)
+    assert read['actor_id'] == user and read['actor_name'] == 'Context participant'
+    for mismatch in [{'actor_id': owner['actor_id']}, {'project_id': 'wrong-project'}]:
+        with pytest.raises(StoreError):
+            events.get_request(service['id'], request['request_id'], **{**context, **mismatch})
+        with pytest.raises(StoreError):
+            events.record_response(service['id'], request['request_id'], read['nonce'], 'ACK', **{**context, **mismatch})
+    with pytest.raises(StoreError, match='different user context'):
+        events.create_request(owner['actor_id'], project, 'context-user-test', context_actor_id=owner['actor_id'])
+    saved = events.record_response(service['id'], request['request_id'], read['nonce'], 'ACK', **context)
+    assert saved['actor_id'] == user and saved['response_actor_id'] == service['actor_id']
+    # Human-context permission loss stops new deliveries even though the service
+    # credential remains valid. No user token or OAuth connection was minted.
+    pending = events.create_request(owner['actor_id'], project, 'context-user-revoke', context_actor_id=user)
+    store.revoke_project_access(actor_id=owner['actor_id'], workspace_id=workspace, project_id=project, target_actor_id=user)
+    assert await events.deliver_one() and len(receiver.events) == 1
+    assert store.db.execute('SELECT state FROM mcp_outbox WHERE request_id=?', (pending['request_id'],)).fetchone()[0] == 'cancelled'
+    with pytest.raises(StoreError):
+        events.get_request(service['id'], request['request_id'], **context)
+    assert auth.authenticate('Bearer '+tokens['access_token'])['id'] == service['id']
+    assert store.db.execute('SELECT COUNT(*) FROM mcp_grants WHERE actor_id=?', (user,)).fetchone()[0] == 0
+
+
+def test_service_provision_cli_private_file_no_stdout_secret_or_implicit_rotation(setup, tmp_path, monkeypatch, capsys):
+    import runpy
+    import sys
+    store, auth, _, _, _, _ = setup
+    settings = Settings(data_dir=store.data_dir, static_dir=tmp_path/'no-ui', session_secret='s'*48, public_origin=ORIGIN)
+    monkeypatch.setattr(Settings, 'from_env', lambda: settings)
+    credential_file = tmp_path/'connection.json'
+    script = Path(__file__).resolve().parents[1]/'scripts/mcp_test_request.py'
+    main = runpy.run_path(str(script))['main']
+    monkeypatch.setattr(sys, 'argv', [str(script), 'provision-service', '--client-id', 'ph_service_cli', '--credential-file', str(credential_file)])
+    assert main() == 0
+    output = capsys.readouterr().out
+    credentials = json.loads(credential_file.read_text())
+    assert credentials['client_secret'] not in output and 'client_secret' not in output
+    assert credential_file.stat().st_mode & 0o777 == 0o600
+    auth.validate_service_secret(credentials['client_id'], credentials['client_secret'])
+    with pytest.raises(FileExistsError):
+        main()
+    assert json.loads(credential_file.read_text()) == credentials
+    auth.validate_service_secret(credentials['client_id'], credentials['client_secret'])
 
 
 @pytest.mark.asyncio

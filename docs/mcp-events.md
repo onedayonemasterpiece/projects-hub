@@ -7,40 +7,70 @@ MVP0 discussion bindings are intentionally gated on that acceptance.
 
 ## Server and scope
 
-Endpoint: `https://projects-hub.kenigevents.ru/mcp` (available after activation of
-this change). Python MCP SDK minimum 2.3; tested version 2.3.0. The SDK owns the
+Endpoint: `https://projects-hub.kenigevents.ru/mcp`. Python MCP SDK minimum 2.3;
+tested version 2.3.0. The SDK owns the
 2026-07-28 envelope and transport. Its capabilities model lacks draft Events;
 the adapter restores `capabilities.events` after discovery serialization and
 registers the three draft handlers on the same authenticated SDK transport.
 
 This connection has only `projects-hub:test`: read saved test requests, save
-nonce responses and subscribe to `projects_hub.test_requested`. The owner
-selects one project on the first-party consent page. Current project-owner ACL,
-membership, grant lifetime and resource binding are checked on every tool call
-and before delivery. Browser cookies are never machine credentials. Only the
+nonce responses and subscribe to `projects_hub.test_requested`. Per the owner's
+updated requirement, the connection represents the service integration, not an
+individual user. An administrator provisions one confidential OAuth client with
+access to these test operations across all active projects, including new ones.
+Event subscriptions still require an explicit `project_id` filter. The service
+actor has no browser session, workspace membership, or platform-owner privileges;
+responses record its identity instead of impersonating a user. Client enablement,
+project status, grant lifetime and resource binding are checked on every tool
+call and before delivery. Browser cookies are never machine credentials. Only the
 exact `/mcp` and OAuth register/token/revoke paths have separate machine auth;
 existing edge checks and Origin protection remain on browser writes and consent.
 
-OAuth uses DCR public clients, S256 PKCE, one-use codes (60 seconds), hashed opaque
-access tokens (one hour) and rotating refresh tokens. Consent lasts at most 30
-days. Redirects are limited to the official stable ChatGPT redirect and official
-callback-ID paths; the issuer is echoed. No integration grant exists until the
-owner explicitly submits consent. Refresh-token reuse revokes the grant.
+OAuth uses a provided confidential client (`client_secret_basic` or
+`client_secret_post`), S256 PKCE, one-use codes (60 seconds), hashed opaque access
+tokens (one hour) and rotating refresh tokens. Grants last at most 365 days and
+can be revoked immediately. This is the host-supported authorization-code flow;
+it does not use `client_credentials`. Authorization redirects directly to
+ChatGPT without any Projects Hub user login. A code alone cannot acquire access:
+the token endpoint also requires the provisioned client secret. Public dynamic
+registration and personal-account linking are disabled at HTTP boundaries.
+Redirects are limited to the official stable ChatGPT redirect and official
+callback-ID paths; the issuer is echoed. Refresh-token reuse revokes the grant.
+Legacy owner grants remain readable until expiration/revocation; no new personal
+grants can be created through the deployed OAuth routes.
 
-## Connect as owner
+User context travels as `actor_id` alongside `project_id` and `request_id` in
+each event and both tool calls. It is not a login identity or an authorization
+override: the backend stores that context when creating a request, checks the
+actor's current project access, and rejects mismatched tool parameters. Reading
+returns the saved actor ID/name and project context. `response_actor_id` remains
+the service integration. Trusted request creation can set `--context-actor-id`
+to an existing project participant without requiring that participant to log in.
 
-1. Sign into Projects Hub with your existing owner session.
-2. Add the private plugin from `plugins/projects-hub` / the supplied ZIP, or use
-   the supported plugin developer connection flow with the endpoint above.
-   Select OAuth and DCR; no client secret or API key is required. Rescan tools
-   and events after updating the server.
-3. Complete the Projects Hub consent screen and select the test project. Read
-   its `project_id` from the Projects Hub project URL, or ask the backend operator
-   to return that project's ID. Do not paste tokens or cookies into chat.
+## Connect the service once
+
+1. The trusted backend operator runs `scripts/run_mcp_test_request.sh
+   provision-service --client-id ph_service_chatgpt --credential-file
+   <private-new-file>`. It requires the existing platform owner and writes the
+   secret to an exclusive mode-0600 file; stdout never contains the secret.
+   Retrying never overwrites a secret. The default redirect is ChatGPT's stable
+   callback; use `--redirect-uri <official-callback>` if the connection form
+   explicitly provides a connection-specific one.
+2. In ChatGPT's normal **Add custom MCP server** form enter the endpoint above,
+   choose OAuth, and use the **provided/registered client** option. Enter the
+   Client ID and Client Secret from the private file once. Use Basic token
+   endpoint authentication when the form offers a choice; POST is also accepted.
+   Do not choose DCR or No authentication. Endpoints and scope are discovered
+   automatically; no Projects Hub invite code, personal login, or same-browser
+   session is needed. The previously uploaded desktop-only package is not needed
+   for this connection. Rescan tools and events after updating the server.
+3. Read the test `project_id` from its Projects Hub URL or ask the backend
+   operator for that project's ID. Do not paste secrets into chat.
 4. In a dot or Work Cloud chat request: “Subscribe to
    `projects_hub.test_requested` for project_id `<id>`. On a test event, read
-   `get_test_request`; verify project_id and eventId, then call
-   `record_test_response` using the saved nonce and a response containing it.”
+   `get_test_request` with request_id, project_id and actor_id from the event;
+   verify the saved actor, project and eventId, then call `record_test_response`
+   with the same context, the saved nonce and a response containing it.”
 5. The backend operator checks successful callback verification and persistent
    subscription using the command below. Finish setup and leave the dot idle.
    Do not send a fresh user message after triggering the acceptance request.
@@ -85,12 +115,15 @@ The outbox worker only sends persisted intents; it does not poll ChatGPT.
 ## Disable
 
 Ask the subscribed dot to stop monitoring; `events/unsubscribe` is idempotent.
-Disconnect the plugin. Its advertised RFC 7009 revocation endpoint revokes the
-integration grant when the host calls it. For immediate server-side revocation,
-use the existing signed-in owner's browser to GET `/api/mcp/grants`, then POST
-`/api/mcp/grants/<grant-id>/revoke` from the same Origin. Revocation invalidates
-access/refresh tokens and cancels future sends. Already sent events cannot be
-recalled, but their tools recheck access. Domain requests/responses are retained.
+Disconnect the MCP connection. Its advertised RFC 7009 revocation endpoint
+requires the same client authentication and revokes the connection's grant when
+the host calls it. For immediate global integration revocation, the trusted
+operator runs `scripts/run_mcp_test_request.sh disable-service --client-id
+ph_service_chatgpt`. It disables the client and all its grants atomically,
+invalidating access/refresh tokens and cancelling future sends. Already sent
+events cannot be recalled, but their tools recheck access. Domain requests and
+responses are retained. The existing browser grant-revocation routes continue
+to serve legacy owner grants only; browser Origin protection is preserved.
 
 No project discussion binding, Slack message, or active Mira delivery is claimed
 by P0. Those are the subsequent MVP0 implementation after live P0 PASS.
