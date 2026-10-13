@@ -279,10 +279,13 @@
     "clients_receive_github_credentials": false,
     "android_device_capabilities": "backend_issued_typed_command_to_bound_device_then_receipt_to_same_live_session",
     "android_is_backend": false,
-    "foreground_android_live_transport": "webview_pwa_shared_wss",
+    "foreground_android_live_transport": "native_shared_live_interaction_target_webview_ui_only",
     "native_parallel_live_transport_allowed": false,
-    "native_android_future_capture_role": "durable_background_offline_capture_handoff_not_second_wss",
-    "android_privileged_web_permissions": "exact_projects_hub_origin_only"
+    "native_android_future_capture_role": "native_microphone_vad_durable_queue_wss_playback_and_recovery_shared_framework",
+    "android_privileged_web_permissions": "exact_projects_hub_origin_only",
+    "pwa_role": "full_browser_and_ios_client_with_explicit_foreground_platform_limits",
+    "parallel_browser_native_capture_allowed": false,
+    "system_capture_scope": "native_microphone_and_lifecycle_not_implicit_other_app_or_phone_call_capture"
   },
   "integrations": [
     {
@@ -613,7 +616,7 @@
     "live_0_3_8_deployed_acceptance": "roundtrip_pass_two_real_provider_concurrency_pass_zero_socket_failed",
     "android_foreground_live_transport": "webview_same_pwa_wss_origin_hardened_released_android_v7_browser_live_interaction_v0.3.11",
     "android_webview_microphone_origin_boundary": "implemented_candidate_android_ci_pending",
-    "android_parallel_native_wss": "not_planned_would_duplicate_foreground_transport",
+    "android_parallel_native_wss": "prohibited_parallel_session_native_shared_framework_replacement_is_target_not_implemented",
     "android_background_durable_capture": "not_implemented",
     "same_conversation_live_owner_lease": "deployed_074409cc_active_and_starting_duplicate_guard_post_deploy_wss_roundtrip_and_concurrency_pass",
     "android_self_update_e2e": "pass_android_v7_to_android_v8_real_release_assets_manifest_sha256_button_verified_download_package_installer_handoff_same_signature_uid_preserved",
@@ -656,7 +659,8 @@
       "notification_quick_actions_until_core_flow",
       "model_tournaments_as_a_prototype_gate"
     ],
-    "preserve_existing_release_gates": true
+    "preserve_existing_release_gates": true,
+    "android_voice": "Current runtime remains WebView PWA WSS; target is native Android voice through shared live-interaction, with WebView UI only. No native implementation or physical acceptance is claimed."
   },
   "previous_owner_revision": {
     "id": "U05",
@@ -724,5 +728,22 @@
       "document": "20-basic-collaboration-and-personal-timeline.md"
     },
     "production_accepted": false
+  },
+  "voice_reliability_revision": {
+    "date": "2026-10-13",
+    "status": "requirements_and_independent_static_audit_only_no_runtime_change",
+    "audit": "../audits/voice-reliability-independent-20261013.md",
+    "critical_requirements": ".devcoveer/requirements.json",
+    "preserve": [
+      "central_mira",
+      "durable_source_before_provider",
+      "no_stale_blind_replay",
+      "damaged_turn_mutation_fence",
+      "idempotency_and_readback",
+      "bounded_queues_and_resource_authority"
+    ],
+    "numeric_tuning": "requires_measured_acceptance_not_set_by_this_document",
+    "imported_audio": "quoted_source_not_executable_owner_turn"
   }
 }
+
