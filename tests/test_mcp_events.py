@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 import socket
 from pathlib import Path
@@ -19,6 +20,7 @@ from projects_hub.app import create_app
 from projects_hub.auth import COOKIE_NAME, issue_session
 from projects_hub.mcp_api import EVENT_DEFINITION
 from projects_hub.mcp_auth import MCPAuth, REDIRECT, SCOPE, challenge, digest
+from projects_hub.logging_config import JsonFormatter
 from projects_hub.mcp_events import EVENT, MCPEvents
 from projects_hub.mcp_webhooks import (CallbackError, PinnedHTTPSConnection, WebhookSender,
                                        callback_parts, public_addresses, signed_headers, validate_secret)
@@ -293,6 +295,48 @@ def rpc(client, token, method, params=None):
                        headers={**edge_headers(), 'Authorization': 'Bearer '+token, 'MCP-Protocol-Version': '2026-07-28', 'Mcp-Method': method,
                                 **({'Mcp-Name': params['name']} if params and 'name' in params and method == 'tools/call' else {}),
                                 'Accept': 'application/json, text/event-stream'})
+
+
+def test_oauth_discovery_never_falls_through_to_built_spa(setup, tmp_path):
+    store, _, _, _, _, _ = setup
+    static = tmp_path / 'ui'
+    static.mkdir()
+    (static / 'index.html').write_text('<!doctype html><title>Projects Hub</title>')
+    app = create_app(Settings(data_dir=store.data_dir, static_dir=static,
+                            session_secret='s'*48, public_origin=ORIGIN), store=store)
+    with TestClient(app, base_url=ORIGIN) as client:
+        assert client.get('/project/example').headers['content-type'].startswith('text/html')
+        metadata = client.get('/.well-known/oauth-authorization-server')
+        assert metadata.status_code == 200 and metadata.json()['issuer'] == ORIGIN
+        oidc = client.get('/.well-known/openid-configuration')
+        assert oidc.status_code == 404 and oidc.json() == {'error': 'not_found'}
+        assert oidc.headers['cache-control'] == 'no-store'
+        assert client.get('/.well-known/oauth-protected-resource').json()['resource'] == ORIGIN+'/mcp'
+
+
+def test_unauthenticated_mcp_logs_only_enumerated_protocol_facts(setup, tmp_path, caplog):
+    store, _, _, _, _, _ = setup
+    app = create_app(Settings(data_dir=store.data_dir, static_dir=tmp_path/'no-ui',
+                            session_secret='s'*48, public_origin=ORIGIN, release_sha='onboarding-release'), store=store)
+    caplog.set_level(logging.INFO, logger='projects_hub.mcp')
+    private = 'private-bearer-and-payload'
+    with TestClient(app, base_url=ORIGIN) as client:
+        # App startup replaces root handlers with production JSON logging.
+        logging.getLogger('projects_hub.mcp').addHandler(caplog.handler)
+        for method, version, expected in [('initialize', '2025-11-25', ('initialize', '2025-11-25')),
+                                          (private, private, ('other', 'unknown'))]:
+            denied = client.post('/mcp', headers={**edge_headers(), 'Authorization': 'Bearer '+private},
+                json={'jsonrpc': '2.0', 'id': 1, 'method': method,
+                      'params': {'protocolVersion': version, 'nonce': private, 'clientInfo': {'name': private}}})
+            assert denied.status_code == 401 and 'resource_metadata=' in denied.headers['www-authenticate']
+            record = next(r for r in reversed(caplog.records) if getattr(r, 'event', None) == 'mcp_auth_boundary')
+            output = JsonFormatter().format(record)
+            assert private not in output
+            facts = json.loads(output)
+            assert (facts['rpc_method'], facts['mcp_protocol']) == expected
+            assert facts['reason'] == 'invalid_credential' and facts['backend_release_sha'] == 'onboarding-release'
+        assert client.post('/mcp', headers=edge_headers(), content=b'invalid json').status_code == 401
+        assert client.get('/mcp', headers=edge_headers()).status_code == 401
 
 
 def test_sdk_discovery_catalog_subscription_tools_and_csrf(setup, tmp_path):

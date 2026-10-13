@@ -24,6 +24,8 @@ class JsonFormatter(logging.Formatter):
             "subscription_id",
             "project_id",
             "grant_id",
+            "rpc_method",
+            "mcp_protocol",
             "delivery_attempt",
             "request_id",
             "command_id",
