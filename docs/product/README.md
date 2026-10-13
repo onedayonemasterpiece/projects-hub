@@ -8,6 +8,7 @@
 | [19. Доска и сильный анализ](19-board-and-strong-analysis.md) | Общие объекты, provided-only анализ, граница с разработкой |
 | [20. Базовая коллаборация](20-basic-collaboration-and-personal-timeline.md) | Нормативные решения, связи функций, приёмка C01–C12 |
 | [MCP: вопросы внешнего анализа](../prompts/projects-hub-analysis-questions-mcp-20261013.md) | Постановка 13 октября: вопросы dot → голосовые ответы Мире → продолжение анализа; реализация ещё не подтверждена |
+| [MCP: создание проекта с репозиторием](../prompts/projects-hub-project-creation-mcp-20261013.md) | POD-SETUP-01: создание/продолжение и чтение результата; project, board, repo binding и канонический docs root; реализация и live-приёмка ещё не подтверждены |
 | [Задание разработчику](../prompts/basic-collaboration-prototype-20261006.md) | Порядок P1–P3 и практическая проверка |
 
 > **Обновление 3 октября 2026:** WSS/multi-user source candidate реализован поверх shared `live-interaction v0.3.8` release: same-origin one-use tickets, binary PCM/ACK, pushed events, no silent HTTP fallback, bounded global/per-actor admission и duplicate buffered-source exclusion. WSS integration tests и полный backend regression suite (107) проходят; clean `npm ci` + PWA production build проходит. Direct public DNS/TLS/HTTPS/WSS ingress теперь принят на реальном сервере; полный production acceptance всё ещё требует 3+ independent-user real-provider soak и physical Android gates. Канонический design/status: [WSS и многопользовательская надёжность](16-wss-multi-user-reliability.md).
