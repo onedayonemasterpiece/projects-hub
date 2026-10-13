@@ -744,6 +744,16 @@
     ],
     "numeric_tuning": "requires_measured_acceptance_not_set_by_this_document",
     "imported_audio": "quoted_source_not_executable_owner_turn"
+  },
+  "voice_compression_contract": {
+    "status": "required_target_not_implemented_or_accepted",
+    "owner": "versioned_shared_live_interaction",
+    "target_client_backend_codec": "opus_uplink_and_downlink_explicitly_negotiated",
+    "provider_boundary": "backend_decode_or_encode_raw_pcm_per_provider_contract",
+    "compatibility": "explicit_pcm_profile_same_wss_no_silent_http_fallback",
+    "storage": "durable_compressed_new_capture_immutable_imported_originals_no_repeated_lossy_recompression",
+    "safety": "independent_encoded_decoded_duration_work_bounds_original_timeline_source_and_command_fences",
+    "acceptance": "measured_quality_latency_bandwidth_storage_cpu_battery_target_device_and_browser_matrix",
+    "specification": "16-wss-multi-user-reliability.md#44-сжатие-передачи-и-хранения-обязательное-целевое-требование"
   }
 }
-
