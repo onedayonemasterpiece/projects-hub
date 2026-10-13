@@ -18,10 +18,10 @@
 - ticket связывается с actor/workspace/conversation/session/resource/generation и используется только один раз;
 - credential не передаётся в URL; origin, resource, generation и ticket проверяются до admission аудио;
 - готовность наступает после protocol `hello_ack`, а не после одного TCP/WebSocket open;
-- PCM идёт короткими binary frames с sequence и исходным capture age; server отбрасывает stale/out-of-order frames вместо «догоняющего» воспроизведения старой речи;
+- аудио идёт короткими binary frames с sequence и исходным capture age; текущий compatibility profile — PCM, целевой compressed profile явно согласуется по §4.4; server отбрасывает stale/out-of-order frames вместо «догоняющего» воспроизведения старой речи;
 - sender имеет bounded ACK window и bounded total queued/unacknowledged audio;
 - ACK означает только **relay admission**, не provider comprehension, не tool success и не durable mutation;
-- server events и output PCM push-ятся по socket, а не читаются event poller;
+- server events и output audio согласованного codec push-ятся по socket, а не читаются event poller;
 - application ping/pong отделяет protocol liveness от TCP-факта;
 - после WSS attach session не может молча переключиться на старый HTTP-audio путь;
 - gap внутри открытого speech turn помечает input как damaged; новые product mutations блокируются до следующей чистой границы речи;
@@ -117,6 +117,25 @@ Socket disconnect, provider reconnect, durable source и semantic command име
 Нужны privacy-safe клиентские и серверные измерения capture age, ACK latency, queue duration, detach/reconnect reason, provider recovery, first output audio, playback underflow, tool/capability wait и durable disposition. Не логировать PCM, полные transcripts или credentials.
 
 Приёмка включает длинный разговор, несколько provider renewals, mobile handover, ограниченную потерю сети с сохранением source, экран off/навигатор, Bluetooth/audio focus и несколько изолированных пользователей. Числа из чужого отчёта остаются его измерениями до независимой проверки исходных журналов. Подробнее: [независимый аудит](../audits/voice-reliability-independent-20261013.md).
+
+
+### 4.4. Сжатие передачи и хранения: обязательное целевое требование
+
+**Уточнение 13 октября 2026.** Эффективная передача и хранение аудио — требование продукта, включая потенциальный разбор телефонной записи, а не только необязательное исследование. Реализация и приёмка сжатия пока не подтверждены; текущий PCM runtime не меняется этим документом.
+
+Целевой путь: **клиент → Opus/WSS → backend → PCM → Live provider; ответ provider PCM → backend → Opus/WSS → клиент**. Encode/decode, wire-version, codec negotiation и conformance tests принадлежат versioned `live-interaction`, а не отдельному транспортному стеку Projects Hub. По [официальному договору Gemini Live](https://ai.google.dev/gemini-api/docs/live-api/capabilities#audio-formats), проверенному 13 октября 2026, provider использует raw little-endian 16-bit PCM: нативный input 16 kHz, output 24 kHz. Opus на клиентском участке не означает передачу Opus непосредственно Gemini.
+
+Обязательные условия:
+- endpoints до compressed media явно согласуют protocol/codec, sample rate, channel layout и framing; фактическую поддержку проверяют на целевых Android и браузерных/iOS версиях;
+- legacy PCM binary profile сохраняется как compatibility path; fallback только явно согласованный в том же WSS. Нет silent HTTP fallback, скрытой замены codec или бесконечного reconnect при недоступном decoder;
+- лимиты независимы: encoded bytes, decoded bytes, decoded duration, frame count, queue duration и decode work. Маленький compressed payload не разрешает неограниченное декодирование;
+- original capture timestamp/age, sequence, source timeline, generation и discontinuity сохраняются при encoding/resampling/reconnect. Кодек не отменяет повреждённый turn, no-stale-replay, durable-before-provider, ACK semantics или command fences;
+- новая offline capture поддерживает durable compressed source: chunks/manifest/checksums, codec metadata и recoverable timeline. Crash/restart или upload failure не удаляет принятый source и не превращает его в новую команду;
+- импортированный звонок сохраняется как immutable original в исходных байтах/формате с provenance. Декодирование для модели и lossy transcoding — отдельные производные; оригинал не заменяется. Избегать повторного lossy recompression; исходные каналы и доступные speaker evidence не уничтожаются;
+- экспорт/публикация аудио и обработка записанных команд сохраняют прежние разрешения; сжатие не делает private source общим и не даёт права записывать будущие звонки;
+- unsupported codec, decoder error, обрезанный файл/кадр и ресурсные ограничения показываются честно, сохраняя восстановимый source. Проблема compression не маскируется успешным сохранением или пониманием.
+
+Приёмка — A/B codec против PCM на одинаковых разрешённых речевых и шумных/телефонных источниках: intelligibility и точность понимания/транскрипта, слышимое качество, end-to-end latency, bandwidth/storage, CPU и battery. Отдельно проверяются реальные устройства, browser/version matrix, mixed-version negotiation, damaged/truncated frames, restart, offline upload, interruption и повторный import без duplicate effects. Числа bitrate, frame duration, compression ratio, latency и ресурсные бюджеты выбираются по измерениям; фиксированные неподтверждённые показатели не обещаются.
 
 
 ## 5. Многопользовательская модель — обязательный архитектурный инвариант
