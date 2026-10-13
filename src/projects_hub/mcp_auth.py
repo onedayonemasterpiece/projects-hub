@@ -103,6 +103,36 @@ class MCPAuth:
                 raise StoreError('invalid_client', 'Service client unavailable')
             return dict(row)
 
+    def provision_tunnel(self, administrator_id: str, client_id: str) -> dict:
+        """Issue a private service credential for tunnel-client's local header.
+
+        Reuses service principals, hashed tokens and revocable grants. This is
+        an on-host administrator operation, never a public OAuth grant or a
+        personal login. The bearer stays on the host, as in the Mail MCP tunnel.
+        """
+        self.store.require_platform_owner(administrator_id)
+        with self.store._lock:
+            project = self.store.db.execute("SELECT id FROM projects WHERE status='active' ORDER BY created_at_ms,id LIMIT 1").fetchone()
+            if not project:
+                raise StoreError('PROJECT_FORBIDDEN', 'No active project available')
+            credentials = self.provision_service(administrator_id, client_id, [REDIRECT])
+            client = self.service_client(client_id)
+            self.store.db.execute('BEGIN IMMEDIATE')
+            try:
+                now, token = _now_ms(), secrets.token_urlsafe(48)
+                deadline, grant_id = now + 365 * 86400_000, 'mcp_grant_' + secrets.token_hex(16)
+                self.store.db.execute('INSERT INTO mcp_grants VALUES(?,?,?,?,?,?,NULL)',
+                    (grant_id, client['actor_id'], project['id'], client_id, now, deadline))
+                self.store.db.execute('INSERT INTO mcp_tokens VALUES(?,?,?,?,0)',
+                    (digest(token), grant_id, 'access', deadline))
+                self.store.db.execute('COMMIT')
+            except BaseException:
+                self.store.db.execute('ROLLBACK')
+                self.disable_service(administrator_id, client_id)
+                raise
+        return dict(client_id=credentials['client_id'], access_token=token, grant_id=grant_id,
+                    expires_at_ms=deadline, mcp_url=self.resource, scope=SCOPE)
+
     def validate_service_secret(self, client_id: str, secret: str) -> None:
         client = self.service_client(client_id)
         if not isinstance(secret, str) or not secrets.compare_digest(client['secret_hash'], digest(secret)):

@@ -1,0 +1,18 @@
+[Unit]
+Description=OpenAI Secure MCP Tunnel for Projects Hub
+After=projects-hub.service network-online.target
+Wants=projects-hub.service network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/dev/.local/state/projects-hub-tunnel
+ExecStart=/home/dev/.local/bin/tunnel-client run --config /home/dev/.config/projects-hub-tunnel/config.yaml
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
