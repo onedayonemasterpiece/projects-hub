@@ -13,7 +13,8 @@ dependencies = [
   "httpx>=0.28,<1",
   "PyYAML>=6.0,<7",
   "PyJWT[crypto]>=2.10,<3",
-  "mcp>=2,<3",
+  "mcp>=2.3,<3",
+  "standardwebhooks==1.0.0",
   "live-interaction @ git+https://github.com/onedayonemasterpiece/live-interaction.git@3e675077e30b06002fe6477d8cdd5fbae6c1331e",
 ]
 

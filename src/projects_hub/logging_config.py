@@ -20,6 +20,11 @@ class JsonFormatter(logging.Formatter):
         }
         for key in (
             "event",
+            "event_id",
+            "subscription_id",
+            "project_id",
+            "grant_id",
+            "delivery_attempt",
             "request_id",
             "command_id",
             "device_id",

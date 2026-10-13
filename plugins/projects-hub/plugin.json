@@ -1,0 +1,20 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "projects-hub",
+  "version": "0.1.0",
+  "description": "Owner-approved MCP Events transport tests for a single Projects Hub project.",
+  "author": {"name": "Projects Hub"},
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Projects Hub",
+        "shortDescription": "Project event tests",
+        "longDescription": "Subscribe to a selected project's test events and save a correlated response in Projects Hub. OAuth consent restricts this P0 connection to one project.",
+        "developerName": "Projects Hub",
+        "category": "Productivity",
+        "capabilities": ["Interactive"],
+        "defaultPrompt": "Help me connect my Projects Hub test project and subscribe to its test_requested events."
+      }
+    }
+  }
+}

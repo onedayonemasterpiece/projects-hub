@@ -32,6 +32,7 @@ from .development import DevelopmentService
 from .live_resources import ConversationScope
 from .live_runtime import build_live_host
 from .logging_config import configure_logging
+from .mcp_api import MACHINE_PATHS, attach_mcp_routes
 from .readiness import ReadinessService
 from .settings import Settings
 from .store import DurableStore, StoreError
@@ -305,6 +306,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        app.state.mcp_manager = app.state.mcp_manager_factory()
         development_service = getattr(app.state, "development", None)
         if development_service is not None and hasattr(
             development_service, "start_background"
@@ -315,7 +317,8 @@ def create_app(
         if collaboration_analysis_service is not None:
             await collaboration_analysis_service.start_background()
         try:
-            yield
+            async with app.state.mcp_manager.run(), app.state.mcp_events.running():
+                yield
         finally:
             host = getattr(app.state, "live_host", None)
             if host is not None and hasattr(host, "stop_all"):
@@ -378,7 +381,7 @@ def create_app(
                         content={"error": {"code": "PUBLIC_ORIGIN_REQUIRED"}},
                     )
                 device_call = request.url.path.startswith("/api/device/")
-                if request.url.path != "/api/github/webhook" and not device_call:
+                if request.url.path not in MACHINE_PATHS and request.url.path != "/api/github/webhook" and not device_call:
                     origin = (request.headers.get("origin") or "").strip().rstrip("/")
                     if origin != settings.public_origin:
                         return JSONResponse(
@@ -425,6 +428,8 @@ def create_app(
         except StoreError as exc:
             raise _error(exc) from exc
         return actor_id
+
+    attach_mcp_routes(app, store=store, settings=settings, actor_id_from_request=actor_id_from_request)
 
     app.state.board_hub = attach_board_routes(
         app,
