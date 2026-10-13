@@ -28,6 +28,9 @@ def main() -> int:
     provision.add_argument('--client-id', required=True)
     provision.add_argument('--redirect-uri', action='append', help='Exact official ChatGPT callback, defaults to stable callback')
     provision.add_argument('--credential-file', type=Path, required=True, help='New file in an existing private directory')
+    tunnel = commands.add_parser('provision-tunnel', help='Write a private local service bearer for tunnel-client; never stdout')
+    tunnel.add_argument('--client-id', required=True)
+    tunnel.add_argument('--credential-file', type=Path, required=True)
     disable = commands.add_parser('disable-service', help='Disable a client and all its MCP grants')
     disable.add_argument('--client-id', required=True)
     args = parser.parse_args()
@@ -44,12 +47,15 @@ def main() -> int:
             result = events.create_request(owner['actor_id'], args.project_id, args.command_id, args.ttl_seconds, context_actor_id=args.context_actor_id)
         elif args.operation == 'status':
             result = events.status(owner['actor_id'], args.request_id)
-        elif args.operation == 'provision-service':
+        elif args.operation in ('provision-service', 'provision-tunnel'):
             # Create exclusively before changing the DB: a retry cannot silently
             # rotate a configured secret or overwrite an existing private file.
             fd = os.open(args.credential_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
             try:
-                credentials = auth.provision_service(owner['actor_id'], args.client_id, args.redirect_uri or [REDIRECT])
+                if args.operation == 'provision-tunnel':
+                    credentials = auth.provision_tunnel(owner['actor_id'], args.client_id)
+                else:
+                    credentials = auth.provision_service(owner['actor_id'], args.client_id, args.redirect_uri or [REDIRECT])
                 with os.fdopen(fd, 'w', encoding='utf-8') as handle:
                     fd = None
                     json.dump({**credentials, 'mcp_url': auth.resource,
@@ -66,6 +72,8 @@ def main() -> int:
                 raise
             result = {'client_id': args.client_id, 'credential_file': str(args.credential_file),
                       'principal_type': 'service', 'project_scope': 'all_active_projects', 'scope': 'projects-hub:test'}
+            if args.operation == 'provision-tunnel':
+                result.update(grant_id=credentials['grant_id'], expires_at_ms=credentials['expires_at_ms'])
         elif args.operation == 'disable-service':
             auth.disable_service(owner['actor_id'], args.client_id)
             result = {'client_id': args.client_id, 'enabled': False}

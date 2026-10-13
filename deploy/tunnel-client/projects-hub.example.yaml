@@ -1,0 +1,24 @@
+# Same HTTP + private local Authorization pattern as mail-mcp-bridge.
+# Real credentials stay in private host files; this is an inert example.
+config_version: 1
+control_plane:
+  base_url: "https://api.openai.com"
+  tunnel_id: "tunnel_0123456789abcdef0123456789abcdef"
+  api_key: "file:/home/dev/.config/tunnel-client/runtime-api-key"
+log:
+  level: info
+  format: json
+health:
+  listen_addr: "127.0.0.1:18082"
+admin_ui:
+  open_browser: false
+mcp:
+  server_urls:
+    - channel: main
+      url: "http://127.0.0.1:8196/mcp"
+  extra_headers:
+    Authorization: "file:/home/dev/.config/projects-hub-tunnel/authorization-header"
+  discovery_extra_headers:
+    Authorization: "file:/home/dev/.config/projects-hub-tunnel/authorization-header"
+  startup_wait_timeout: 60s
+  max_concurrent_requests: 10

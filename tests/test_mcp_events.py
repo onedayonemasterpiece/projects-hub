@@ -542,7 +542,8 @@ async def test_saved_user_context_is_parameter_not_login_and_cannot_be_substitut
     assert store.db.execute('SELECT COUNT(*) FROM mcp_grants WHERE actor_id=?', (user,)).fetchone()[0] == 0
 
 
-def test_service_provision_cli_private_file_no_stdout_secret_or_implicit_rotation(setup, tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize('operation', ['provision-service', 'provision-tunnel'])
+def test_service_provision_cli_private_file_no_stdout_secret_or_implicit_rotation(setup, tmp_path, monkeypatch, capsys, operation):
     import runpy
     import sys
     store, auth, _, _, _, _ = setup
@@ -551,17 +552,53 @@ def test_service_provision_cli_private_file_no_stdout_secret_or_implicit_rotatio
     credential_file = tmp_path/'connection.json'
     script = Path(__file__).resolve().parents[1]/'scripts/mcp_test_request.py'
     main = runpy.run_path(str(script))['main']
-    monkeypatch.setattr(sys, 'argv', [str(script), 'provision-service', '--client-id', 'ph_service_cli', '--credential-file', str(credential_file)])
+    monkeypatch.setattr(sys, 'argv', [str(script), operation, '--client-id', 'ph_service_cli', '--credential-file', str(credential_file)])
     assert main() == 0
     output = capsys.readouterr().out
     credentials = json.loads(credential_file.read_text())
-    assert credentials['client_secret'] not in output and 'client_secret' not in output
+    secret_field = 'client_secret' if operation == 'provision-service' else 'access_token'
+    assert credentials[secret_field] not in output and secret_field not in output
     assert credential_file.stat().st_mode & 0o777 == 0o600
-    auth.validate_service_secret(credentials['client_id'], credentials['client_secret'])
+    if operation == 'provision-service':
+        auth.validate_service_secret(credentials['client_id'], credentials['client_secret'])
+    else:
+        assert auth.authenticate('Bearer '+credentials['access_token'])['principal_type'] == 'service'
     with pytest.raises(FileExistsError):
         main()
     assert json.loads(credential_file.read_text()) == credentials
-    auth.validate_service_secret(credentials['client_id'], credentials['client_secret'])
+    if operation == 'provision-service':
+        auth.validate_service_secret(credentials['client_id'], credentials['client_secret'])
+    else:
+        assert auth.authenticate('Bearer '+credentials['access_token'])['principal_type'] == 'service'
+
+
+def test_private_tunnel_credential_survives_restart_and_remains_revocable_service_scope(setup, tmp_path):
+    store, auth, _, _, owner, _ = setup
+    with pytest.raises(StoreError):
+        auth.provision_tunnel('not-an-admin', 'ph_service_tunnel')
+    issued = auth.provision_tunnel(owner['actor_id'], 'ph_service_tunnel')
+    token = issued['access_token']
+    principal = auth.authenticate('Bearer '+token)
+    assert principal['principal_type'] == 'service' and principal['actor_id'] != owner['actor_id']
+    row = store.db.execute('SELECT * FROM mcp_tokens WHERE grant_id=?', (principal['id'],)).fetchone()
+    assert row['token_hash'] == digest(token) and token not in json.dumps(dict(row))
+    assert row['expires_ms'] == issued['expires_at_ms'] == principal['expires_ms']
+    assert store.db.execute('SELECT COUNT(*) FROM memberships WHERE actor_id=?', (principal['actor_id'],)).fetchone()[0] == 0
+    reopened = DurableStore(store.data_dir)
+    try:
+        restored = MCPAuth(reopened, ORIGIN)
+        assert restored.authenticate('Bearer '+token)['id'] == principal['id']
+        app = create_app(Settings(data_dir=reopened.data_dir, static_dir=tmp_path/'no-ui',
+                                session_secret='s'*48, public_origin=ORIGIN), store=reopened)
+        with TestClient(app, base_url=ORIGIN) as client:
+            assert rpc(client, token, 'server/discover').status_code == 200
+            assert len(rpc(client, token, 'tools/list').json()['result']['tools']) == 2
+        restored.project_grant(principal['id'], owner['project_id'])
+        restored.disable_service(owner['actor_id'], issued['client_id'])
+        with pytest.raises(StoreError):
+            restored.authenticate('Bearer '+token)
+    finally:
+        reopened.close()
 
 
 @pytest.mark.asyncio

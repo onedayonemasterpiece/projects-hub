@@ -55,6 +55,33 @@ to an existing project participant without requiring that participant to log in.
 
 ## Connect the service once
 
+### Secure MCP Tunnel (existing Mail MCP deployment pattern)
+
+Use the same `tunnel-client` HTTP configuration and private local Authorization
+header pattern as `mail-mcp-bridge`. A distinct tunnel identity and systemd unit
+route to the existing backend at `http://127.0.0.1:8196/mcp`; tools, Events,
+saved context and durable SQLite state remain the same. The tunnel client uses
+the existing private runtime API-key file. It does not use personal OAuth.
+
+After deploying the source release, the operator runs its
+`scripts/install_mcp_tunnel.py --tunnel-id <id>`. The installer provisions a
+dedicated service grant and mode-0600 local bearer/header, validates configuration
+with `tunnel-client doctor`, and enables `projects-hub-tunnel.service`.
+Credentials stay in `/home/dev/.config/projects-hub-tunnel`, never in ChatGPT,
+source or reports. The credential expires after 365 days and is immediately
+revocable with `disable-service --client-id ph_service_tunnel_projects_hub`.
+Installer retries preserve the same tunnel and credential; differing existing
+configuration is refused rather than overwritten.
+
+In **Add custom MCP server**, choose **Tunnel**, enter its `tunnel_id`, and
+choose **No authentication**. Tunnel organization/workspace access controls
+the host connection; the local private header authenticates the product service.
+No Client ID, Client Secret, user invite or personal Projects Hub login is
+required in this form. Event subscriptions still need explicit project filters
+and the live idle-dot acceptance described below.
+
+### Public OAuth URL
+
 1. The trusted backend operator runs `scripts/run_mcp_test_request.sh
    provision-service --client-id ph_service_chatgpt --credential-file
    <private-new-file>`. It requires the existing platform owner and writes the
