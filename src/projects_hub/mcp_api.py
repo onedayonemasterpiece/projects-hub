@@ -23,6 +23,8 @@ from .store import StoreError
 from .version import __version__
 
 log = logging.getLogger('projects_hub.mcp')
+RPC_METHODS = frozenset({'initialize', 'server/discover', 'ping', 'notifications/initialized',
+                         'tools/list', 'tools/call', 'events/list', 'events/subscribe', 'events/unsubscribe'})
 # Only these exact machine routes have a separate OAuth security boundary.
 MACHINE_PATHS = frozenset({'/mcp', '/mcp/oauth/token', '/mcp/oauth/register', '/mcp/oauth/revoke'})
 
@@ -181,6 +183,25 @@ def attach_mcp_routes(app, *, store, settings, actor_id_from_request):
         try:
             auth.authenticate(request.headers.get('authorization', ''))
         except StoreError:
+            # Inspect only bounded, enumerated protocol facts. Never log params,
+            # callback signing secrets, bearer tokens, cookies or request bodies.
+            rpc_method, protocol = 'unknown', 'unknown'
+            if request.method == 'POST':
+                try:
+                    incoming = json.loads(await small_body(Request(scope, receive), limit=262144))
+                    if isinstance(incoming, dict):
+                        method = incoming.get('method')
+                        rpc_method = method if isinstance(method, str) and method in RPC_METHODS else 'other'
+                        params = incoming.get('params')
+                        if isinstance(params, dict):
+                            version = params.get('protocolVersion')
+                            if version in ('2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25', '2026-07-28'):
+                                protocol = version
+                except (ValueError, HTTPException):
+                    pass
+            log.info('MCP authorization required', extra={'event': 'mcp_auth_boundary', 'rpc_method': rpc_method,
+                'mcp_protocol': protocol, 'reason': 'missing_credential' if not request.headers.get('authorization') else 'invalid_credential',
+                'request_id': request.headers.get('x-request-id'), 'backend_release_sha': settings.release_sha, 'result': 'denied'})
             response = JSONResponse({'error': 'unauthorized'}, status_code=401, headers={
                 'WWW-Authenticate': f'Bearer resource_metadata="{origin}/.well-known/oauth-protected-resource", scope="{SCOPE}"',
                 'Cache-Control': 'no-store'})
@@ -230,6 +251,12 @@ def attach_mcp_routes(app, *, store, settings, actor_id_from_request):
             revocation_endpoint=origin+'/mcp/oauth/revoke', revocation_endpoint_auth_methods_supported=['client_secret_basic', 'client_secret_post'],
             grant_types_supported=['authorization_code', 'refresh_token'], token_endpoint_auth_methods_supported=['client_secret_basic', 'client_secret_post'],
             code_challenge_methods_supported=['S256'], scopes_supported=[SCOPE])
+
+    @app.get('/.well-known/openid-configuration')
+    async def unsupported_oidc_metadata():
+        # OAuth is implemented; OIDC/ID tokens are not. ChatGPT probes both.
+        # The SPA catch-all must never masquerade as a successful OIDC document.
+        return JSONResponse({'error': 'not_found'}, status_code=404, headers={'Cache-Control': 'no-store'})
 
     @app.post('/mcp/oauth/register')
     async def register(request: Request):

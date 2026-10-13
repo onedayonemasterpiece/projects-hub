@@ -39,6 +39,12 @@ callback-ID paths; the issuer is echoed. Refresh-token reuse revokes the grant.
 Legacy owner grants remain readable until expiration/revocation; no new personal
 grants can be created through the deployed OAuth routes.
 
+OAuth metadata is served as JSON at `/.well-known/oauth-authorization-server`.
+The OIDC discovery endpoint returns an explicit JSON 404 because this service
+does not issue OIDC ID tokens. It must never fall through to the application's
+HTML page. Denied MCP requests log only enumerated RPC method/protocol facts,
+request correlation and release identity; no credentials or request payloads.
+
 User context travels as `actor_id` alongside `project_id` and `request_id` in
 each event and both tool calls. It is not a login identity or an authorization
 override: the backend stores that context when creating a request, checks the
