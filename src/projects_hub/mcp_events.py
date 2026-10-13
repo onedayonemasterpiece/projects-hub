@@ -18,14 +18,15 @@ from .store import DurableStore, StoreError, _now_ms
 
 log = logging.getLogger('projects_hub.mcp')
 EVENT = 'projects_hub.test_requested'
+REQUEST_EVENT = 'projects_hub.request.created'
 
 
 def iso(ms: int) -> str:
     return datetime.fromtimestamp(ms/1000, timezone.utc).isoformat().replace('+00:00', 'Z')
 
 
-def subscription_id(grant_id: str, url: str, project_id: str) -> str:
-    identity = json.dumps([grant_id, url, EVENT, {'project_id': project_id}], sort_keys=True, separators=(',', ':'))
+def subscription_id(grant_id: str, url: str, project_id: str, name: str = EVENT) -> str:
+    identity = json.dumps([grant_id, url, name, {'project_id': project_id}], sort_keys=True, separators=(',', ':'))
     return 'sub_' + hashlib.sha256(identity.encode()).hexdigest()
 
 
@@ -70,6 +71,19 @@ class MCPEvents:
             # as context until an explicitly supplied contextual actor exists.
             if 'context_actor_id' not in {row['name'] for row in store.db.execute('PRAGMA table_info(mcp_test_requests)')}:
                 store.db.execute('ALTER TABLE mcp_test_requests ADD COLUMN context_actor_id TEXT REFERENCES actors(id)')
+            for table, column, definition in (
+                ('mcp_subscriptions', 'event_name', f"TEXT NOT NULL DEFAULT '{EVENT}'"),
+                ('mcp_test_requests', 'event_name', f"TEXT NOT NULL DEFAULT '{EVENT}'"),
+                ('mcp_test_requests', 'mode', "TEXT NOT NULL DEFAULT 'test' CHECK(mode IN ('test','live'))"),
+                ('mcp_test_requests', 'response_id', 'TEXT'),
+                ('mcp_test_requests', 'result_json', 'TEXT'),
+                ('mcp_test_requests', 'binding_id', 'TEXT'),
+                ('mcp_test_requests', 'binding_revision', 'INTEGER'),
+            ):
+                if column not in {r['name'] for r in store.db.execute(f'PRAGMA table_info({table})')}:
+                    store.db.execute(f'ALTER TABLE {table} ADD COLUMN {column} {definition}')
+            from .mcp_bindings import MCPBindings
+            self.bindings = MCPBindings(store, auth, self)
 
     def _encrypt(self, value: str) -> str:
         return self.cipher.encrypt(value.encode()).decode()
@@ -84,7 +98,7 @@ class MCPEvents:
         return self.auth.project_grant(grant_id, project_id)
 
     def identity(self, grant_id: str, name: str, arguments: dict, delivery: dict) -> tuple[str, str, str]:
-        if name != EVENT or set(arguments) != {'project_id'} or not isinstance(arguments['project_id'], str):
+        if name not in (EVENT, REQUEST_EVENT) or set(arguments) != {'project_id'} or not isinstance(arguments['project_id'], str) or not arguments['project_id']:
             raise StoreError('INVALID_ARGUMENT', 'Event requires exactly one project_id')
         project = arguments['project_id']
         self._access(grant_id, project)
@@ -92,7 +106,7 @@ class MCPEvents:
         if delivery.get('mode', 'webhook') != 'webhook' or not isinstance(url, str):
             raise StoreError('INVALID_ARGUMENT', 'HTTPS webhook delivery required')
         callback_parts(url)
-        return subscription_id(grant_id, url, project), project, url
+        return subscription_id(grant_id, url, project, name), project, url
 
     async def subscribe(self, grant_id: str, name: str, arguments: dict, delivery: dict,
                         ttl_ms: int | None = 86400_000, cursor: str | None = None) -> dict:
@@ -122,12 +136,14 @@ class MCPEvents:
                 elif old['rotation_until_ms'] and old['rotation_until_ms'] > now:
                     previous, until = old['old_secret_enc'], old['rotation_until_ms']
             expires = min(now + lifetime, grant['expires_ms'])
-            self.store.db.execute('''INSERT INTO mcp_subscriptions VALUES(?,?,?,?,?,?,?,?,?, 'active',?)
+            self.store.db.execute('''INSERT INTO mcp_subscriptions
+                (id,grant_id,project_id,url,secret_enc,old_secret_enc,rotation_until_ms,verified_ms,expires_ms,state,updated_ms,event_name)
+                VALUES(?,?,?,?,?,?,?,?,?, 'active',?,?)
                 ON CONFLICT(id) DO UPDATE SET secret_enc=excluded.secret_enc,
                 old_secret_enc=excluded.old_secret_enc,rotation_until_ms=excluded.rotation_until_ms,
                 verified_ms=excluded.verified_ms,expires_ms=excluded.expires_ms,state='active',updated_ms=excluded.updated_ms''',
                 (sub_id, grant_id, project, url, self._encrypt(secret), previous, until,
-                 old['verified_ms'] if cached else now, expires, now))
+                 old['verified_ms'] if cached else now, expires, now, name))
         self._log('MCP subscription verified', event='mcp_subscription', subscription_id=sub_id,
                   project_id=project, result='active')
         return dict(id=sub_id, refreshBefore=iso(expires), cursor=None, truncated=False)
@@ -140,7 +156,8 @@ class MCPEvents:
         return {}
 
     def create_request(self, actor_id: str, project_id: str, command_id: str, ttl_seconds: int = 900,
-                       *, context_actor_id: str | None = None) -> dict:
+                       *, context_actor_id: str | None = None, event_name: str = EVENT,
+                       binding_id: str | None = None) -> dict:
         if not isinstance(command_id, str) or not 8 <= len(command_id) <= 160 or not 60 <= ttl_seconds <= 3600:
             raise StoreError('INVALID_ARGUMENT', 'Command id or request lifetime invalid')
         with self.store._lock:
@@ -150,20 +167,27 @@ class MCPEvents:
                 context_actor_id = context_actor_id or actor_id
                 project = self.store.db.execute('SELECT workspace_id FROM projects WHERE id=?', (project_id,)).fetchone()
                 self.store.project_access(context_actor_id, project['workspace_id'], project_id)
+                if event_name not in (EVENT, REQUEST_EVENT) or (binding_id and event_name != REQUEST_EVENT):
+                    raise StoreError('INVALID_ARGUMENT', 'Unknown request event')
+                binding = self.bindings.for_owner(actor_id, project_id, binding_id, context_actor_id) if binding_id else None
                 old = self.store.db.execute('SELECT id FROM mcp_test_requests WHERE actor_id=? AND project_id=? AND command_id=?',
                                             (actor_id, project_id, command_id)).fetchone()
                 if old:
                     prior = self.store.db.execute('SELECT * FROM mcp_test_requests WHERE id=?', (old['id'],)).fetchone()
                     if (prior['context_actor_id'] or prior['actor_id']) != context_actor_id:
                         raise StoreError('REQUEST_CONFLICT', 'Command id already used with a different user context')
+                    if prior['event_name'] != event_name or prior['binding_id'] != binding_id:
+                        raise StoreError('REQUEST_CONFLICT', 'Command id already used for another route or mode')
                     self.store.db.execute('COMMIT')
                     return self.status(actor_id, old['id'])
                 now = _now_ms()
-                subscriptions = self.store.db.execute("SELECT * FROM mcp_subscriptions WHERE project_id=? AND state='active' AND expires_ms>?", (project_id, now)).fetchall()
+                subscriptions = self.store.db.execute("SELECT * FROM mcp_subscriptions WHERE project_id=? AND event_name=? AND state='active' AND expires_ms>?", (project_id, event_name, now)).fetchall()
                 eligible = []
                 for sub in subscriptions:
                     try:
                         self._access(sub['grant_id'], project_id)
+                        if binding:
+                            self.bindings.access(sub['grant_id'], project_id, binding_id, context_actor_id, binding['revision'])
                         eligible.append(sub)
                     except StoreError:
                         continue
@@ -171,9 +195,10 @@ class MCPEvents:
                     raise StoreError('NO_SUBSCRIPTION', 'Connect and approve a verified project subscription first')
                 request_id, event_id = 'mcp_test_' + secrets.token_hex(16), 'evt_' + secrets.token_hex(16)
                 self.store.db.execute('''INSERT INTO mcp_test_requests
-                    (id,project_id,actor_id,command_id,nonce,created_ms,expires_ms,state,event_id,context_actor_id)
-                    VALUES(?,?,?,?,?,?,?,'awaiting_response',?,?)''',
-                    (request_id, project_id, actor_id, command_id, secrets.token_urlsafe(32), now, now + ttl_seconds*1000, event_id, context_actor_id))
+                    (id,project_id,actor_id,command_id,nonce,created_ms,expires_ms,state,event_id,context_actor_id,event_name,mode,binding_id,binding_revision)
+                    VALUES(?,?,?,?,?,?,?,'awaiting_response',?,?,?,?,?,?)''',
+                    (request_id, project_id, actor_id, command_id, secrets.token_urlsafe(32), now, now + ttl_seconds*1000, event_id, context_actor_id,
+                     event_name, 'live' if binding else 'test', binding_id, binding['revision'] if binding else None))
                 for sub in eligible:
                     self.store.db.execute("INSERT INTO mcp_outbox(event_id,subscription_id,request_id,state,next_ms) VALUES(?,?,?,'pending',?)", (event_id, sub['id'], request_id, now))
                 self.store.db.execute('COMMIT')
@@ -211,6 +236,8 @@ class MCPEvents:
     def get_request(self, grant_id: str, request_id: str, *, project_id: str | None = None, actor_id: str | None = None) -> dict:
         with self.store._lock:
             row, grant = self._request(grant_id, request_id, project_id, actor_id)
+            if row['mode'] != 'test':
+                raise StoreError('REQUEST_UNAVAILABLE', 'Legacy tools only accept test requests')
             access = self.auth.project_owner(grant['actor_id'], row['project_id'])
             context_actor_id, actor_name = self._context(row)
             return dict(request_id=row['id'], project_id=row['project_id'], actor_id=context_actor_id, actor_name=actor_name, eventId=row['event_id'],
@@ -225,14 +252,17 @@ class MCPEvents:
             self.store.db.execute('BEGIN IMMEDIATE')
             try:
                 row, grant = self._request(grant_id, request_id, project_id, actor_id)
+                if row['mode'] != 'test':
+                    raise StoreError('REQUEST_UNAVAILABLE', 'Legacy tools only accept test requests')
                 if not secrets.compare_digest(row['nonce'].encode(), nonce.encode()):
                     raise StoreError('NONCE_MISMATCH', 'Nonce does not match request')
                 if row['state'] == 'completed':
                     if row['response'] != response or row['response_actor_id'] != grant['actor_id']:
                         raise StoreError('RESPONSE_CONFLICT', 'A different response is already saved')
                 else:
-                    self.store.db.execute("UPDATE mcp_test_requests SET state='completed',response=?,response_actor_id=?,response_ms=? WHERE id=?",
-                                          (response, grant['actor_id'], _now_ms(), request_id))
+                    self.store.db.execute("UPDATE mcp_test_requests SET state='completed',response=?,response_actor_id=?,response_ms=?,response_id=?,result_json=? WHERE id=?",
+                                          (response, grant['actor_id'], _now_ms(), self.response_id(request_id),
+                                           json.dumps(dict(kind='test_ack', nonce=nonce, text=response), ensure_ascii=False, sort_keys=True), request_id))
                 self.store.db.execute('COMMIT')
             except BaseException:
                 self.store.db.execute('ROLLBACK')
@@ -240,6 +270,37 @@ class MCPEvents:
         self._log('MCP test response saved', event='mcp_test_response', request_id=request_id,
                   event_id=row['event_id'], result='completed')
         return self.status(grant['actor_id'], request_id)
+
+    @staticmethod
+    def response_id(request_id: str) -> str:
+        return 'mcp_response_' + hashlib.sha256(request_id.encode()).hexdigest()[:32]
+
+    def get_project_request(self, grant_id: str, project_id: str, request_id: str) -> dict:
+        with self.store._lock:
+            row, _ = self._request(grant_id, request_id, project_id)
+            if row['mode'] == 'live':
+                return self.bindings.get_request(grant_id, row)
+            data = self.get_request(grant_id, request_id, project_id=project_id)
+            data.update(mode='test', event_id=row['event_id'], response_id=self.response_id(request_id) if row['state']=='completed' else None,
+                        backend_state='stored' if row['state']=='completed' else 'awaiting_result',
+                        allowed_result_kinds=['test_ack'],
+                        result=json.loads(row['result_json']) if row['result_json'] else
+                            dict(kind='test_ack',nonce=row['nonce'],text=row['response']) if row['state']=='completed' else None)
+            return data
+
+    def record_request_result(self, grant_id: str, project_id: str, request_id: str, event_id: str, result: dict) -> dict:
+        with self.store._lock:
+            row, _ = self._request(grant_id, request_id, project_id)
+            if row['event_id'] != event_id:
+                raise StoreError('REQUEST_UNAVAILABLE', 'Request event mismatch')
+            if row['mode'] == 'live':
+                return self.bindings.record_result(grant_id, row, result)
+            if (not isinstance(result, dict) or set(result) != {'kind','nonce','text'} or result['kind'] != 'test_ack'
+                    or not isinstance(result['nonce'], str) or not 1 <= len(result['nonce']) <= 128
+                    or not isinstance(result['text'], str) or not 1 <= len(result['text']) <= 4000):
+                raise StoreError('INVALID_ARGUMENT', 'Expected strict test_ack result')
+            self.record_response(grant_id, request_id, result['nonce'], result['text'], project_id=project_id)
+            return self.get_project_request(grant_id, project_id, request_id)
 
     def status(self, actor_id: str, request_id: str) -> dict:
         with self.store._lock:
@@ -250,6 +311,8 @@ class MCPEvents:
             deliveries = [dict(r) for r in self.store.db.execute('''SELECT event_id,subscription_id,state,attempts,
                 accepted_ms,last_status,last_error FROM mcp_outbox WHERE request_id=?''', (request_id,))]
             return dict(request_id=row['id'], project_id=row['project_id'], actor_id=row['context_actor_id'] or row['actor_id'], eventId=row['event_id'],
+                        event_name=row['event_name'],mode=row['mode'],binding_id=row['binding_id'],binding_revision=row['binding_revision'],
+                        response_id=self.response_id(request_id) if row['state']=='completed' else None,
                         created_at=iso(row['created_ms']), expires_at=iso(row['expires_ms']), state=row['state'],
                         response=row['response'], response_actor_id=row['response_actor_id'],
                         response_at=iso(row['response_ms']) if row['response_ms'] else None, deliveries=deliveries)
@@ -259,7 +322,7 @@ class MCPEvents:
         with self.store._lock:
             row = self.store.db.execute('''SELECT o.*,s.grant_id,s.project_id,s.url,s.secret_enc,
                 s.old_secret_enc,s.rotation_until_ms,s.state AS sub_state,s.expires_ms AS sub_expires,
-                r.created_ms,r.expires_ms AS request_expires,r.state AS request_state,
+                r.created_ms,r.expires_ms AS request_expires,r.state AS request_state,r.event_name,r.mode,r.binding_id,r.binding_revision,
                 COALESCE(r.context_actor_id,r.actor_id) AS context_actor_id
                 FROM mcp_outbox o JOIN mcp_subscriptions s ON s.id=o.subscription_id
                 JOIN mcp_test_requests r ON r.id=o.request_id
@@ -273,6 +336,8 @@ class MCPEvents:
                 self._access(row['grant_id'], row['project_id'])
                 project = self.store.db.execute('SELECT workspace_id FROM projects WHERE id=?', (row['project_id'],)).fetchone()
                 self.store.project_access(row['context_actor_id'], project['workspace_id'], row['project_id'])
+                if row['mode'] == 'live':
+                    self.bindings.access(row['grant_id'], row['project_id'], row['binding_id'], row['context_actor_id'], row['binding_revision'])
             except StoreError:
                 allowed = False
             if not allowed:
@@ -284,8 +349,12 @@ class MCPEvents:
                 (now + 30_000, event_id, sub_id, now, now))
             if claimed.rowcount != 1:
                 return True
-        event = dict(eventId=event_id, name=EVENT, timestamp=iso(row['created_ms']), cursor=None,
-                     data=dict(request_id=row['request_id'], project_id=row['project_id'], actor_id=row['context_actor_id'], summary='A Projects Hub transport test was requested.'))
+        data = dict(request_id=row['request_id'], project_id=row['project_id'], summary='A Projects Hub request was created.')
+        if row['event_name'] == EVENT:
+            data.update(actor_id=row['context_actor_id'])
+        else:
+            data.update(mode=row['mode'])
+        event = dict(eventId=event_id, name=row['event_name'], timestamp=iso(row['created_ms']), cursor=None, data=data)
         status, reason = None, None
         try:
             old_key = self._decrypt(row['old_secret_enc']) if row['old_secret_enc'] and row['rotation_until_ms'] > now else None

@@ -18,10 +18,10 @@ from standardwebhooks.webhooks import Webhook, WebhookVerificationError
 
 from projects_hub.app import create_app
 from projects_hub.auth import COOKIE_NAME, issue_session
-from projects_hub.mcp_api import EVENT_DEFINITION
+from projects_hub.mcp_api import EVENT_DEFINITION, REQUEST_EVENT_DEFINITION
 from projects_hub.mcp_auth import MCPAuth, REDIRECT, SCOPE, challenge, digest
 from projects_hub.logging_config import JsonFormatter
-from projects_hub.mcp_events import EVENT, MCPEvents
+from projects_hub.mcp_events import EVENT, REQUEST_EVENT, MCPEvents
 from projects_hub.mcp_webhooks import (CallbackError, PinnedHTTPSConnection, WebhookSender,
                                        callback_parts, public_addresses, signed_headers, validate_secret)
 from projects_hub.settings import Settings
@@ -354,8 +354,8 @@ def test_sdk_discovery_catalog_subscription_tools_and_csrf(setup, tmp_path):
         result = discovery.json()['result']
         assert result['resultType'] == 'complete'
         assert result['supportedVersions'] == ['2026-07-28'] and result['capabilities']['events'] == {}
-        assert {t['name'] for t in rpc(client, token, 'tools/list').json()['result']['tools']} == {'get_test_request', 'record_test_response'}
-        assert rpc(client, token, 'events/list').json()['result']['events'] == [EVENT_DEFINITION]
+        assert {t['name'] for t in rpc(client, token, 'tools/list').json()['result']['tools']} == {'get_test_request', 'record_test_response','get_project_request','record_request_result'}
+        assert rpc(client, token, 'events/list').json()['result']['events'] == [REQUEST_EVENT_DEFINITION,EVENT_DEFINITION]
         subscribed = rpc(client, token, 'events/subscribe', dict(name=EVENT, arguments={'project_id': grant['project_id']}, delivery=DELIVERY))
         assert subscribed.status_code == 200, subscribed.text
         assert subscribed.json()['result']['id'].startswith('sub_')
@@ -592,7 +592,7 @@ def test_private_tunnel_credential_survives_restart_and_remains_revocable_servic
                                 session_secret='s'*48, public_origin=ORIGIN), store=reopened)
         with TestClient(app, base_url=ORIGIN) as client:
             assert rpc(client, token, 'server/discover').status_code == 200
-            assert len(rpc(client, token, 'tools/list').json()['result']['tools']) == 2
+            assert len(rpc(client, token, 'tools/list').json()['result']['tools']) == 4
         restored.project_grant(principal['id'], owner['project_id'])
         restored.disable_service(owner['actor_id'], issued['client_id'])
         with pytest.raises(StoreError):
@@ -632,3 +632,220 @@ async def test_unknown_delivery_lease_recovery_and_retry_limit(setup):
 def test_secret_contract(secret):
     with pytest.raises(CallbackError):
         validate_secret(secret)
+
+
+@pytest.mark.asyncio
+async def test_stable_contract_preserves_legacy_subscription_and_one_emission(setup):
+    store,auth,events,receiver,owner,_=setup
+    project,actor=owner['project_id'],owner['actor_id']
+    legacy=await events.subscribe(owner['id'],EVENT,{'project_id':project},DELIVERY)
+    stable=await events.subscribe(owner['id'],REQUEST_EVENT,{'project_id':project},DELIVERY)
+    assert legacy['id']!=stable['id']
+    assert (await events.subscribe(owner['id'],REQUEST_EVENT,{'project_id':project},DELIVERY))['id']==stable['id']
+    request=events.create_request(actor,project,'stable-test-one',event_name=REQUEST_EVENT)
+    assert await events.deliver_one()
+    payload=receiver.events[0][0]
+    assert payload['name']==REQUEST_EVENT and payload['data']['mode']=='test'
+    assert 'nonce' not in payload['data'] and 'actor_id' not in payload['data']
+    assert store.db.execute('SELECT COUNT(*) FROM mcp_outbox WHERE request_id=?',(request['request_id'],)).fetchone()[0]==1
+    context=events.get_project_request(owner['id'],project,request['request_id'])
+    result=dict(kind='test_ack',nonce=context['nonce'],text='ACK '+context['nonce'])
+    for bad in ({**result,'command':'execute'}, {**result,'kind':'discussion_reply'}, {**result,'nonce':'wrong'}):
+        with pytest.raises(StoreError):
+            events.record_request_result(owner['id'],project,request['request_id'],request['eventId'],bad)
+    with pytest.raises(StoreError):
+        events.record_request_result(owner['id'],project,request['request_id'],'evt-wrong',result)
+    saved=events.record_request_result(owner['id'],project,request['request_id'],request['eventId'],result)
+    assert saved['response_id'] and saved['backend_state']=='stored'
+    assert events.record_request_result(owner['id'],project,request['request_id'],request['eventId'],result)==saved
+    with pytest.raises(StoreError):
+        events.record_request_result(owner['id'],project,request['request_id'],request['eventId'],{**result,'text':'changed'})
+    reopened=DurableStore(store.data_dir)
+    try:
+        restored=MCPEvents(reopened,MCPAuth(reopened,ORIGIN),'s'*48,receiver)
+        assert restored.get_project_request(owner['id'],project,request['request_id'])==saved
+        assert (await restored.subscribe(owner['id'],REQUEST_EVENT,{'project_id':project},DELIVERY))['id']==stable['id']
+        assert not await restored.deliver_one()
+        assert reopened.db.execute('SELECT state FROM mcp_subscriptions WHERE id=?',(legacy['id'],)).fetchone()[0]=='active'
+    finally:
+        reopened.close()
+
+
+def live_fixture(setup):
+    from projects_hub.collaboration import CollaborationService
+    store,auth,events,receiver,owner,_=setup
+    CollaborationService(store,None)
+    credential=auth.provision_tunnel(owner['actor_id'],'ph_service_live_test')
+    service=auth.authenticate('Bearer '+credential['access_token'])
+    project=owner['project_id']
+    workspace=store.db.execute('SELECT workspace_id FROM projects WHERE id=?',(project,)).fetchone()[0]
+    bindings=[]
+    for index in (1,2):
+        note_id=f'note_discussion_{index}'
+        store.db.execute('''INSERT INTO project_notes(id,workspace_id,project_id,author_actor_id,title,body,source_text,
+            author_roles_json,audience,status,repository_id,repository_full_name,repository_path,command_id,request_sha256,created_at_ms,updated_at_ms)
+            VALUES(?,?,?,?,?,?,?,'[]','project','ready',123,'example/docs',?,?,?,1,1)''',
+            (note_id,workspace,project,owner['actor_id'],f'Discussion {index}',f'Context {index}',f'Context {index}',f'docs/{index}.md',f'fixture-note-{index}',f'fixture-{index}'))
+        bindings.append(events.bindings.bind(owner['actor_id'],project,note_id,service['client_id'],'T0123456789','C0123456789',f'179190000{index}.000001'))
+    return store,auth,events,receiver,owner,service,bindings
+
+
+@pytest.mark.asyncio
+async def test_two_bound_discussions_same_subscription_independent_destinations_restart(setup):
+    store,auth,events,receiver,owner,service,bindings=live_fixture(setup)
+    project=owner['project_id']
+    sub=await events.subscribe(service['id'],REQUEST_EVENT,{'project_id':project},DELIVERY)
+    requests=[events.create_request(owner['actor_id'],project,f'live-bound-{i}',event_name=REQUEST_EVENT,binding_id=b['id']) for i,b in enumerate(bindings)]
+    reopened=DurableStore(store.data_dir)
+    try:
+        restored=MCPEvents(reopened,MCPAuth(reopened,ORIGIN),'s'*48,receiver)
+        assert (await restored.subscribe(service['id'],REQUEST_EVENT,{'project_id':project},DELIVERY))['id']==sub['id']
+        for i,(request,binding) in enumerate(zip(requests,bindings)):
+            assert await restored.deliver_one()
+            read=restored.get_project_request(service['id'],project,request['request_id'])
+            assert read['mode']=='live' and read['note_id']==binding['note_id'] and read['slack']['thread_ts']==binding['slack_thread_ts']
+            with pytest.raises(StoreError):
+                restored.get_project_request(owner['id'],project,request['request_id']) # test-only principal is not the bound client
+            with pytest.raises(StoreError):
+                restored.get_request(service['id'],request['request_id']) # legacy wrapper cannot read live
+            result=dict(kind='discussion_reply',text=f'Bound answer {i}')
+            saved=restored.record_request_result(service['id'],project,request['request_id'],request['eventId'],result)
+            assert saved['destinations']['backend_state']=='stored' and saved['destinations']['mira_state']=='available'
+            assert saved['destinations']['slack_state']=='pending'
+            assert restored.record_request_result(service['id'],project,request['request_id'],request['eventId'],result)==saved
+            assert store.db.execute('SELECT COUNT(*) FROM project_discussion_entries WHERE note_id=?',(binding['note_id'],)).fetchone()[0]==1
+            from projects_hub.collaboration import CollaborationService
+            collaboration=CollaborationService(reopened,None)
+            workspace=reopened.db.execute('SELECT workspace_id FROM projects WHERE id=?',(project,)).fetchone()[0]
+            mira_read=collaboration.list_replies(actor_id=owner['actor_id'],workspace_id=workspace,note_id=binding['note_id'])
+            assert mira_read[0]['body']==result['text'] and mira_read[0]['author']['id']==service['actor_id']
+        assert len(receiver.events)==2 and not await restored.deliver_one()
+        assert store.db.execute('SELECT COUNT(*) FROM mcp_test_requests').fetchone()[0]==2 # saving own replies did not create request loops
+        assert store.db.execute('SELECT COUNT(*) FROM mcp_binding_history').fetchone()[0]==2
+    finally:
+        reopened.close()
+
+
+@pytest.mark.asyncio
+async def test_slack_claim_unknown_send_reconcile_and_no_confirmed_repeat(setup):
+    store,auth,events,receiver,owner,service,bindings=live_fixture(setup)
+    project=owner['project_id'];binding=bindings[0]
+    await events.subscribe(service['id'],REQUEST_EVENT,{'project_id':project},DELIVERY)
+    req=events.create_request(owner['actor_id'],project,'slack-claim-test',event_name=REQUEST_EVENT,binding_id=binding['id'])
+    def write(result):
+        return events.record_request_result(service['id'],project,req['request_id'],req['eventId'],result)
+    saved=write(dict(kind='discussion_reply',text='Answer for Slack'))
+    response_id=saved['response_id']
+    claim=write(dict(kind='slack_claim',response_id=response_id))
+    claim_id=claim['destinations']['claim_id']
+    receipt=dict(kind='slack_receipt',response_id=response_id,claim_id=claim_id,status='unconfirmed',message_id='',error='timeout',**claim['slack'])
+    uncertain=write(receipt)
+    assert uncertain['destinations']['backend_state']=='stored' and uncertain['destinations']['slack_state']=='unconfirmed'
+    with pytest.raises(StoreError,match='reconcile'):
+        write(dict(kind='slack_claim',response_id=response_id))
+    reopened=DurableStore(store.data_dir)
+    try:
+        restored=MCPEvents(reopened,MCPAuth(reopened,ORIGIN),'s'*48,receiver)
+        assert restored.get_project_request(service['id'],project,req['request_id'])==uncertain
+        with pytest.raises(StoreError,match='reconcile'):
+            restored.record_request_result(service['id'],project,req['request_id'],req['eventId'],dict(kind='slack_claim',response_id=response_id))
+    finally:
+        reopened.close()
+    with pytest.raises(StoreError):
+        write({**receipt,'status':'confirmed','message_id':'1791911111.123456','error':'','thread_ts':bindings[1]['slack_thread_ts']})
+    confirmed=write({**receipt,'status':'confirmed','message_id':'1791911111.123456','error':''})
+    assert confirmed['destinations']['slack_state']=='confirmed'
+    assert write(dict(kind='slack_claim',response_id=response_id))==confirmed
+    assert write({**receipt,'status':'confirmed','message_id':'1791911111.123456','error':''})==confirmed
+    with pytest.raises(StoreError):
+        write({**receipt,'status':'confirmed','message_id':'1791911112.123456','error':''})
+    assert store.db.execute('SELECT COUNT(*) FROM project_discussion_entries').fetchone()[0]==1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('change',['binding','context_acl','owner_acl','client','project'])
+async def test_live_revocation_stops_tools_and_delivery_without_context_leak(setup,change):
+    store,auth,events,receiver,owner,service,bindings=live_fixture(setup)
+    project=owner['project_id'];binding=bindings[0]
+    await events.subscribe(service['id'],REQUEST_EVENT,{'project_id':project},DELIVERY)
+    req=events.create_request(owner['actor_id'],project,'live-revoke-test',event_name=REQUEST_EVENT,binding_id=binding['id'])
+    if change=='binding':
+        events.bindings.revoke(owner['actor_id'],binding['id'],binding['revision'])
+    elif change in ('context_acl','owner_acl'):
+        store.db.execute('UPDATE project_grants SET revoked_at_ms=1 WHERE project_id=? AND actor_id=?',(project,owner['actor_id']))
+    elif change=='client':
+        auth.disable_service(owner['actor_id'],service['client_id'])
+    else:
+        store.db.execute("UPDATE projects SET status='archived' WHERE id=?",(project,))
+    assert await events.deliver_one() and not receiver.events
+    with pytest.raises(StoreError):
+        events.get_project_request(service['id'],project,req['request_id'])
+    with pytest.raises(StoreError):
+        events.record_request_result(service['id'],project,req['request_id'],req['eventId'],dict(kind='discussion_reply',text='Unauthorized'))
+    assert store.db.execute('SELECT COUNT(*) FROM project_discussion_entries').fetchone()[0]==0
+
+
+@pytest.mark.asyncio
+async def test_binding_version_unique_route_and_atomic_response_failure(setup):
+    store,auth,events,receiver,owner,service,bindings=live_fixture(setup)
+    project=owner['project_id'];binding=bindings[0]
+    with pytest.raises(StoreError,match='already bound'):
+        events.bindings.bind(owner['actor_id'],project,bindings[1]['note_id'],service['client_id'],
+                            binding['slack_workspace_id'],binding['slack_channel_id'],binding['slack_thread_ts'],expected_revision=1)
+    assert store.db.execute('SELECT COUNT(*) FROM mcp_binding_history').fetchone()[0]==2
+    await events.subscribe(service['id'],REQUEST_EVENT,{'project_id':project},DELIVERY)
+    req=events.create_request(owner['actor_id'],project,'atomic-discussion',event_name=REQUEST_EVENT,binding_id=binding['id'])
+    # Fail the second destination write, after the note reply was inserted.
+    store.db.execute("CREATE TRIGGER fail_response BEFORE INSERT ON mcp_response_destinations BEGIN SELECT RAISE(ABORT,'fixture failure'); END")
+    with pytest.raises(Exception,match='fixture failure'):
+        events.record_request_result(service['id'],project,req['request_id'],req['eventId'],dict(kind='discussion_reply',text='Atomic reply'))
+    assert store.db.execute('SELECT COUNT(*) FROM project_discussion_entries').fetchone()[0]==0
+    assert store.db.execute('SELECT state FROM mcp_test_requests WHERE id=?',(req['request_id'],)).fetchone()[0]=='awaiting_response'
+    store.db.execute('DROP TRIGGER fail_response')
+    with pytest.raises(StoreError,match='revision'):
+        events.bindings.bind(owner['actor_id'],project,binding['note_id'],service['client_id'],'T0123456789','C0123456789','1791900010.000001')
+    updated=events.bindings.bind(owner['actor_id'],project,binding['note_id'],service['client_id'],'T0123456789','C0123456789','1791900010.000001',expected_revision=1)
+    assert updated['revision']==2
+    assert await events.deliver_one() and not receiver.events # stale route never follows the new destination
+    with pytest.raises(StoreError):
+        events.get_project_request(service['id'],project,req['request_id'])
+
+
+def test_stable_tools_use_sdk_strict_result_schema_and_saved_context(setup,tmp_path):
+    store,auth,events,receiver,owner,tokens=setup
+    project=owner['project_id']
+    asyncio.run(events.subscribe(owner['id'],REQUEST_EVENT,{'project_id':project},DELIVERY))
+    req=events.create_request(owner['actor_id'],project,'stable-sdk-test',event_name=REQUEST_EVENT)
+    app=create_app(Settings(data_dir=store.data_dir,static_dir=tmp_path/'no-ui',session_secret='s'*48,public_origin=ORIGIN),store=store)
+    with TestClient(app,base_url=ORIGIN) as client:
+        token=tokens['access_token']
+        read=rpc(client,token,'tools/call',{'name':'get_project_request','arguments':{'project_id':project,'request_id':req['request_id']}}).json()['result']['structuredContent']
+        assert read['actor_id']==owner['actor_id'] and read['mode']=='test'
+        arguments={'project_id':project,'request_id':req['request_id'],'event_id':req['eventId'],
+                   'result':{'kind':'test_ack','nonce':read['nonce'],'text':'SDK ACK'}}
+        invalid=rpc(client,token,'tools/call',{'name':'record_request_result','arguments':{**arguments,'result':{**arguments['result'],'execute':'code'}}}).json()
+        assert 'error' in invalid or invalid['result']['isError']
+        saved=rpc(client,token,'tools/call',{'name':'record_request_result','arguments':arguments}).json()['result']['structuredContent']
+        assert saved['response_id'] and saved['state']=='completed'
+
+
+@pytest.mark.asyncio
+async def test_explicit_slack_rejection_can_retry_only_unfinished_destination(setup):
+    store,auth,events,receiver,owner,service,bindings=live_fixture(setup)
+    project=owner['project_id'];binding=bindings[0]
+    await events.subscribe(service['id'],REQUEST_EVENT,{'project_id':project},DELIVERY)
+    req=events.create_request(owner['actor_id'],project,'slack-error-retry',event_name=REQUEST_EVENT,binding_id=binding['id'])
+    def write(result):
+        return events.record_request_result(service['id'],project,req['request_id'],req['eventId'],result)
+    saved=write(dict(kind='discussion_reply',text='One durable reply'))
+    first=write(dict(kind='slack_claim',response_id=saved['response_id']))
+    error=dict(kind='slack_receipt',response_id=saved['response_id'],claim_id=first['destinations']['claim_id'],status='error',message_id='',error='not_in_channel',**first['slack'])
+    rejected=write(error)
+    assert rejected['destinations']['slack_state']=='error' and rejected['destinations']['backend_state']=='stored'
+    retry=write(dict(kind='slack_claim',response_id=saved['response_id']))
+    assert retry['destinations']['claim_id']!=first['destinations']['claim_id']
+    with pytest.raises(StoreError):
+        write(error) # delayed receipt cannot finish a newer claim
+    unknown=write({**error,'claim_id':retry['destinations']['claim_id'],'error':'internal_error'})
+    assert unknown['destinations']['slack_state']=='unconfirmed'
+    assert store.db.execute('SELECT COUNT(*) FROM project_discussion_entries').fetchone()[0]==1
