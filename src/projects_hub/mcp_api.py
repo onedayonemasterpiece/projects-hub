@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import logging
 import re
@@ -259,6 +260,26 @@ def attach_mcp_routes(app, *, store, settings, actor_id_from_request):
                     if 'supportedVersions' in discovery and 'capabilities' in discovery:
                         discovery['capabilities']['events'] = {}
                         body = json.dumps(result, ensure_ascii=False, separators=(',', ':')).encode()
+                    for field, method, allowed in (
+                        ('tools', 'tools/list', {tool['name'] for tool in TOOLS}),
+                        ('events', 'events/list', {EVENT, REQUEST_EVENT}),
+                    ):
+                        catalog = discovery.get(field)
+                        if isinstance(catalog, list):
+                            # Diagnose the serialized catalogue actually returned
+                            # to the caller, never its credential or private params.
+                            names = [item.get('name') for item in catalog if isinstance(item, dict)]
+                            if len(names) == len(catalog) and all(name in allowed for name in names):
+                                protocol = request.headers.get('mcp-protocol-version')
+                                log.info('MCP catalog returned', extra={
+                                    'event': 'mcp_catalog', 'rpc_method': method,
+                                    'mcp_protocol': protocol if protocol in ('2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25', '2026-07-28') else 'unknown',
+                                    'catalog_names': names, 'catalog_count': len(catalog),
+                                    'catalog_sha256': hashlib.sha256(json.dumps(catalog, sort_keys=True, separators=(',', ':')).encode()).hexdigest(),
+                                    'request_id': request.headers.get('x-request-id'),
+                                    'backend_release_sha': settings.release_sha,
+                                    'status': start['status'], 'result': 'returned',
+                                })
                 except (ValueError, AttributeError):
                     pass
                 start['headers'] = [(k, v) for k, v in start['headers'] if k.lower() != b'content-length']

@@ -339,6 +339,33 @@ def test_unauthenticated_mcp_logs_only_enumerated_protocol_facts(setup, tmp_path
         assert client.get('/mcp', headers=edge_headers()).status_code == 401
 
 
+def test_catalog_logs_describe_wire_response_without_private_request_data(setup, tmp_path, caplog):
+    store, _, _, _, _, tokens = setup
+    app = create_app(Settings(data_dir=store.data_dir, static_dir=tmp_path/'no-ui',
+                            session_secret='s'*48, public_origin=ORIGIN, release_sha='catalog-release'), store=store)
+    caplog.set_level(logging.INFO, logger='projects_hub.mcp')
+    with TestClient(app, base_url=ORIGIN) as client:
+        client.headers['x-request-id'] = 'catalog-correlation'
+        logging.getLogger('projects_hub.mcp').addHandler(caplog.handler)
+        for method, field in [('tools/list', 'tools'), ('events/list', 'events')]:
+            response = rpc(client, tokens['access_token'], method)
+            assert response.status_code == 200
+            catalog = response.json()['result'][field]
+            record = next(r for r in reversed(caplog.records) if getattr(r, 'event', None) == 'mcp_catalog')
+            output = JsonFormatter().format(record)
+            facts = json.loads(output)
+            assert facts['rpc_method'] == method and facts['mcp_protocol'] == '2026-07-28'
+            assert facts['catalog_names'] == [item['name'] for item in catalog]
+            assert facts['catalog_count'] == len(catalog)
+            assert facts['catalog_sha256'] == hashlib.sha256(json.dumps(catalog, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+            assert facts['backend_release_sha'] == 'catalog-release' and facts['status'] == 200
+            assert facts['request_id'] == 'catalog-correlation'
+            assert tokens['access_token'] not in output and 'session_secret' not in output
+        count = sum(getattr(r, 'event', None) == 'mcp_catalog' for r in caplog.records)
+        assert rpc(client, 'private-invalid-token', 'tools/list').status_code == 401
+        assert sum(getattr(r, 'event', None) == 'mcp_catalog' for r in caplog.records) == count
+
+
 def test_sdk_discovery_catalog_subscription_tools_and_csrf(setup, tmp_path):
     store, _, _, receiver, grant, tokens = setup
     settings = Settings(data_dir=store.data_dir, static_dir=tmp_path/'no-ui', session_secret='s'*48,
