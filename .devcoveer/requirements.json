@@ -219,6 +219,46 @@
         "General activity can summarize authored changes with source links only after opt-in; declining or deferring does not trigger repeated offers on every reconnect.",
         "Seen, answered and deferred states remain distinct; only authorized project information appears in the user's brief."
       ]
+    },
+    {
+      "id": "CORE-ANDROID-NATIVE-VOICE",
+      "critical": true,
+      "statement": "Android uses a native microphone, capture/VAD, bounded audio queue, playback and reconnect lifecycle through the versioned shared live-interaction framework, independent of the WebView UI lifecycle. PWA remains a full browser/iOS client with explicitly stated platform limits; neither client opens a direct provider connection.",
+      "acceptance": [
+        "WebView is a typed UI bridge; the Android voice session has exactly one active shared-framework transport, not parallel browser and native microphone/provider sessions.",
+        "An explicitly user-started native microphone foreground service owns long-running capture and the visible stop control; screen lock or navigation to another app does not silently terminate accepted capture.",
+        "Local durable source survives network loss and application restart; bounded resource exhaustion or OS interruption is visible and never presented as continued recording.",
+        "Audio focus loss, phone interruption, Bluetooth route changes, screen-off, background navigation and repeated reconnect are physically tested; platform-imposed restrictions are reported honestly.",
+        "Native microphone capture does not imply permission or capability to capture other apps or both sides of phone calls; those sources require separate platform feasibility and user authorization.",
+        "Shared framework changes are released and promoted explicitly, with conformance tests for Android and browser paths; existing authentication, Calendar, signed update and provider-secret boundaries are preserved."
+      ]
+    },
+    {
+      "id": "CORE-VOICE-SESSION-CONTINUITY",
+      "critical": true,
+      "statement": "A transient transport outage must not silently erase accepted speech or destroy the logical conversation. Socket, provider session, source durability and business effects are independently tracked; reconnect preserves authorization, bounded resource use and damaged-turn safety.",
+      "acceptance": [
+        "Transport I/O failures detach the socket within a documented bounded recovery policy rather than automatically stopping the logical session; explicit stop, authorization failure and protocol violations remain fail-closed.",
+        "Capture continuity and safe durable recovery are distinct from blind retransmission: no expired or uncertain audio is replayed as a fresh executable owner command, and no accepted mutation is duplicated.",
+        "Provider resume failure and capability transition preserve a durable conversation journal and expose degraded context instead of claiming full memory restored from a bounded bootstrap.",
+        "Reconnect and queue limits are justified by reproducible network profiles and measured audio age; a lifetime retry counter cannot substitute for a bounded retry-rate policy.",
+        "Structured privacy-safe telemetry correlates capture, relay admission, provider delivery, audible output, recovery and failure without logging audio, transcript contents or credentials.",
+        "Physical Android and foreground browser acceptance cover long sessions, mobile handover, bounded offline recovery and shared multi-user load; mocks and prepared audio are not physical microphone evidence."
+      ]
+    },
+    {
+      "id": "CORE-IMPORTED-AUDIO-AS-SOURCE",
+      "critical": true,
+      "statement": "Imported call recordings, audio and transcripts are quoted external source material, never a new executable owner turn. Importing or structuring material does not authorize actions requested by recorded speakers or convert historical promises into current instructions.",
+      "acceptance": [
+        "Current user authorization bounds the source, purpose and permitted import/structuring operation; captured participants' imperatives cannot grant permissions.",
+        "Recorded decisions, requests and promises are attributable source claims or draft candidates until the current authorized user adopts them; project facts preserve source provenance and speaker uncertainty.",
+        "Existing project-note audience, repository visibility, receipt/readback, idempotency and external-action confirmation rules apply to derived artifacts.",
+        "Reuse authorized audio ingestion without injecting recordings into the live command channel as executable instructions; no hidden ASR/router or second semantic conversation pipeline is introduced.",
+        "Stable source IDs and receipts deduplicate repeated imports within the authenticated user scope; immutable originals and transcript versions preserve provenance, known capture time separately from import time, and honest unknown speaker/timestamp or one-sided audio status.",
+        "Private audio is not automatically published to project audiences. Permission for one import does not authorize future call recording or folder watching.",
+        "Repeated Share, upload interruption, restart after accepted note, transcript instructions and denied project access are tested without duplicate effects or widened authority."
+      ]
     }
   ]
 }
