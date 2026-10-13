@@ -268,7 +268,11 @@
     "transport_detach_not_logical_stop_required": true,
     "reconnect_cannot_weaken_damaged_turn_fence": true,
     "capture_lifecycle_independent_of_ui_required": true,
-    "imported_audio_is_quoted_source_not_command": true
+    "imported_audio_is_quoted_source_not_command": true,
+    "binary_pcm_wss_scope": "legacy_compatibility_profile_not_exclusive_of_explicit_negotiated_codec",
+    "versioned_codec_negotiation_required": true,
+    "bidirectional_opus_client_backend_target": true,
+    "decoded_size_duration_and_work_bounds_required": true
   },
   "implementation_evidence": {
     "release_sha": "59b522278a1694dfb930e070149fa0de9224c6b6",
@@ -347,7 +351,8 @@
     "replay_stale_unacked_pcm_after_gap": false,
     "damaged_open_turn_blocks_mutations_until_clean_boundary": true,
     "bounded_bootstrap_bytes": 4096,
-    "bounded_ingress_and_egress": true
+    "bounded_ingress_and_egress": true,
+    "binary_pcm_scope": "current_legacy_profile_remains_supported_future_compressed_profile_requires_explicit_negotiation"
   },
   "multi_user": {
     "resource_binding": [
@@ -416,6 +421,16 @@
     "numeric_limits": "unchanged_pending_measured_protocol_design",
     "telemetry": "privacy_safe_correlated_capture_ack_provider_playback_recovery",
     "system_capture_scope": "native_microphone_lifecycle_does_not_imply_other_app_or_call_capture"
+  },
+  "voice_compression_contract": {
+    "status": "required_target_not_implemented_or_accepted",
+    "owner": "versioned_shared_live_interaction",
+    "target_client_backend_codec": "opus_uplink_and_downlink_explicitly_negotiated",
+    "provider_boundary": "backend_decode_or_encode_raw_pcm_per_provider_contract",
+    "compatibility": "explicit_pcm_profile_same_wss_no_silent_http_fallback",
+    "storage": "durable_compressed_new_capture_immutable_imported_originals_no_repeated_lossy_recompression",
+    "safety": "independent_encoded_decoded_duration_work_bounds_original_timeline_source_and_command_fences",
+    "acceptance": "measured_quality_latency_bandwidth_storage_cpu_battery_target_device_and_browser_matrix",
+    "specification": "16-wss-multi-user-reliability.md#44-сжатие-передачи-и-хранения-обязательное-целевое-требование"
   }
 }
-
