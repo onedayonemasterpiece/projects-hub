@@ -84,21 +84,40 @@ PWA использует общий browser transport/AudioWorklet из `live-in
 6. pending offline source не удаляется до terminal server disposition/readback;
 7. старые HTTP Live endpoints могут временно существовать как explicit compatibility/canary path, но **не являются автоматическим fallback** активной WSS-сессии.
 
-## 4. Android: один foreground WSS, native только для Android-specific durability
+## 4. Android: нативный голосовой контур общего framework, WebView как UI
 
-Фактический Android Projects Hub — WebView-контейнер общего PWA плюс native возможности: Keystore/device binding, Calendar Provider, notifications и signed self-update. Внутри WebView запускается **тот же PWA `live-interaction v0.3.8` WSS client**, поэтому foreground Android уже не нуждается во втором native WebSocket transport.
+**Нормативное уточнение 13 октября 2026.** Целевая архитектура Android возвращает исходный договор `b438f0d`: native microphone capture, VAD/admission, bounded audio queue, WSS, playback и recovery принадлежат платформенному модулю общего versioned `live-interaction`. WebView остаётся интерфейсом с узким typed bridge (start/stop, state/events, transcript projection, playback/status). PWA остаётся полноценным браузерным/iOS-клиентом с честными ограничениями фоновой работы.
 
-Целевая граница:
+Это **целевой договор, не объявление готовности**. Проверенный текущий код Projects Hub `af65f93e` ещё захватывает микрофон через WebView; microphone foreground service и native voice edge отсутствуют. Старые release receipts ниже описывают именно свои версии.
 
-- foreground UI, microphone capture, WSS framing, ACK/backpressure и playback остаются в общем PWA/shared-browser Live path;
-- WebView выдаёт `RESOURCE_AUDIO_CAPTURE` только exact Projects Hub origin; Supabase/Yandex OAuth страницы могут проходить PKCE navigation, но не получают microphone permission;
-- Android native слой не открывает параллельную Live-сессию и не создаёт второй WSS transport;
-- Gemini/API key/GitHub credentials остаются только на backend;
-- Android-specific native развитие относится к **durable/background/offline capture** и системным capabilities. Такой capture должен передавать source в существующий Projects Hub Live/replay contract, а не обходить его альтернативным provider/socket path;
-- Stop и UI state остаются согласованы с одной central Live session;
-- PWA IndexedDB foreground queue не выдаётся за reboot/background durability Android.
+Обязательные границы:
+- в одной Android voice session работает один транспорт общего framework; миграция заменяет browser capture/transport, не запускает параллельные браузерный и native микрофоны или provider sessions;
+- Android не подключается к Gemini напрямую и не получает provider/GitHub credentials;
+- явно начатую пользователем запись обслуживает native microphone foreground service с видимым состоянием и Stop; UI pause, навигатор и блокировка экрана не должны молча прекращать захват;
+- native capture, VAD, transport и playback развиваются в общем framework с общими wire/conformance tests; продукт владеет разрешениями, durable source и доменными действиями;
+- local durable capture остаётся выше socket transport; запись при недоступности сети/ресурса не выдаётся за доставку или понимание моделью;
+- AUDIO focus, interruption, Bluetooth route, screen-off, foreground/background и bounded recovery требуют физической проверки; отсутствие такой проверки нельзя заменить emulator/prepared PCM;
+- Keystore/device binding, Calendar, signed self-update, exact-origin WebView permissions и действующие ACL сохраняются;
+- «системный захват приложения» здесь означает нативный микрофон и жизненный цикл записи. Это не доказательство возможности захвата других приложений или двух сторон телефонного звонка; такой импорт/захват имеет отдельную платформенную и авторизационную границу.
 
-Из Street Story переносим проверенные принципы bounded audio, явного setup/listening state, physical-microphone diagnostics и запрета silent HTTP fallback, но не копируем domain controller и не создаём native transport только ради технологического совпадения. В shared `live-interaction v0.3.8` native Java source сам всё ещё маркирует transport как `0.3.7-rc.1`, поэтому он не является основанием объявлять native Android edge стабильным. Prepared PCM/emulator также не заменяют физическую проверку микрофона.
+### 4.1. Восстановление без повторного исполнения
+
+Socket disconnect, provider reconnect, durable source и semantic command имеют независимые состояния. Временная I/O-ошибка должна освобождать socket binding, сохраняя логический разговор в ограниченном документированном recovery window; явный Stop, нарушения протокола и авторизации не становятся бесконечным retry.
+
+Действующие no-stale-replay и damaged-turn mutation fences сохраняются. ACK означает relay admission, а не provider comprehension или durable business effect. Нельзя просто расширить возраст очереди, повторить неизвестный хвост или признать повреждённый ход чистым. Deliberate recovery использует известный source/manifest, recovery epoch, актуальность поручения, command idempotency и authoritative readback. Сохранность before-provider не снимается ради более быстрого ACK: асинхронная запись обязана сохранить определённый durable barrier.
+
+Пороговые значения, retry windows, sliding-window размер, jitter buffer и codec negotiation выбираются по воспроизводимой сетевой приёмке. Этот документ не меняет численные лимиты и не обещает фиксированную задержку внешнего провайдера.
+
+### 4.2. Записи звонков и импортируемый материал
+
+Запись/транскрипт звонка — цитируемый внешний источник с происхождением, а не новый исполнимый user turn. Фразы участников «создай», «отправь», «удали», включая прежние обещания владельца, не разрешают текущих действий. Текущее поручение может разрешить ограниченный import/structuring; решения/задачи из источника остаются атрибутированными утверждениями или кандидатами до принятия уполномоченным пользователем. Публикация, аудитория и внешние действия сохраняют прежние разрешения и receipt/readback. Нельзя подать запись в Live command path как живую команду.
+
+### 4.3. Проверка надёжности
+
+Нужны privacy-safe клиентские и серверные измерения capture age, ACK latency, queue duration, detach/reconnect reason, provider recovery, first output audio, playback underflow, tool/capability wait и durable disposition. Не логировать PCM, полные transcripts или credentials.
+
+Приёмка включает длинный разговор, несколько provider renewals, mobile handover, ограниченную потерю сети с сохранением source, экран off/навигатор, Bluetooth/audio focus и несколько изолированных пользователей. Числа из чужого отчёта остаются его измерениями до независимой проверки исходных журналов. Подробнее: [независимый аудит](../audits/voice-reliability-independent-20261013.md).
+
 
 ## 5. Многопользовательская модель — обязательный архитектурный инвариант
 
@@ -239,7 +258,7 @@ Capability switch сохраняет **один пользовательский
 - physical Android WebView microphone over the already accepted shared public PWA WSS path;
 - physical microphone/noise/poor-network acceptance;
 - hosted Android 14 self-update `android-v6 → android-v7`: **PASS** (manifest SHA-256, app update UI, verified download, Package Installer handoff, same-signature in-place update, UID preserved); финальный пользовательский tap остаётся physical gate;
-- Android reboot/background durable capture; native implementation must hand off to the existing Live/replay contract rather than open a parallel WSS;
+- Android native voice/background durable capture remains unimplemented; the target replaces WebView capture/transport with the shared native framework path and preserves the existing Live/replay contract, never a parallel provider session;
 - Regional Knowledge delegated OAuth E2E.
 
 ## 15. Shared OAuth, Regional Knowledge и canonical POI ownership
@@ -382,3 +401,4 @@ Accepted on 3 October 2026:
 7. `127.0.0.1:8196` remains private.
 
 Public ingress is therefore no longer a release blocker.
+
