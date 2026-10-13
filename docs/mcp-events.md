@@ -60,9 +60,9 @@ Run the existing installed release's Python with its normal service environment
 HTTP endpoint or call note/analysis tools for this check:
 
 ```bash
-python scripts/mcp_test_request.py subscriptions
-python scripts/mcp_test_request.py create --project-id <id> --command-id p0-20261013-one
-python scripts/mcp_test_request.py status --request-id <returned-request-id>
+scripts/run_mcp_test_request.sh subscriptions
+scripts/run_mcp_test_request.sh create --project-id <id> --command-id p0-20261013-one
+scripts/run_mcp_test_request.sh status --request-id <returned-request-id>
 ```
 
 Creation requires the existing platform owner, current project ACL and at least

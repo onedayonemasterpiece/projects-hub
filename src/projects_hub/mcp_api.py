@@ -245,7 +245,7 @@ def attach_mcp_routes(app, *, store, settings, actor_id_from_request):
             <label>Проект <select required name="project_id">{options}</select></label>
             <button type="submit">Разрешить подключение</button></form><p><a href="/">Отмена</a></p></html>'''
         return HTMLResponse(page, headers={'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
-                                         'Content-Security-Policy': "default-src 'none'; form-action 'self'; frame-ancestors 'none'"})
+                                         'Content-Security-Policy': "default-src 'none'; form-action 'self' https://chatgpt.com; frame-ancestors 'none'"})
 
     @app.post('/mcp/oauth/consent')
     async def consent(request: Request):
