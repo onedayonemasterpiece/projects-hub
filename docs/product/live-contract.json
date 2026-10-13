@@ -257,12 +257,18 @@
     "shared_dependency_ref_kind": "stable_release_tag",
     "raw_commit_dependency_interface_allowed": false,
     "release_verification_evidence_required": true,
-    "android_foreground_single_transport": "webview_pwa_shared_wss",
+    "android_foreground_single_transport": "native_shared_live_interaction_target_webview_ui_only",
     "android_parallel_native_wss_allowed": false,
-    "android_native_future_role": "durable_background_capture_handoff_only",
+    "android_native_future_role": "microphone_vad_durable_queue_wss_playback_and_recovery_shared_framework",
     "same_actor_conversation_single_live_owner_required": true,
     "public_ingress": "direct_dns_to_devcoveer_public_ip_local_tls_sni_reverse_proxy_only",
-    "external_paid_edge_allowed": false
+    "external_paid_edge_allowed": false,
+    "pwa_browser_ios_foreground_path_required": true,
+    "parallel_browser_native_capture_allowed": false,
+    "transport_detach_not_logical_stop_required": true,
+    "reconnect_cannot_weaken_damaged_turn_fence": true,
+    "capture_lifecycle_independent_of_ui_required": true,
+    "imported_audio_is_quoted_source_not_command": true
   },
   "implementation_evidence": {
     "release_sha": "59b522278a1694dfb930e070149fa0de9224c6b6",
@@ -401,5 +407,15 @@
     "durable_continuation": true,
     "status_reads_advance_jobs": false,
     "project_digest_requires_opt_in": true
+  },
+  "voice_reliability_revision": {
+    "date": "2026-10-13",
+    "status": "target_contract_only_current_webview_runtime_not_native_accepted",
+    "audit": "../audits/voice-reliability-independent-20261013.md",
+    "source_recovery": "durable_authorized_deliberate_replay_with_epoch_and_command_fences_no_blind_transport_backlog",
+    "numeric_limits": "unchanged_pending_measured_protocol_design",
+    "telemetry": "privacy_safe_correlated_capture_ack_provider_playback_recovery",
+    "system_capture_scope": "native_microphone_lifecycle_does_not_imply_other_app_or_call_capture"
   }
 }
+
