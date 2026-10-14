@@ -150,3 +150,7 @@ Android теперь существует как отдельное устана
 После подтверждённого calendar result backend автоматически создаёт event card. Реализованы bounded templates `generic` и `podcast`, checklist готовности и follow-up tasks со статусами proposed/accepted/done/snoozed/rejected; UI показывает это в существующих floating islands. Backend suite после этого слоя: 80 pytest PASS; PWA production build PASS.
 
 Не закрыты и поэтому не подменяются mock/unit evidence: physical Android WebView-microphone/calendar E2E, Android offline/reboot capture, 3+ independent-user real-provider soak и production GitHub App registration/credentials (`github_app_configured=false`). Публичный direct ingress `projects-hub.kenigevents.ru` уже принят по пути DNS → DevCoveer → локальный TLS/SNI → `127.0.0.1:8196`; внешний Yandex edge не используется. Работающий Record Idea Hub не выключается до отдельной физической приёмки нового Android capture/recovery пути.
+
+## Проектная информация · 14 октября 2026
+
+[21. Онтология, единый доступ Миры/dot и Slack ↔ Hub](21-project-information-unified-access.md) — один канонический аналитический трек: AS-IS, владение версиями, shared lookup, backfill/ACL/retention, этапы и подготовленные вопросы. Обсуждение вопросов начинается после готовности действующей question-session системы; этот документ не является новой реализационной постановкой.

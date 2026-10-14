@@ -274,3 +274,7 @@ Search/retrieval может быть полнотекстовым или век�
 - Отзыв grant закрывает cached/индексированные excerpts; edit/delete не выдаётся как прежняя актуальная версия.
 - Большие архивы/списки проектов paginated; `has_more` и gaps видимы, решений не теряют.
 - Budget denial/retry не дублирует ответ, mutation, continuation или Slack delivery.
+
+### Канонический трек интеграции
+
+[21. Проектная информация, общий доступ и Slack ↔ Hub](21-project-information-unified-access.md) связывает этот durable-memory контракт с онтологией, source coverage/backfill, revision ownership, общим lookup и failure matrix. Контекстные ограничения и правила §14 сохраняются; весь Slack-архив не становится Live bootstrap.

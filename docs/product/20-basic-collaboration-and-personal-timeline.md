@@ -262,3 +262,7 @@ PR [#87](https://github.com/onedayonemasterpiece/projects-hub/pull/87), head `d4
 Обработчик: [SummaryPayload](https://github.com/onedayonemasterpiece/my-data-hub/blob/e7972f7339b0abe28634bd1782c0d517c65ab06e/src/my_data_hub/voice_intake/contracts.py), [Gemini summarize](https://github.com/onedayonemasterpiece/my-data-hub/blob/e7972f7339b0abe28634bd1782c0d517c65ab06e/src/my_data_hub/voice_intake/gemini.py), [Markdown renderer](https://github.com/onedayonemasterpiece/my-data-hub/blob/e7972f7339b0abe28634bd1782c0d517c65ab06e/src/my_data_hub/voice_intake_v2/markdown.py). Эти файлы подтверждают доступные части для переиспользования; существующий готовый Projects Hub text endpoint не заявляется.
 
 Архитектурное основание — [центральная Мира](12-central-live-agent.md), [shared Live agent architecture](https://github.com/onedayonemasterpiece/live-interaction/blob/main/docs/live-agent-architecture.md), [защищённые требования](../../.devcoveer/requirements.json). Ссылки на код и ограничения исходного состояния собраны в [аудите](../audits/collaboration-design-update-20261006.md).
+
+## Связанный аналитический трек · 14 октября 2026
+
+[21. Проектная информация, единый доступ и Slack ↔ Hub](21-project-information-unified-access.md) — каноническая аналитика общего информационного слоя поверх этой коллаборации. У проекта допускается несколько каналов; exact route обсуждения, ACL, версии и связь нетасковых материалов с задачами описаны там. Новый документ не отменяет voice-first UX, личную ленту или одну доску и не объявляет будущие функции реализованными.

@@ -236,3 +236,7 @@ Compression не снимает `RESOURCE_TOKEN_BUDGET`. Framework допуск�
 3. Стартовая гипотеза для испытаний: bootstrap ≤8k estimated tokens, одна retrieval-страница ≤4k, одновременно подгруженное evidence ≤16k; мягкий high-water всего контекста 64k при модельном input ceiling 131072. Эти числа **не реализованы, не runtime-квоты и не обещание точного tokenizer**; уточнить измерением русской речи/текста и фактической моделью. Проверять отдельно byte-based ARC admission.
 4. При превышении бюджетов выдавать меньшую страницу с `has_more/cursor`, ссылки и явную неполноту. Не удалять исходник, не отбрасывать решения и не заменять полный ответ урезанным без маркировки.
 5. Durable evidence/decisions/answer receipts остаются вне Live-контекста; восстановление и ACL — по [памяти](10-conversation-memory.md#14-slack-история-и-восстановление-рабочего-набора).
+
+### Связанный информационный контракт
+
+[21. Проектная информация и единый доступ](21-project-information-unified-access.md) применяет этот baseline к bounded lookup Миры/dot и Slack ↔ Hub. Он не меняет provider/context/admission механизмы и не превращает proposed budgets в production-квоты.

@@ -162,3 +162,7 @@ Agent может использовать контекст, чтобы поня�
 - отсутствие скрытых дополнительных LLM calls.
 
 Успех измеряется правильным смыслом и правильным target/receipt, а не только валидным JSON словаря.
+
+## Общий lookup Миры и dot
+
+Следующий аналитический трек — [21. Проектная информация и Slack ↔ Hub](21-project-information-unified-access.md). Он описывает project/discussion resolution по человеческому описанию, одинаковые ACL/provenance/pagination для Live и MCP и разделение project channel links от точного delivery route. Имена операций там предложены для проектирования, не объявлены доступными tools.
