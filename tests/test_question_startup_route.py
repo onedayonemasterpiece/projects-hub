@@ -40,12 +40,17 @@ async def test_pending_questions_are_executable_in_core_through_explicit_complet
             return await adapter.execute_tool(session, {"id": "control-" + action, "name": "collaboration_questions_answer",
                 "args": {"analysis_id": analysis["id"], "session_action": action, **flags}})
         await control("accept")
+        after_consent = initialize()
+        assert after_consent["context"]["pending_question_count"] == 0
+        session = SimpleNamespace(state=after_consent["state"], capability="core")
+        assert len((await adapter.execute_tool(session, {"name": "collaboration_questions_inbox", "args": {}}))["questions"]) == 2
         await control("important_only", important_only=True)
         await control("pause")
         restarted = initialize()
         assert restarted["context"]["pending_question_count"] == 0
         assert {"collaboration_questions_inbox", "collaboration_questions_answer"} <= {
             f["name"] for f in restarted["configuration"]["functions"]}
+        session = SimpleNamespace(state=restarted["state"], capability="core")
         resumed = await control("resume")
         assert resumed["important_only"] is True
         question = next(q for q in analysis["questions"] if q["blocking"])
