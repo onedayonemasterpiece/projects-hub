@@ -366,6 +366,7 @@ def create_app(
                 github_connections=app.state.github_connections,
                 collaboration=app.state.collaboration,
                 collaboration_analysis=app.state.collaboration_analysis,
+                question_events=app.state.mcp_events,
                 regional_knowledge_factory=regional_knowledge_factory,
             )
         return app.state.live_host
@@ -429,7 +430,9 @@ def create_app(
             raise _error(exc) from exc
         return actor_id
 
-    attach_mcp_routes(app, store=store, settings=settings, actor_id_from_request=actor_id_from_request)
+    attach_mcp_routes(app, store=store, settings=settings, actor_id_from_request=actor_id_from_request,
+                      analysis_service=app.state.collaboration_analysis)
+    app.state.collaboration_analysis.question_events = app.state.mcp_events
 
     app.state.board_hub = attach_board_routes(
         app,

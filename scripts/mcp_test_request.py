@@ -26,6 +26,8 @@ def main() -> int:
     status = commands.add_parser('status')
     status.add_argument('--request-id', required=True)
     commands.add_parser('subscriptions')
+    inspect_binding = commands.add_parser('binding-status', help='Read one existing owner-approved route without changing permissions')
+    inspect_binding.add_argument('--binding-id', required=True)
     bind=commands.add_parser('bind-discussion',help='Trusted owner confirmation of a single discussion/Slack route; never available through MCP tools')
     bind.add_argument('--project-id',required=True)
     bind.add_argument('--note-id',required=True)
@@ -61,6 +63,14 @@ def main() -> int:
                                            context_actor_id=args.context_actor_id,event_name=args.event_name,binding_id=args.binding_id)
         elif args.operation == 'status':
             result = events.status(owner['actor_id'], args.request_id)
+        elif args.operation == 'binding-status':
+            store.require_platform_owner(owner['actor_id'])
+            row = store.db.execute('SELECT id,owner_actor_id,project_id,note_id,client_id,slack_workspace_id,slack_channel_id,slack_thread_ts,revision,state,questions_allowed FROM mcp_discussion_bindings WHERE id=?', (args.binding_id,)).fetchone()
+            if not row:
+                raise StoreError('REQUEST_UNAVAILABLE', 'Binding unavailable')
+            result = dict(row)
+            note = store.db.execute('SELECT repository_full_name,repository_path,revision,repository_sha FROM project_notes WHERE id=?', (row['note_id'],)).fetchone()
+            result['source'] = dict(note) if note else None
         elif args.operation in ('provision-service', 'provision-tunnel'):
             # Create exclusively before changing the DB: a retry cannot silently
             # rotate a configured secret or overwrite an existing private file.

@@ -231,9 +231,10 @@ async def test_analysis_questions_grouped_answer_and_restart_safe_continuation(t
     assert all(item["addressed_to_actor_id"] == actor_b for item in completed["questions"])
 
     inbox = service.inbox(actor_id=actor_b, workspace_id=workspace_id)
-    assert [item["id"] for item in inbox] == [
+    assert {item["id"] for item in inbox} == {
         item["id"] for item in completed["questions"]
-    ]
+    }
+    assert inbox[0]["blocking"]  # The inbox is priority-sorted, not insertion-sorted.
 
     blocking = next(item for item in inbox if item["blocking"])
     optional = next(item for item in inbox if not item["blocking"])
@@ -917,6 +918,194 @@ async def test_explicit_refresh_serializes_with_background_analysis_worker(tmp_p
         # Both callers may observe the provider, but serialization prevents
         # overlapping materialization/repair transactions.
         assert bridge.reads.count("provider-analysis-1") <= 2
+    finally:
+        await service.close()
+        store.close()
+
+
+
+@pytest.mark.asyncio
+async def test_later_without_time_replays_exact_receipt_after_clock_moves(tmp_path: Path, monkeypatch):
+    (
+        store, collaboration, service, bridge,
+        actor_a, actor_b, workspace_id, project_id,
+    ) = setup(tmp_path)
+    try:
+        note = await collaboration.create_note(
+            actor_id=actor_a, workspace_id=workspace_id, project_id=project_id,
+            command_id="cmd.note.later.idempotent", title="Later",
+            body="Return later without inventing a deadline.",
+        )
+        started = await service.start_analysis(
+            actor_id=actor_a, workspace_id=workspace_id, project_id=project_id,
+            note_id=note["id"], addressed_to_actor_id=actor_b,
+            command_id="cmd.analysis.later.idempotent", model="kimi_k3",
+            purpose="requirements", question="Formulate a question.",
+        )
+        done = await service.refresh_analysis(
+            actor_id=actor_a, workspace_id=workspace_id, analysis_id=started["id"]
+        )
+        question = next(q for q in done["questions"] if q["blocking"])
+        responses = [{"question_id": question["id"], "disposition": "later", "body": ""}]
+        receipt = service.answer_questions(
+            actor_id=actor_b, workspace_id=workspace_id,
+            analysis_id=started["id"], command_id="cmd.answer.later.stable",
+            responses=responses,
+        )
+        assert receipt["continuation"] == "deferred"
+        monkeypatch.setattr("projects_hub.collaboration_analysis._now_ms", lambda: 9999999999999)
+        assert service.answer_questions(
+            actor_id=actor_b, workspace_id=workspace_id,
+            analysis_id=started["id"], command_id="cmd.answer.later.stable",
+            responses=responses,
+        ) == receipt
+        assert all(q["id"] != question["id"] for q in service.inbox(
+            actor_id=actor_b, workspace_id=workspace_id
+        ))
+        assert len(bridge.consults) == 1
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_legacy_question_schema_adds_columns_before_index(tmp_path: Path):
+    store = DurableStore(tmp_path / "data")
+    try:
+        # Existing installations can have either table without the new columns.
+        with store._lock:
+            store.db.execute(
+                "CREATE TABLE collaboration_analyses (id TEXT PRIMARY KEY, "
+                "workspace_id TEXT, project_id TEXT, note_id TEXT, "
+                "initiating_actor_id TEXT, addressed_to_actor_id TEXT, command_id TEXT, "
+                "request_sha256 TEXT, model_alias TEXT, purpose TEXT, question TEXT, "
+                "source_snapshot_json TEXT, evidence_bundle TEXT, input_sha256 TEXT, "
+                "status TEXT, provider_task_id TEXT, result_markdown TEXT, result_json TEXT, "
+                "error_code TEXT, created_at_ms INTEGER, updated_at_ms INTEGER, finished_at_ms INTEGER)"
+            )
+            store.db.execute(
+                "CREATE TABLE collaboration_questions (id TEXT PRIMARY KEY, analysis_id TEXT, "
+                "workspace_id TEXT, project_id TEXT, asked_by_actor_id TEXT, "
+                "addressed_to_actor_id TEXT, addressed_role TEXT, prompt TEXT, "
+                "shared_context TEXT, blocking INTEGER, alternatives_json TEXT, "
+                "state TEXT, disposition TEXT, answer_text TEXT, "
+                "answered_by_actor_id TEXT, deferred_until_ms INTEGER, "
+                "created_at_ms INTEGER, updated_at_ms INTEGER)"
+            )
+        collaboration = CollaborationService(store, FakeGitHub(store))
+        service = CollaborationAnalysisService(store, collaboration, bridge=FakeBridge())
+        try:
+            for table, expected in [
+                ("collaboration_analyses", {"origin", "package_state", "slack_binding_revision"}),
+                ("collaboration_questions", {"priority", "deadline_ms", "stale_since_ms"}),
+            ]:
+                columns = {row["name"] for row in store.db.execute(f"PRAGMA table_info({table})")}
+                assert expected <= columns
+            assert store.db.execute(
+                "SELECT name FROM sqlite_master WHERE name='collaboration_questions_priority_idx'"
+            ).fetchone()
+        finally:
+            await service.close()
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_dot_package_is_durable_scoped_idempotent_and_provider_free(tmp_path: Path):
+    from projects_hub.mcp_auth import MCPAuth, REDIRECT
+    from projects_hub.mcp_events import MCPEvents
+
+    (
+        store, collaboration, service, bridge,
+        actor_a, actor_b, workspace_id, project_id,
+    ) = setup(tmp_path)
+    try:
+        note = await collaboration.create_note(
+            actor_id=actor_a, workspace_id=workspace_id, project_id=project_id,
+            command_id="cmd.note.dot.package1", title="Dot analysis source",
+            body="One essential decision and one optional suggestion.",
+        )
+        auth = MCPAuth(store, "https://projects-hub.kenigevents.ru")
+        events = MCPEvents(store, auth, "s" * 48)
+        credential = auth.provision_service(
+            actor_a, "ph_service_questions_test", [REDIRECT],
+        )
+        producer = auth.service_client(credential["client_id"])["actor_id"]
+        binding = events.bindings.bind(
+            actor_a, project_id, note["id"], credential["client_id"],
+            "T0123456789", "C0123456789", "1791900001.000001",
+            allow_questions=True,
+        )
+        payload = dict(
+            initiating_actor_id=actor_a, producer_actor_id=producer,
+            workspace_id=workspace_id, project_id=project_id, note_id=note["id"],
+            addressed_to_actor_id=actor_b, command_id="cmd.dot.package1",
+            external_analysis_id="external-analysis-01", origin="slack",
+            source_kind="project_note", source_id=note["id"],
+            source_revision=note["revision"], summary="Clarify two choices",
+            purpose="requirements", binding_id=binding["id"],
+            binding_revision=binding["revision"],
+            slack_workspace_id=binding["slack_workspace_id"],
+            slack_channel_id=binding["slack_channel_id"],
+            slack_thread_ts=binding["slack_thread_ts"], questions=[
+                dict(external_question_id="critical-choice-01",
+                     prompt="Should users get one board?",
+                     context="The agreed navigation is a single board.",
+                     reason="We must select the rendering path.",
+                     priority="critical", blocking=True),
+                dict(external_question_id="optional-choice-01",
+                     prompt="Should it be animated?",
+                     context="Animation is not essential.",
+                     reason="It affects only presentation.",
+                     priority="low", blocking=False),
+            ],
+        )
+        package = service.publish_dot_package(**payload)
+        assert package["model"] == "dot"
+        assert package["source_verified"] and package["source_revision"] == note["revision"]
+        assert package["producer_actor_id"] == producer
+        assert package["package_state"] == "waiting_answers"
+        assert len(package["questions"]) == 2
+        assert package["questions"][0]["asked_by_actor_id"] == producer
+        assert package["slack_thread_ts"] == binding["slack_thread_ts"]
+        assert service.publish_dot_package(**payload)["id"] == package["id"]
+        with pytest.raises(StoreError) as conflict:
+            service.publish_dot_package(**{
+                **payload, "summary": "Changed payload with same command",
+            })
+        assert conflict.value.code == "ANALYSIS_COMMAND_CONFLICT"
+        with pytest.raises(StoreError) as stale:
+            service.publish_dot_package(**{
+                **payload, "command_id": "cmd.dot.package2",
+                "source_revision": note["revision"] + 1,
+            })
+        assert stale.value.code == "QUESTION_SOURCE_STALE"
+        critical = next(q for q in package["questions"] if q["blocking"])
+        optional = next(q for q in package["questions"] if not q["blocking"])
+        partial = service.answer_questions(
+            actor_id=actor_b, workspace_id=workspace_id,
+            analysis_id=package["id"], command_id="cmd.dot.optional",
+            responses=[{"question_id": optional["id"], "disposition": "unknown"}],
+        )
+        assert partial["continuation"] == "waiting_answers"
+        ready = service.answer_questions(
+            actor_id=actor_b, workspace_id=workspace_id,
+            analysis_id=package["id"], command_id="cmd.dot.critical",
+            responses=[{"question_id": critical["id"], "disposition": "answer", "body": "One board."}],
+        )
+        assert ready["continuation"] == "ready_to_complete"
+        completed = service.control_question_session(
+            actor_id=actor_b, workspace_id=workspace_id, analysis_id=package["id"],
+            command_id="cmd.dot.complete", action="complete",
+        )
+        assert completed["continuation"] == "waiting_event_transport"
+        assert service.get_analysis(
+            actor_id=actor_a, workspace_id=workspace_id, analysis_id=package["id"]
+        )["package_state"] == "all_answered"
+        assert bridge.consults == []
+        assert store.db.execute(
+            "SELECT COUNT(*) FROM collaboration_jobs WHERE analysis_id=?", (package["id"],)
+        ).fetchone()[0] == 0
     finally:
         await service.close()
         store.close()

@@ -381,7 +381,7 @@ def test_sdk_discovery_catalog_subscription_tools_and_csrf(setup, tmp_path):
         result = discovery.json()['result']
         assert result['resultType'] == 'complete'
         assert result['supportedVersions'] == ['2026-07-28'] and result['capabilities']['events'] == {}
-        assert {t['name'] for t in rpc(client, token, 'tools/list').json()['result']['tools']} == {'get_test_request', 'record_test_response','get_project_request','record_request_result'}
+        assert {t['name'] for t in rpc(client, token, 'tools/list').json()['result']['tools']} == {'get_test_request', 'record_test_response','get_project_request','record_request_result','start_question_session'}
         assert rpc(client, token, 'events/list').json()['result']['events'] == [REQUEST_EVENT_DEFINITION,EVENT_DEFINITION]
         subscribed = rpc(client, token, 'events/subscribe', dict(name=EVENT, arguments={'project_id': grant['project_id']}, delivery=DELIVERY))
         assert subscribed.status_code == 200, subscribed.text
@@ -619,7 +619,7 @@ def test_private_tunnel_credential_survives_restart_and_remains_revocable_servic
                                 session_secret='s'*48, public_origin=ORIGIN), store=reopened)
         with TestClient(app, base_url=ORIGIN) as client:
             assert rpc(client, token, 'server/discover').status_code == 200
-            assert len(rpc(client, token, 'tools/list').json()['result']['tools']) == 4
+            assert len(rpc(client, token, 'tools/list').json()['result']['tools']) == 5
         restored.project_grant(principal['id'], owner['project_id'])
         restored.disable_service(owner['actor_id'], issued['client_id'])
         with pytest.raises(StoreError):
@@ -716,6 +716,81 @@ def live_fixture(setup):
         bindings.append(events.bindings.bind(owner['actor_id'],project,note_id,service['client_id'],'T0123456789','C0123456789',f'179190000{index}.000001'))
     return store,auth,events,receiver,owner,service,bindings
 
+
+
+
+@pytest.mark.asyncio
+async def test_question_session_owner_opt_in_dot_package_without_consult_or_redirect(setup):
+    from projects_hub.collaboration import CollaborationService
+    from projects_hub.collaboration_analysis import CollaborationAnalysisService
+
+    store,auth,events,receiver,owner,service,bindings=live_fixture(setup)
+    project=owner['project_id']
+    binding=bindings[0]
+    note_id=binding['note_id']
+    note=store.db.execute('SELECT * FROM project_notes WHERE id=?',(note_id,)).fetchone()
+    await events.subscribe(service['id'],REQUEST_EVENT,{'project_id':project},DELIVERY)
+    with pytest.raises(StoreError) as denied:
+        events.start_question_session(owner['actor_id'],project,note_id,'questions.start.first')
+    assert denied.value.code=='QUESTION_ROUTE_REQUIRED'
+    opted=events.bindings.bind(
+        owner['actor_id'],project,note_id,service['client_id'],
+        binding['slack_workspace_id'],binding['slack_channel_id'],binding['slack_thread_ts'],
+        expected_revision=1,allow_questions=True,
+    )
+    assert opted['revision']==2 and opted['questions_allowed']==1
+    request=events.start_question_session(owner['actor_id'],project,note_id,'questions.start.first')
+    assert request['request_id']
+    assert events.start_question_session(owner['actor_id'],project,note_id,'questions.start.first')['request_id']==request['request_id']
+    assert await events.deliver_one()
+    read=events.get_project_request(service['id'],project,request['request_id'])
+    assert read['request_kind']=='question_start'
+    assert read['source_revision']==note['revision']
+    assert read['allowed_result_kinds']==['question_package']
+    assert read['slack']=={'workspace_id':opted['slack_workspace_id'],'channel_id':opted['slack_channel_id'],'thread_ts':opted['slack_thread_ts']}
+    analysis=CollaborationAnalysisService(store,CollaborationService(store,None))
+    events.analysis_service=analysis
+    payload=dict(
+        kind='question_package',external_analysis_id='analysis-generated-by-dot-01',
+        source_kind='project_note',source_id=note_id,source_revision=note['revision'],
+        source_repository_sha=None,purpose='requirements',summary='One product decision',
+        questions=[dict(external_question_id='question-generated-by-dot-01',
+                        prompt='One board or multiple boards?',
+                        context='Owner prefers one active project board.',
+                        reason='Navigation scope needs clarification.',
+                        priority='critical',blocking=True,deadline_ms=None)],
+    )
+    with pytest.raises(StoreError):
+        events.record_request_result(service['id'],project,request['request_id'],request['eventId'],
+                                     {**payload,'source_revision':note['revision']+1})
+    saved=events.record_request_result(service['id'],project,request['request_id'],request['eventId'],payload)
+    assert saved['question_package']['model']=='dot'
+    assert saved['question_package']['producer_actor_id']==service['actor_id']
+    assert saved['destinations']['slack_state']=='pending'
+    assert saved['analysis_id']==saved['question_package']['id']
+    assert events.record_request_result(service['id'],project,request['request_id'],request['eventId'],payload)['analysis_id']==saved['analysis_id']
+    with pytest.raises(StoreError):
+        events.record_request_result(service['id'],project,request['request_id'],request['eventId'],
+                                     {**payload,'summary':'Different question package'})
+    workspace=store.db.execute('SELECT workspace_id FROM projects WHERE id=?',(project,)).fetchone()[0]
+    receipt=analysis.answer_questions(
+        actor_id=owner['actor_id'],workspace_id=workspace,
+        analysis_id=saved['analysis_id'],command_id='questions.answer.first',
+        responses=[{'question_id':saved['question_package']['questions'][0]['id'],
+                    'disposition':'answer','body':'One board.'}],
+    )
+    assert receipt['continuation']=='ready_to_complete'
+    analysis.question_events=events
+    completed=analysis.control_question_session(
+        actor_id=owner['actor_id'],workspace_id=workspace,analysis_id=saved['analysis_id'],
+        command_id='questions.complete.first',action='complete',
+    )
+    assert completed['continuation']=='ready_for_dot'
+    assert completed['continuation_request_id']
+    assert store.db.execute(
+        'SELECT COUNT(*) FROM collaboration_jobs WHERE analysis_id=?',(saved['analysis_id'],)
+    ).fetchone()[0]==0
+    await analysis.close()
 
 @pytest.mark.asyncio
 async def test_two_bound_discussions_same_subscription_independent_destinations_restart(setup):

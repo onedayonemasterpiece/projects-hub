@@ -7,13 +7,13 @@ BUNDLES = {
     "collaboration": [
         "collaboration_personal_brief", "collaboration_brief_seen",
         "collaboration_general_news_set", "collaboration_questions_inbox",
-        "collaboration_questions_answer", "collaboration_question_respond",
+        "collaboration_questions_request", "collaboration_questions_answer", "collaboration_question_respond",
         "collaboration_continuation_status", "collaboration_view",
     ],
     "notes": [
         "project_notes_list", "project_note_create", "project_note_get",
         "project_note_reply", "project_participants_list", "project_note_analyze",
-        "collaboration_view",
+        "collaboration_questions_request", "collaboration_view",
     ],
     "memory": ["memory_read_project", "voice_source_read", "memory_commit_voice_source", "memory_finish_ephemeral"],
     "repositories": ["github_repositories_list", "github_repository_read"],
@@ -149,6 +149,6 @@ OVERLAYS = {'core': 'Read allowed projects before choosing focus. Use runtime_ve
 
 OVERLAYS.update({
     "board": "Работай с одной доской текущего проекта внутри личной timeline. На открыть/закрыть используй board_navigate; для видимых объектов board_query view_context, затем board_edit с проверкой revision. Вся запись только через Миру, UI read-only.",
-    "collaboration": "На «привет»/«что нового» озвучь лично адресованную collaboration_personal_brief, после фактической сводки brief_seen. Затем проверь collaboration_questions_inbox и задай один существенный ожидающий вопрос аналитики ГОЛОСОМ; не высыпай список. Допустимы четыре исхода: answer с текстом, unknown («не знаю»), skip («пропустить»), later («позже»). Дожидайся backend receipt и не снимай blocker без ответа. Если пользователь сразу поставил другую задачу, она приоритетнее сводки. По умолчанию нет карточек; collaboration_view только на явное «покажи на экране / закрой».",
+    "collaboration": "На «привет» быстро ответь голосом; если context.pending_question_count>0, ненавязчиво предложи обсудить вопросы, но НЕ задавай их без согласия. На «что нового» прочти лично адресованную collaboration_personal_brief и после фактической сводки brief_seen, затем collaboration_questions_inbox; предложи обсуждение. После согласия спрашивай один существенный ожидающий вопрос голосом, с контекстом и причиной, можно несколько ответов в одном turn. Допустимы четыре исхода: answer с точными словами, unknown, skip, later. Не снимай blocker без содержательного ответа. На явную просьбу начать dot-анализ одобренной заметки используй collaboration_questions_request без Kimi/DeepSeek. Если другая задача — она приоритетнее. По умолчанию нет карточек; collaboration_view только на явное «покажи на экране / закрой».",
     "notes": "Проектная заметка — общий объект, не личная переписка. Создавай project_note_create только по явной просьбе; читай и отвечай через project_notes_list/get/reply. На голосовой запрос прочитать или рассказать не открывай виджет. Только на явное «ПОКАЖИ заметку на экране» вызови collaboration_view(view=note, note_id=...). Проверяй участие и полномочия, а сильный анализ получай через provided-only project_note_analyze.",
 })
