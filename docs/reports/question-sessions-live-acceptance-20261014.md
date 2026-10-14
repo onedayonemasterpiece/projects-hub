@@ -4,7 +4,7 @@
 
 The real owner phone → Mira questions → saved answers → MCP continuation → dot analysis → verified GitHub result → original Slack thread path passed on release **0.1.62**, deployed SHA `b44a1f58c6fcf2de8b24b1fdd5ef96ca29c5b90a`.
 
-**The final spoken Mira notification is not yet verified.** Backend `mira_state=available` means the saved result is readable, not that Mira has announced it or the owner has heard it. Full end-to-end acceptance remains open at that last boundary. This report does not claim that the product requirements discussed in the note have been implemented.
+**The final spoken Mira notification failed in the real owner follow-up at 07:40 UTC.** Backend `mira_state=available` means the saved result is readable, not that Mira has announced it or the owner has heard it. Full end-to-end acceptance remains open at that last boundary. This report does not claim that the product requirements discussed in the note have been implemented.
 
 No new deployment, question package, answer, grant, subscription or binding was created to prepare this report. Raw audio and answer transcripts are not reproduced here.
 
@@ -25,6 +25,12 @@ At07:07UTC on0.1.61, Mira offered four questions and then claimed system restric
 Core startup exposed only the pending count, leaving question access behind an uncalled capability switch. PR170 exposes the existing inbox and answer/session-control functions directly when the ACL-checked inbox has open questions, keeping the nine-tool limit and retaining the existing owner-development router. Actual accept/resume stores the received-offer marker; a restarted session can still read and continue unfinished questions.
 
 Deterministic regression covers core initialization, inbox, accept, important-only, pause, new-session resume, answer, explicit completion and ACL revocation. It does not replace the subsequent real owner phone test.
+
+### Failed final notification, 07:39–07:40 UTC
+
+The owner reported the missing notice in [the original task thread](https://app.slack.com/archives/C0C872SJFA7/p1791963627219879?thread_ts=1791920569.001289&cid=C0C872SJFA7). Registered logs identify session `live_14ce9691171f45fc8c7f8b5d60099841`, 07:39:36–07:40:04 UTC, on client/backend 0.1.62 and the deployed SHA above. Audio/transcript events and completed turns were present; no result-reading tool call occurred in that session.
+
+Code inspection found that core initialization supplies pending questions and owner-development completions, but not the completed question-analysis personal notification. With all questions completed, the pending count is zero and ordinary onboarding can win the greeting. Backend availability and a confirmed Slack receipt therefore did not establish a working startup notice. Repair and a new real spoken check are required; existing answers, analysis and delivery receipts remain valid.
 
 ## Authorized test scope
 
@@ -56,7 +62,7 @@ Deterministic regression covers core initialization, inbox, accept, important-on
    - Independent exact-commit GitHub readback matched this blob.
 7. Response `mcp_response_064828c2163b3156a9b484a7c4a073ba`; claim `claim_da1bbe62ab6f6d663b5626db9d6fd5e7`.
 8. [Slack result message](https://app.slack.com/archives/C0C872SJFA7/p1791963451804759?thread_ts=1791913871.135149&cid=C0C872SJFA7), timestamp `1791963451.804759`, was sent to the original test root. The coordinating delivery verified the original message; independent backend readback confirms slack_state=confirmed with this message ID.
-9. At07:38UTC independent MCP readback: request completed, package completed, backend_state=stored, mira_state=available, slack_state=confirmed. The final spoken Mira notice remains unverified.
+9. At07:38UTC independent MCP readback: request completed, package completed, backend_state=stored, mira_state=available, slack_state=confirmed. The subsequent real phone check failed: at 07:40:27 UTC the owner reported that Mira mentioned only the theme, not the completed analysis.
 
 ## What is and is not accepted
 
@@ -64,7 +70,7 @@ Deterministic regression covers core initialization, inbox, accept, important-on
 
 **Verified deterministically, not exhaustively live:** stale source/binding/ACL rejection, idempotent replay, pause/filter/reconnect/partial completion, transactional request/outbox and restart recovery cases in the test suite.
 
-**Still open:** final real Mira announcement and optional detailed spoken result; a full phone interruption/pause/restart scenario; prolonged idle/restart delivery adversity beyond the observed real event; all unrelated product behavior described in the resulting requirements analysis.
+**Failed and requiring repair:** final real Mira announcement and optional detailed spoken result; a full phone interruption/pause/restart scenario; prolonged idle/restart delivery adversity beyond the observed real event; all unrelated product behavior described in the resulting requirements analysis.
 
 An answered question is a receipt, not proof that every product ambiguity is resolved. The result explicitly retains undecided GitHub/model outage behavior and other open design details.
 
