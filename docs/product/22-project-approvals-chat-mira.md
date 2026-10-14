@@ -4,6 +4,64 @@
 Проверенный срез AS-IS: [main b44a1f58](https://github.com/onedayonemasterpiece/projects-hub/tree/b44a1f58c6fcf2de8b24b1fdd5ef96ca29c5b90a).
 Этот документ не меняет ACL, OAuth grants, bindings, подписки, код или deployment.
 
+## 0. Проверенный feasibility verdict · revision 2, 2026-10-14 08:34 UTC
+
+**Да, голосовой ответ может быть единственным согласием для обычных действий, допускающих предварительное разрешение, если приложение достоверно связывает конкретное указание с аутентифицированным аккаунтом владельца. Повторное «да» в чате тогда не нужно. Но сегодня установленный Projects Hub этого end-to-end не реализует и не доказывает.**
+
+Предыдущая редакция оставляла «trusted ingress» абстрактным и смешивала две разные проверки. Исправление: **проверка автора указания** не равна **обязательной форме конкретного действия**. Нельзя объявлять любую внешнюю авторизованную команду недопустимой лишь потому, что она пришла через MCP; нельзя и считать любую MCP-запись owner approval. Отдельный универсальный host API «импортировать разрешение» для обычных pre-approval действий не является установленным требованием и не найден среди доступных интерфейсов.
+
+### Что проверено сейчас
+
+Повторный source read: [main 76bc5f2d](https://github.com/onedayonemasterpiece/projects-hub/tree/76bc5f2d84424f26bf3d0056687ae6a5dfcbde81). Ниже текущие факты; срез раздела 3 оставлен как историческая основа.
+
+| Вопрос | Вердикт и основание |
+| --- | --- |
+| Может ли MCP доставить событие и запись ответа? | Да, транспорт уже есть: request/outbox/get_project_request и question receipts. Он переносит данные, но сам не удостоверяет автора каждого указания. |
+| Авторизован ли нынешний MCP как личный аккаунт владельца? | Текущий основной service-client контур в [mcp_auth.py](https://github.com/onedayonemasterpiece/projects-hub/blob/76bc5f2d84424f26bf3d0056687ae6a5dfcbde81/src/projects_hub/mcp_auth.py) создаёт отдельный mcp_service actor. Legacy owner grants в коде не доказывают, что выбранная текущая connection является owner-linked. |
+| Что именно доступно dot? | В установленной схеме пять tools: start_question_session, get_project_request, record_request_result, get_test_request, record_test_response. В [mcp_api.py](https://github.com/onedayonemasterpiece/projects-hub/blob/76bc5f2d84424f26bf3d0056687ae6a5dfcbde81/src/projects_hub/mcp_api.py) нет approval decision/read или designated profile tool. |
+| Уже есть реальное авторство ответов внутри Hub? | Да: authenticated REST/Live actor и answered_by_actor_id/command receipts. Но это аналитические ответы; не подтверждён полный путь «этот author — аккаунт владельца данной dot connection; вот точное его разрешение на данный scope». |
+| Требует ли каждый вызов Hub отдельного подтверждения? | Read-only проверка фактических app permissions вернула Projects hub: Allow all actions; global default: Allow low-risk actions. Эта настройка не делает service principal владельцем, не распространяется на другие приложения и не отменяет обязательные подтверждения. Настройки не менялись. |
+| Есть ли документированный identity building block? | Да: authenticated read-only profile tool и user-linked OAuth. Это существующий способ идентификации подключённого аккаунта, а не API одобрения операций. |
+| Доказано ли, что Мира → dot уже продолжает без повторного согласия? | Нет. Ни текущие пять tools, ни source fixtures, ни доступные документы не дают такого end-to-end evidence. |
+
+Официальная [документация OpenAI по authentication](https://developers.openai.com/plugins/build/auth) описывает read-only get_profile/whoami с пустым input, stable opaque ID из проверенных credentials, outputSchema и _meta["openai/profile"]=true. Metadata помогает обнаружить профиль, но не доказывает корректность identity implementation и не выдаёт полномочий. **При service credential этот tool должен возвращать service identity, а не притворяться владельцем.**
+
+Официальный [MCP Events contract](https://developers.openai.com/plugins/build/mcp-events) поддерживает доставку событий в подписанный чат и выполнение ранее заданных пользователем инструкций. Он не описывает импорт owner approvals. Поэтому event — сигнал перечитать источник, а не разрешение в payload.
+
+### Конкретная MVP-граница и минимальная доработка
+
+**Можно выпустить сейчас как самостоятельный полезный MVP:** один широкий запрос в чате, долговечный pending status, Мира для объяснения и сбора ответа, delivery/readback/recovery. До доказательства identity path нельзя обозначать голосовое «да» как достаточное завершённое разрешение dot. Если ответ уже получен, причина fallback формулируется точно: не проверена связь автора с подключённым аккаунтом, а не «Мира вообще не умеет разрешать».
+
+**Целевой MVP без дублирующего согласия:** добавить owner decision domain и read path через реально owner-linked connection. Предпочтительный проверяемый путь — пользовательская OAuth connection к Hub, designated authenticated profile tool, approval_get с immutable source-author evidence. Существующий service event transport может оставаться сигналом; чувствительную запись dot читает через owner-linked connection. Новый login/OAuth scope/постоянный доступ, если потребуется, отдельно согласуется; в рамках документа ничего не подключалось.
+
+Минимальный read contract:
+- authenticated_profile_id из выбранной connection, не из аргумента модели;
+- decision_author_profile_id из server-authenticated owner submission, тот же identity namespace;
+- request_id, decision_id, scope_revision/digest, exact owner decision/ограничения, server timestamp, expiry/revoke state;
+- immutable source message/voice-turn reference и способ проверить, что scope был предъявлен до ответа;
+- server-enforced отсутствие пути, где service client/dot сам записывает «владелец одобрил»;
+- отказ при другом profile, service-only credential, пропавшем evidence или stale scope.
+
+Равенство двух произвольных строк в JSON не доказательство: обе identity должны следовать реальному credential/session binding. Для owner-linked read app удостоверяет авторство; модель не назначает его. Решение о достаточности согласия всё равно принимается для конкретного действия, его scope и действующих ограничений.
+
+**Что нашим backend исправить нельзя:** изменить правила/permissions dot host или другого connector; принять за владельца обязательную внешнюю форму; обеспечить распознавание любого custom receipt как разрешения только полем approved=true; гарантировать идентичность Hub owner и владельца dot без реальной связи аккаунтов; превратить подпись service webhook в подпись человеческого намерения. Если host после корректного source evidence требует собственное обязательное подтверждение, используется оно. Это не повод добавлять повторный чат-вопрос к каждому обычному действию.
+
+Альтернативный service-only identity binding пока **не выбран и не доказан**. Его нельзя считать готовым решением только потому, что backend знает owner_actor_id. Если сохранять service-only connection, потребуется отдельное документированное доказательство текущей связи с владельцем dot; до него — чат-fallback.
+
+### Минимальный проверяемый spike: только план, не запуск
+
+1. **Contract/identity check.** После отдельного поручения на реализацию подготовить owner-linked read path и profile metadata; проверить, что tool реально доступен dot. Проверить стабильность ID после reconnect, отличие другого пользователя и корректный отказ service token. Без credentials/grants в отчёте.
+2. **Один безопасный реальный сценарий.** В отдельном разрешённом тестовом проекте запросить через чат/Mira bounded обычное действие без расходов и чувствительных данных, например запись заранее оговорённого короткого текста в тестовый документ. Предварительное разрешение на организацию теста не считать самим решением на действие: approve конкретного запроса должен действительно прийти от владельца через Миру. Не подменять реальный ответ fixture.
+3. **Доставить и прочитать.** Реальный owner response → immutable receipt → event → dot читает профиль и receipt выбранной connection, проверяет author/scope/revision. В чате уже есть тот же запрос; после валидного решения он обновляется на «согласовано», без повторного «разрешаю».
+4. **Проверить настоящий результат.** Нужен exact effect readback и отсутствие повторного запроса согласия. Сохранить безопасные IDs/время/decision/effect correlation. Callback 2xx, голосовая фраза «готово», правильный JSON или работа только в backend не считаются PASS.
+5. **Негативные проверки.** Чужой owner, service-authored approval, replay после revoke/expiry и изменение scope не выполняют действие. Эти проверки сначала unit/integration fixtures; реальные внешние действия не запускать ради negative test.
+6. **Разделить исходы.** PASS означает доказанную работоспособность только данного source/connection и класса обычных действий. Identity/transport failure → тот же запрос доступен в чате; необходимое подтверждение спрашивается там с конкретной причиной. Mandatory form → открыть штатную форму и проверить её receipt. Неизвестный outcome → readback/reconcile, не второй execution.
+
+Если единственный успешный тест был уже покрыт независимым прежним разрешением, он доказывает транспорт/исполнение, **но не** достаточность голосового согласия. Нужен честный test report с этим различием. Не расширять вывод одного PASS на все приложения, риски и permissions.
+
+**Итоговое решение:** не ждать вымышленного approval-import API и не обещать уже готовый voice approval. Реализуемая часть на нашей стороне конкретна: owner-authenticated decision read, настоящий account binding, event и idempotent continuation. Полное «сказал Мире один раз → dot сделал» допускается как цель и остаётся release-blocked ровно до указанного identity/end-to-end spike. Для действий, уже покрытых действующим разрешением, никаких новых запросов не добавляется.
+
+
 ## 1. Решение в одном абзаце
 
 Основная единица согласования — максимально широкий, понятный **набор разрешённых действий в конкретном проекте**, действующий для последующих задач в согласованных границах. dot создаёт один typed approval request. Он сразу становится долговечным запросом в чате; push и Мира ускоряют ответ, но не являются условием доступности. Ответ реального аутентифицированного владельца сохраняется как проверяемый receipt. dot получает событие, перечитывает текущее разрешение и продолжает только допустимую работу. Чат, Мира, push и обязательная форма показывают один request_id и одно актуальное решение.
@@ -124,7 +182,7 @@ Project approval никогда не:
 
 Для каждого обязательного шага linked TechnicalConfirmation хранит provider/action ID, exact scope/amount/destination, expiry и verified terminal receipt. Чат и Мира объясняют, что и где требуется; по голосовому «да» можно открыть/показать правильную форму, но не отметить её принятой. Проверяется доверенный provider callback/readback, а не пересказ агента. Смена суммы/адресата/условий инвалидирует старую корреляцию. Истечение формы не создаёт новую автоматически принятую форму.
 
-Grant в Projects Hub не обязывает dot host считать его достаточным подтверждением. До production нужен документированный trusted receipt ingress/consumer contract с host. Если host не принимает такое evidence или требует собственную форму, задача остаётся waiting_required_form, а пользователь получает точную причину и доступный чат-путь. Это обязательный integration gate, не ошибка, которую можно скрыть успешным голосовым ответом.
+Для обычного предварительного согласия нужен доказанный source-author/account binding и достаточный scope, а не вымышленная универсальная форма host: см. проверенный verdict и spike в разделе 0. При валидном owner instruction повторное «да» в чате не требуется. Отсутствие подтверждённого автора — состояние identity_unverified с чат-fallback; обязательная форма конкретного действия — отдельное awaiting_required_form. Их нельзя смешивать. Решение Hub не отменяет действующие ограничения host/connector.
 
 ## 8. Обязательный чат и надёжная доставка
 
@@ -151,7 +209,7 @@ PWA: стандарт NotificationOptions не определяет custom sound
 
 ## 9. Минимальные стадии
 
-**A. Contract + chat-first MVP.** Отдельный approval domain/schema; scope resolver; trusted owner chat/UI decisions; required-form adapter contract; CAS/idempotency/revoke; durable chat + inbox; continuation/outbox + resume ack. Без Миры продукт уже завершает допустимое согласование.
+**A. Contract + chat-first MVP; identity spike из раздела 0 до обещания voice-only approval.** Отдельный approval domain/schema; scope resolver; trusted owner chat/UI decisions; required-form adapter contract; CAS/idempotency/revoke; durable chat + inbox; continuation/outbox + resume ack. Без Миры продукт уже завершает допустимое согласование.
 
 **B. Мира как второй интерфейс.** Маленькая capability, exact request/revision, input evidence, совместный статус, deep link и мгновенный текстовый fallback. Проверить concurrent chat/voice и provider interruption.
 
