@@ -1,6 +1,6 @@
 # 23. Проектная коллаборация уровня «швейцарские часы»: проектное предложение
 
-[Индекс продукта](README.md) · [21. Проектная информация](21-project-information-unified-access.md) · [24. Структура данных из историй](24-ontology-from-user-stories.md) · [Реестр историй](user-stories.md) · [Ревью надёжности](../audits/project-information-operational-reliability-20261014.md) · [03. Продукт и UX](03-product-and-ux.md) · [08. Надёжность](08-reliability.md)
+[Индекс продукта](README.md) · [21. Проектная информация](21-project-information-unified-access.md) · [24. Онтология и структура данных](24-ontology-from-user-stories.md) · [Реестр историй](user-stories.md) · [Ревью надёжности](../audits/project-information-operational-reliability-20261014.md) · [03. Продукт и UX](03-product-and-ux.md) · [08. Надёжность](08-reliability.md)
 
 **Дата:** 14 октября 2026
 **Статус:** проектное предложение. Владелец его не принимал. Это не разрешение на реализацию, не выдача доступов и не установка Slack-приложения или scopes.
