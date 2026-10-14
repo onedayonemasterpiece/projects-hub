@@ -30,7 +30,17 @@ Deterministic regression covers core initialization, inbox, accept, important-on
 
 The owner reported the missing notice in [the original task thread](https://app.slack.com/archives/C0C872SJFA7/p1791963627219879?thread_ts=1791920569.001289&cid=C0C872SJFA7). Registered logs identify session `live_14ce9691171f45fc8c7f8b5d60099841`, 07:39:36–07:40:04 UTC, on client/backend 0.1.62 and the deployed SHA above. Audio/transcript events and completed turns were present; no result-reading tool call occurred in that session.
 
-Code inspection found that core initialization supplies pending questions and owner-development completions, but not the completed question-analysis personal notification. With all questions completed, the pending count is zero and ordinary onboarding can win the greeting. Backend availability and a confirmed Slack receipt therefore did not establish a working startup notice. Repair and a new real spoken check are required; existing answers, analysis and delivery receipts remain valid.
+Code inspection found that core initialization supplies pending questions and owner-development completions, but not the completed question-analysis personal notification. With all questions completed, the pending count is zero and ordinary onboarding can win the greeting. Backend availability and a confirmed Slack receipt therefore did not establish a working startup notice. PR171 repaired the startup path and was deployed at 08:02 UTC; a new real spoken check is still required. Existing answers, analysis and delivery receipts remain valid.
+
+### Notification repair release, 08:02 UTC
+
+- [PR171](https://github.com/onedayonemasterpiece/projects-hub/pull/171), candidate `c3e78c53d5751e4ecb2d506a626f3c62f296ca8a`, merged and deployed as `76bc5f2d84424f26bf3d0056687ae6a5dfcbde81`.
+- 427 backend tests passed, with two existing dependency warnings; [CI38531834280](https://github.com/onedayonemasterpiece/projects-hub/actions/runs/38531834280) passed. Independent read-only review approved the two-file change.
+- Core startup now includes the existing bounded personal brief and validates current source/binding/project access for result notices. The existing brief_seen function fits the nine-tool limit alongside question controls.
+- Initialization and reads do not acknowledge. A model acknowledgment requires observed provider output and a valid presented prefix; it records announced, while playback remains unverified. Any provider output is not semantic proof that the specific summary was spoken, and no state claims heard/delivered.
+- The installer succeeded after fetching the new merge object; independent health confirmed exact deployed SHA, static/live/resource readiness. Version remains 0.1.62 for this backend-only repair.
+- Post-deployment readback confirmed the same analysis/response, four owner receipts, backend stored, Mira available and Slack confirmed with the original message ID.
+- Remaining real check: start a new Mira conversation and greet without another specific task; confirm that the completed analysis is announced before optional theme onboarding. Optional detailed reading remains separately unverified.
 
 ## Authorized test scope
 
