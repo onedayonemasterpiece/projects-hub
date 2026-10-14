@@ -4,6 +4,7 @@
 
 | Текущий документ | Назначение |
 | --- | --- |
+| [25. Ревью модели коллаборации — раунд dot](25-collaboration-model-dot-review-20261014.md) | Аналитический раунд 14 октября 2026 для повторного разбора Claude: 77 историй, хранение, процессы, Slack и минимальный срез; предложение, не утверждённое задание на реализацию |
 | [13. UI и inline-блоки](13-ui-floating-islands.md) | Личная лента, один BoardViewport, popup как дополнительный режим |
 | [19. Доска и сильный анализ](19-board-and-strong-analysis.md) | Общие объекты, provided-only анализ, граница с разработкой |
 | [20. Базовая коллаборация](20-basic-collaboration-and-personal-timeline.md) | Нормативные решения, связи функций, приёмка C01–C12 |
@@ -150,3 +151,4 @@ Android теперь существует как отдельное устана
 После подтверждённого calendar result backend автоматически создаёт event card. Реализованы bounded templates `generic` и `podcast`, checklist готовности и follow-up tasks со статусами proposed/accepted/done/snoozed/rejected; UI показывает это в существующих floating islands. Backend suite после этого слоя: 80 pytest PASS; PWA production build PASS.
 
 Не закрыты и поэтому не подменяются mock/unit evidence: physical Android WebView-microphone/calendar E2E, Android offline/reboot capture, 3+ independent-user real-provider soak и production GitHub App registration/credentials (`github_app_configured=false`). Публичный direct ingress `projects-hub.kenigevents.ru` уже принят по пути DNS → DevCoveer → локальный TLS/SNI → `127.0.0.1:8196`; внешний Yandex edge не используется. Работающий Record Idea Hub не выключается до отдельной физической приёмки нового Android capture/recovery пути.
+
