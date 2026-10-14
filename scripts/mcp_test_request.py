@@ -36,6 +36,8 @@ def main() -> int:
     bind.add_argument('--channel-id',required=True)
     bind.add_argument('--thread-ts',required=True)
     bind.add_argument('--expected-revision',type=int,default=0)
+    bind.add_argument('--allow-questions', action='store_true',
+                      help='Explicit owner approval for questions on an unchanged existing binding; requires its current revision')
     revoke=commands.add_parser('revoke-binding')
     revoke.add_argument('--binding-id',required=True)
     revoke.add_argument('--expected-revision',type=int,required=True)
@@ -102,7 +104,20 @@ def main() -> int:
             auth.disable_service(owner['actor_id'], args.client_id)
             result = {'client_id': args.client_id, 'enabled': False}
         elif args.operation=='bind-discussion':
-            result=events.bindings.bind(owner['actor_id'],args.project_id,args.note_id,args.client_id,args.workspace_id,args.channel_id,args.thread_ts,expected_revision=args.expected_revision)
+            current = store.db.execute('SELECT * FROM mcp_discussion_bindings WHERE project_id=? AND note_id=?',
+                                       (args.project_id, args.note_id)).fetchone()
+            expected_route = (args.client_id, args.workspace_id, args.channel_id, args.thread_ts)
+            same_route = bool(current and current['state'] == 'active' and tuple(
+                current[k] for k in ('client_id', 'slack_workspace_id', 'slack_channel_id', 'slack_thread_ts')) == expected_route)
+            allow_questions = bool(current['questions_allowed']) if same_route else False
+            if args.allow_questions:
+                if (not current or current['state'] != 'active'
+                        or current['owner_actor_id'] != owner['actor_id']
+                        or current['revision'] != args.expected_revision
+                        or tuple(current[k] for k in ('client_id', 'slack_workspace_id', 'slack_channel_id', 'slack_thread_ts')) != expected_route):
+                    raise StoreError('BINDING_CONFLICT', 'Question approval requires the unchanged active binding and current revision')
+                allow_questions = True
+            result=events.bindings.bind(owner['actor_id'],args.project_id,args.note_id,args.client_id,args.workspace_id,args.channel_id,args.thread_ts,expected_revision=args.expected_revision,allow_questions=allow_questions)
         elif args.operation=='revoke-binding':
             result=events.bindings.revoke(owner['actor_id'],args.binding_id,args.expected_revision)
         else:
