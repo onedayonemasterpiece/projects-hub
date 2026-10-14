@@ -4,7 +4,7 @@
 
 The real owner phone → Mira questions → saved answers → MCP continuation → dot analysis → verified GitHub result → original Slack thread path passed on release **0.1.62**, deployed SHA `b44a1f58c6fcf2de8b24b1fdd5ef96ca29c5b90a`.
 
-**The final spoken Mira notification failed in the real owner follow-up at 07:40 UTC.** Backend `mira_state=available` means the saved result is readable, not that Mira has announced it or the owner has heard it. Full end-to-end acceptance remains open at that last boundary. This report does not claim that the product requirements discussed in the note have been implemented.
+**The final Mira notification initially failed at 07:40 UTC, then worked in the post-repair real phone session at 08:26–08:27 UTC.** Saved provider transcripts confirm a result announcement and, after the owner's request, a short substantive summary. Audio output and the matching personal cursor are recorded; the owner's 08:42 feedback was cautiously positive. Backend `mira_state=available` still means readable, not delivered/heard. The observed bounded happy-path cycle is verified; this is not exhaustive acceptance of every voice scenario. This report does not claim that the product requirements discussed in the note have been implemented.
 
 No new deployment, question package, answer, grant, subscription or binding was created to prepare this report. Raw audio and answer transcripts are not reproduced here.
 
@@ -30,7 +30,7 @@ Deterministic regression covers core initialization, inbox, accept, important-on
 
 The owner reported the missing notice in [the original task thread](https://app.slack.com/archives/C0C872SJFA7/p1791963627219879?thread_ts=1791920569.001289&cid=C0C872SJFA7). Registered logs identify session `live_14ce9691171f45fc8c7f8b5d60099841`, 07:39:36–07:40:04 UTC, on client/backend 0.1.62 and the deployed SHA above. Audio/transcript events and completed turns were present; no result-reading tool call occurred in that session.
 
-Code inspection found that core initialization supplies pending questions and owner-development completions, but not the completed question-analysis personal notification. With all questions completed, the pending count is zero and ordinary onboarding can win the greeting. Backend availability and a confirmed Slack receipt therefore did not establish a working startup notice. PR171 repaired the startup path and was deployed at 08:02 UTC; a new real spoken check is still required. Existing answers, analysis and delivery receipts remain valid.
+Code inspection found that core initialization supplies pending questions and owner-development completions, but not the completed question-analysis personal notification. With all questions completed, the pending count is zero and ordinary onboarding can win the greeting. Backend availability and a confirmed Slack receipt therefore did not establish a working startup notice. PR171 repaired the startup path and was deployed at 08:02 UTC; the subsequent real spoken check is recorded below. Existing answers, analysis and delivery receipts remain valid.
 
 ### Notification repair release, 08:02 UTC
 
@@ -40,7 +40,18 @@ Code inspection found that core initialization supplies pending questions and ow
 - Initialization and reads do not acknowledge. A model acknowledgment requires observed provider output and a valid presented prefix; it records announced, while playback remains unverified. Any provider output is not semantic proof that the specific summary was spoken, and no state claims heard/delivered.
 - The installer succeeded after fetching the new merge object; independent health confirmed exact deployed SHA, static/live/resource readiness. Version remains 0.1.62 for this backend-only repair.
 - Post-deployment readback confirmed the same analysis/response, four owner receipts, backend stored, Mira available and Slack confirmed with the original message ID.
-- Remaining real check: start a new Mira conversation and greet without another specific task; confirm that the completed analysis is announced before optional theme onboarding. Optional detailed reading remains separately unverified.
+- Subsequent real check: the new session below announced the completed analysis before optional onboarding and gave a short substantive summary on request. Full-document spoken reading remains unverified.
+
+### Real notification retry, 08:26–08:27 UTC
+
+- Session `live_1b2d2c4cf1734337bf0d9d60fe35a193`, source `src_d32137a9a4f344cdbdc05e9d13988633`, ran 08:26:44–08:27:42 UTC on deployed SHA `76bc5f2d84424f26bf3d0056687ae6a5dfcbde81`, client/backend version0.1.62.
+- Fixed-source, actor-scoped read-only SQLite queries (URI mode=ro, query_only=ON; no app instantiation) recovered the saved provider output. The first reply announced the completed collaboration analysis for Projects Hub and said the requirements were clarified.
+- After the owner explicitly asked for the analysis information, Mira summarized the preserved personal feed/project switch, verified GitHub note save, and merging compatible edits. It referred to GitHub for more detail; it did not read the full result document or the remaining unresolved decisions.
+- Registered turn-complete telemetry records19 output-audio events /304800bytes for the first announcement and46 events /762240bytes for the substantive summary. This proves generated output, not independent acoustic verification at the phone.
+- The existing notification event47 is `question_result_ready` for analysis `ca_afaa230429de18c3f826a698cbe337e0`. The owner's personal cursor became47 at08:27:02.364UTC, after the first announcement. This corroborates model acknowledgment; no separately persisted command receipt or named tool-log entry was found for brief_seen.
+- Fresh MCP readback retained response `mcp_response_064828c2163b3156a9b484a7c4a073ba`, the same four answer receipts, stored/available/confirmed states and original Slack message `1791963451.804759`.
+- [Owner feedback at08:42:11UTC](https://app.slack.com/archives/C0C872SJFA7/p1791967331846669?thread_ts=1791920569.001289&cid=C0C872SJFA7): “Вроде бы отработало”. Treat this as cautious confirmation of this retry, not detailed acceptance of every scenario.
+- No question package, answer, analysis, application deployment or test run was created for this read-only verification. Only the documentation checkpoint was updated.
 
 ## Authorized test scope
 
@@ -80,7 +91,7 @@ Code inspection found that core initialization supplies pending questions and ow
 
 **Verified deterministically, not exhaustively live:** stale source/binding/ACL rejection, idempotent replay, pause/filter/reconnect/partial completion, transactional request/outbox and restart recovery cases in the test suite.
 
-**Failed and requiring repair:** final real Mira announcement and optional detailed spoken result; a full phone interruption/pause/restart scenario; prolonged idle/restart delivery adversity beyond the observed real event; all unrelated product behavior described in the resulting requirements analysis.
+**Still unverified:** full-document spoken reading; a full phone interruption/pause/restart scenario; prolonged idle/restart delivery adversity beyond the observed real event; all unrelated product behavior described in the resulting requirements analysis. The earlier final-notification failure was repaired and the bounded real retry passed as described below.
 
 An answered question is a receipt, not proof that every product ambiguity is resolved. The result explicitly retains undecided GitHub/model outage behavior and other open design details.
 
