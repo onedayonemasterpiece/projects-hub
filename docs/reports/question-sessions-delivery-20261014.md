@@ -45,3 +45,13 @@ Remaining product gates:
 5. Controlled restart preserves version/receipts/delivery/notification without duplicates.
 
 No callback 2xx, test fixture or prepared audio is represented as completion of these live gates.
+
+## Release review fixes — 05:40 UTC
+
+Independent source review identified and fixed three concrete defects:
+- Reads now recheck dot-package source revision and current requester/addressee grants and binding authorization before returning questions.
+- Any durable completion intent freezes new answers, including awaiting_delivery; old command replay remains immutable.
+- Pause/resume preserves the important-only filter when omitted; explicit false clears it.
+
+Full backend validation after these fixes: **405 passed** (job_8ac21139aef8376a2b3b907a).
+Hosted CI run 38517500548 passed the complete PWA job including browser theme checks. Its backend failure was a pre-existing main-branch Android contract/test mismatch: the owner-approved native target replaced the old WebView target, while runtime remains WebView. The test now distinguishes the target contract from current implementation without changing voice code or requirements. CI rerun remains pending.

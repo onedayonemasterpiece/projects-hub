@@ -106,7 +106,11 @@ async def test_pause_filter_single_answer_never_completes_batch(tmp_path):
         assert filtered["important_only"] and len(filtered["questions"]) == 1
         resumed = service.control_question_session(**args, command_id="control.resume", action="resume")
         assert resumed["package_state"] == "active"
-        assert not resumed["important_only"]
+        assert resumed["important_only"]
+        unfiltered = service.control_question_session(
+            **args, command_id="control.unfilter", action="resume", important_only=False,
+        )
+        assert not unfiltered["important_only"]
         inbox = service.inbox(actor_id=args["actor_id"], workspace_id=args["workspace_id"])
         assert all(q["package_last_offered_at_ms"] and q["package_state"] == "active" for q in inbox)
         assert store.db.execute("SELECT COUNT(*) FROM mcp_test_requests").fetchone()[0] == 0
@@ -217,6 +221,74 @@ async def test_one_question_answer_and_empty_package_still_require_complete(tmp_
         with pytest.raises(StoreError) as collision:
             service.control_question_session(**args, command_id="answer.only", action="pause")
         assert collision.value.code == "COLLABORATION_COMMAND_CONFLICT"
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["binding_disabled", "binding_revision", "binding_revoked",
+                                    "source_revision", "source_status", "addressee_grant", "requester_grant"])
+async def test_dot_reads_recheck_binding_source_and_both_project_grants(tmp_path, change):
+    store, service, events, bridge, owner, binding, note, analysis, args = await package(tmp_path)
+    try:
+        assert len(service.inbox(actor_id=args["actor_id"], workspace_id=args["workspace_id"])) == 2
+        assert service.get_analysis(**args)["id"] == analysis["id"]
+        # The requester may read a package addressed to a participant.
+        owner_args = dict(args, actor_id=owner)
+        assert service.get_analysis(**owner_args)["id"] == analysis["id"]
+        if change == "binding_disabled":
+            store.db.execute("UPDATE mcp_discussion_bindings SET questions_allowed=0 WHERE id=?", (binding["id"],))
+        elif change == "binding_revision":
+            store.db.execute("UPDATE mcp_discussion_bindings SET revision=revision+1 WHERE id=?", (binding["id"],))
+        elif change == "binding_revoked":
+            store.db.execute("UPDATE mcp_discussion_bindings SET state='revoked' WHERE id=?", (binding["id"],))
+        elif change == "source_revision":
+            store.db.execute("UPDATE project_notes SET revision=revision+1 WHERE id=?", (note["id"],))
+        elif change == "source_status":
+            store.db.execute("UPDATE project_notes SET status='failed' WHERE id=?", (note["id"],))
+        else:
+            actor = args["actor_id"] if change == "addressee_grant" else owner
+            store.db.execute("UPDATE project_grants SET revoked_at_ms=1 WHERE actor_id=?", (actor,))
+        assert service.inbox(actor_id=args["actor_id"], workspace_id=args["workspace_id"]) == []
+        assert service.inbox(**args) == []
+        for reader in [args, owner_args]:
+            with pytest.raises(StoreError):
+                service.get_analysis(**reader)
+        assert not bridge.consults
+    finally:
+        await service.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("result_state", ["awaiting_delivery", "waiting_answers"])
+async def test_complete_intent_freezes_answers_during_result_delivery(tmp_path, result_state):
+    store, service, events, bridge, owner, binding, note, analysis, args = await package(tmp_path)
+    try:
+        blocker = next(q for q in analysis["questions"] if q["blocking"])
+        response = [dict(question_id=blocker["id"], disposition="unknown")]
+        saved = service.answer_questions(**args, command_id="answer.before.partial", responses=response)
+        service.control_question_session(
+            **args, command_id="complete.before.result", action="complete", allow_partial=True,
+        )
+        # Result persistence moves the package to awaiting_delivery. Even a legacy
+        # state repair must not erase the durable completion boundary.
+        store.db.execute("UPDATE collaboration_analyses SET package_state=? WHERE id=?",
+                         (result_state, analysis["id"]))
+        with pytest.raises(StoreError) as rejected:
+            service.answer_questions(
+                **args, command_id="answer.after.result",
+                responses=[dict(question_id=blocker["id"], disposition="answer", body="Too late")],
+            )
+        assert rejected.value.code == "QUESTION_SESSION_COMPLETED"
+        assert service.answer_questions(
+            **args, command_id="answer.before.partial", responses=response
+        ) == saved
+        current = service.get_analysis(**args)
+        assert current["package_state"] == result_state
+        assert current["receipt_ids"] == ["answer.before.partial"]
+        assert next(q for q in current["questions"] if q["id"] == blocker["id"])["disposition"] == "unknown"
     finally:
         await service.close()
         store.close()

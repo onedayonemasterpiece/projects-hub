@@ -134,10 +134,25 @@ def test_live_docs_are_cross_linked():
     for n in range(1, 36):
         assert f"G{n:02d}" in reliability
 
-def test_android_foreground_reuses_one_pwa_wss_transport():
-    registry = load("contract.json")
-    platform = registry["platform_decision"]
-    assert platform["foreground_android_live_transport"] == "webview_pwa_shared_wss"
+def test_android_contract_preserves_one_transport_without_claiming_native_delivery():
+    platform = load("contract.json")["platform_decision"]
+    target = platform["foreground_android_live_transport"]
     assert platform["native_parallel_live_transport_allowed"] is False
     assert platform["android_privileged_web_permissions"] == "exact_projects_hub_origin_only"
-    assert "handoff_not_second_wss" in platform["native_android_future_capture_role"]
+    if target == "native_shared_live_interaction_target_webview_ui_only":
+        # Owner-approved to-be architecture, not evidence that native capture exists.
+        assert platform["parallel_browser_native_capture_allowed"] is False
+        assert platform["native_android_future_capture_role"] == (
+            "native_microphone_vad_durable_queue_wss_playback_and_recovery_shared_framework"
+        )
+        assert platform["clients_connect_to_live_provider_directly"] is False
+    else:
+        # Compatibility with the prior contract on maintenance branches.
+        assert target == "webview_pwa_shared_wss"
+        assert "handoff_not_second_wss" in platform["native_android_future_capture_role"]
+
+
+def test_current_android_shell_remains_webview_until_native_implementation():
+    source = (DOCS.parents[1] / "android/app/src/main/java/com/kenigevents/projectshub/MainActivity.java").read_text()
+    assert "WebView" in source
+    assert "loadUrl" in source

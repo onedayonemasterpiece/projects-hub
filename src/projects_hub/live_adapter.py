@@ -2331,7 +2331,7 @@ class ProjectsHubLiveAdapter:
                         actor_id=actor_id, workspace_id=workspace_id,
                         analysis_id=str(args.get("analysis_id") or ""), command_id=command_id,
                         action=str(args["session_action"]),
-                        important_only=args.get("important_only", False),
+                        important_only=args.get("important_only"),
                         allow_partial=args.get("allow_partial", False),
                     )
                 raw = args.get("responses")

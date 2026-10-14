@@ -452,6 +452,8 @@ class CollaborationAnalysisService:
     def _analysis_public(self, actor_id: str, workspace_id: str, row: Any) -> dict[str, Any]:
         self.store.project_access(actor_id, workspace_id, row["project_id"])
         with self.store._lock:
+            if row["model_alias"] == "dot":
+                self._check_question_source(row)
             questions = self.store.db.execute(
                 "SELECT * FROM collaboration_questions WHERE analysis_id=? ORDER BY created_at_ms,id",
                 (row["id"],),
@@ -1291,6 +1293,21 @@ class CollaborationAnalysisService:
                 base_query += " AND q.analysis_id=?"
                 params.append(analysis_id)
             analysis_rows = self.store.db.execute(base_query, tuple(params)).fetchall()
+            readable_sessions: dict[str, bool] = {}
+            visible_rows = []
+            for question in analysis_rows:
+                session_id = question["analysis_id"]
+                if session_id not in readable_sessions:
+                    session = self._analysis_row(session_id)
+                    try:
+                        if session["model_alias"] == "dot":
+                            self._check_question_session(actor_id, workspace_id, session)
+                        readable_sessions[session_id] = True
+                    except StoreError:
+                        readable_sessions[session_id] = False
+                if readable_sessions[session_id]:
+                    visible_rows.append(question)
+            analysis_rows = visible_rows
             owner_rows = self.store.db.execute(
                 """SELECT q.* FROM owner_development_questions q
                    JOIN project_grants g
@@ -1349,8 +1366,18 @@ class CollaborationAnalysisService:
         self.store.project_access(
             analysis["initiating_actor_id"], workspace_id, analysis["project_id"], require_analyze=True
         )
-        if analysis["model_alias"] != "dot":
-            return
+        if analysis["model_alias"] == "dot":
+            self._check_question_source(analysis)
+
+    def _check_question_source(self, analysis: Any) -> None:
+        """Shared read/write gate; a project-authorized reader need not be the addressee."""
+        self.store.project_access(
+            analysis["initiating_actor_id"], analysis["workspace_id"],
+            analysis["project_id"], require_analyze=True,
+        )
+        self.store.project_access(
+            analysis["addressed_to_actor_id"], analysis["workspace_id"], analysis["project_id"],
+        )
         scope = json.loads(analysis["scope_json"])
         anchor = self.store.db.execute(
             "SELECT revision,status,project_id FROM project_notes WHERE id=?", (analysis["note_id"],)
@@ -1373,13 +1400,13 @@ class CollaborationAnalysisService:
 
     def control_question_session(
         self, *, actor_id: str, workspace_id: str, analysis_id: str,
-        command_id: str, action: str, important_only: bool = False,
+        command_id: str, action: str, important_only: bool | None = None,
         allow_partial: bool = False,
     ) -> dict[str, Any]:
         """Persist explicit session intent; only complete can request dot continuation."""
         if (not COMMAND_RE.fullmatch(str(command_id or ""))
                 or action not in {"offer", "accept", "pause", "resume", "important_only", "complete"}
-                or type(important_only) is not bool or type(allow_partial) is not bool
+                or (important_only is not None and type(important_only) is not bool) or type(allow_partial) is not bool
                 or (allow_partial and action != "complete")):
             raise StoreError("INVALID_ARGUMENT", "Invalid question session control")
         payload_sha = _sha(dict(action=action, important_only=important_only, allow_partial=allow_partial))
@@ -1431,10 +1458,12 @@ class CollaborationAnalysisService:
             if action == "offer":
                 offered = now
             elif action in {"accept", "resume"}:
-                state, paused, filtered = "active", None, important_only
+                state, paused = "active", None
+                if important_only is not None:
+                    filtered = important_only
             elif action == "pause":
                 state, paused = "paused", now
-            elif action == "important_only":
+            elif action == "important_only" and important_only is not None:
                 filtered = important_only
             elif action == "complete":
                 state, paused = ("partially_completed" if unresolved else "all_answered"), None
@@ -1533,8 +1562,14 @@ class CollaborationAnalysisService:
                 if existing["payload_sha256"] != payload_sha:
                     raise StoreError("COLLABORATION_COMMAND_CONFLICT", "answer command_id conflict")
                 return json.loads(existing["receipt_json"])
-            if analysis["model_alias"] == "dot" and analysis["package_state"] in {
-                    "all_answered", "partially_completed", "completed", "cancelled"}:
+            completed_intent = self.store.db.execute(
+                """SELECT 1 FROM collaboration_answer_commands WHERE analysis_id=?
+                   AND json_extract(receipt_json,'$.kind')='session_control'
+                   AND json_extract(receipt_json,'$.action')='complete' LIMIT 1""",
+                (analysis_id,),
+            ).fetchone()
+            if analysis["model_alias"] == "dot" and (completed_intent or analysis["package_state"] in {
+                    "all_answered", "partially_completed", "awaiting_delivery", "completed", "cancelled"}):
                 raise StoreError("QUESTION_SESSION_COMPLETED", "Question session is already complete")
             rows = self.store.db.execute(
                 """SELECT * FROM collaboration_questions
