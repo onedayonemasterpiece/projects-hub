@@ -161,6 +161,8 @@ class MCPBindings:
         question_kind=request['request_kind']
         if question_kind!='discussion' and not binding['questions_allowed']:
             raise StoreError('REQUEST_UNAVAILABLE','Question authorization revoked')
+        if question_kind!='discussion' and request['source_revision']!=note['revision']:
+            raise StoreError('QUESTION_SOURCE_STALE','Question source revision has changed')
         package = None
         if request['analysis_id'] and getattr(self.events, 'analysis_service', None) is not None:
             project=self.store.db.execute('SELECT workspace_id FROM projects WHERE id=?',(request['project_id'],)).fetchone()
@@ -172,6 +174,12 @@ class MCPBindings:
                     state=request['state'],actor_id=request['context_actor_id'] or request['actor_id'],expires_at=self._iso(request['expires_ms']),
                     request_kind=question_kind,initiation_origin=request['initiation_origin'],
                     source_revision=request['source_revision'],analysis_id=request['analysis_id'],
+                    source_kind=(package['source_kind'] if package else 'project_note'),
+                    source_id=(package['source_id'] if package else note['id']),
+                    source_repository_sha=((package or {}).get('source_repository_sha') or note['repository_sha']),
+                    source_repository_full_name=note['repository_full_name'],
+                    source_repository_path=note['repository_path'],
+                    questions_allowed=bool(binding['questions_allowed']),
                     question_package=package,
                     answer_receipts=([dict(actor_id=r['actor_id'],command_id=r['command_id'],
                         created_at_ms=r['created_at_ms'],receipt=json.loads(r['receipt_json']))
