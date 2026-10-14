@@ -1036,7 +1036,7 @@ Live-сессии. НЕ вызывай activate_capability и не перекл�
 Если context.recent_owner_completions содержит подтверждённые результаты,
 можешь кратко назвать один. Если context.pending_question_count > 0,
 предложи обсудить вопросы, но НЕ задавай их без согласия.
-После согласия активируй collaboration и задай голосом один важный вопрос.
+После согласия используй collaboration_questions_inbox и collaboration_questions_answer напрямую, если они есть в configuration.functions; иначе активируй collaboration. Прочти пакет, сохрани реальное согласие session_action=accept и задай голосом один важный вопрос. Для pause/resume/important_only/complete используй тот же collaboration_questions_answer; complete требует явного завершения, одиночный ответ не завершает пакет.
 На «что нового», «какие задачи или вопросы аналитики» сначала
 активируй collaboration, если разрешено: collaboration_personal_brief, затем
 collaboration_questions_inbox; предложи голосом обсудить существенные вопросы.
@@ -1070,11 +1070,18 @@ _OWNER_CORE_DIRECT = frozenset({
     "backlog_list", "backlog_create", "development_execute_backlog",
 })
 _CORE_DIRECT_PREFERENCES = frozenset(BUNDLES["preferences"])
+_CORE_DIRECT_QUESTIONS = frozenset({
+    "collaboration_questions_inbox", "collaboration_questions_answer",
+})
 
 
-def _startup_functions(*, owner_development: bool) -> list[dict[str, Any]]:
+def _startup_functions(*, owner_development: bool, pending_questions: bool = False) -> list[dict[str, Any]]:
     names = set(BUNDLES["core"]) | _CORE_DIRECT_PREFERENCES
-    if owner_development:
+    if pending_questions:
+        # A server-verified greeting offer must have an executable consent path.
+        # Owner development stays reachable through the existing router.
+        names.update(_CORE_DIRECT_QUESTIONS)
+    elif owner_development:
         names.update(_OWNER_CORE_DIRECT)
     declarations = _functions(owner_development=owner_development) + PREFERENCES
     exposed = [ROUTER, *(item for item in declarations if item["name"] in names)]
@@ -1422,12 +1429,15 @@ class ProjectsHubLiveAdapter:
             except StoreError:
                 pass
         pending_questions: list[dict[str, Any]] = []
+        question_sessions_available = False
         if self.collaboration_analysis is not None and not recovery_only:
             try:
+                question_inbox = self.collaboration_analysis.inbox(
+                    actor_id=actor_id, workspace_id=conversation["workspace_id"], limit=100,
+                )
+                question_sessions_available = any(item["state"] == "open" for item in question_inbox)
                 pending_questions = [
-                    item for item in self.collaboration_analysis.inbox(
-                        actor_id=actor_id, workspace_id=conversation["workspace_id"], limit=100,
-                    )
+                    item for item in question_inbox
                     if item["state"] == "open" and not item.get("disposition")
                     and item.get("package_state", "waiting_answers") in {"active", "waiting_answers"}
                     and not item.get("package_last_offered_at_ms")
@@ -1441,8 +1451,16 @@ class ProjectsHubLiveAdapter:
                 "\n# PENDING QUESTIONS AT GREETING\n"
                 "context.pending_question_count — подтверждённое число ожидающих вопросов. "
                 "После краткого приветствия предложи их обсудить, но НЕ задавай "
-                "сразу вопрос без согласия человека. После согласия задай голосом один вопрос. Если он занят или поставил "
-                "другую задачу, не мешай. Не открывай виджеты без просьбы."
+                "сразу вопрос без согласия человека. После согласия задай голосом один вопрос. "
+                "collaboration_questions_inbox и collaboration_questions_answer уже доступны НАПРЯМУЮ: "
+                "не активируй capability для них и не придумывай системное ограничение без ошибки tool. "
+                "Сначала прочти inbox, возьми реальный analysis_id и сохрани реальное согласие через "
+                "collaboration_questions_answer(session_action=accept), затем задай один существенный вопрос "
+                "с контекстом и причиной. Ответы сохраняй тем же инструментом; unknown/skip/later допустимы. "
+                "Пауза и продолжение: session_action=pause/resume; только важные: session_action=important_only с important_only=true; все вопросы: important_only=false. "
+                "Не запускай итог после одного ответа: только явное завершение пакета вызывает session_action=complete; "
+                "allow_partial=true только при явном завершении с открытыми вопросами. "
+                "Если он занят или поставил другую задачу, не мешай. Не открывай виджеты без просьбы."
             )
         if recent_owner_completions:
             # This is server-verified owner-only context. The SAME Live Mira
@@ -1488,6 +1506,7 @@ class ProjectsHubLiveAdapter:
                 "client_instance_id": client_instance_id,
                 "caption_vocabulary": transcription_vocabulary,
                 "allowed_capabilities": [] if recovery_only else allowed,
+                "_core_question_tools": question_sessions_available,
             },
             "context": {
                 "workspace_id": conversation["workspace_id"],
@@ -1525,7 +1544,7 @@ class ProjectsHubLiveAdapter:
             "configuration": {
                 "system_instruction": system_instruction,
                 "functions": [] if recovery_only else _startup_functions(
-                    owner_development=owner_development,
+                    owner_development=owner_development, pending_questions=question_sessions_available,
                 ),
                 "voice": "Aoede",
                 "input_audio_transcription": {
@@ -1654,7 +1673,8 @@ class ProjectsHubLiveAdapter:
         self._mark_semantic_observed(session, committed=True, evidence="capability_intent")
         declarations = _functions(expert_reviews=True, regional_knowledge=True, owner_development=True) + PREFERENCES
         configuration = {**session.state["_base_configuration"],
-                         "functions": (_startup_functions(owner_development="owner_development" in allowed)
+                         "functions": (_startup_functions(owner_development="owner_development" in allowed,
+                                                         pending_questions=bool(session.state.get("_core_question_tools")))
                                        if capability == "core" else
                                        [ROUTER, *[f for f in declarations if f["name"] in BUNDLES[capability]]]),
                          "system_instruction": _live_instruction(capability) + "\n" + OVERLAYS[capability]}
@@ -2032,9 +2052,14 @@ class ProjectsHubLiveAdapter:
             and name in _OWNER_CORE_DIRECT
             and "owner_development" in allowed_capabilities
         )
+        core_questions = (
+            capability == "core" and name in _CORE_DIRECT_QUESTIONS
+            and session.state.get("_core_question_tools")
+            and "collaboration" in allowed_capabilities
+        )
         if (capability not in allowed_capabilities
                 or not (name in BUNDLES.get(capability, [])
-                        or core_preference or core_owner)):
+                        or core_preference or core_owner or core_questions)):
             raise StoreError("TOOL_NOT_AVAILABLE", "Function not in active capability")
         if name == "preferences_get":
             if args:

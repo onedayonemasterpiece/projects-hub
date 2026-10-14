@@ -1462,6 +1462,9 @@ class CollaborationAnalysisService:
                 offered = now
             elif action in {"accept", "resume"}:
                 state, paused = "active", None
+                # Real consent proves the offer was received; reconnect must not
+                # repeat the same greeting offer. The unfinished inbox remains readable.
+                offered = offered or now
                 if important_only is not None:
                     filtered = important_only
             elif action == "pause":
