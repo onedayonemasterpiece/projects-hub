@@ -22,6 +22,20 @@ MAX_ANALYSIS_REPAIR_ATTEMPTS = 1
 PURPOSES = {"requirements", "edge_cases", "architecture", "code_review", "ideas"}
 JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.S)
 
+ANALYSIS_ORIGINS = {"mira", "slack"}
+SOURCE_KINDS = {"project_note", "project_document", "project_task", "feature_idea", "board_object"}
+QUESTION_PRIORITIES = {"critical", "high", "normal", "low"}
+CONTINUATION_KINDS = {"analysis_followup", "external_continuation"}
+PACKAGE_STATES = {
+    "active",
+    "paused",
+    "waiting_answers",
+    "all_answered",
+    "completed",
+    "partially_completed",
+    "cancelled",
+}
+
 
 def _now_ms() -> int:
     return round(time.time() * 1000)
@@ -55,6 +69,7 @@ class CollaborationAnalysisService:
         self.collaboration = collaboration
         self.bridge = bridge or AnalyticsBridgeClient()
         self.development = development
+        self.question_events = None  # Set by the existing MCP/Events integration.
         self.poll_seconds = max(0.5, min(float(poll_seconds), 30.0))
         self._task: asyncio.Task[None] | None = None
         self._stop: asyncio.Event | None = None
@@ -75,6 +90,9 @@ class CollaborationAnalysisService:
                     command_id TEXT NOT NULL,
                     request_sha256 TEXT NOT NULL,
                     model_alias TEXT NOT NULL,
+                    producer_actor_id TEXT REFERENCES actors(id),
+                    external_analysis_id TEXT,
+                    source_verified INTEGER NOT NULL DEFAULT 0,
                     purpose TEXT NOT NULL,
                     question TEXT NOT NULL,
                     source_snapshot_json TEXT NOT NULL,
@@ -91,6 +109,20 @@ class CollaborationAnalysisService:
                     created_at_ms INTEGER NOT NULL,
                     updated_at_ms INTEGER NOT NULL,
                     finished_at_ms INTEGER,
+                    origin TEXT NOT NULL DEFAULT 'mira',
+                    source_kind TEXT NOT NULL DEFAULT 'project_note',
+                    source_id TEXT NOT NULL DEFAULT '',
+                    source_revision INTEGER,
+                    source_repository_sha TEXT,
+                    scope_json TEXT NOT NULL DEFAULT '{}',
+                    slack_workspace_id TEXT,
+                    slack_channel_id TEXT,
+                    slack_thread_ts TEXT,
+                    slack_binding_revision INTEGER,
+                    package_state TEXT NOT NULL DEFAULT 'active',
+                    package_paused_at_ms INTEGER,
+                    package_last_offered_at_ms INTEGER,
+                    package_filter_important_only INTEGER NOT NULL DEFAULT 0,
                     UNIQUE(initiating_actor_id, project_id, command_id)
                 );
                 CREATE INDEX IF NOT EXISTS collaboration_analyses_project_idx
@@ -106,13 +138,19 @@ class CollaborationAnalysisService:
                     addressed_role TEXT NOT NULL,
                     prompt TEXT NOT NULL,
                     shared_context TEXT NOT NULL,
+                    reason TEXT NOT NULL DEFAULT '',
+                    external_question_id TEXT,
                     blocking INTEGER NOT NULL CHECK(blocking IN (0,1)),
+                    priority TEXT NOT NULL DEFAULT 'normal',
+                    deadline_ms INTEGER,
                     alternatives_json TEXT NOT NULL,
                     state TEXT NOT NULL,
                     disposition TEXT,
                     answer_text TEXT,
                     answered_by_actor_id TEXT REFERENCES actors(id),
                     deferred_until_ms INTEGER,
+                    expected_revision INTEGER,
+                    stale_since_ms INTEGER,
                     created_at_ms INTEGER NOT NULL,
                     updated_at_ms INTEGER NOT NULL
                 );
@@ -179,6 +217,7 @@ class CollaborationAnalysisService:
                 );
                 CREATE INDEX IF NOT EXISTS collaboration_jobs_active_idx
                     ON collaboration_jobs(status,created_at_ms);
+
                 """
             )
             analysis_columns = {
@@ -202,6 +241,60 @@ class CollaborationAnalysisService:
                     "ALTER TABLE collaboration_analyses "
                     "ADD COLUMN repair_model_alias TEXT"
                 )
+            # New fields for external analysis origin and package state
+            for col, defn in (
+                ("origin", "TEXT NOT NULL DEFAULT 'mira'"),
+                ("source_kind", "TEXT NOT NULL DEFAULT 'project_note'"),
+                ("source_id", "TEXT NOT NULL DEFAULT ''"),
+                ("source_revision", "INTEGER"),
+                ("source_repository_sha", "TEXT"),
+                ("scope_json", "TEXT NOT NULL DEFAULT '{}'"),
+                ("slack_workspace_id", "TEXT"),
+                ("slack_channel_id", "TEXT"),
+                ("slack_thread_ts", "TEXT"),
+                ("slack_binding_revision", "INTEGER"),
+                ("package_state", "TEXT NOT NULL DEFAULT 'active'"),
+                ("package_paused_at_ms", "INTEGER"),
+                ("package_last_offered_at_ms", "INTEGER"),
+                ("package_filter_important_only", "INTEGER NOT NULL DEFAULT 0"),
+                ("producer_actor_id", "TEXT REFERENCES actors(id)"),
+                ("external_analysis_id", "TEXT"),
+                ("source_verified", "INTEGER NOT NULL DEFAULT 0"),
+            ):
+                if col not in analysis_columns:
+                    self.store.db.execute(
+                        f"ALTER TABLE collaboration_analyses ADD COLUMN {col} {defn}"
+                    )
+
+            question_columns = {
+                str(row["name"])
+                for row in self.store.db.execute(
+                    "PRAGMA table_info(collaboration_questions)"
+                ).fetchall()
+            }
+            for col, defn in (
+                ("priority", "TEXT NOT NULL DEFAULT 'normal'"),
+                ("deadline_ms", "INTEGER"),
+                ("expected_revision", "INTEGER"),
+                ("stale_since_ms", "INTEGER"),
+                ("reason", "TEXT NOT NULL DEFAULT ''"),
+                ("external_question_id", "TEXT"),
+            ):
+                if col not in question_columns:
+                    self.store.db.execute(
+                        f"ALTER TABLE collaboration_questions ADD COLUMN {col} {defn}"
+                    )
+            # Recreate priority index if needed
+            self.store.db.execute(
+                "CREATE INDEX IF NOT EXISTS collaboration_questions_priority_idx "
+                "ON collaboration_questions(analysis_id,blocking DESC,priority,deadline_ms,created_at_ms)"
+            )
+
+            # Indexes referencing added columns are created only after migration.
+            self.store.db.execute(
+                "CREATE INDEX IF NOT EXISTS collaboration_analyses_package_idx "
+                "ON collaboration_analyses(package_state,updated_at_ms)"
+            )
 
     def _analysis_row(self, analysis_id: str) -> Any:
         row = self.store.db.execute(
@@ -222,13 +315,19 @@ class CollaborationAnalysisService:
             "addressed_role": row["addressed_role"],
             "prompt": row["prompt"],
             "shared_context": row["shared_context"],
+            "reason": row["reason"],
+            "external_question_id": row["external_question_id"],
             "blocking": bool(row["blocking"]),
+            "priority": row["priority"],
+            "deadline_ms": row["deadline_ms"],
             "alternatives": json.loads(row["alternatives_json"]),
             "state": row["state"],
             "disposition": row["disposition"],
             "answer_text": row["answer_text"],
             "answered_by_actor_id": row["answered_by_actor_id"],
             "deferred_until_ms": row["deferred_until_ms"],
+            "expected_revision": row["expected_revision"],
+            "stale_since_ms": row["stale_since_ms"],
             "created_at_ms": int(row["created_at_ms"]),
             "updated_at_ms": int(row["updated_at_ms"]),
         }
@@ -353,17 +452,51 @@ class CollaborationAnalysisService:
     def _analysis_public(self, actor_id: str, workspace_id: str, row: Any) -> dict[str, Any]:
         self.store.project_access(actor_id, workspace_id, row["project_id"])
         with self.store._lock:
+            if row["model_alias"] == "dot":
+                self._check_question_source(row)
             questions = self.store.db.execute(
                 "SELECT * FROM collaboration_questions WHERE analysis_id=? ORDER BY created_at_ms,id",
                 (row["id"],),
             ).fetchall()
+            receipts = []
+            for item in self.store.db.execute(
+                "SELECT command_id,receipt_json FROM collaboration_answer_commands WHERE analysis_id=? ORDER BY created_at_ms,command_id",
+                (row["id"],),
+            ).fetchall():
+                receipt = json.loads(item["receipt_json"])
+                receipt.setdefault("receipt_id", item["command_id"])
+                receipt.setdefault("kind", "answers")
+                receipts.append(receipt)
+            answers = [r for r in receipts if r["kind"] == "answers"]
+            controls = [r for r in receipts if r["kind"] == "session_control"]
+            complete = next((r for r in controls if r.get("action") == "complete"), None)
+            continuation = complete.get("continuation") if complete else (
+                "paused" if row["package_state"] == "paused" else "waiting_answers")
+            request_id = complete.get("continuation_request_id") if complete else None
+            if request_id and self.question_events is not None:
+                request = self.store.db.execute(
+                    "SELECT event_id,state FROM mcp_test_requests WHERE id=?", (request_id,)
+                ).fetchone()
+                if request:
+                    delivery = self.question_events._question_delivery(request_id, request["event_id"])
+                    continuation = ("completed" if request["state"] == "completed" else
+                                    "ready_for_dot" if delivery["delivery_state"] == "queued"
+                                    else "waiting_event_transport")
         return {
             "id": row["id"],
             "project_id": row["project_id"],
             "note_id": row["note_id"],
+            "answer_receipts": answers,
+            "receipt_ids": [r["receipt_id"] for r in answers],
+            "session_receipts": controls,
+            "continuation": continuation,
+            "continuation_request_id": request_id,
             "initiating_actor_id": row["initiating_actor_id"],
             "addressed_to_actor_id": row["addressed_to_actor_id"],
             "model": row["model_alias"],
+            "producer_actor_id": row["producer_actor_id"],
+            "external_analysis_id": row["external_analysis_id"],
+            "source_verified": bool(row["source_verified"]),
             "purpose": row["purpose"],
             "question": row["question"],
             "sources": json.loads(row["source_snapshot_json"]),
@@ -380,6 +513,20 @@ class CollaborationAnalysisService:
             "created_at_ms": int(row["created_at_ms"]),
             "updated_at_ms": int(row["updated_at_ms"]),
             "finished_at_ms": row["finished_at_ms"],
+            "origin": row["origin"],
+            "source_kind": row["source_kind"],
+            "source_id": row["source_id"],
+            "source_revision": row["source_revision"],
+            "source_repository_sha": row["source_repository_sha"],
+            "scope": json.loads(row["scope_json"]),
+            "slack_workspace_id": row["slack_workspace_id"],
+            "slack_channel_id": row["slack_channel_id"],
+            "slack_thread_ts": row["slack_thread_ts"],
+            "slack_binding_revision": row["slack_binding_revision"],
+            "package_state": row["package_state"],
+            "package_paused_at_ms": row["package_paused_at_ms"],
+            "package_last_offered_at_ms": row["package_last_offered_at_ms"],
+            "package_filter_important_only": bool(row["package_filter_important_only"]),
         }
 
     def _freeze_note(
@@ -510,6 +657,17 @@ class CollaborationAnalysisService:
                     if not prompt or len(prompt) > 2000:
                         raise StoreError("ANALYTICS_INVALID_RESULT", "Question prompt is invalid")
                     blocking = bool(raw.get("blocking"))
+                    priority = str(raw.get("priority") or "normal")
+                    if priority not in QUESTION_PRIORITIES:
+                        priority = "normal"
+                    deadline_ms = raw.get("deadline_ms")
+                    if deadline_ms is not None:
+                        try:
+                            deadline_ms = int(deadline_ms)
+                            if deadline_ms < now:
+                                deadline_ms = None
+                        except (TypeError, ValueError):
+                            deadline_ms = None
                     qid = "q_" + hashlib.sha256(
                         f"{row['id']}:{index}:{prompt}".encode("utf-8")
                     ).hexdigest()[:32]
@@ -518,12 +676,12 @@ class CollaborationAnalysisService:
                         """INSERT INTO collaboration_questions(
                                id,analysis_id,workspace_id,project_id,asked_by_actor_id,
                                addressed_to_actor_id,addressed_role,prompt,shared_context,
-                               blocking,alternatives_json,state,created_at_ms,updated_at_ms)
-                           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                               blocking,priority,deadline_ms,alternatives_json,state,created_at_ms,updated_at_ms)
+                           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (
                             qid, row["id"], row["workspace_id"], row["project_id"],
                             row["initiating_actor_id"], addressed, access["role"], prompt,
-                            summary, int(blocking), _canonical(alternatives), "open", now, now,
+                            summary, int(blocking), priority, deadline_ms, _canonical(alternatives), "open", now, now,
                         ),
                     )
                     self.store.db.execute(
@@ -577,6 +735,157 @@ class CollaborationAnalysisService:
             ]
         return {"summary": summary, "questions": created}
 
+
+    def publish_dot_package(
+        self, *, initiating_actor_id: str, producer_actor_id: str,
+        workspace_id: str, project_id: str, note_id: str,
+        addressed_to_actor_id: str, command_id: str, external_analysis_id: str,
+        origin: str, source_kind: str, source_id: str, source_revision: int,
+        summary: str, purpose: str, questions: list[dict[str, Any]],
+        binding_id: str, binding_revision: int,
+        slack_workspace_id: str, slack_channel_id: str, slack_thread_ts: str,
+        source_repository_sha: str | None = None,
+    ) -> dict[str, Any]:
+        """Import dot-produced questions; never dispatch a provider or continuation job.
+
+        Authorization is a precondition enforced by the MCP service grant +
+        owner-approved bound route. This method additionally checks project,
+        addressed actor, frozen note revision, immutable command and provenance.
+        """
+        if (not COMMAND_RE.fullmatch(command_id) or not COMMAND_RE.fullmatch(external_analysis_id)
+                or origin not in ANALYSIS_ORIGINS or source_kind not in SOURCE_KINDS
+                or not isinstance(source_id, str) or not 1 <= len(source_id) <= 250
+                or type(source_revision) is not int or source_revision < 1
+                or purpose not in PURPOSES or not isinstance(questions, list)
+                or len(questions) > 6 or not isinstance(summary, str)
+                or len(summary) > 4000 or type(binding_revision) is not int
+                or binding_revision < 1 or not all(isinstance(x, str) and x for x in (
+                    binding_id, slack_workspace_id, slack_channel_id, slack_thread_ts))):
+            raise StoreError("INVALID_ARGUMENT", "Invalid external question package")
+        clean_questions: list[dict[str, Any]] = []
+        external_ids: set[str] = set()
+        for raw in questions:
+            if not isinstance(raw, dict):
+                raise StoreError("INVALID_ARGUMENT", "Invalid question")
+            external_qid = raw.get("external_question_id")
+            prompt = raw.get("prompt")
+            context = raw.get("context")
+            reason = raw.get("reason")
+            priority = raw.get("priority", "normal")
+            blocking = raw.get("blocking")
+            deadline = raw.get("deadline_ms")
+            if (not isinstance(external_qid, str) or not COMMAND_RE.fullmatch(external_qid)
+                    or external_qid in external_ids or not isinstance(prompt, str)
+                    or not 1 <= len(prompt.strip()) <= 2000 or not isinstance(context, str)
+                    or not 1 <= len(context.strip()) <= 1200 or not isinstance(reason, str)
+                    or not 1 <= len(reason.strip()) <= 1000 or priority not in QUESTION_PRIORITIES
+                    or type(blocking) is not bool or (deadline is not None and
+                        (type(deadline) is not int or deadline <= 0))):
+                raise StoreError("INVALID_ARGUMENT", "Invalid external question fields")
+            external_ids.add(external_qid)
+            clean_questions.append(dict(
+                external_question_id=external_qid, prompt=prompt.strip(),
+                context=context.strip(), reason=reason.strip(),
+                blocking=blocking, priority=priority, deadline_ms=deadline,
+            ))
+        request = dict(
+            project_id=project_id, note_id=note_id, addressed_to_actor_id=addressed_to_actor_id,
+            external_analysis_id=external_analysis_id, origin=origin,
+            source_kind=source_kind, source_id=source_id, source_revision=source_revision,
+            source_repository_sha=source_repository_sha, purpose=purpose,
+            summary=summary, questions=clean_questions, binding_id=binding_id,
+            binding_revision=binding_revision, slack_workspace_id=slack_workspace_id,
+            slack_channel_id=slack_channel_id, slack_thread_ts=slack_thread_ts,
+        )
+        request_sha = _sha(request)
+        now = _now_ms()
+        with self.store._lock:
+            self.store.project_access(initiating_actor_id, workspace_id, project_id, require_analyze=True)
+            addressee = self.store.project_access(addressed_to_actor_id, workspace_id, project_id)
+            existing = self.store.db.execute(
+                """SELECT * FROM collaboration_analyses WHERE initiating_actor_id=?
+                   AND project_id=? AND command_id=?""",
+                (initiating_actor_id, project_id, command_id),
+            ).fetchone()
+            if existing:
+                if existing["model_alias"] != "dot" or existing["request_sha256"] != request_sha:
+                    raise StoreError("ANALYSIS_COMMAND_CONFLICT", "External question command changed")
+                return self._analysis_public(initiating_actor_id, workspace_id, existing)
+            sources, evidence = self._freeze_note(
+                actor_id=initiating_actor_id, workspace_id=workspace_id,
+                project_id=project_id, note_id=note_id,
+            )
+            anchor_revision = int(sources[0]["revision"])
+            if source_kind == "project_note" and (source_id != note_id or anchor_revision != source_revision):
+                raise StoreError("QUESTION_SOURCE_STALE", "Question source revision has changed")
+            if source_kind != "project_note" and not source_repository_sha:
+                # A non-note anchor must retain a concrete remote source checkpoint.
+                raise StoreError("INVALID_ARGUMENT", "External source requires an immutable checkpoint")
+            if not self.store.db.execute(
+                    "SELECT 1 FROM actors WHERE id=?", (producer_actor_id,)).fetchone():
+                raise StoreError("PROJECT_FORBIDDEN", "Unrecognized service author")
+            analysis_id = "ca_" + hashlib.sha256(
+                f"{project_id}:{initiating_actor_id}:{command_id}".encode("utf-8")
+            ).hexdigest()[:32]
+            fields = dict(
+                id=analysis_id, workspace_id=workspace_id, project_id=project_id,
+                note_id=note_id, initiating_actor_id=initiating_actor_id,
+                addressed_to_actor_id=addressed_to_actor_id, command_id=command_id,
+                request_sha256=request_sha, model_alias="dot", producer_actor_id=producer_actor_id,
+                external_analysis_id=external_analysis_id, source_verified=int(source_kind == "project_note"),
+                purpose=purpose, question=summary[:4000] or "External analysis questions",
+                source_snapshot_json=_canonical(sources), evidence_bundle=evidence,
+                input_sha256=hashlib.sha256(evidence.encode("utf-8")).hexdigest(),
+                status="completed", result_json=_canonical({"summary":summary, "questions":clean_questions}),
+                created_at_ms=now, updated_at_ms=now, finished_at_ms=now,
+                origin=origin, source_kind=source_kind, source_id=source_id,
+                source_revision=source_revision, source_repository_sha=source_repository_sha,
+                scope_json=_canonical({"note_anchor_revision":anchor_revision,"binding_id":binding_id}),
+                slack_workspace_id=slack_workspace_id, slack_channel_id=slack_channel_id,
+                slack_thread_ts=slack_thread_ts, slack_binding_revision=binding_revision,
+                package_state="waiting_answers",
+            )
+            self.store.db.execute("SAVEPOINT dot_package")
+            try:
+                self.store.db.execute(
+                    "INSERT INTO collaboration_analyses(" + ",".join(fields) + ") VALUES(" +
+                    ",".join("?" for _ in fields) + ")", tuple(fields.values()),
+                )
+                for item in clean_questions:
+                    qid = "q_" + hashlib.sha256(
+                        f"{analysis_id}:{item['external_question_id']}".encode("utf-8")
+                    ).hexdigest()[:32]
+                    qfields = dict(
+                        id=qid, analysis_id=analysis_id, workspace_id=workspace_id,
+                        project_id=project_id, asked_by_actor_id=producer_actor_id,
+                        addressed_to_actor_id=addressed_to_actor_id, addressed_role=addressee["role"],
+                        prompt=item["prompt"], shared_context=item["context"], reason=item["reason"],
+                        external_question_id=item["external_question_id"], blocking=int(item["blocking"]),
+                        priority=item["priority"], deadline_ms=item["deadline_ms"],
+                        expected_revision=anchor_revision,
+                        alternatives_json=_canonical(["answer","unknown","skip","later"]),
+                        state="open", created_at_ms=now, updated_at_ms=now,
+                    )
+                    self.store.db.execute(
+                        "INSERT INTO collaboration_questions(" + ",".join(qfields) + ") VALUES(" +
+                        ",".join("?" for _ in qfields) + ")", tuple(qfields.values()),
+                    )
+                    self.store.db.execute(
+                        """INSERT INTO collaboration_events(
+                           workspace_id,project_id,actor_id,kind,object_kind,object_id,
+                           parent_object_id,addressed_to_actor_id,summary,created_at_ms)
+                           VALUES(?,?,?,'question_addressed','question',?,?,?,?,?)""",
+                        (workspace_id,project_id,producer_actor_id,qid,note_id,
+                         addressed_to_actor_id,item["prompt"][:240],now),
+                    )
+                self.store.db.execute("RELEASE SAVEPOINT dot_package")
+            except BaseException:
+                self.store.db.execute("ROLLBACK TO SAVEPOINT dot_package")
+                self.store.db.execute("RELEASE SAVEPOINT dot_package")
+                raise
+            created = self._analysis_row(analysis_id)
+            return self._analysis_public(initiating_actor_id, workspace_id, created)
+
     async def start_analysis(
         self,
         *,
@@ -589,6 +898,16 @@ class CollaborationAnalysisService:
         model: str,
         purpose: str,
         question: str,
+        origin: str = "mira",
+        source_kind: str = "project_note",
+        source_id: str = "",
+        source_revision: int | None = None,
+        source_repository_sha: str | None = None,
+        scope: dict[str, Any] | None = None,
+        slack_workspace_id: str | None = None,
+        slack_channel_id: str | None = None,
+        slack_thread_ts: str | None = None,
+        slack_binding_revision: int | None = None,
     ) -> dict[str, Any]:
         if not COMMAND_RE.fullmatch(str(command_id or "")):
             raise StoreError("INVALID_ARGUMENT", "analysis command_id is invalid")
@@ -596,6 +915,10 @@ class CollaborationAnalysisService:
             raise StoreError("ANALYTICS_MODEL_UNAVAILABLE", "Requested consultant is unavailable")
         if purpose not in PURPOSES:
             raise StoreError("INVALID_ARGUMENT", "Analysis purpose is invalid")
+        if origin not in ANALYSIS_ORIGINS:
+            raise StoreError("INVALID_ARGUMENT", "Analysis origin is invalid")
+        if source_kind not in SOURCE_KINDS:
+            raise StoreError("INVALID_ARGUMENT", "Analysis source kind is invalid")
         self.store.project_access(
             addressed_to_actor_id, workspace_id, project_id
         )
@@ -608,6 +931,11 @@ class CollaborationAnalysisService:
             project_id=project_id,
             note_id=note_id,
         )
+        # Use provided source info or fall back to note
+        effective_source_id = source_id or note_id
+        effective_source_revision = source_revision
+        effective_source_repository_sha = source_repository_sha
+        effective_scope = scope or {}
         request = {
             "project_id": project_id,
             "note_id": note_id,
@@ -619,6 +947,12 @@ class CollaborationAnalysisService:
             "model": model,
             "purpose": purpose,
             "question": clean_question,
+            "origin": origin,
+            "source_kind": source_kind,
+            "source_id": effective_source_id,
+            "source_revision": effective_source_revision,
+            "source_repository_sha": effective_source_repository_sha,
+            "scope": effective_scope,
         }
         request_sha = _sha(request)
         now = _now_ms()
@@ -638,22 +972,31 @@ class CollaborationAnalysisService:
                        id,workspace_id,project_id,note_id,initiating_actor_id,
                        addressed_to_actor_id,command_id,request_sha256,model_alias,
                        purpose,question,source_snapshot_json,evidence_bundle,input_sha256,
-                       status,created_at_ms,updated_at_ms)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       status,created_at_ms,updated_at_ms,
+                       origin,source_kind,source_id,source_revision,source_repository_sha,
+                       scope_json,slack_workspace_id,slack_channel_id,slack_thread_ts,
+                       slack_binding_revision,package_state)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,
+                          ?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     analysis_id, workspace_id, project_id, note_id, actor_id,
                     addressed_to_actor_id, command_id, request_sha, model, purpose,
                     clean_question, _canonical(sources), evidence,
                     hashlib.sha256(evidence.encode("utf-8")).hexdigest(),
                     "dispatching", now, now,
+                    origin, source_kind, effective_source_id, effective_source_revision,
+                    effective_source_repository_sha, _canonical(effective_scope),
+                    slack_workspace_id, slack_channel_id, slack_thread_ts,
+                    slack_binding_revision, "active",
                 ),
             )
         prompt = (
             "Analyze only the supplied evidence. Return STRICT JSON and nothing else: "
             '{"summary":"shared context <=1200 chars","questions":['
-            '{"prompt":"one contextual question","blocking":true}]}'
-            ". Produce 1-4 minimal questions whose answers materially affect the requested analysis. "
-            "Do not ask for facts already present in evidence. "
+            '{"prompt":"one contextual question","blocking":true,"priority":"high","deadline_ms":1700000000000}]}'
+            ". Produce 1-6 minimal questions whose answers materially affect the requested analysis. "
+            "Each question must have: prompt (string, required), blocking (boolean), priority (critical|high|normal|low, default normal), "
+            "deadline_ms (optional, Unix ms timestamp). Do not ask for facts already present in evidence. "
             f"Task: {clean_question}"
         )
         try:
@@ -931,23 +1274,40 @@ class CollaborationAnalysisService:
         return self._analysis_public(actor_id, workspace_id, row)
 
     def inbox(
-        self, *, actor_id: str, workspace_id: str, limit: int = 30
+        self, *, actor_id: str, workspace_id: str, limit: int = 30, analysis_id: str | None = None
     ) -> list[dict[str, Any]]:
         self.store._membership(actor_id, workspace_id)
         self._sync_owner_development_questions()
         bounded = max(1, min(int(limit), 100))
         with self.store._lock:
-            analysis_rows = self.store.db.execute(
-                """SELECT q.* FROM collaboration_questions q
-                   JOIN project_grants g
-                     ON g.project_id=q.project_id
-                    AND g.actor_id=q.addressed_to_actor_id
-                   JOIN projects p ON p.id=q.project_id
-                   WHERE q.workspace_id=? AND q.addressed_to_actor_id=?
-                     AND g.revoked_at_ms IS NULL
-                     AND p.status='active'""",
-                (workspace_id, actor_id),
-            ).fetchall()
+            base_query = """SELECT q.* FROM collaboration_questions q
+                JOIN project_grants g
+                  ON g.project_id=q.project_id
+                 AND g.actor_id=q.addressed_to_actor_id
+                JOIN projects p ON p.id=q.project_id
+                WHERE q.workspace_id=? AND q.addressed_to_actor_id=?
+                  AND g.revoked_at_ms IS NULL
+                  AND p.status='active'"""
+            params = [workspace_id, actor_id]
+            if analysis_id:
+                base_query += " AND q.analysis_id=?"
+                params.append(analysis_id)
+            analysis_rows = self.store.db.execute(base_query, tuple(params)).fetchall()
+            readable_sessions: dict[str, bool] = {}
+            visible_rows = []
+            for question in analysis_rows:
+                session_id = question["analysis_id"]
+                if session_id not in readable_sessions:
+                    session = self._analysis_row(session_id)
+                    try:
+                        if session["model_alias"] == "dot":
+                            self._check_question_session(actor_id, workspace_id, session)
+                        readable_sessions[session_id] = True
+                    except StoreError:
+                        readable_sessions[session_id] = False
+                if readable_sessions[session_id]:
+                    visible_rows.append(question)
+            analysis_rows = visible_rows
             owner_rows = self.store.db.execute(
                 """SELECT q.* FROM owner_development_questions q
                    JOIN project_grants g
@@ -963,25 +1323,188 @@ class CollaborationAnalysisService:
             *[self._question_public(row) for row in analysis_rows],
             *[self._owner_question_public(row) for row in owner_rows],
         ]
+        with self.store._lock:
+            for item in items:
+                if item["source_kind"] != "analysis":
+                    continue
+                session = self._analysis_row(item["analysis_id"])
+                item.update(
+                    package_state=session["package_state"],
+                    package_last_offered_at_ms=session["package_last_offered_at_ms"],
+                    package_filter_important_only=bool(session["package_filter_important_only"]),
+                )
         now = _now_ms()
+        # Filter out deferred questions whose deferral time hasn't arrived
         items = [
             item
             for item in items
             if not (
                 item["state"] == "deferred"
-                and item.get("deferred_until_ms") is not None
-                and int(item["deferred_until_ms"]) > now
+                and (item.get("deferred_until_ms") is None
+                     or int(item["deferred_until_ms"]) > now)
             )
         ]
+        # Priority sorting: blocking first, then by priority (critical > high > normal > low), then deadline, then creation time
+        priority_rank = {"critical": 0, "high": 1, "normal": 2, "low": 3}
         state_rank = {"open": 0, "deferred": 1}
         items.sort(
             key=lambda item: (
                 state_rank.get(str(item["state"]), 2),
+                -int(item.get("blocking", 0)),  # blocking first (1 > 0)
+                priority_rank.get(str(item.get("priority", "normal")), 2),
+                int(item.get("deadline_ms") or 0) or 2**63,  # earlier deadline first, None last
                 int(item["created_at_ms"]),
                 str(item["id"]),
             )
         )
         return items[:bounded]
+
+    def _check_question_session(self, actor_id: str, workspace_id: str, analysis: Any) -> None:
+        self.store.project_access(actor_id, workspace_id, analysis["project_id"])
+        if analysis["workspace_id"] != workspace_id or analysis["addressed_to_actor_id"] != actor_id:
+            raise StoreError("PROJECT_FORBIDDEN", "Question session is addressed to another actor")
+        self.store.project_access(
+            analysis["initiating_actor_id"], workspace_id, analysis["project_id"], require_analyze=True
+        )
+        if analysis["model_alias"] == "dot":
+            self._check_question_source(analysis)
+
+    def _check_question_source(self, analysis: Any) -> None:
+        """Shared read/write gate; a project-authorized reader need not be the addressee."""
+        self.store.project_access(
+            analysis["initiating_actor_id"], analysis["workspace_id"],
+            analysis["project_id"], require_analyze=True,
+        )
+        self.store.project_access(
+            analysis["addressed_to_actor_id"], analysis["workspace_id"], analysis["project_id"],
+        )
+        scope = json.loads(analysis["scope_json"])
+        anchor = self.store.db.execute(
+            "SELECT revision,status,project_id FROM project_notes WHERE id=?", (analysis["note_id"],)
+        ).fetchone()
+        if (not anchor or anchor["status"] != "ready"
+                or anchor["project_id"] != analysis["project_id"]
+                or int(anchor["revision"]) != scope.get("note_anchor_revision")):
+            raise StoreError("QUESTION_SOURCE_STALE", "Question source has changed")
+        binding = self.store.db.execute(
+            "SELECT * FROM mcp_discussion_bindings WHERE id=?", (scope.get("binding_id"),)
+        ).fetchone()
+        if (not binding or binding["state"] != "active" or not binding["questions_allowed"]
+                or binding["revision"] != analysis["slack_binding_revision"]
+                or binding["project_id"] != analysis["project_id"]
+                or binding["note_id"] != analysis["note_id"]
+                or binding["slack_workspace_id"] != analysis["slack_workspace_id"]
+                or binding["slack_channel_id"] != analysis["slack_channel_id"]
+                or binding["slack_thread_ts"] != analysis["slack_thread_ts"]):
+            raise StoreError("PROJECT_FORBIDDEN", "Question session authorization changed")
+
+    def control_question_session(
+        self, *, actor_id: str, workspace_id: str, analysis_id: str,
+        command_id: str, action: str, important_only: bool | None = None,
+        allow_partial: bool = False,
+    ) -> dict[str, Any]:
+        """Persist explicit session intent; only complete can request dot continuation."""
+        if (not COMMAND_RE.fullmatch(str(command_id or ""))
+                or action not in {"offer", "accept", "pause", "resume", "important_only", "complete"}
+                or (important_only is not None and type(important_only) is not bool) or type(allow_partial) is not bool
+                or (allow_partial and action != "complete")):
+            raise StoreError("INVALID_ARGUMENT", "Invalid question session control")
+        payload_sha = _sha(dict(action=action, important_only=important_only, allow_partial=allow_partial))
+        now = _now_ms()
+        with self.store._lock:
+            analysis = self._analysis_row(analysis_id)
+            self._check_question_session(actor_id, workspace_id, analysis)
+            existing = self.store.db.execute(
+                "SELECT * FROM collaboration_answer_commands WHERE actor_id=? AND analysis_id=? AND command_id=?",
+                (actor_id, analysis_id, command_id),
+            ).fetchone()
+            if existing:
+                if existing["payload_sha256"] != payload_sha:
+                    raise StoreError("COLLABORATION_COMMAND_CONFLICT", "Session command changed")
+                return json.loads(existing["receipt_json"])
+            if analysis["model_alias"] != "dot":
+                raise StoreError("INVALID_ARGUMENT", "Session controls require a dot question package")
+            receipts = [json.loads(r["receipt_json"]) for r in self.store.db.execute(
+                "SELECT receipt_json FROM collaboration_answer_commands WHERE analysis_id=? ORDER BY created_at_ms,command_id",
+                (analysis_id,),
+            ).fetchall()]
+            completion = next((r for r in receipts if r.get("kind") == "session_control"
+                               and r.get("action") == "complete"), None)
+            if completion:
+                if action == "complete" and completion.get("allow_partial") == allow_partial:
+                    replay = dict(completion, receipt_id=command_id)
+                    self.store.db.execute(
+                        """INSERT INTO collaboration_answer_commands(
+                           actor_id,analysis_id,command_id,payload_sha256,receipt_json,created_at_ms)
+                           VALUES(?,?,?,?,?,?)""",
+                        (actor_id, analysis_id, command_id, payload_sha, _canonical(replay), now),
+                    )
+                    return replay
+                raise StoreError("QUESTION_SESSION_COMPLETED", "Question session is already complete")
+            if analysis["package_state"] in {"completed", "cancelled", "partially_completed", "all_answered"}:
+                raise StoreError("QUESTION_SESSION_COMPLETED", "Question session is already complete")
+            questions = [self._question_public(r) for r in self.store.db.execute(
+                "SELECT * FROM collaboration_questions WHERE analysis_id=? ORDER BY created_at_ms,id",
+                (analysis_id,),
+            ).fetchall()]
+            unresolved = [q for q in questions if q["state"] in {"open", "deferred"}
+                          or (q["blocking"] and q["state"] != "resolved")]
+            if action == "complete" and unresolved and not allow_partial:
+                raise StoreError("QUESTION_SESSION_UNRESOLVED", "Explicit partial completion is required")
+            state = analysis["package_state"]
+            paused = analysis["package_paused_at_ms"]
+            offered = analysis["package_last_offered_at_ms"]
+            filtered = bool(analysis["package_filter_important_only"])
+            if action == "offer":
+                offered = now
+            elif action in {"accept", "resume"}:
+                state, paused = "active", None
+                if important_only is not None:
+                    filtered = important_only
+            elif action == "pause":
+                state, paused = "paused", now
+            elif action == "important_only" and important_only is not None:
+                filtered = important_only
+            elif action == "complete":
+                state, paused = ("partially_completed" if unresolved else "all_answered"), None
+            self.store.db.execute("SAVEPOINT question_session_control")
+            try:
+                self.store.db.execute(
+                    """UPDATE collaboration_analyses SET package_state=?,package_paused_at_ms=?,
+                       package_last_offered_at_ms=?,package_filter_important_only=?,updated_at_ms=? WHERE id=?""",
+                    (state, paused, offered, int(filtered), now, analysis_id),
+                )
+                ready = None
+                if action == "complete" and self.question_events is not None:
+                    ready = self.question_events.enqueue_question_ready(self._analysis_row(analysis_id))
+                receipt = dict(
+                    receipt_id=command_id, kind="session_control", action=action,
+                    analysis_id=analysis_id, package_state=state, important_only=filtered,
+                    allow_partial=allow_partial, completion_scope="partial" if unresolved else "full",
+                    unresolved_question_ids=[q["id"] for q in unresolved],
+                    unresolved_blocking_question_ids=[q["id"] for q in unresolved if q["blocking"]],
+                    questions=[q for q in questions if not filtered or q["blocking"]
+                               or q["priority"] in {"critical", "high"}],
+                    continuation=("ready_for_dot" if ready and ready.get("delivery_state") == "queued"
+                                  else "waiting_event_transport") if action == "complete" else "waiting_answers",
+                    continuation_request_id=ready["request_id"] if ready else None,
+                    summary={"offer": "Пакет вопросов предложен.", "accept": "Ответы на пакет вопросов начаты.",
+                             "pause": "Пакет вопросов отложен.", "resume": "Ответы на вопросы продолжены.",
+                             "important_only": "Фильтр важных вопросов сохранён.",
+                             "complete": "Сессия ответов завершена."}[action],
+                )
+                self.store.db.execute(
+                    """INSERT INTO collaboration_answer_commands(
+                       actor_id,analysis_id,command_id,payload_sha256,receipt_json,created_at_ms)
+                       VALUES(?,?,?,?,?,?)""",
+                    (actor_id, analysis_id, command_id, payload_sha, _canonical(receipt), now),
+                )
+                self.store.db.execute("RELEASE SAVEPOINT question_session_control")
+            except BaseException:
+                self.store.db.execute("ROLLBACK TO SAVEPOINT question_session_control")
+                self.store.db.execute("RELEASE SAVEPOINT question_session_control")
+                raise
+            return receipt
 
     def answer_questions(
         self,
@@ -1011,7 +1534,7 @@ class CollaborationAnalysisService:
             deferred_until = raw.get("deferred_until_ms")
             if disposition == "later":
                 try:
-                    deferred_until = int(deferred_until) if deferred_until is not None else _now_ms() + 86_400_000
+                    deferred_until = int(deferred_until) if deferred_until is not None else None
                 except (TypeError, ValueError):
                     raise StoreError("INVALID_ARGUMENT", "deferred_until_ms is invalid") from None
             else:
@@ -1029,7 +1552,7 @@ class CollaborationAnalysisService:
         now = _now_ms()
         with self.store._lock:
             analysis = self._analysis_row(analysis_id)
-            self.store.project_access(actor_id, workspace_id, analysis["project_id"])
+            self._check_question_session(actor_id, workspace_id, analysis)
             existing = self.store.db.execute(
                 """SELECT * FROM collaboration_answer_commands
                    WHERE actor_id=? AND analysis_id=? AND command_id=?""",
@@ -1039,6 +1562,15 @@ class CollaborationAnalysisService:
                 if existing["payload_sha256"] != payload_sha:
                     raise StoreError("COLLABORATION_COMMAND_CONFLICT", "answer command_id conflict")
                 return json.loads(existing["receipt_json"])
+            completed_intent = self.store.db.execute(
+                """SELECT 1 FROM collaboration_answer_commands WHERE analysis_id=?
+                   AND json_extract(receipt_json,'$.kind')='session_control'
+                   AND json_extract(receipt_json,'$.action')='complete' LIMIT 1""",
+                (analysis_id,),
+            ).fetchone()
+            if analysis["model_alias"] == "dot" and (completed_intent or analysis["package_state"] in {
+                    "all_answered", "partially_completed", "awaiting_delivery", "completed", "cancelled"}):
+                raise StoreError("QUESTION_SESSION_COMPLETED", "Question session is already complete")
             rows = self.store.db.execute(
                 """SELECT * FROM collaboration_questions
                    WHERE analysis_id=? AND id IN (%s)"""
@@ -1100,12 +1632,27 @@ class CollaborationAnalysisService:
                 has_deferred = any(row["state"] == "deferred" for row in blocking)
                 has_unresolved = any(row["state"] in {"open", "skipped", "unknown"} for row in blocking)
                 all_resolved = all(row["state"] == "resolved" for row in blocking)
-                job = self.store.db.execute(
+                is_dot = analysis["model_alias"] == "dot"
+                all_questions = self.store.db.execute(
+                    "SELECT state,blocking FROM collaboration_questions WHERE analysis_id=?",
+                    (analysis_id,),
+                ).fetchall()
+                dot_ready = (all(row["state"] in {"resolved", "skipped", "unknown"}
+                                 for row in all_questions) and
+                             all(not row["blocking"] or row["state"] == "resolved"
+                                 for row in all_questions))
+                ready_event = None
+                if is_dot:
+                    self.store.db.execute(
+                        "UPDATE collaboration_analyses SET package_state=?,updated_at_ms=? WHERE id=?",
+                        (analysis["package_state"] if analysis["package_state"] == "paused" else "waiting_answers", now, analysis_id),
+                    )
+                job = None if is_dot else self.store.db.execute(
                     "SELECT * FROM collaboration_jobs WHERE analysis_id=? AND kind='analysis_followup'",
                     (analysis_id,),
                 ).fetchone()
                 continuation_job_id = str(job["id"]) if job else None
-                if all_resolved and not job:
+                if all_resolved and not job and not is_dot:
                     job_id = _id("cj")
                     continuation_job_id = job_id
                     answers = [
@@ -1136,14 +1683,20 @@ class CollaborationAnalysisService:
                     ).fetchall()
                 ]
                 receipt = {
+                    "receipt_id": command_id,
+                    "kind": "answers",
+                    "summary": "Ответы сохранены.",
                     "analysis_id": analysis_id,
                     "questions": questions,
                     "continuation": (
+                        ("paused" if analysis["package_state"] == "paused" else
+                         "ready_to_complete" if dot_ready else "waiting_answers") if is_dot else
                         "queued" if all_resolved else
                         "deferred" if has_deferred else
                         "blocked" if has_unresolved else "not_required"
                     ),
                     "continuation_job_id": continuation_job_id,
+                    "continuation_request_id": ready_event["request_id"] if ready_event else None,
                 }
                 self.store.db.execute(
                     """INSERT INTO collaboration_answer_commands(

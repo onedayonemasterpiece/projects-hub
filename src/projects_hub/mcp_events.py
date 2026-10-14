@@ -79,6 +79,10 @@ class MCPEvents:
                 ('mcp_test_requests', 'result_json', 'TEXT'),
                 ('mcp_test_requests', 'binding_id', 'TEXT'),
                 ('mcp_test_requests', 'binding_revision', 'INTEGER'),
+                ('mcp_test_requests', 'request_kind', "TEXT NOT NULL DEFAULT 'discussion'"),
+                ('mcp_test_requests', 'source_revision', 'INTEGER'),
+                ('mcp_test_requests', 'analysis_id', 'TEXT'),
+                ('mcp_test_requests', 'initiation_origin', "TEXT NOT NULL DEFAULT 'mira'"),
             ):
                 if column not in {r['name'] for r in store.db.execute(f'PRAGMA table_info({table})')}:
                     store.db.execute(f'ALTER TABLE {table} ADD COLUMN {column} {definition}')
@@ -144,9 +148,50 @@ class MCPEvents:
                 verified_ms=excluded.verified_ms,expires_ms=excluded.expires_ms,state='active',updated_ms=excluded.updated_ms''',
                 (sub_id, grant_id, project, url, self._encrypt(secret), previous, until,
                  old['verified_ms'] if cached else now, expires, now, name))
+            if name == REQUEST_EVENT:
+                self._backfill_question_requests(sub_id, grant_id, project, now)
         self._log('MCP subscription verified', event='mcp_subscription', subscription_id=sub_id,
                   project_id=project, result='active')
         return dict(id=sub_id, refreshBefore=iso(expires), cursor=None, truncated=False)
+
+    def _backfill_question_requests(self, sub_id, grant_id, project, now):
+        """Renewed transport resumes durable question requests without new grants."""
+        requests = self.store.db.execute(
+            """SELECT * FROM mcp_test_requests WHERE project_id=? AND event_name=?
+               AND mode='live' AND request_kind IN ('question_start','questions_ready')
+               AND state='awaiting_response' AND expires_ms>?""",
+            (project, REQUEST_EVENT, now),
+        ).fetchall()
+        for request in requests:
+            try:
+                binding = self.bindings.access(
+                    grant_id, project, request['binding_id'],
+                    request['context_actor_id'] or request['actor_id'],
+                    request['binding_revision'],
+                )
+                if not binding['questions_allowed']:
+                    continue
+            except StoreError:
+                continue
+            self.store.db.execute(
+                """INSERT INTO mcp_outbox(event_id,subscription_id,request_id,state,next_ms)
+                   VALUES(?,?,?,'pending',?)
+                   ON CONFLICT(event_id,subscription_id) DO UPDATE SET
+                   state='pending',next_ms=excluded.next_ms,lease_until_ms=NULL,last_error=NULL
+                   WHERE mcp_outbox.state='cancelled'
+                     AND mcp_outbox.last_error='access_or_lifetime_ended'""",
+                (request['event_id'], sub_id, request['id'], now),
+            )
+
+    def _question_delivery(self, request_id, event_id):
+        queued = self.store.db.execute(
+            """SELECT 1 FROM mcp_outbox o JOIN mcp_subscriptions s ON s.id=o.subscription_id
+               WHERE o.request_id=? AND o.state IN ('pending','in_flight','accepted')
+                 AND s.state='active' AND s.expires_ms>? LIMIT 1""",
+            (request_id, _now_ms()),
+        ).fetchone()
+        return dict(request_id=request_id, event_id=event_id,
+                    delivery_state='queued' if queued else 'waiting_event_transport')
 
     def unsubscribe(self, grant_id: str, name: str, arguments: dict, delivery: dict) -> dict:
         sub_id, _, _ = self.identity(grant_id, name, arguments, delivery)
@@ -157,7 +202,8 @@ class MCPEvents:
 
     def create_request(self, actor_id: str, project_id: str, command_id: str, ttl_seconds: int = 900,
                        *, context_actor_id: str | None = None, event_name: str = EVENT,
-                       binding_id: str | None = None) -> dict:
+                       binding_id: str | None = None, request_kind: str = 'discussion',
+                       origin: str = 'mira') -> dict:
         if not isinstance(command_id, str) or not 8 <= len(command_id) <= 160 or not 60 <= ttl_seconds <= 3600:
             raise StoreError('INVALID_ARGUMENT', 'Command id or request lifetime invalid')
         with self.store._lock:
@@ -167,16 +213,23 @@ class MCPEvents:
                 context_actor_id = context_actor_id or actor_id
                 project = self.store.db.execute('SELECT workspace_id FROM projects WHERE id=?', (project_id,)).fetchone()
                 self.store.project_access(context_actor_id, project['workspace_id'], project_id)
-                if event_name not in (EVENT, REQUEST_EVENT) or (binding_id and event_name != REQUEST_EVENT):
+                if (event_name not in (EVENT, REQUEST_EVENT) or (binding_id and event_name != REQUEST_EVENT)
+                        or request_kind not in ('discussion','question_start')
+                        or origin not in ('mira','slack') or
+                        (request_kind == 'question_start' and (not binding_id or event_name != REQUEST_EVENT))):
                     raise StoreError('INVALID_ARGUMENT', 'Unknown request event')
                 binding = self.bindings.for_owner(actor_id, project_id, binding_id, context_actor_id) if binding_id else None
+                if request_kind == 'question_start' and not binding['questions_allowed']:
+                    raise StoreError('PROJECT_FORBIDDEN', 'Owner has not approved external question analysis')
+                frozen_source_revision = int(self.bindings._note(actor_id,project_id,binding['note_id'])['revision']) if binding else None
                 old = self.store.db.execute('SELECT id FROM mcp_test_requests WHERE actor_id=? AND project_id=? AND command_id=?',
                                             (actor_id, project_id, command_id)).fetchone()
                 if old:
                     prior = self.store.db.execute('SELECT * FROM mcp_test_requests WHERE id=?', (old['id'],)).fetchone()
                     if (prior['context_actor_id'] or prior['actor_id']) != context_actor_id:
                         raise StoreError('REQUEST_CONFLICT', 'Command id already used with a different user context')
-                    if prior['event_name'] != event_name or prior['binding_id'] != binding_id:
+                    if (prior['event_name'] != event_name or prior['binding_id'] != binding_id
+                            or prior['request_kind'] != request_kind or prior['initiation_origin'] != origin):
                         raise StoreError('REQUEST_CONFLICT', 'Command id already used for another route or mode')
                     self.store.db.execute('COMMIT')
                     return self.status(actor_id, old['id'])
@@ -195,10 +248,11 @@ class MCPEvents:
                     raise StoreError('NO_SUBSCRIPTION', 'Connect and approve a verified project subscription first')
                 request_id, event_id = 'mcp_test_' + secrets.token_hex(16), 'evt_' + secrets.token_hex(16)
                 self.store.db.execute('''INSERT INTO mcp_test_requests
-                    (id,project_id,actor_id,command_id,nonce,created_ms,expires_ms,state,event_id,context_actor_id,event_name,mode,binding_id,binding_revision)
-                    VALUES(?,?,?,?,?,?,?,'awaiting_response',?,?,?,?,?,?)''',
+                    (id,project_id,actor_id,command_id,nonce,created_ms,expires_ms,state,event_id,context_actor_id,event_name,mode,binding_id,binding_revision,request_kind,source_revision,initiation_origin)
+                    VALUES(?,?,?,?,?,?,?,'awaiting_response',?,?,?,?,?,?,?,?,?)''',
                     (request_id, project_id, actor_id, command_id, secrets.token_urlsafe(32), now, now + ttl_seconds*1000, event_id, context_actor_id,
-                     event_name, 'live' if binding else 'test', binding_id, binding['revision'] if binding else None))
+                     event_name, 'live' if binding else 'test', binding_id, binding['revision'] if binding else None,
+                     request_kind,frozen_source_revision,origin))
                 for sub in eligible:
                     self.store.db.execute("INSERT INTO mcp_outbox(event_id,subscription_id,request_id,state,next_ms) VALUES(?,?,?,'pending',?)", (event_id, sub['id'], request_id, now))
                 self.store.db.execute('COMMIT')
@@ -208,6 +262,110 @@ class MCPEvents:
         self._log('MCP test requested', event='mcp_test_created', request_id=request_id,
                   event_id=event_id, project_id=project_id)
         return self.status(actor_id, request_id)
+
+
+    def start_question_session(self, actor_id: str, project_id: str, note_id: str,
+                               command_id: str, *, origin: str = 'mira') -> dict:
+        """Mira/approved workspace actor requests dot analysis via existing Events.
+
+        The owner-approved binding supplies both service identity and immutable
+        Slack destination. Never infer a Slack thread from the latest message.
+        """
+        if origin not in ('mira', 'slack'):
+            raise StoreError('INVALID_ARGUMENT', 'Invalid question origin')
+        with self.store._lock:
+            project = self.store.db.execute(
+                "SELECT workspace_id FROM projects WHERE id=? AND status='active'",
+                (project_id,),
+            ).fetchone()
+            if not project:
+                raise StoreError('PROJECT_FORBIDDEN', 'Project unavailable')
+            self.store.project_access(actor_id, project['workspace_id'], project_id, require_analyze=True)
+            binding = self.store.db.execute(
+                """SELECT * FROM mcp_discussion_bindings
+                   WHERE project_id=? AND note_id=? AND state='active' AND questions_allowed=1""",
+                (project_id, note_id),
+            ).fetchone()
+            if not binding:
+                raise StoreError('QUESTION_ROUTE_REQUIRED', 'Owner-approved source and Slack thread are required')
+            owner_id = binding['owner_actor_id']
+            self.bindings._note(owner_id, project_id, note_id, editor=True)
+        return self.create_request(
+            owner_id, project_id, command_id, ttl_seconds=3600,
+            context_actor_id=actor_id, event_name=REQUEST_EVENT, binding_id=binding['id'],
+            request_kind='question_start', origin=origin,
+        )
+
+
+    def start_question_session_from_service(self, grant_id: str, project_id: str, binding_id: str,
+                                            command_id: str, slack_workspace_id: str,
+                                            slack_channel_id: str, slack_thread_ts: str) -> dict:
+        """Dot's Slack-origin request: never accept an arbitrary destination."""
+        with self.store._lock:
+            principal=self.auth.project_grant(grant_id,project_id)
+            binding=self.store.db.execute(
+                "SELECT * FROM mcp_discussion_bindings WHERE id=? AND project_id=? AND state='active'",
+                (binding_id,project_id),
+            ).fetchone()
+            if (not binding or not binding['questions_allowed'] or binding['client_id']!=principal['client_id']
+                    or (binding['slack_workspace_id'],binding['slack_channel_id'],binding['slack_thread_ts']) !=
+                       (slack_workspace_id,slack_channel_id,slack_thread_ts)):
+                raise StoreError('PROJECT_FORBIDDEN','Question session requires exact approved Slack thread')
+            owner_id=binding['owner_actor_id']
+            self.bindings.access(grant_id,project_id,binding_id,owner_id,binding['revision'])
+        return self.start_question_session(
+            owner_id,project_id,binding['note_id'],command_id,origin='slack',
+        )
+
+    def enqueue_question_ready(self, analysis):
+        """Create one typed continuation request inside the caller's answer transaction."""
+        if analysis['model_alias'] != 'dot' or analysis['package_state'] not in ('all_answered', 'partially_completed'):
+            raise StoreError('REQUEST_UNAVAILABLE', 'Question package not ready')
+        owner, project = analysis['initiating_actor_id'], analysis['project_id']
+        self.auth.project_owner(owner, project)
+        binding_id = json.loads(analysis['scope_json'])['binding_id']
+        binding = self.bindings.for_owner(owner, project, binding_id, analysis['addressed_to_actor_id'])
+        if (not binding['questions_allowed'] or binding['revision'] != analysis['slack_binding_revision']
+                or (binding['slack_workspace_id'],binding['slack_channel_id'],binding['slack_thread_ts']) !=
+                   (analysis['slack_workspace_id'],analysis['slack_channel_id'],analysis['slack_thread_ts'])):
+            raise StoreError('REQUEST_UNAVAILABLE', 'Question binding changed')
+        command = 'questions.ready.' + analysis['id']
+        old = self.store.db.execute(
+            'SELECT * FROM mcp_test_requests WHERE actor_id=? AND project_id=? AND command_id=?',
+            (owner, project, command),
+        ).fetchone()
+        if old:
+            if old['request_kind'] != 'questions_ready' or old['analysis_id'] != analysis['id']:
+                raise StoreError('REQUEST_CONFLICT', 'Question continuation already differs')
+            return self._question_delivery(old['id'], old['event_id'])
+        now = _now_ms()
+        request_id = 'mcp_test_' + secrets.token_hex(16)
+        event_id = 'evt_' + secrets.token_hex(16)
+        self.store.db.execute(
+            """INSERT INTO mcp_test_requests
+               (id,project_id,actor_id,command_id,nonce,created_ms,expires_ms,state,event_id,
+                context_actor_id,event_name,mode,binding_id,binding_revision,request_kind,
+                source_revision,analysis_id,initiation_origin)
+               VALUES(?,?,?,?,?,?,?,'awaiting_response',?,?,?,?,?,?,?,?,?,?)""",
+            (request_id,project,owner,command,secrets.token_urlsafe(32),now,now+7*86400_000,
+             event_id,analysis['addressed_to_actor_id'],REQUEST_EVENT,'live',
+             binding_id,binding['revision'],'questions_ready',
+             analysis['source_revision'],analysis['id'],analysis['origin']),
+        )
+        for sub in self.store.db.execute(
+            "SELECT * FROM mcp_subscriptions WHERE project_id=? AND event_name=? AND state='active' AND expires_ms>?",
+            (project,REQUEST_EVENT,now),
+        ).fetchall():
+            try:
+                self.bindings.access(sub['grant_id'],project,binding_id,
+                                     analysis['addressed_to_actor_id'],binding['revision'])
+            except StoreError:
+                continue
+            self.store.db.execute(
+                "INSERT INTO mcp_outbox(event_id,subscription_id,request_id,state,next_ms) VALUES(?,?,?,'pending',?)",
+                (event_id,sub['id'],request_id,now),
+            )
+        return self._question_delivery(request_id, event_id)
 
     def _context(self, row):
         actor_id = row['context_actor_id'] or row['actor_id']
@@ -288,6 +446,19 @@ class MCPEvents:
                             dict(kind='test_ack',nonce=row['nonce'],text=row['response']) if row['state']=='completed' else None)
             return data
 
+    async def record_request_result_async(self, grant_id: str, project_id: str,
+                                          request_id: str, event_id: str, result: dict) -> dict:
+        if not isinstance(result, dict) or result.get('kind') != 'analysis_result':
+            return self.record_request_result(grant_id, project_id, request_id, event_id, result)
+        with self.store._lock:
+            row, _ = self._request(grant_id, request_id, project_id)
+            if row['event_id'] != event_id or row['mode'] != 'live':
+                raise StoreError('REQUEST_UNAVAILABLE', 'Request event mismatch')
+            request = dict(row)
+        # Repository I/O never holds the SQLite/process lock. The binding
+        # handler rechecks authorization and exact source revision after readback.
+        return await self.bindings.record_result_async(grant_id, request, result)
+
     def record_request_result(self, grant_id: str, project_id: str, request_id: str, event_id: str, result: dict) -> dict:
         with self.store._lock:
             row, _ = self._request(grant_id, request_id, project_id)
@@ -312,6 +483,7 @@ class MCPEvents:
                 accepted_ms,last_status,last_error FROM mcp_outbox WHERE request_id=?''', (request_id,))]
             return dict(request_id=row['id'], project_id=row['project_id'], actor_id=row['context_actor_id'] or row['actor_id'], eventId=row['event_id'],
                         event_name=row['event_name'],mode=row['mode'],binding_id=row['binding_id'],binding_revision=row['binding_revision'],
+                        request_kind=row['request_kind'],analysis_id=row['analysis_id'],
                         response_id=self.response_id(request_id) if row['state']=='completed' else None,
                         created_at=iso(row['created_ms']), expires_at=iso(row['expires_ms']), state=row['state'],
                         response=row['response'], response_actor_id=row['response_actor_id'],
@@ -323,7 +495,7 @@ class MCPEvents:
             row = self.store.db.execute('''SELECT o.*,s.grant_id,s.project_id,s.url,s.secret_enc,
                 s.old_secret_enc,s.rotation_until_ms,s.state AS sub_state,s.expires_ms AS sub_expires,
                 r.created_ms,r.expires_ms AS request_expires,r.state AS request_state,r.event_name,r.mode,r.binding_id,r.binding_revision,
-                COALESCE(r.context_actor_id,r.actor_id) AS context_actor_id
+                COALESCE(r.context_actor_id,r.actor_id) AS context_actor_id,r.request_kind,r.analysis_id
                 FROM mcp_outbox o JOIN mcp_subscriptions s ON s.id=o.subscription_id
                 JOIN mcp_test_requests r ON r.id=o.request_id
                 WHERE (o.state='pending' AND o.next_ms<=?) OR (o.state='in_flight' AND o.lease_until_ms<=?)
@@ -354,6 +526,10 @@ class MCPEvents:
             data.update(actor_id=row['context_actor_id'])
         else:
             data.update(mode=row['mode'])
+            if row['request_kind'] != 'discussion':
+                data.update(request_kind=row['request_kind'])
+                if row['analysis_id']:
+                    data.update(analysis_id=row['analysis_id'])
         event = dict(eventId=event_id, name=row['event_name'], timestamp=iso(row['created_ms']), cursor=None, data=data)
         status, reason = None, None
         try:

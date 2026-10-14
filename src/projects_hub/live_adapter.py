@@ -523,6 +523,25 @@ def _functions(
                     ],
                 },
             },
+
+            {
+                "name": "collaboration_questions_request",
+                "description": (
+                    "ONLY on explicit user request: ask the existing authorized dot to "
+                    "analyze an owner-approved project note and return a typed question package "
+                    "through Events. This does not call Kimi, DeepSeek or a second AI. "
+                    "A bound source and verified Slack destination are required; if absent "
+                    "report QUESTION_ROUTE_REQUIRED, never silently grant permission."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "project_id": {"type": "string"},
+                        "note_id": {"type": "string"},
+                    },
+                    "required": ["project_id", "note_id"],
+                },
+            },
             {
                 "name": "collaboration_questions_inbox",
                 "description": (
@@ -532,7 +551,8 @@ def _functions(
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 50}
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                        "analysis_id": {"type": "string"},
                     },
                 },
             },
@@ -541,12 +561,17 @@ def _functions(
                 "description": (
                     "Answer one or several questions from the same analysis in one semantic turn. "
                     "Each item must use answer, unknown, skip or later. Reading a question never "
-                    "counts as an answer."
+                    "counts as an answer. For dot sessions use session_action to persist offer, accept, "
+                    "pause, resume, important_only or explicit complete, without responses. "
+                    "Only explicit complete can continue dot; allow_partial requires explicit user intent."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "analysis_id": {"type": "string"},
+                        "session_action": {"type": "string", "enum": ["offer", "accept", "pause", "resume", "important_only", "complete"]},
+                        "important_only": {"type": "boolean"},
+                        "allow_partial": {"type": "boolean"},
                         "responses": {
                             "type": "array",
                             "minItems": 1,
@@ -566,7 +591,7 @@ def _functions(
                             },
                         },
                     },
-                    "required": ["analysis_id", "responses"],
+                    "required": ["analysis_id"],
                 },
             },
             {
@@ -886,7 +911,7 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Для чтения используй project_notes_list/project_note_get. Обычному участнику не нужен GitHub login: Projects Hub проверяет project grant на сервере.
 - Ответ на заметку делай через project_note_reply; он остаётся связанным с note_id и виден участникам проекта.
 - На общий старт вроде «привет»/«что нового» сначала используй collaboration_personal_brief: лично адресованное важнее общего. Если пользователь сразу дал конкретную задачу, выполняй её и не вставляй приветственную сводку перед ней.
-- После личной сводки в таком общем разговоре обязательно проверь collaboration_questions_inbox: сильная модель могла сформировать адресованные пользователю вопросы аналитики. Если есть открытые вопросы, задай голосом ОДИН наиболее существенный вопрос с необходимым контекстом и дождись ответа. При нескольких вопросах кратко назови их число; следующие задавай последовательно, а не зачитывай весь список. Не вызывай визуальный collaboration_view без отдельной просьбы показать вопросы.
+- После личной сводки в общем разговоре проверь collaboration_questions_inbox. Если есть ожидающие вопросы, кратко предложи обсудить их и дождись согласия. Только после согласия задай голосом ОДИН наиболее существенный вопрос с необходимым контекстом и дождись ответа. Конкретная задача пользователя важнее предложения вопросов. Пауза сохраняет весь проход; «только важное» ограничивает предъявление, но не завершает пакет. Не вызывай визуальный collaboration_view без отдельной просьбы показать вопросы.
 - У каждого вопроса четыре законных исхода: обычный содержательный ответ — disposition=answer с точными словами человека; «не знаю» — unknown; «пропустить» — skip; «позже» — later. Не подставляй выдуманный ответ, не путай skip с answer и не снимай блокирующую зависимость без фактического ответа. Для вопросов из одного analysis используй collaboration_questions_answer; owner_development — collaboration_question_respond. Состояние и продолжение проверяй по receipt backend.
 - Завершённый анализ ChatGPT называй завершённой аналитической работой, а не заметкой, которую якобы отредактировал участник. Для новостей команды отличай действительно новые заметки/ответы других людей от собственных старых заметок. Голосовое сообщение важнее визуальной карточки.
 - После того как фактически озвучила/показала элементы brief, вызови collaboration_brief_seen с соответствующим through_id, чтобы reconnect/следующий hello не повторял то же самое.
@@ -894,8 +919,10 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Не создавай отдельный чат на проект: focus проекта меняется внутри одной личной timeline.
 - Перед адресованным вопросом прочитай project_participants_list и используй реальный actor_id/role, а не свободный текст роли.
 - Для сильного анализа заметки используй project_note_analyze: он получает только frozen note/reply evidence через provided-only bridge. Не превращай analysis в development.
-- Когда вопросы адресованы текущему человеку, collaboration_questions_inbox даёт их общий контекст. Мира спрашивает их голосом при общем старте/запросе вопросов, не ждёт, пока пользователь найдёт форму. Пользователь может одной репликой ответить на несколько; передай их одним collaboration_questions_answer.
+- Когда вопросы адресованы текущему человеку, collaboration_questions_inbox даёт их контекст и причину. На приветствие только предложи обсудить; после согласия либо прямой просьбы «задай вопросы» спроси голосом один существенный вопрос, не заставляй искать форму. Пользователь может одной репликой ответить на несколько; передай их одним collaboration_questions_answer.
 - answer, unknown, skip и later — разные состояния. Blocking continuation запускается только когда все blocking questions получили disposition=answer. later сохраняет отложенную зависимость; unknown/skip не выдумывают решение и не снимают blocker.
+- Для пакетов dot сохраняй предложение, согласие, паузу, возобновление и «только важное» через collaboration_questions_answer с session_action=offer/accept/pause/resume/important_only и analysis_id, без responses. Только явное завершение человеком вызывает session_action=complete; allow_partial=true допускается лишь по прямому намерению закончить с текущими ответами. Нерешённые blockers остаются ограничениями. Ответ сам по себе не завершает пакет.
+- Лично адресованное question_result_ready означает проверенный новый содержательный результат и подтверждённую доставку в исходный Slack. Кратко сообщи готовность, но не читай весь текст без просьбы. По просьбе прочти результат через collaboration_questions_inbox с analysis_id из object_id. После фактического уведомления отметь brief_seen, не повторяй его при reconnect.
 - Простое чтение статуса/вопроса никогда не продвигает worker.
 - Если collaboration_questions_inbox возвращает source_kind=owner_development, отвечай через collaboration_question_respond. Только platform owner сможет реально resume; backend продолжит тот же execution/thread и не создаст новую разработку.
 
@@ -1007,10 +1034,12 @@ collaboration. Это те же личная переписка и текуща�
 На простое «Мира, привет» без другого запроса ответь СРАЗУ голосом в этой
 Live-сессии. НЕ вызывай activate_capability и не переключай конфигурацию.
 Если context.recent_owner_completions содержит подтверждённые результаты,
-можешь кратко назвать один. Не утверждай, что новых вопросов нет, пока не
-проверен inbox. На «что нового», «какие задачи или вопросы аналитики» сначала
+можешь кратко назвать один. Если context.pending_question_count > 0,
+предложи обсудить вопросы, но НЕ задавай их без согласия.
+После согласия активируй collaboration и задай голосом один важный вопрос.
+На «что нового», «какие задачи или вопросы аналитики» сначала
 активируй collaboration, если разрешено: collaboration_personal_brief, затем
-collaboration_questions_inbox, задай голосом один существенный ожидающий вопрос.
+collaboration_questions_inbox; предложи голосом обсудить существенные вопросы.
 Доступны answer, unknown, skip, later; не снимай blocker без содержательного
 answer и backend receipt. Не открывай карточку/форму без явного «покажи».
 Если пользователь сразу поставил конкретную задачу, она приоритетнее сводки.
@@ -1099,6 +1128,7 @@ class ProjectsHubLiveAdapter:
         github_connections: GitHubConnections | None = None,
         collaboration: CollaborationService | None = None,
         collaboration_analysis: CollaborationAnalysisService | None = None,
+        question_events: Any | None = None,
         board: BoardService | None = None,
         board_hub: Any | None = None,
         board_view_context: BoardViewContextStore | None = None,
@@ -1119,6 +1149,7 @@ class ProjectsHubLiveAdapter:
         self.github_connections = github_connections
         self.collaboration = collaboration
         self.collaboration_analysis = collaboration_analysis
+        self.question_events = question_events
         self.board = board or BoardService(store)
         self.board_hub = board_hub
         self.board_view_context = board_view_context or BoardViewContextStore(store, self.board)
@@ -1390,7 +1421,29 @@ class ProjectsHubLiveAdapter:
                 )
             except StoreError:
                 pass
+        pending_questions: list[dict[str, Any]] = []
+        if self.collaboration_analysis is not None and not recovery_only:
+            try:
+                pending_questions = [
+                    item for item in self.collaboration_analysis.inbox(
+                        actor_id=actor_id, workspace_id=conversation["workspace_id"], limit=100,
+                    )
+                    if item["state"] == "open" and not item.get("disposition")
+                    and item.get("package_state", "waiting_answers") in {"active", "waiting_answers"}
+                    and not item.get("package_last_offered_at_ms")
+                ]
+            except StoreError:
+                pass
+        pending_question_count = len(pending_questions)
         system_instruction = _live_instruction("core") + "\n" + OVERLAYS["core"]
+        if pending_question_count and not recovery_only:
+            system_instruction += (
+                "\n# PENDING QUESTIONS AT GREETING\n"
+                "context.pending_question_count — подтверждённое число ожидающих вопросов. "
+                "После краткого приветствия предложи их обсудить, но НЕ задавай "
+                "сразу вопрос без согласия человека. После согласия задай голосом один вопрос. Если он занят или поставил "
+                "другую задачу, не мешай. Не открывай виджеты без просьбы."
+            )
         if recent_owner_completions:
             # This is server-verified owner-only context. The SAME Live Mira
             # should naturally mention it at greeting, not a TTS side agent.
@@ -1450,6 +1503,7 @@ class ProjectsHubLiveAdapter:
                     actor_id=actor_id, workspace_id=conversation["workspace_id"],
                     conversation_id=conversation_id,
                 ),
+                "pending_question_count": pending_question_count,
                 "recent_owner_completions": [
                     {
                         "project_name": item["project_name"],
@@ -2209,6 +2263,7 @@ class ProjectsHubLiveAdapter:
         if name in {
             "project_participants_list",
             "project_note_analyze",
+            "collaboration_questions_request",
             "collaboration_questions_inbox",
             "collaboration_questions_answer",
             "collaboration_question_respond",
@@ -2237,7 +2292,23 @@ class ProjectsHubLiveAdapter:
                     purpose=str(args.get("purpose") or "requirements"),
                     question=str(args.get("question") or ""),
                 )
+            if name == "collaboration_questions_request":
+                if self.question_events is None:
+                    raise StoreError("TOOL_NOT_AVAILABLE", "Question Events are unavailable")
+                command_id, _args_sha = self._command_id(session, name, args)
+                return self.question_events.start_question_session(
+                    actor_id=actor_id,
+                    project_id=str(args.get("project_id") or ""),
+                    note_id=str(args.get("note_id") or ""),
+                    command_id=command_id,
+                    origin="mira",
+                )
             if name == "collaboration_questions_inbox":
+                if args.get("analysis_id"):
+                    return {"analysis": self.collaboration_analysis.get_analysis(
+                        actor_id=actor_id, workspace_id=workspace_id,
+                        analysis_id=str(args["analysis_id"]),
+                    )}
                 try:
                     limit = int(args.get("limit", 30))
                 except (TypeError, ValueError):
@@ -2250,6 +2321,19 @@ class ProjectsHubLiveAdapter:
                     )
                 }
             if name == "collaboration_questions_answer":
+                if args.get("session_action"):
+                    if args.get("responses"):
+                        raise StoreError("INVALID_ARGUMENT", "Session control cannot also answer questions")
+                    if any(key in args and type(args[key]) is not bool for key in ("important_only", "allow_partial")):
+                        raise StoreError("INVALID_ARGUMENT", "Session flags must be booleans")
+                    command_id, _args_sha = self._command_id(session, name, args)
+                    return self.collaboration_analysis.control_question_session(
+                        actor_id=actor_id, workspace_id=workspace_id,
+                        analysis_id=str(args.get("analysis_id") or ""), command_id=command_id,
+                        action=str(args["session_action"]),
+                        important_only=args.get("important_only"),
+                        allow_partial=args.get("allow_partial", False),
+                    )
                 raw = args.get("responses")
                 if not isinstance(raw, list):
                     raise StoreError("INVALID_ARGUMENT", "responses must be a list")

@@ -102,7 +102,8 @@ async def test_mira_explicit_collaboration_view_is_read_only_and_questions_remai
         )
         instruction = initialized["configuration"]["system_instruction"]
         assert "collaboration_questions_inbox" in instruction
-        assert "задай голосом" in instruction
+        assert "предложи обсудить" in instruction
+        assert "НЕ задавай" in instruction
         assert "unknown" in instruction and "skip" in instruction and "later" in instruction
         assert "collaboration_view" in BUNDLES["collaboration"]
         assert "collaboration_view" in BUNDLES["notes"]

@@ -66,6 +66,7 @@ def build_live_host(
     github_connections: GitHubConnections | None = None,
     collaboration: CollaborationService | None = None,
     collaboration_analysis: CollaborationAnalysisService | None = None,
+    question_events: Any | None = None,
     expert_reviews_factory: (
         Callable[[str, str], ExpertReviewAdapter | None] | None
     ) = None,
@@ -234,6 +235,7 @@ def build_live_host(
             github_connections=github_connections,
             collaboration=collaboration,
             collaboration_analysis=collaboration_analysis,
+            question_events=question_events,
             expert_reviews_factory=expert_reviews_factory,
             regional_knowledge_factory=regional_knowledge_factory,
             **shared,
