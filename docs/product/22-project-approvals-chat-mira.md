@@ -4,17 +4,38 @@
 Проверенный срез AS-IS: [main b44a1f58](https://github.com/onedayonemasterpiece/projects-hub/tree/b44a1f58c6fcf2de8b24b1fdd5ef96ca29c5b90a).
 Этот документ не меняет ACL, OAuth grants, bindings, подписки, код или deployment.
 
-## 0. Выбранный минимальный путь · revision 3, 2026-10-14
+## 0. AS-IS, dual-access target и чат-fallback · revision 4, 2026-10-14
 
-**Сохраняем рабочую авторизацию и MCP connection Projects Hub. Первый этап: разрешение спрашивается и даётся текстом в исходном чате; Мира сообщает об ожидающем решении, объясняет предмет и открывает тот же запрос. Голосовое согласие — возможное последующее улучшение, не условие первого этапа.**
+**Два подключения к одному backend — обоснованный целевой вариант для многопользовательской коллаборации. Существующее сервисное подключение сохраняется для событий и разрешённых фоновых операций; личный путь добавляется рядом и работает с правами конкретного участника. Это не замена рабочего auth и не единый «аккаунт владельца для всех».**
 
-[Уточнение владельца 14 октября](https://app.slack.com/archives/C0C872SJFA7/p1791968021033259): прежняя OAuth-авторизация не проходила; уже работают MCP других проектов; текстовое разрешение, возможно, проще. Это предпочтение минимального решения, **не окончательный отказ от голоса**. Предыдущая редакция преждевременно выбрала новое owner-linked OAuth-подключение. Оно не требуется для выбранного первого этапа и не предлагается как обязательная перестройка.
+Источники: [опасение о перестройке auth и текстовый вариант как возможность](https://app.slack.com/archives/C0C872SJFA7/p1791968021033259), [предложение двух MCP-подключений](https://app.slack.com/archives/C0C872SJFA7/p1791968286222449), [прямое уточнение: Hub — инструмент коллаборации для нескольких пользователей](https://app.slack.com/archives/C0C872SJFA7/p1791968363167599). **D0 не объявляется окончательно выбранным владельцем:** текстовое согласование — рабочий fallback и возможный минимальный этап; dual-access — рассматриваемый target.
 
-### Практический сценарий
+### Что поддержано, что ещё проверить
 
-dot создаёт один широкий запрос в проверенном исходном чате и сохраняет связанный pending record в Hub. Мира показывает «нужно решение по проекту X» и ссылку; при недоступности Миры чат уже содержит вопрос. Владелец отвечает текстом, dot проверяет автора/точную связь с вопросом обычными средствами этого канала, продолжает в разрешённых границах и обновляет Hub status. Hub-запись об этом ответе служит общей проекцией статуса, а не самостоятельным новым источником полномочий.
+[OpenAI authentication docs](https://developers.openai.com/plugins/build/auth#support-multiple-accounts) прямо поддерживают несколько подключённых аккаунтов одного plugin: вызов использует credentials выбранной connection. Это подтверждает общий механизм multi-account, **не** live-совместимость текущего Hub Secure Tunnel и нового user OAuth внутри одной app registration. Документация также отделяет end-user OAuth от аутентификации MCP-клиента. Profile tool идентифицирует текущие credentials, а не выдаёт approval.
 
-Никакого обязательного второго «да», отдельной новой OAuth connection или голосовой процедуры. Согласованный широкий проектный scope действует на последующие покрытые задачи; пересогласование лишь для изменившихся границ или обязательных исключений. Мира не создаёт grant из фразы «да», пока отдельный voice-consent путь не реализован и не проверен.
+Поэтому предлагаемый deploy shape: **две ясно различимые app/access surfaces к одному Hub backend**, существующая Service и добавляемая Personal. Отдельная регистрация Personal с отдельным endpoint/resource позволяет не менять service catalogue/auth. Это технический дизайн; создание второй регистрации, одновременная доступность обоих каталогов в текущем dot, выбор correct connection и сохранение старых подписок ещё требуют client acceptance. Альтернатива «два accounts одного plugin на одном endpoint» допустима после проверки смешанного auth; её нельзя считать автоматически работающей только из общей multi-account документации.
+
+**Не создавать новый machine-to-machine OAuth grant в ChatGPT:** обычный OAuth client-credentials flow здесь не заявляется. Service остаётся существующим проверенным Secure MCP Tunnel, а Personal использует пользовательский flow. Новые подключения/постоянный доступ сейчас не создавались.
+
+### Конкретный AS-IS Hub
+
+Срез [76bc5f2d](https://github.com/onedayonemasterpiece/projects-hub/tree/76bc5f2d84424f26bf3d0056687ae6a5dfcbde81):
+- [store.py](../../src/projects_hub/store.py): external_identities(provider,subject) → стабильный actor; memberships и project_grants с viewer/editor/owner, can_analyze/can_manage_share. Есть основа разных пользователей, а не только platform owner.
+- [auth.py](../../src/projects_hub/auth.py) и [app.py](../../src/projects_hub/app.py): подписанная browser session → actor_id; эти actor/ACL нужно переиспользовать для Personal, не создавать параллельных людей по email.
+- [mcp_api.py](../../src/projects_hub/mcp_api.py): текущий authorize вызывает authorize_service; consent явно возвращает Personal account linking is disabled; token exchange использует service_only=True. Добавление личного access path действительно требует реализации, но не отключения существующего.
+- [mcp_auth.py](../../src/projects_hub/mcp_auth.py): legacy human grants owner/project-bound; это не готовый collaborator API. Service branch project_owner допускает активный project как integration. Такой доступ нельзя скопировать в user endpoint; фоновые reads новых approvals требуют явной tenant/project/subscriber binding, а не общей service visibility.
+- Текущий каталог пяти tools и question receipts не является готовым approval API. Реальный MCP Events/read/write через tunnel уже подтверждён [P0](../reports/mcp-events-p0-20261013.md) и [stable contract](../reports/mcp-events-mvp0-20261013.md).
+
+### Минимальная dual delta, без поломки Service
+
+1. **Service без миграции:** сохранить существующий endpoint, tunnel credential, subscriptions и semantics старых tools. Для новых approval events хранить exact initiating actor/workspace/project, requester connection и разрешённый callback/chat binding; payload только IDs и безопасный summary. Service не может согласиться от имени участника.
+2. **Personal рядом:** предлагаемый новый endpoint/resource, например /mcp/user (ещё не создан), отдельные user OAuth routes/discovery и отдельная app label «Projects Hub Personal». Consent использует уже существующую Hub session и тот же external identity → actor mapping. Не менять старые service-only routes. Resource/audience и tool allowlist исключают применение service token на user surface и наоборот.
+3. **Минимальный личный каталог:** profile, approval_inbox/get и чтение доступных project contexts. Authenticated profile ID берётся из credential subject. Для каждого read проверяются membership, current project grant и addressed approver; workspace/project из запроса не дают доступ сами по себе. Этот путь полезен всей коллаборации, не только approvals.
+4. **Человеческое решение:** Mira/UI сохраняет exact scope/revision/decision от текущего authenticated actor. Request имеет approver_actor_id либо явную approval policy; нельзя автоматически назначать platform owner согласующим каждого проекта. Viewer/editor не получают право одобрять любые действия; право зависит от конкретного action/resource. Один участник не разрешает доступ к данным/аккаунту другого.
+5. **Dot continuation:** service event будит нужный subscribed dot, Personal connection того же пользователя читает source receipt. Author/approver, workspace/project/scope, connection identity и current rights должны совпасть. Несовпадение — explicit blocked; нельзя подобрать другой личный аккаунт или подставить service actor. При валидном согласии обычное действие продолжается без второго «да» в чате; mandatory формы остаются отдельными.
+
+Число user connections соответствует пользователям/их аккаунтам, а не «один Personal на всю систему». Нужны два пользователя и два проекта в isolation tests, отзыв membership, повторное подключение и отсутствие межпользовательской утечки в notifications. Service entitlement не равен user entitlement.
 
 ### Ограниченное read-only сравнение существующих решений
 
@@ -31,30 +52,20 @@ dot создаёт один широкий запрос в проверенно�
 
 У Wonderful Lections отдельно исправлялись Origin:null из no-referrer и CSP на callback; events-bot также имеет [CSP redirect incident](https://github.com/onedayonemasterpiece/events-bot-new/blob/d431b9f86b87999cf27f74b99857d23aedc28f16/docs/reports/incidents/INC-2026-08-08-private-mcp-oauth-csp-redirect.md). **Это возможные классы проверок, не установленная причина сбоя Hub.** В этой задаче возвращаться к ремонту публичного OAuth не нужно.
 
-### Delta: от простого к необязательному
 
-**D0 — предпочтительный первый этап, без смены connection.** Добавить pending approval projection: request ID, exact chat reference, project/scope, статус и безопасный summary; Mira inbox/read/link; обновление resolved/revoked из решения, которое dot уже проверил в исходном чате. Существующий service client вправе обновлять проекцию, но не выдавать себя за человека. Актуальный chat receipt остаётся evidence. Риск изменения persistent access оценивается отдельно при реализации; нового credentials setup этот вариант не требует.
+### D0 fallback и проверяемый следующий шаг
 
-**D1 — последующее голосовое согласие через ту же connection, только если можно доказать binding.** Hub уже знает authenticated REST/Live actor. Можно исследовать неизменяемый owner-decision read через существующий service transport с отдельным серверным author evidence и проверенной связью этого actor с владельцем dot. Сам service principal остаётся service; недопустимо объявлять его owner в profile. Если соответствующая связь уже существует и может быть достоверно проверена текущим connected-app contract, смена connection технически не обязательна. Сейчас такого end-to-end доказательства нет. Для обычного допустимого действия проверенный owner receipt должен исключать повторное согласие в чате.
+**D0:** один широкий запрос в исходном проверенном чате; Мира сообщает pending, объясняет и даёт ссылку. Владелец соответствующей dot отвечает текстом; dot проверяет author/correlation и обновляет Hub projection. Это не выдача полномочий сервисом. D0 работает при недоступном Personal/Mira и не означает отказа от голоса.
 
-**D2 — другое личное подключение/новый OAuth.** Не часть выбранного пути. Рассматривать только по отдельному решению владельца, если D1 доказанно невозможен существующими средствами и польза оправдывает сложность. Отсутствие D1 пока не доказывает необходимость D2.
+**План spike, пока без setup/внешних действий:** (1) contract fixtures: service/user audiences, два actor и два project, ACL/revoke, запрет service-authored decisions; (2) после отдельного разрешения на реализацию/setup добавить Personal рядом и проверить доступность обоих каталогов в одном dot, stable profile и неизменность service subscription; (3) owner voice decision → same-actor Personal read → одно безопасное ordinary action → exact effect readback, без независимого заранее выданного approval на само тестируемое действие; (4) другой actor/tenant, replay, stale scope и revoke не допускают effect. Callback 2xx или подходящий JSON не PASS.
 
-[Официальный profile contract](https://developers.openai.com/plugins/build/auth) удостоверяет профиль, представленный credentials, а не автора любой записи. [MCP Events](https://developers.openai.com/plugins/build/mcp-events) доставляет события в subscribed chat, а не выдаёт разрешения. Поэтому транспорт, авторство человеческого решения и обязательная форма конкретного действия — три независимых проверки. Специальный универсальный approval-import API не заявляется.
+Если client не поддерживает конкретную пару registrations или user linking ещё не работает, Service продолжает работать, D0 остаётся доступен. Не удалять рабочее подключение, не переключать его auth и не выдавать повторное подключение за гарантированное исправление. Новый consent flow требует реального browser/client regression; прежний публичный OAuth failure Hub остаётся unexplained, пока нет его evidence.
 
-### Проверка и граница готовности
-
-Для D0 приёмка проста: один pending request в чате → Мира сообщает о нём → владелец отвечает текстом → dot продолжает → обе поверхности показывают тот же terminal status. Падение Миры не скрывает запрос; restart и повторное событие не дублируют вопрос или действие. Это план реализации, не выполненный тест.
-
-Для D1 сначала **read-only identity spike**, без смены connection: показать на существующем контуре реальные credential/service identity, authenticated owner actor и проверяемую связь автора конкретного решения с владельцем dot. Не использовать совпадение имени/email, JSON-флаг approved или собственный пересказ dot как доказательство. Если связи не хватает, остановить spike и оставить D0; не запускать OAuth setup автоматически.
-
-Лишь после отдельного поручения на реализацию и доказанного binding — один безопасный live voice-consent тест с точным scope и effect readback, без предварительного независимого согласия на само тестируемое действие. Повторное «да» не требуется, если evidence принято для обычного действия. Отрицательные cases: другой автор, stale revision, expiry/revoke, replay. Требование обязательной формы — отдельный штатный путь, не identity failure. Один PASS не распространяется на все категории действий.
-
-**Итог:** задача «не пропускать разрешения» решается D0 поверх уже работающей авторизации. Голосовое разрешение не отвергнуто, но не должно тянуть за собой auth-перестройку без доказанной необходимости. Разделы ниже сохраняют целевую архитектуру D1; для первого этапа применяются чат, общие статусы и доставка, без voice-issued grant.
-
+**Вердикт:** dual-access реализуем как additive архитектура на существующих actors/ACL и документированной возможности нескольких подключений; конкретная комбинация Hub tunnel + Personal в текущем dot и voice-to-action цепочка ещё не приняты live. Здесь определена минимальная delta и способ её проверить, без обещания уже работающей функции. Весь документ ниже — target design; D0 остаётся fallback, а не навязанным окончательным выбором.
 
 ## 1. Решение в одном абзаце
 
-Основная единица согласования — максимально широкий, понятный **набор разрешённых действий в конкретном проекте**, действующий для последующих задач в согласованных границах. dot создаёт один typed approval request. Он сразу становится долговечным запросом в чате; push и Мира ускоряют ответ, но не являются условием доступности. В первом этапе ответ владельца проверяется в исходном чате, а Hub хранит его ссылку и статус; в целевом voice-consent этапе ответ сохраняется как отдельный проверяемый owner receipt. dot получает событие, перечитывает текущее разрешение и продолжает только допустимую работу. Чат, Мира, push и обязательная форма показывают один request_id и одно актуальное решение.
+Основная единица согласования — максимально широкий, понятный **набор разрешённых действий в конкретном проекте**, действующий для последующих задач в согласованных границах. dot создаёт один typed approval request. Он сразу становится долговечным запросом в чате; push и Мира ускоряют ответ, но не являются условием доступности. В D0 ответ проверяется в исходном чате, а Hub хранит его ссылку и статус; в dual-access target решение сохраняется от конкретного уполномоченного участника и читается через его Personal connection. dot получает событие, перечитывает текущее разрешение и продолжает только допустимую работу. Чат, Мира, push и обязательная форма показывают один request_id и одно актуальное решение.
 
 Нельзя обещать, что человек обязательно увидит уведомление при полном отключении связи/уведомлений. Гарантируем отсутствие **тихой потери**: запрос и причина остановки сохраняются; доставка, просмотр и решение различимы; сбой виден; после восстановления происходит сверка.
 
@@ -99,7 +110,7 @@ dot создаёт один широкий запрос в проверенно�
 ### Canonical scope envelope
 
 - workspace_id, project_id и стабильная project/repository identity; имена только для показа.
-- owner_actor_id, requester service principal, dot conversation/task identity.
+- approver_actor_id/approval policy, requester service principal, initiating user, dot conversation/task identity. Термин owner в receipts ниже означает конкретного уполномоченного владельца аккаунта/ресурса, не глобального platform owner.
 - allowed_action_categories и exclusions: что dot вправе выполнять самостоятельно, включая новые задачи и retries.
 - resources/destinations: конкретные repos, ветки, environments, сервисы; для communications — аудитория и ограниченная категория информации.
 - data_categories и recipient boundaries; чувствительные данные требуют конкретного получателя, а секреты не входят в голосовой текст/чаты/receipt.
@@ -199,9 +210,9 @@ PWA: стандарт NotificationOptions не определяет custom sound
 
 ## 9. Минимальные стадии
 
-**A. D0: текстовое согласование + Мира как уведомление.** Сохранять существующие auth/connection. Pending projection с exact chat reference, scope resolver, общий статус, CAS/idempotency/revoke, durable chat + Mira inbox/link. Решение проверяется в исходном чате; Hub не создаёт самостоятельное voice permission. Без Миры согласование работает.
+**A. D0 fallback: текстовое согласование + Мира как уведомление.** Сохранять существующие auth/connection. Pending projection с exact chat reference, scope resolver, общий статус, CAS/idempotency/revoke, durable chat + Mira inbox/link. Решение проверяется в исходном чате; Hub не создаёт самостоятельное voice permission. Без Миры согласование работает.
 
-**B. D1 только после доказательства reuse текущего auth. Мира как второй интерфейс.** Маленькая capability, exact request/revision, input evidence, совместный статус, deep link и мгновенный текстовый fallback. Проверить concurrent chat/voice и provider interruption.
+**B. Dual-access target: добавить Personal рядом с Service и доказать user/tenant isolation. Мира как второй интерфейс.** Маленькая capability, exact request/revision, input evidence, совместный статус, deep link и мгновенный текстовый fallback. Проверить concurrent chat/voice и provider interruption.
 
 **C. Platform notifications.** Android channel/sound + request deep link, выбранный push transport; Web Push отдельно. Обязательная реальная device/browser acceptance, deny/DND/offline и first-sync pending. Не блокировать A/B ради звука.
 
@@ -248,7 +259,7 @@ PWA: стандарт NotificationOptions не определяет custom sound
 
 ## 11. Критерий готовности документа и открытые решения
 
-Архитектура не зависит от обязательного наличия Миры и не производит micro-approval на tool calls. Для первого этапа нужны exact chat route, pending/status projection и допустимый широкий scope/срок; отдельный voice identity adapter и новый OAuth не требуются. Для optional D1 сначала проверяется reuse существующего binding, для push отдельно выбирается transport. Эти решения не должны превращаться в разрешение «всё во всех проектах».
+Архитектура не зависит от обязательного наличия Миры и не производит micro-approval на tool calls. Для D0 нужны exact chat route, pending/status projection и допустимый широкий scope/срок. Для dual-access target нужны additive Personal route, reuse существующих actors/sessions/ACL и проверка двух connections в dot; service сохраняется. Push transport выбирается отдельно. Эти решения не должны превращаться в разрешение «всё во всех проектах».
 
 Ссылки: [индекс спецификации](README.md), [безопасность](05-security.md), [базовая коллаборация](20-basic-collaboration-and-personal-timeline.md), [MCP events](../mcp-events.md).
 
