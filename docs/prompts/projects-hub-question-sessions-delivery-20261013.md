@@ -103,6 +103,19 @@ Task key: `projects-hub-question-sessions-20261013`. Ссылка на тред 
 - Один command ID + одно содержимое → прежний receipt после retries/restart; тот же ID + другой payload → явный конфликт. Нормализация later/defaults детерминирована. Запись ответа, receipt и разрешённого continuation intent/outbox атомарна. Конкурентные ответы и новая revision не теряют данные.
 - Не выпускать новые credentials, расширять постоянные разрешения или публиковать в новую аудиторию без необходимого подтверждения. Существующая техническая возможность не означает согласие владельца. Секреты не помещать в prompts, вопросы, отчёты или GitHub.
 
+
+### 4.5. Ограниченный Live-контекст и долговечная история
+
+Добавление 14 октября 2026 не расширяет текущую выкладку до нового indexing service и не блокирует её самостоятельные проверки. Это обязательный контракт проектирования последующей Slack/Projects Hub интеграции; выполнение нельзя заявлять без приёмки.
+
+Проверенный AS-IS, официальный input limit 131072 tokens, configured `gemini-3.8-live` при неподтверждённом runtime model, включённые compression/resumption и ограниченный fallback 8 реплик ×700 символов описаны в [06-live §13](../product/06-live.md#13-ограниченный-контекст-миры-проверенный-baseline-14-октября-2026). Numeric budgets там являются предложением для испытаний, не действующей production-квотой.
+
+- Полная Slack-история не загружается в Live prompt. Внешний индекс/источники и search/read проверяют текущие ACL, edits/deletions, source revision и coverage по [memory §14](../product/10-conversation-memory.md#14-slack-история-и-восстановление-рабочего-набора). Существующая доступность боту не расширяет аудиторию.
+- Bootstrap содержит текущую задачу/вопрос, сохранённые решения, ограничения, blockers, refs и receipts. Остальное читается небольшими страницами; каждый tool result имеет явную полноту, `has_more/cursor` и provenance. Достижение budget не означает, что прочитана вся история или получены все ответы.
+- Ответы и question session state сохраняются до подтверждения; compression/reconnect/restart не стирают согласие, паузу, фильтр, нерешённые вопросы или approved result route. Возобновление читает canonical records, а не угадывает по обрезанной recent history.
+- Измерять отдельно provider context/input/output/audio usage, setup/tool schemas, retrieval/tool results и ARC admission units. Резервировать место для следующего voice turn и результата инструмента; уменьшать страницы, а не терять решения. Изменения общих provider compression/reconnect/resource механизмов выполняются в shared framework, не вторым транспортом Projects Hub.
+- Дополнительная приёмка: решение старше восьми реплик; ответ в середине >700-символьного сообщения; compression + длительный reconnect; полный process restart/просроченный handle; ACL revoke; edit/delete; многопроектный bootstrap; paginated history; quota wait без повторной mutation/answer/delivery. Evidence отличает deterministic test, существующие runtime logs и новый real-provider canary. Новые provider calls этим docs-update не выполняются.
+
 ## 5. Минимальные этапы без расползания объёма
 
 1. Зафиксировать baseline, оба пути начала процесса и сохранённый исходный Slack-маршрут. Устранить расхождение startup-инструкций. Добавить минимальную external-origin модель и MCP import/read поверх существующего сервиса; тестами доказать отсутствие paid-provider follow-up.
