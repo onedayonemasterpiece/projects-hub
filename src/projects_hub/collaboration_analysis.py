@@ -818,6 +818,9 @@ class CollaborationAnalysisService:
             anchor_revision = int(sources[0]["revision"])
             if source_kind == "project_note" and (source_id != note_id or anchor_revision != source_revision):
                 raise StoreError("QUESTION_SOURCE_STALE", "Question source revision has changed")
+            if (source_kind == "project_note" and source_repository_sha is not None
+                    and source_repository_sha != sources[0].get("repository_sha")):
+                raise StoreError("QUESTION_SOURCE_STALE", "Question source repository checkpoint differs")
             if source_kind != "project_note" and not source_repository_sha:
                 # A non-note anchor must retain a concrete remote source checkpoint.
                 raise StoreError("INVALID_ARGUMENT", "External source requires an immutable checkpoint")
