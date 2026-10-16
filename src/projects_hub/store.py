@@ -146,6 +146,16 @@ class DurableStore:
         );
         CREATE INDEX IF NOT EXISTS conversations_personal_idx
             ON conversations(actor_id, workspace_id, updated_at_ms DESC);
+        CREATE TABLE IF NOT EXISTS live_checkpoints(
+            actor_id TEXT NOT NULL REFERENCES actors(id),
+            conversation_id TEXT NOT NULL REFERENCES conversations(id),
+            model TEXT NOT NULL,
+            handle TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            usable INTEGER NOT NULL DEFAULT 1,
+            updated_at_ms INTEGER NOT NULL,
+            PRIMARY KEY(actor_id, conversation_id)
+        );
         CREATE TABLE IF NOT EXISTS personal_conversations(
             actor_id TEXT NOT NULL REFERENCES actors(id),
             workspace_id TEXT NOT NULL REFERENCES workspaces(id),
@@ -2772,6 +2782,46 @@ class DurableStore:
                 (project_id, now, conversation_id),
             )
             return {"project_id": project_id, "project_name": project["name"], "revision": now}
+
+    # Provider resumption checkpoints let a backend restart continue the same
+    # provider conversation. The handle is a server-only secret: never returned
+    # to clients or logged. Explicit user Stop makes it unusable.
+    def save_live_checkpoint(
+        self, actor_id: str, conversation_id: str, *, model: str, handle: str, session_id: str
+    ) -> None:
+        if not isinstance(handle, str) or not 0 < len(handle) <= 4096:
+            raise StoreError("INVALID_ARGUMENT", "Checkpoint handle is invalid")
+        with self._lock:
+            self.get_conversation(actor_id, conversation_id)
+            self.db.execute(
+                """INSERT INTO live_checkpoints(actor_id,conversation_id,model,handle,session_id,usable,updated_at_ms)
+                   VALUES(?,?,?,?,?,1,?)
+                   ON CONFLICT(actor_id,conversation_id) DO UPDATE SET
+                     model=excluded.model,handle=excluded.handle,session_id=excluded.session_id,
+                     usable=1,updated_at_ms=excluded.updated_at_ms""",
+                (actor_id, conversation_id, model, handle, session_id, _now_ms()),
+            )
+
+    def usable_live_checkpoint(
+        self, actor_id: str, conversation_id: str, *, model: str, max_age_ms: int
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            row = self.db.execute(
+                """SELECT handle,session_id,updated_at_ms FROM live_checkpoints
+                   WHERE actor_id=? AND conversation_id=? AND model=? AND usable=1""",
+                (actor_id, conversation_id, model),
+            ).fetchone()
+        if row is None or _now_ms() - int(row["updated_at_ms"]) > max_age_ms:
+            return None
+        return {"handle": row["handle"], "session_id": row["session_id"],
+                "age_ms": _now_ms() - int(row["updated_at_ms"])}
+
+    def invalidate_live_checkpoint(self, actor_id: str, conversation_id: str, session_id: str) -> None:
+        with self._lock:
+            self.db.execute(
+                "UPDATE live_checkpoints SET usable=0 WHERE actor_id=? AND conversation_id=? AND session_id=?",
+                (actor_id, conversation_id, session_id),
+            )
 
     def recent_conversation_history(
         self,

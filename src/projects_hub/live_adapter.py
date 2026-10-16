@@ -37,6 +37,10 @@ from .live_capabilities import BUNDLES, ROUTER, PREFERENCES, OVERLAYS
 
 log = logging.getLogger("projects_hub.live")
 
+# Gemini Live documents resumption tokens as valid for 2 h after the last
+# session ends; keep a margin so an expiring handle is not offered.
+CHECKPOINT_MAX_AGE_MS = 100 * 60 * 1000
+
 _BASE_TRANSCRIPTION_VOCABULARY = ["Мира", "Projects Hub", "Codex", "DevCoveer", "Калининград"]
 
 
@@ -1657,7 +1661,33 @@ class ProjectsHubLiveAdapter:
 
         result["state"]["_base_configuration"] = dict(result["configuration"])
         result["state"]["_product_context"] = dict(result["context"])
+        result["state"]["_model"] = model
+        if audio_mode == "realtime" and not recovery_only:
+            checkpoint = self.store.usable_live_checkpoint(
+                actor_id, conversation_id, model=model, max_age_ms=CHECKPOINT_MAX_AGE_MS
+            )
+            if checkpoint is not None:
+                # Same provider conversation after a backend restart or abandoned
+                # socket; the provider rejects an expired handle and the shared
+                # transport then falls back to bounded history.
+                result["resume_handle"] = checkpoint["handle"]
+                result["response"]["resumed_from_checkpoint"] = True
+                log.info(
+                    "live checkpoint resume",
+                    extra={"event": "live_checkpoint_resume", "conversation_id": conversation_id,
+                           "previous_session_id": checkpoint["session_id"], "age_ms": checkpoint["age_ms"]},
+                )
         return result
+
+    def on_checkpoint(self, session: Any, handle: str) -> None:
+        state = session.state
+        if state.get("recovery_only") or state.get("audio_mode") != "realtime":
+            return
+        self.store.save_live_checkpoint(
+            state["actor_id"], state["conversation_id"],
+            model=str(state.get("_model") or getattr(session, "model", "")),
+            handle=handle, session_id=session.id,
+        )
 
     def _allowed_capabilities(self, session: Any) -> list[str]:
         state = session.state
@@ -2023,6 +2053,9 @@ class ProjectsHubLiveAdapter:
                 if isinstance(utterance, dict):
                     self._finalize_utterance(session, utterance, reason="session_stopped")
         self.store.mark_source_stopped(state["actor_id"], state["source_id"])
+        # Explicit Stop ends this provider conversation; only abandoned sessions
+        # (restart, lost client) may be resumed from their checkpoint.
+        self.store.invalidate_live_checkpoint(state["actor_id"], state["conversation_id"], session.id)
         diag = state.get("_voice_diag") if isinstance(state.get("_voice_diag"), dict) else {}
         current = self._current_utterance(session)
         log.info(
