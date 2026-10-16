@@ -10,9 +10,14 @@
 
 В Android микрофон, воспроизведение, транспорт и жизненный цикл разговора должны работать нативно,
 независимо от WebView. Сам WebView может остаться интерфейсом: переписывать весь UI на native не требуется.
-PWA остаётся полноценным самостоятельным клиентом, а не заглушкой для установки APK.
+Приоритет первого этапа — Android native: максимально используй его возможности, не ограничивай их
+наименьшим общим знаменателем браузеров. PWA сохраняется как самостоятельный клиент без регрессий.
+Устанавливаемая на iOS PWA — важный следующий этап, но её полная приёмка не блокирует первый Android-релиз.
+Универсальность означает общие смысловые контракты и совместимый backend, а не одинаковые платформенные API.
+Для iOS/PWA допустим собственный механизм capture/playback/lifecycle через общий контракт.
 Общая цель — логический разговор не менее 90 минут, включая продления provider-сессии и восстановление.
-Это цель приёмки, не обещание уже достигнутой надёжности или непрерывной фоновой работы любого браузера.
+Это цель первой Android-приёмки и общего session layer; браузерные профили проверяются отдельно.
+Не обещай iOS PWA фоновую непрерывность на уровне Android или уже достигнутую надёжность.
 
 Действуй самостоятельно в выборе минимального технического решения. Применяй бритву Оккама:
 сначала используй существующий shared framework и продуктовые контракты, убирай дублирование,
@@ -54,7 +59,8 @@ PWA остаётся полноценным самостоятельным кл�
 `android/app/src/main/java/com/kenigevents/projectshub/MainActivity.java` и Android manifest.
 Shared transport, codec framing/decoding, reconnect и общая interruption-механика принадлежат framework.
 Продукт сохраняет права, domain tools, durable source integration, UI и Android permissions/service wiring.
-Границу уточняй по существующему коду, не копируй общую реализацию в Projects Hub.
+Платформенные адаптеры и разные механизмы допустимы и ожидаемы; domain semantics, авторизация и recovery
+не должны расходиться. Границу уточняй по существующему коду, не копируй общую реализацию в Projects Hub.
 
 Изменения framework выпускай версионированно, с совместимостью и conformance-проверками.
 Обнови обе consumer-зависимости и lockfiles согласованно, сохрани version + immutable SHA/digest evidence.
@@ -73,14 +79,18 @@ Android:
 - Не обещай автоматический старт микрофона после reboot/force-stop вопреки правилам Android.
 - Сохрани Keystore/device binding, Calendar, ACL, exact-origin bridge и действующий signed updater.
 
-PWA:
+PWA сейчас и устанавливаемая iOS PWA следующим этапом:
 - Сохрани обычный live-разговор, playback, interruptions, offline source, recovery, transcript и domain tools.
 - Используй общий browser binding, без нового частного getUserMedia/WebSocket engine.
-- Проверь desktop Chrome/Edge, Android Chrome и iOS Safari/PWA на явно указанных версиях.
+- Сейчас проведи smoke/regression текущей PWA на поддержанных desktop/mobile профилях и укажи точные версии.
+- Отдельным следующим milestone проверь установленную на iOS PWA: установку, запуск, capture/playback,
+  разрешения, сохранность источника, suspend/return и recovery на физическом iPhone с указанной iOS.
+- Полная физическая Safari/iOS installed-PWA квалификация не является gate первого Android-релиза.
+  При этом новые backend/wire/codec решения уже сейчас не должны ломать текущую PWA или закрывать этот путь.
 - Зафиксируй поддержанные профили; неподдержанный codec/режим должен давать понятное состояние или согласованный fallback.
 - Не выдавай service worker за гарантию фонового микрофона. Suspend/lock должен честно отражаться в UI.
 - При возвращении вкладки восстанавливай логический разговор и сохранённые источники без повторных effects.
-- Отличия платформ допустимы в lifecycle, но не в смысле ACK, source recovery, прав или результата команды.
+- Разные platform-specific механизмы допустимы, но смысл ACK, source recovery, прав и результата команды общий.
 
 ## Один контракт разговора и восстановления
 
@@ -125,7 +135,9 @@ Deployment/drain/restart policy должна учитывать активные
 Не хранить новые длинные разговоры как постоянную несжатую PCM-копию.
 Общий decoder обслуживает provider, captions, recovery и будущий source analysis без независимых несовместимых путей.
 
-Определи по измерениям пригодные Opus и AAC профили для Android и браузеров, включая Safari.
+Определи по измерениям пригодные Opus и AAC профили для Android и текущей PWA.
+Сохрани negotiation/adapter путь для Safari; его полная физическая квалификация относится к iOS milestone.
+Не ухудшай Android профиль ради обязательного совпадения codec API на всех платформах.
 Codec и container/framing — разные решения: не объявляй fMP4 в целом непригодным.
 Проверь latency chunk emission, init/fragment handling, decoder restart, playback и восстановление timeline.
 Явно согласуй protocol/codec, sample rate, channels, framing и fallback; не меняй формат молча.
@@ -170,17 +182,19 @@ chunked analysis с durable cursor, исходные интервалы, вер�
 1. Коротко сверь код/контракты, проверь самые рискованные codec/recovery/lifecycle предположения.
    Зафиксируй измеримые пороги latency, recovery window, offline capacity, потерь, battery/traffic и budget.
    90 минут уже заданы как цель; остальные пороги обоснуй baseline и пометь неутверждённые продуктовые trade-offs.
-2. Реализуй минимальную вертикаль в shared framework и сразу подключи её к Projects Hub Android и PWA.
+2. Реализуй Android-first вертикаль в shared framework и Projects Hub; согласованно обнови текущую PWA
+   без регрессий. Отдельные платформенные адаптеры предпочтительнее искусственно одинаковой реализации.
    Устраняй выявленные дефекты до интеграционного результата; не заканчивай на отдельном harness.
 3. Проведи regression, conformance и end-to-end проверки на точных сборках.
    Включи сеть с latency/loss, Wi-Fi↔mobile, offline speech, provider renewal, backend restart,
    interrupted playback, unknown tool result, multi-user isolation и восстановление источника.
-4. Проведи 90-минутный разговор с несколькими renewal/recovery, idle/wake и воспоминанием ранних фактов.
+4. Проведи 90-минутный Android-разговор с несколькими renewal/recovery, idle/wake и воспоминанием ранних фактов.
    Сверь принятые durable chunks, timeline/coverage и результаты команд: нет потерянной сохранённой речи
    и повторных business effects. Промежутки, когда OS не позволяла capture, видимы, не скрыты словом PASS.
 5. Проверь настоящий Android handset: screen-off, background/навигатор, возврат WebView,
    permission/audio-focus changes, route change и signed update. Emulator/prepared PCM не заменяют handset.
-   Для PWA приложи результаты указанных desktop/mobile браузеров и честные границы background.
+   Для текущей PWA приложи smoke/regression и честные границы background. Полную приёмку установленной
+   iOS PWA выдели следующим milestone с конкретными сценариями; не задерживай ею первый Android-релиз.
 6. Подготовь совместимый выпуск framework, backend/PWA и signed APK через существующий release path.
    При наличии действующих полномочий доведи deployment и post-release smoke до verified результата.
    Если merge/release или устройство требуют отдельного доступа/разрешения, запроси только конкретное недостающее,
@@ -193,7 +207,8 @@ chunked analysis с durable cursor, исходные интервалы, вер�
 ## Итоговый отчёт
 
 Дай короткий продуктовый итог и ссылки:
-- Что теперь реально работает в Android и PWA; что ограничено платформой или пока не проверено.
+- Что реально работает в Android и текущей PWA; отдельно следующий iOS installed-PWA milestone,
+  платформенные ограничения и непроверенные возможности. Не смешивай готовность этих этапов.
 - PR/commits, shared release version, backend/PWA deployment SHA и APK/version/checksum.
 - Воспроизводимые команды и evidence: CI, conformance, 90 минут, handset, браузеры и post-release smoke.
 - Измеренные задержки, reconnect/recovery, traffic/storage, CPU/battery и ошибки на описанных условиях.
