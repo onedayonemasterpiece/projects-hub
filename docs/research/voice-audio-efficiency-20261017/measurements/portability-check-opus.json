@@ -1,0 +1,237 @@
+{
+  "scope": "synthetic single-stream sequential native-codec cost probe; not a Go/Rust/Python comparison or capacity/quality test",
+  "python": "3.12.14",
+  "machine": "x86_64",
+  "cpu": "AMD EPYC 9V74 80-Core Processor",
+  "libopus": "libopus 1.4",
+  "libopus_library": "libopus.so.0",
+  "seconds_per_trial": 20,
+  "trials": 3,
+  "warmup_audio_seconds_per_trial": 1,
+  "encoder_state_bytes_mono": 43580,
+  "decoder_state_bytes_mono": 18228,
+  "notes": [
+    "CPU includes Python/ctypes loop and instrumentation; encode includes saving compressed bytes for decoder input.",
+    "Call latencies include FFI and timer overhead; host is shared, no CPU affinity or target phone/server measurement.",
+    "No TLS, WSS, fsync, provider, ASR, network, resampling, parallel-stream or battery measurement.",
+    "State sizes are direct libopus state allocations, not process RSS/stack/queues or transport memory."
+  ],
+  "results": [
+    {
+      "sample_rate_hz": 16000,
+      "channels": 1,
+      "target_bitrate_bps": 24000,
+      "complexity": 0,
+      "application": "VOIP",
+      "vbr": true,
+      "fec": false,
+      "dtx": false,
+      "frame_ms": 20,
+      "lookahead_ms": 6.5,
+      "observed_payload_bitrate_bps": 21965.2,
+      "packet_bytes_mean": 54.913,
+      "packet_bytes_max": 78,
+      "packet_mode_counts_from_toc": {
+        "SILK": 3000
+      },
+      "encode_cpu_ms_per_audio_second_median": 2.4475122,
+      "decode_cpu_ms_per_audio_second_median": 0.6119342499999999,
+      "encode_call_us_p50": 43.985,
+      "encode_call_us_p95": 65.126,
+      "encode_call_us_max": 305.192,
+      "decode_call_us_p50": 12.208,
+      "decode_call_us_p95": 13.991,
+      "decode_call_us_max": 553.829,
+      "encode_cpu_seconds_trials": [
+        0.052308388,
+        0.048950244,
+        0.047304701
+      ],
+      "decode_cpu_seconds_trials": [
+        0.012655244,
+        0.012238685,
+        0.012048923
+      ]
+    },
+    {
+      "sample_rate_hz": 16000,
+      "channels": 1,
+      "target_bitrate_bps": 24000,
+      "complexity": 5,
+      "application": "VOIP",
+      "vbr": true,
+      "fec": false,
+      "dtx": false,
+      "frame_ms": 20,
+      "lookahead_ms": 6.5,
+      "observed_payload_bitrate_bps": 21336.8,
+      "packet_bytes_mean": 53.342,
+      "packet_bytes_max": 78,
+      "packet_mode_counts_from_toc": {
+        "SILK": 3000
+      },
+      "encode_cpu_ms_per_audio_second_median": 6.0504102,
+      "decode_cpu_ms_per_audio_second_median": 0.6263902,
+      "encode_call_us_p50": 117.094,
+      "encode_call_us_p95": 164.223,
+      "encode_call_us_max": 672.475,
+      "decode_call_us_p50": 12.468,
+      "decode_call_us_p95": 15.022,
+      "decode_call_us_max": 132.606,
+      "encode_cpu_seconds_trials": [
+        0.118968276,
+        0.121008204,
+        0.122411567
+      ],
+      "decode_cpu_seconds_trials": [
+        0.012405603,
+        0.012802151,
+        0.012527804
+      ]
+    },
+    {
+      "sample_rate_hz": 16000,
+      "channels": 1,
+      "target_bitrate_bps": 24000,
+      "complexity": 10,
+      "application": "VOIP",
+      "vbr": true,
+      "fec": false,
+      "dtx": false,
+      "frame_ms": 20,
+      "lookahead_ms": 6.5,
+      "observed_payload_bitrate_bps": 22467.2,
+      "packet_bytes_mean": 56.168,
+      "packet_bytes_max": 100,
+      "packet_mode_counts_from_toc": {
+        "CELT": 3000
+      },
+      "encode_cpu_ms_per_audio_second_median": 3.0898980999999996,
+      "decode_cpu_ms_per_audio_second_median": 0.7359963500000001,
+      "encode_call_us_p50": 59.839,
+      "encode_call_us_p95": 85.536,
+      "encode_call_us_max": 2460.207,
+      "decode_call_us_p50": 13.9,
+      "decode_call_us_p95": 16.345,
+      "decode_call_us_max": 262.739,
+      "encode_cpu_seconds_trials": [
+        0.059942839,
+        0.061797962,
+        0.067846631
+      ],
+      "decode_cpu_seconds_trials": [
+        0.014719927,
+        0.01475491,
+        0.01437781
+      ]
+    },
+    {
+      "sample_rate_hz": 24000,
+      "channels": 1,
+      "target_bitrate_bps": 32000,
+      "complexity": 0,
+      "application": "AUDIO",
+      "vbr": true,
+      "fec": false,
+      "dtx": false,
+      "frame_ms": 20,
+      "lookahead_ms": 6.5,
+      "observed_payload_bitrate_bps": 32168.0,
+      "packet_bytes_mean": 80.42,
+      "packet_bytes_max": 101,
+      "packet_mode_counts_from_toc": {
+        "CELT": 3000
+      },
+      "encode_cpu_ms_per_audio_second_median": 0.9244115500000001,
+      "decode_cpu_ms_per_audio_second_median": 0.73528435,
+      "encode_call_us_p50": 15.603,
+      "encode_call_us_p95": 19.499,
+      "encode_call_us_max": 1438.997,
+      "decode_call_us_p50": 13.02,
+      "decode_call_us_p95": 14.973,
+      "decode_call_us_max": 530.695,
+      "encode_cpu_seconds_trials": [
+        0.018488231,
+        0.022513956,
+        0.01809051
+      ],
+      "decode_cpu_seconds_trials": [
+        0.015210816,
+        0.014705687,
+        0.014285263
+      ]
+    },
+    {
+      "sample_rate_hz": 24000,
+      "channels": 1,
+      "target_bitrate_bps": 32000,
+      "complexity": 5,
+      "application": "AUDIO",
+      "vbr": true,
+      "fec": false,
+      "dtx": false,
+      "frame_ms": 20,
+      "lookahead_ms": 6.5,
+      "observed_payload_bitrate_bps": 32155.2,
+      "packet_bytes_mean": 80.388,
+      "packet_bytes_max": 130,
+      "packet_mode_counts_from_toc": {
+        "CELT": 3000
+      },
+      "encode_cpu_ms_per_audio_second_median": 2.49901665,
+      "decode_cpu_ms_per_audio_second_median": 0.9313303,
+      "encode_call_us_p50": 46.579,
+      "encode_call_us_p95": 67.4,
+      "encode_call_us_max": 760.054,
+      "decode_call_us_p50": 16.985,
+      "decode_call_us_p95": 21.772,
+      "decode_call_us_max": 423.506,
+      "encode_cpu_seconds_trials": [
+        0.054879473,
+        0.049980333,
+        0.049771022
+      ],
+      "decode_cpu_seconds_trials": [
+        0.018335764,
+        0.018721658,
+        0.018626606
+      ]
+    },
+    {
+      "sample_rate_hz": 24000,
+      "channels": 1,
+      "target_bitrate_bps": 32000,
+      "complexity": 10,
+      "application": "AUDIO",
+      "vbr": true,
+      "fec": false,
+      "dtx": false,
+      "frame_ms": 20,
+      "lookahead_ms": 6.5,
+      "observed_payload_bitrate_bps": 32151.2,
+      "packet_bytes_mean": 80.378,
+      "packet_bytes_max": 134,
+      "packet_mode_counts_from_toc": {
+        "CELT": 3000
+      },
+      "encode_cpu_ms_per_audio_second_median": 3.7305427500000006,
+      "decode_cpu_ms_per_audio_second_median": 0.9663523,
+      "encode_call_us_p50": 62.722,
+      "encode_call_us_p95": 111.474,
+      "encode_call_us_max": 2089.329,
+      "decode_call_us_p50": 16.915,
+      "decode_call_us_p95": 31.697,
+      "decode_call_us_max": 544.405,
+      "encode_cpu_seconds_trials": [
+        0.079710999,
+        0.074610855,
+        0.066201378
+      ],
+      "decode_cpu_seconds_trials": [
+        0.030484125,
+        0.019007868,
+        0.019327046
+      ]
+    }
+  ]
+}

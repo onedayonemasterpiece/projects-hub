@@ -1,0 +1,498 @@
+{
+  "method": {
+    "network": false,
+    "keys": false,
+    "production": false,
+    "store_disk_IO": false,
+    "guard_sdk": false,
+    "websocket_TLS_compression": false,
+    "real_time_pacing": false,
+    "warning": "Serial hot-loop microbenchmarks; not provider latency, browser/device battery, VPS capacity, concurrency or per-session RAM. Tracemalloc is a separate 256-iteration probe, not included in timing."
+  },
+  "environment": {
+    "python": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]",
+    "platform": "Linux-6.18.55-x86_64-with-glibc2.39",
+    "cpu_model": "AMD EPYC 9V74 80-Core Processor",
+    "visible_logical_cpus": 9,
+    "process_peak_rss_kib_including_imports": 20608
+  },
+  "declared_source_refs": {
+    "framework": "3b852249",
+    "consumer_code": "4a4d658",
+    "consumer_head_docs": "ffa3b508"
+  },
+  "source_ref_note": "Declared refs identify the original research baseline; actual imported files/hashes are recorded below.",
+  "source_files": {
+    "live_interaction.socket_transport": "/workspace/scratch/0702e2310172/continuation-final/framework/python/live_interaction/socket_transport.py",
+    "live_interaction.session_host": "/workspace/scratch/0702e2310172/continuation-final/framework/python/live_interaction/session_host.py",
+    "live_interaction.provider": "/workspace/scratch/0702e2310172/continuation-final/framework/python/live_interaction/provider.py",
+    "live_interaction.transcribe": "/workspace/scratch/0702e2310172/continuation-final/framework/python/live_interaction/transcribe.py",
+    "projects_hub.live_transcription": "/workspace/scratch/0702e2310172/continuation-final/consumer/src/projects_hub/live_transcription.py"
+  },
+  "source_sha256": {
+    "live_interaction.socket_transport": "1f2187b96357b89aae2ba9aa58e08ed65cd190da2ae568899b3d3f8253d7db08",
+    "live_interaction.session_host": "57e0b64b36affe1fbb4929029bf35c98325b0a678678016b8915acbbfc0b14fc",
+    "live_interaction.provider": "22b8aa8d3901d09953bc4378383af8c121b875a81ad13dc7b430e5af7d1d59f5",
+    "live_interaction.transcribe": "9e961f7b685ac6c428deb83102a5fdab351553fb0512b6442d81547295b24d1e",
+    "projects_hub.live_transcription": "c474dbd533805c7adef7c0fd9f2f858958098d3cad4aa9b6ee2273dc5113c00d"
+  },
+  "byte_examples": [
+    {
+      "pcm_bytes": 1280,
+      "audio_ms": 40.0,
+      "phone_wss_application_bytes": 1292,
+      "base64_ascii_bytes": 1708,
+      "main_ndjson_bytes": 1787,
+      "provider_json_bytes": 1786
+    },
+    {
+      "pcm_bytes": 3200,
+      "audio_ms": 100.0,
+      "phone_wss_application_bytes": 3212,
+      "base64_ascii_bytes": 4268,
+      "main_ndjson_bytes": 4347,
+      "provider_json_bytes": 4346
+    },
+    {
+      "pcm_bytes": 11000,
+      "audio_ms": 343.75,
+      "phone_wss_application_bytes": 11012,
+      "base64_ascii_bytes": 14668,
+      "main_ndjson_bytes": 14747,
+      "provider_json_bytes": 14746
+    }
+  ],
+  "results": [
+    {
+      "case": "existing_wss_decode_base64_encode_and_adapter_decode",
+      "input_pcm_bytes": 1280,
+      "iterations_per_trial": 22962,
+      "trials": 5,
+      "cpu_ns_per_iteration_median": 4511.315172894348,
+      "cpu_us_per_iteration_median": 4.5113151728943475,
+      "cpu_ms_per_audio_second": 0.11278287932235868,
+      "wall_ns_per_iteration_median": 4512.439116801673,
+      "python_tracemalloc_peak_bytes_256_serial_iterations": 8329,
+      "python_tracemalloc_retained_bytes": 136,
+      "raw": [
+        {
+          "cpu_ns": 118120789,
+          "wall_ns": 118126700,
+          "checksum": 29391360
+        },
+        {
+          "cpu_ns": 102133690,
+          "wall_ns": 102139435,
+          "checksum": 29391360
+        },
+        {
+          "cpu_ns": 103588819,
+          "wall_ns": 103614627,
+          "checksum": 29391360
+        },
+        {
+          "cpu_ns": 106444298,
+          "wall_ns": 106698453,
+          "checksum": 29391360
+        },
+        {
+          "cpu_ns": 101293162,
+          "wall_ns": 101295840,
+          "checksum": 29391360
+        }
+      ]
+    },
+    {
+      "case": "existing_main_NDJSON_queue_parse_and_provider_JSON",
+      "input_pcm_bytes": 1280,
+      "iterations_per_trial": 8347,
+      "trials": 5,
+      "cpu_ns_per_iteration_median": 17115.65149155385,
+      "cpu_us_per_iteration_median": 17.11565149155385,
+      "cpu_ms_per_audio_second": 0.42789128728884623,
+      "wall_ns_per_iteration_median": 17128.331616149513,
+      "python_tracemalloc_peak_bytes_256_serial_iterations": 14868,
+      "python_tracemalloc_retained_bytes": 1336,
+      "raw": [
+        {
+          "cpu_ns": 127221687,
+          "wall_ns": 127223905,
+          "checksum": 14907742
+        },
+        {
+          "cpu_ns": 138697239,
+          "wall_ns": 138701737,
+          "checksum": 14907742
+        },
+        {
+          "cpu_ns": 142864343,
+          "wall_ns": 142970184,
+          "checksum": 14907742
+        },
+        {
+          "cpu_ns": 166633983,
+          "wall_ns": 166638360,
+          "checksum": 14907742
+        },
+        {
+          "cpu_ns": 156318002,
+          "wall_ns": 156322566,
+          "checksum": 14907742
+        }
+      ]
+    },
+    {
+      "case": "existing_caption_decode_rechunk_100ms_NDJSON_provider_JSON",
+      "input_pcm_bytes": 1280,
+      "iterations_per_trial": 6766,
+      "trials": 5,
+      "cpu_ns_per_iteration_median": 17277.165533550102,
+      "cpu_us_per_iteration_median": 17.2771655335501,
+      "cpu_ms_per_audio_second": 0.4319291383387525,
+      "wall_ns_per_iteration_median": 17278.850280815845,
+      "python_tracemalloc_peak_bytes_256_serial_iterations": 29650,
+      "python_tracemalloc_retained_bytes": 1648,
+      "raw": [
+        {
+          "cpu_ns": 132787788,
+          "wall_ns": 132793365,
+          "checksum": 11762062
+        },
+        {
+          "cpu_ns": 111719527,
+          "wall_ns": 111727034,
+          "checksum": 11762062
+        },
+        {
+          "cpu_ns": 111751375,
+          "wall_ns": 111755707,
+          "checksum": 11762062
+        },
+        {
+          "cpu_ns": 122158237,
+          "wall_ns": 122171224,
+          "checksum": 11762062
+        },
+        {
+          "cpu_ns": 116897302,
+          "wall_ns": 116908701,
+          "checksum": 11762062
+        }
+      ]
+    },
+    {
+      "case": "existing_wss_decode_base64_encode_and_adapter_decode",
+      "input_pcm_bytes": 3200,
+      "iterations_per_trial": 10631,
+      "trials": 5,
+      "cpu_ns_per_iteration_median": 9784.448969993415,
+      "cpu_us_per_iteration_median": 9.784448969993415,
+      "cpu_ms_per_audio_second": 0.09784448969993415,
+      "wall_ns_per_iteration_median": 9784.847051077038,
+      "python_tracemalloc_peak_bytes_256_serial_iterations": 19849,
+      "python_tracemalloc_retained_bytes": 136,
+      "raw": [
+        {
+          "cpu_ns": 104018477,
+          "wall_ns": 104022709,
+          "checksum": 34019200
+        },
+        {
+          "cpu_ns": 103679114,
+          "wall_ns": 103684318,
+          "checksum": 34019200
+        },
+        {
+          "cpu_ns": 104087330,
+          "wall_ns": 104113983,
+          "checksum": 34019200
+        },
+        {
+          "cpu_ns": 103277147,
+          "wall_ns": 103492005,
+          "checksum": 34019200
+        },
+        {
+          "cpu_ns": 105207572,
+          "wall_ns": 105219598,
+          "checksum": 34019200
+        }
+      ]
+    },
+    {
+      "case": "existing_main_NDJSON_queue_parse_and_provider_JSON",
+      "input_pcm_bytes": 3200,
+      "iterations_per_trial": 4106,
+      "trials": 5,
+      "cpu_ns_per_iteration_median": 29341.27934729664,
+      "cpu_us_per_iteration_median": 29.34127934729664,
+      "cpu_ms_per_audio_second": 0.2934127934729664,
+      "wall_ns_per_iteration_median": 29342.230394544567,
+      "python_tracemalloc_peak_bytes_256_serial_iterations": 24620,
+      "python_tracemalloc_retained_bytes": 1336,
+      "raw": [
+        {
+          "cpu_ns": 120434313,
+          "wall_ns": 120437517,
+          "checksum": 17844676
+        },
+        {
+          "cpu_ns": 141548981,
+          "wall_ns": 141554130,
+          "checksum": 17844676
+        },
+        {
+          "cpu_ns": 121846479,
+          "wall_ns": 121865807,
+          "checksum": 17844676
+        },
+        {
+          "cpu_ns": 118544387,
+          "wall_ns": 118548535,
+          "checksum": 17844676
+        },
+        {
+          "cpu_ns": 120475293,
+          "wall_ns": 120479198,
+          "checksum": 17844676
+        }
+      ]
+    },
+    {
+      "case": "existing_caption_decode_rechunk_100ms_NDJSON_provider_JSON",
+      "input_pcm_bytes": 3200,
+      "iterations_per_trial": 2966,
+      "trials": 5,
+      "cpu_ns_per_iteration_median": 41222.04281861092,
+      "cpu_us_per_iteration_median": 41.22204281861092,
+      "cpu_ms_per_audio_second": 0.4122204281861092,
+      "wall_ns_per_iteration_median": 41225.624747134185,
+      "python_tracemalloc_peak_bytes_256_serial_iterations": 28546,
+      "python_tracemalloc_retained_bytes": 1648,
+      "raw": [
+        {
+          "cpu_ns": 117600246,
+          "wall_ns": 117824274,
+          "checksum": 12890236
+        },
+        {
+          "cpu_ns": 117063990,
+          "wall_ns": 117096148,
+          "checksum": 12890236
+        },
+        {
+          "cpu_ns": 122264579,
+          "wall_ns": 122275203,
+          "checksum": 12890236
+        },
+        {
+          "cpu_ns": 124739102,
+          "wall_ns": 124744631,
+          "checksum": 12890236
+        },
+        {
+          "cpu_ns": 124467959,
+          "wall_ns": 124472318,
+          "checksum": 12890236
+        }
+      ]
+    },
+    {
+      "case": "existing_wss_decode_base64_encode_and_adapter_decode",
+      "input_pcm_bytes": 11000,
+      "iterations_per_trial": 3800,
+      "trials": 5,
+      "cpu_ns_per_iteration_median": 31443.44552631579,
+      "cpu_us_per_iteration_median": 31.44344552631579,
+      "cpu_ms_per_audio_second": 0.09147184153110048,
+      "wall_ns_per_iteration_median": 31499.37657894737,
+      "python_tracemalloc_peak_bytes_256_serial_iterations": 66649,
+      "python_tracemalloc_retained_bytes": 136,
+      "raw": [
+        {
+          "cpu_ns": 120754537,
+          "wall_ns": 120759712,
+          "checksum": 41800000
+        },
+        {
+          "cpu_ns": 115054337,
+          "wall_ns": 115058852,
+          "checksum": 41800000
+        },
+        {
+          "cpu_ns": 118481654,
+          "wall_ns": 118485427,
+          "checksum": 41800000
+        },
+        {
+          "cpu_ns": 119485093,
+          "wall_ns": 119697631,
+          "checksum": 41800000
+        },
+        {
+          "cpu_ns": 120298742,
+          "wall_ns": 120309495,
+          "checksum": 41800000
+        }
+      ]
+    },
+    {
+      "case": "existing_main_NDJSON_queue_parse_and_provider_JSON",
+      "input_pcm_bytes": 11000,
+      "iterations_per_trial": 1364,
+      "trials": 5,
+      "cpu_ns_per_iteration_median": 86087.83284457478,
+      "cpu_us_per_iteration_median": 86.08783284457478,
+      "cpu_ms_per_audio_second": 0.25043733191149026,
+      "wall_ns_per_iteration_median": 86091.85923753666,
+      "python_tracemalloc_peak_bytes_256_serial_iterations": 66100,
+      "python_tracemalloc_retained_bytes": 1336,
+      "raw": [
+        {
+          "cpu_ns": 117423804,
+          "wall_ns": 117429296,
+          "checksum": 20113544
+        },
+        {
+          "cpu_ns": 114874640,
+          "wall_ns": 114879015,
+          "checksum": 20113544
+        },
+        {
+          "cpu_ns": 125395611,
+          "wall_ns": 125415552,
+          "checksum": 20113544
+        },
+        {
+          "cpu_ns": 119447708,
+          "wall_ns": 119489792,
+          "checksum": 20113544
+        },
+        {
+          "cpu_ns": 114536449,
+          "wall_ns": 114541464,
+          "checksum": 20113544
+        }
+      ]
+    },
+    {
+      "case": "existing_caption_decode_rechunk_100ms_NDJSON_provider_JSON",
+      "input_pcm_bytes": 11000,
+      "iterations_per_trial": 915,
+      "trials": 5,
+      "cpu_ns_per_iteration_median": 147828.2306010929,
+      "cpu_us_per_iteration_median": 147.82823060109288,
+      "cpu_ms_per_audio_second": 0.43004576174863385,
+      "wall_ns_per_iteration_median": 147850.47978142076,
+      "python_tracemalloc_peak_bytes_256_serial_iterations": 47354,
+      "python_tracemalloc_retained_bytes": 1648,
+      "raw": [
+        {
+          "cpu_ns": 123010115,
+          "wall_ns": 123285936,
+          "checksum": 13669584
+        },
+        {
+          "cpu_ns": 155003926,
+          "wall_ns": 155031220,
+          "checksum": 13669584
+        },
+        {
+          "cpu_ns": 135444130,
+          "wall_ns": 135450007,
+          "checksum": 13669584
+        },
+        {
+          "cpu_ns": 135160179,
+          "wall_ns": 135164474,
+          "checksum": 13669584
+        },
+        {
+          "cpu_ns": 135262831,
+          "wall_ns": 135283189,
+          "checksum": 13669584
+        }
+      ]
+    },
+    {
+      "case": "existing_downlink_base64_decode_and_binary_frame",
+      "input_pcm_bytes": 2400,
+      "iterations_per_trial": 20490,
+      "trials": 5,
+      "cpu_ns_per_iteration_median": 5057.976183504148,
+      "cpu_us_per_iteration_median": 5.057976183504148,
+      "cpu_ms_per_audio_second": 0.10115952367008296,
+      "wall_ns_per_iteration_median": 5058.190141532455,
+      "python_tracemalloc_peak_bytes_256_serial_iterations": 6098,
+      "python_tracemalloc_retained_bytes": 112,
+      "raw": [
+        {
+          "cpu_ns": 102498912,
+          "wall_ns": 102504393,
+          "checksum": 49421880
+        },
+        {
+          "cpu_ns": 103637932,
+          "wall_ns": 103642316,
+          "checksum": 49421880
+        },
+        {
+          "cpu_ns": 105929154,
+          "wall_ns": 106359987,
+          "checksum": 49421880
+        },
+        {
+          "cpu_ns": 102572922,
+          "wall_ns": 102595087,
+          "checksum": 49421880
+        },
+        {
+          "cpu_ns": 105062386,
+          "wall_ns": 105066904,
+          "checksum": 49421880
+        }
+      ],
+      "sample_rate_hz": 24000
+    },
+    {
+      "case": "existing_downlink_base64_decode_and_binary_frame",
+      "input_pcm_bytes": 4800,
+      "iterations_per_trial": 10363,
+      "trials": 5,
+      "cpu_ns_per_iteration_median": 8670.153044485187,
+      "cpu_us_per_iteration_median": 8.670153044485186,
+      "cpu_ms_per_audio_second": 0.08670153044485186,
+      "wall_ns_per_iteration_median": 8670.643153526971,
+      "python_tracemalloc_peak_bytes_256_serial_iterations": 11698,
+      "python_tracemalloc_retained_bytes": 112,
+      "raw": [
+        {
+          "cpu_ns": 89807125,
+          "wall_ns": 89810731,
+          "checksum": 49866756
+        },
+        {
+          "cpu_ns": 90903472,
+          "wall_ns": 90908735,
+          "checksum": 49866756
+        },
+        {
+          "cpu_ns": 89848796,
+          "wall_ns": 89853875,
+          "checksum": 49866756
+        },
+        {
+          "cpu_ns": 96320443,
+          "wall_ns": 96648933,
+          "checksum": 49866756
+        },
+        {
+          "cpu_ns": 86602768,
+          "wall_ns": 86607914,
+          "checksum": 49866756
+        }
+      ],
+      "sample_rate_hz": 24000
+    }
+  ]
+}

@@ -126,13 +126,19 @@ release metadata и pin tests одним согласованным измене
 проверки: старый подсчёт `resource_budget.granted_units` не доказывает общий
 расход. Shared resource guard не заменяет проверку этого отдельного cap.
 
-Сегодня OpenCode task `dvt_43845b37065747bfabb255e917cdfde0` трижды завершился
+Первоначально OpenCode task `dvt_43845b37065747bfabb255e917cdfde0` трижды завершился
 до выполнения команд с `503 Upstream error from Nvidia: Service temporarily
-overloaded`, включая повтор после паузы. Модель/provider не переключались.
+overloaded`, включая повтор после паузы.
 Последний evidence SHA256:
 `13baaaa1216e77cf5c260dc6befde6a3f2519c6bd583c6e929672783d0a0ec2d`.
 Это недоступность provider, а не отказ автоматической проверки безопасности.
-Наличие текущих файлов runner на devstand пока не перечитано.
+После явного разрешения владельца в той же сессии выбран
+`opencode/glm-5.3-flash-free`: Git/stat команды выполнились, но вызовы Read
+оставались без результата. Зависшие read-only turns прерваны; история сохранена.
+Разрешённый владельцем резервный native Codex прочитал установленный shared skill
+и именно существующие `provider_spike.py` (210 строк) / `run_spike.sh`.
+`env.sh`, ключи и handle values не читались и не публиковались.
+Operator thread: `01a148df-e64d-7083-bd56-c55a768e8650`.
 
 Следующий реальный прогон: проверить точный импорт candidate framework,
 исправить метки в существующем runner и подтвердить bounded accounting,
@@ -143,12 +149,19 @@ renewal/GoAway, resume/history restore и Stop. Прежнее разрешен�
 
 ## Решение владельца и следующий этап
 
-Один точный вопрос вынесен в
-[предложение аудиопрофиля](native-voice-audio-profile-proposal-20261017.md):
-разрешить согласуемый версионированный codec profile в
-`CORE-LIVE-WSS.acceptance[2]`, сохранив v1 PCM и существующие защитные границы.
-Защищённый `.devcoveer/requirements.json` не изменён. После явного решения
-применить только согласованный diff через `requirements_update`.
+Владелец согласовал обязательное сжатие в обе стороны нового мобильного профиля
+и работу на нестабильном мобильном интернете. [Точная редакция и формальный receipt](native-voice-audio-profile-proposal-20261017.md)
+зафиксированы: `requirements_update` `op_ecf3179c0821aa8269ac6832`, commit guard
+`op_833602a9d3820614e1d01dbb`, коммит `493215046cd75d0f267d612f2277e81846204d1d`
+в той же consumer Claude-ветке. Изменены только два requirement ID, все остальные
+прежние criteria и statements сохранены.
+
+[Дополнительное исследование](../research/voice-audio-efficiency-20261017/README.md)
+проверило действующий candidate audio path и ограниченные локальные CPU-пробы.
+Выбрана рекомендация Python host + native codec для первого сжатого пути;
+большой перенос Go/Rust остаётся условной гипотезой после измерения остаточного
+ограничителя. Единственный оставшийся вопрос верхнего уровня — целевой пик
+одновременных активных разговоров. Он не блокирует уже согласованное продолжение.
 
 В shared draft уточнены уже принятые решения: Stop завершает capture/Live,
 сохраняя timeline и источники; полнота восстановленного source не возвращает

@@ -1,0 +1,205 @@
+{
+  "source_root": "/workspace/scratch/0702e2310172/continuation-final/framework",
+  "source_ref_note": "Declared ref identifies the original research baseline; actual file hashes are recorded separately.",
+  "declared_source_ref": "3b85224962c396e1a52977d6b81eee659db0cacc",
+  "source_sha256": {
+    "browser/capture.js": "3d8c5ec4fef49bfd92904faa9ec48ff340276c4dbd467a7a8d14af8beaffa1a0",
+    "browser/capture-worklet.js": "84e4abf7eeb24e59dbc856407a7f9265cc7b6684fc875640db91650414b57fde",
+    "browser/socket-transport.js": "0c5b053b578f4af6d62b3b2be63825e9e7135e4d133de27bf2ca18a7afdcccd5"
+  },
+  "method": {
+    "scope": "Imported existing pure helpers; no AudioWorklet thread, browser, real microphone, playback, crypto, network, disk or provider. Node is not an Android device or a VPS capacity measurement.",
+    "gc_exposed": true
+  },
+  "environment": {
+    "node": "v24.19.0",
+    "platform": "linux",
+    "arch": "x64",
+    "cpu_model": "AMD EPYC 9V74 80-Core Processor",
+    "visible_logical_cpus": 9,
+    "memory_after_cases": {
+      "rss": 104259584,
+      "heapTotal": 10219520,
+      "heapUsed": 5560408,
+      "external": 46109800,
+      "arrayBuffers": 9063951
+    }
+  },
+  "results": [
+    {
+      "case": "existing_48k_to_16k_resample_and_rms_with_worklet_copy_128_samples",
+      "iterations_per_trial": 26407,
+      "trials": 5,
+      "cpu_us_per_iteration_median": 2.8991933956905367,
+      "cpu_ms_per_audio_second": 1.0871975233839513,
+      "wall_us_per_iteration_median": 2.2149957587003453,
+      "raw": [
+        {
+          "cpu_us": 103149,
+          "wall_ms": 76.08494100000001,
+          "checksum": 1130410.3734832131
+        },
+        {
+          "cpu_us": 78242,
+          "wall_ms": 59.79261700000001,
+          "checksum": 1130410.3734832131
+        },
+        {
+          "cpu_us": 76382,
+          "wall_ms": 58.491393000000016,
+          "checksum": 1130410.3734832131
+        },
+        {
+          "cpu_us": 76559,
+          "wall_ms": 56.493066999999996,
+          "checksum": 1130410.3734832131
+        },
+        {
+          "cpu_us": 75730,
+          "wall_ms": 57.21888000000001,
+          "checksum": 1130410.3734832131
+        }
+      ]
+    },
+    {
+      "case": "existing_wss_encode_1280_bytes",
+      "iterations_per_trial": 90285,
+      "trials": 5,
+      "cpu_us_per_iteration_median": 1.6240350002769008,
+      "cpu_ms_per_audio_second": 0.04060087500692252,
+      "wall_us_per_iteration_median": 1.2495336434623685,
+      "raw": [
+        {
+          "cpu_us": 131117,
+          "wall_ms": 101.33167900000001,
+          "checksum": 116648220
+        },
+        {
+          "cpu_us": 165775,
+          "wall_ms": 133.11456699999997,
+          "checksum": 116648220
+        },
+        {
+          "cpu_us": 150070,
+          "wall_ms": 115.86680899999999,
+          "checksum": 116648220
+        },
+        {
+          "cpu_us": 146626,
+          "wall_ms": 112.81414499999994,
+          "checksum": 116648220
+        },
+        {
+          "cpu_us": 139415,
+          "wall_ms": 107.50056700000005,
+          "checksum": 116648220
+        }
+      ]
+    },
+    {
+      "case": "existing_wss_encode_3200_bytes",
+      "iterations_per_trial": 44339,
+      "trials": 5,
+      "cpu_us_per_iteration_median": 2.5280227339362638,
+      "cpu_ms_per_audio_second": 0.025280227339362638,
+      "wall_us_per_iteration_median": 1.976236653961522,
+      "raw": [
+        {
+          "cpu_us": 99037,
+          "wall_ms": 79.68667200000004,
+          "checksum": 142416868
+        },
+        {
+          "cpu_us": 93822,
+          "wall_ms": 74.42184299999985,
+          "checksum": 142416868
+        },
+        {
+          "cpu_us": 112090,
+          "wall_ms": 88.47287699999993,
+          "checksum": 142416868
+        },
+        {
+          "cpu_us": 113186,
+          "wall_ms": 87.62435699999992,
+          "checksum": 142416868
+        },
+        {
+          "cpu_us": 112756,
+          "wall_ms": 88.32171900000003,
+          "checksum": 142416868
+        }
+      ]
+    },
+    {
+      "case": "existing_wss_encode_11000_bytes",
+      "iterations_per_trial": 15716,
+      "trials": 5,
+      "cpu_us_per_iteration_median": 4.156655637566811,
+      "cpu_ms_per_audio_second": 0.012092089127467086,
+      "wall_us_per_iteration_median": 3.1311688088572125,
+      "raw": [
+        {
+          "cpu_us": 56518,
+          "wall_ms": 47.48698300000001,
+          "checksum": 173064592
+        },
+        {
+          "cpu_us": 65326,
+          "wall_ms": 55.117123999999876,
+          "checksum": 173064592
+        },
+        {
+          "cpu_us": 72724,
+          "wall_ms": 59.92046699999992,
+          "checksum": 173064592
+        },
+        {
+          "cpu_us": 73339,
+          "wall_ms": 49.20944899999995,
+          "checksum": 173064592
+        },
+        {
+          "cpu_us": 61877,
+          "wall_ms": 45.574794999999995,
+          "checksum": 173064592
+        }
+      ]
+    },
+    {
+      "case": "existing_wss_decode_4800_bytes",
+      "iterations_per_trial": 45002,
+      "trials": 5,
+      "cpu_us_per_iteration_median": 2.0837518332518554,
+      "cpu_ms_per_audio_second": 0.020837518332518554,
+      "wall_us_per_iteration_median": 1.6993609617350371,
+      "raw": [
+        {
+          "cpu_us": 107174,
+          "wall_ms": 84.92203199999994,
+          "checksum": 216009600
+        },
+        {
+          "cpu_us": 93773,
+          "wall_ms": 76.47464200000013,
+          "checksum": 216009600
+        },
+        {
+          "cpu_us": 109822,
+          "wall_ms": 86.92522899999994,
+          "checksum": 216009600
+        },
+        {
+          "cpu_us": 84991,
+          "wall_ms": 67.63700500000004,
+          "checksum": 216009600
+        },
+        {
+          "cpu_us": 76254,
+          "wall_ms": 63.01458100000036,
+          "checksum": 216009600
+        }
+      ]
+    }
+  ]
+}
