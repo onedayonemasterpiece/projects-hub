@@ -1,4 +1,0 @@
-.voice-source-setup { margin: .6rem 0; padding: .7rem .9rem; border: 1px solid var(--stroke); border-radius: .85rem; background: var(--surface); color: var(--text); font-size: .85rem; line-height: 1.45; overflow-wrap: anywhere; }
-.voice-source-setup p { margin: 0 0 .45rem; }
-.voice-source-setup p:last-child { margin-bottom: 0; }
-.voice-source-setup button { max-width: 100%; white-space: normal; }

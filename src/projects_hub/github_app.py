@@ -202,6 +202,55 @@ class GitHubAppClient:
             "text": text,
         }
 
+    async def repository_immutable_text(self, *, token: str, full_name: str, path: str, commit_sha: str):
+        """Read the exact Git tree/blob, rejecting symlinks including parent paths."""
+        import re
+        if (not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+',full_name)
+                or not re.fullmatch(r'[a-f0-9]{40}',commit_sha)
+                or any(p in ('','.','..') for p in path.split('/')) or '%' in path or '\\' in path
+                or len(path.split('/'))>12):
+            raise GitHubAppError('INVALID_ARGUMENT','Immutable source reference invalid')
+        base=f'/repos/{full_name}/git'
+        commit=await self._json_request('GET',base+'/commits/'+commit_sha,token=token)
+        if not isinstance(commit,dict) or commit.get('sha')!=commit_sha:
+            raise GitHubAppError('GITHUB_INVALID_RESPONSE','Commit identity mismatch')
+        tree_sha=(commit.get('tree') or {}).get('sha','')
+        parts=path.split('/')
+        blob_sha=None
+        for index,part in enumerate(parts):
+            if not re.fullmatch(r'[a-f0-9]{40}',str(tree_sha)):
+                raise GitHubAppError('GITHUB_INVALID_RESPONSE','Tree identity unavailable')
+            tree=await self._json_request('GET',base+'/trees/'+tree_sha,token=token)
+            if (not isinstance(tree,dict) or tree.get('sha')!=tree_sha or tree.get('truncated') is not False
+                    or not isinstance(tree.get('tree'),list)):
+                raise GitHubAppError('GITHUB_INVALID_RESPONSE','Complete tree required')
+            matches=[item for item in tree['tree'] if isinstance(item,dict) and item.get('path')==part]
+            if len(matches)!=1:
+                raise GitHubAppError('GITHUB_INVALID_RESPONSE','Source path unavailable')
+            entry=matches[0]
+            if index<len(parts)-1:
+                if entry.get('type')!='tree' or entry.get('mode')!='040000':
+                    raise GitHubAppError('GITHUB_INVALID_RESPONSE','Source parent must be a real directory')
+                tree_sha=entry.get('sha')
+            else:
+                if entry.get('type')!='blob' or entry.get('mode') not in ('100644','100755'):
+                    raise GitHubAppError('GITHUB_INVALID_RESPONSE','Source must be a regular file')
+                blob_sha=entry.get('sha')
+        if not re.fullmatch(r'[a-f0-9]{40}',str(blob_sha)):
+            raise GitHubAppError('GITHUB_INVALID_RESPONSE','Blob identity unavailable')
+        blob=await self._json_request('GET',base+'/blobs/'+blob_sha,token=token)
+        if (not isinstance(blob,dict) or blob.get('sha')!=blob_sha or blob.get('encoding')!='base64'
+                or type(blob.get('size')) is not int or not 0<blob['size']<=120000):
+            raise GitHubAppError('GITHUB_INVALID_RESPONSE','Text blob unavailable')
+        try:
+            raw=base64.b64decode(str(blob.get('content','')).replace('\n',''),validate=True)
+            if len(raw)!=blob['size'] or hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()!=blob_sha:
+                raise ValueError('blob mismatch')
+            text=raw.decode('utf-8')
+        except (ValueError,UnicodeDecodeError) as exc:
+            raise GitHubAppError('GITHUB_INVALID_RESPONSE','Text blob mismatch') from exc
+        return dict(kind='file',path=path,sha=blob_sha,commit_sha=commit_sha,text=text,size=len(raw))
+
     async def put_repository_content(
         self,
         *,

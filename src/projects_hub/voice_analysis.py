@@ -40,6 +40,8 @@ class VoiceAnalysis:
 
         from .voice_join import VoiceJoins
         self.joins = VoiceJoins(self)
+        from .voice_source import VoiceSourceCapability
+        self.source_capability = VoiceSourceCapability(self)
 
     def authorize(self, authorization):
         token = self.config.get('token', '')
@@ -98,8 +100,8 @@ class VoiceAnalysis:
         github = self.collaboration.github
         if github is None:
             raise StoreError('VOICE_SOURCE_UNAVAILABLE', 'Source reader unavailable')
-        item = await github.read_repository_path(actor_id=self.config['owner_id'], workspace_id=workspace,
-            repository_id=int(self.config['source_repository_id']), path=source['path'], ref=source['commit_sha'])
+        item = await github.read_voice_source(capability=self.source_capability, source=source)
+        self._access()
         if item.get('kind') != 'file' or item.get('full_name') != source['repository']:
             raise StoreError('VOICE_SOURCE_CONFLICT', 'Source repository mismatch')
         text = item.get('text', '')
@@ -233,7 +235,6 @@ class VoiceAnalysis:
         connection = self.store.get_repository_connection(self.config['owner_id'],workspace,
             int(self.config['source_repository_id']))
         if (connection.get('state') != 'available' or connection.get('installation_state') != 'active'
-                or connection.get('role') == 'unassigned'
                 or connection.get('full_name') != self.config['source_repository']):
             raise StoreError('VOICE_SOURCE_UNAVAILABLE','Original note link unavailable')
         branch = self.config.get('source_branch') or connection.get('default_branch')

@@ -292,23 +292,27 @@ request readiness. Only after that succeeds should the separately approved
 intake configuration mount be enabled. `enabled=true` in the unmounted intake
 file does not activate intake processing by itself.
 
-## Owner-session source connection control
+## Dedicated immutable source capability
 
-`GET /api/voice-analysis/setup` reports only the configured owner's own source
-connection state. `POST /api/voice-analysis/setup/connect-source` accepts no body
-or arbitrary targets. A real owner session is required; the voice bridge token
-and MCP service token are not owner sessions. No login invitation is minted.
+The approved private voice configuration is itself the narrow server-owned
+source capability. Voice intake does not require assigning the source repository
+a generic role, adding a user setup button, or obtaining an owner browser session.
+Only the in-process voice adapter constructs this capability. Its owner, private
+project, enabled service client, repository identity, prefix and branch are frozen
+and rechecked against the current configuration and access policy for every read.
 
-The explicit owner button may connect the configured, still-unassigned source to
-its configured owner-only project as `source_dataset`, `read_only`, restricted to
-the configured source prefix. It first verifies fresh owner-only GitHub audience
-using Metadata read, which is permitted for this exact existing installation even
-before an operational repository role is assigned. The normal content reader
-continues rejecting unassigned repositories. Unknown or shared audience refuses
-connection. Existing nonmatching bindings are never overwritten. A database
-transaction rechecks configuration context, project ACL and repository binding
-after network I/O; an exact existing binding is idempotent.
+The dedicated reader checks the existing installation and fresh private owner-only
+GitHub audience, then obtains an existing-repository Contents-read token. It walks
+the exact immutable Git commit/tree and blob, rejects symlink parents, symlink
+files, submodules, encoded traversal and incomplete trees, and verifies Git blob
+identity plus the existing final-transcript SHA256. Supporting notes use the same
+configured namespace. Current owner/project/client and repository/installation
+identity are rechecked after I/O, before the content can enter an analysis.
 
-Success means only that source read access has been connected. It does not mean
-intake was mounted, an analysis ran, a notification arrived, or results were
-written into a note. Parent/operator checks still govern staged intake activation.
+Generic repository reads still reject unassigned roles. No registry binding,
+project ACL, invitation, browser session, or general service permission is changed.
+Scoped readiness can audit the configured source's audience through this same
+capability using Metadata only, even when its generic role remains unassigned.
+An original-note link is supported by the dedicated binding, not a fabricated
+repository-role assignment. Existing signed voice handoff and staged activation
+requirements remain unchanged.

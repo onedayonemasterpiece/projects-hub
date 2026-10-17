@@ -17,6 +17,9 @@ class Repository:
         self.refs = []
         self.writes = 0
 
+    async def read_voice_source(self, *, capability, source):
+        return await self.read_repository_path(path=source['path'],ref=source['commit_sha'])
+
     async def read_repository_path(self, **kwargs):
         if 'ref' in kwargs:
             self.refs.append(kwargs['ref'])

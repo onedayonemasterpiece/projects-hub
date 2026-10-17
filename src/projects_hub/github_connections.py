@@ -520,7 +520,7 @@ class GitHubConnections:
         )
         return token, connection
 
-    async def repository_audience(self, *, actor_id: str, workspace_id: str, repository_id: int, _allow_unassigned: bool = False) -> dict:
+    async def repository_audience(self, *, actor_id: str, workspace_id: str, repository_id: int) -> dict:
         """Metadata-only evidence for an existing authorized binding, no ACL changes.
 
         A personal installation owner is the expected GitHub owner. This does
@@ -531,8 +531,14 @@ class GitHubConnections:
             if connection.get('project_id'):
                 self.store.project_access(actor_id, workspace_id, connection['project_id'])
             if (connection.get('state') != 'available' or connection.get('installation_state') != 'active'
-                    or (connection.get('role') == 'unassigned' and not _allow_unassigned)):
+                    or connection.get('role') == 'unassigned'):
                 return dict(owner_only=None, status='unavailable')
+            return await self._repository_audience(connection)
+        except (StoreError, GitHubAppError):
+            return dict(owner_only=None,status='unavailable')
+
+    async def _repository_audience(self, connection):
+        try:
             installation = self.store.github_installation(connection['installation_id'])
             expected = str((installation or {}).get('account_login') or '')
             if ((installation or {}).get('account_type') != 'User' or not expected
@@ -540,9 +546,9 @@ class GitHubConnections:
                 return dict(owner_only=None, status='owner_identity_unverified')
             client = self._require_client()
             token = await client.installation_token(int(connection['installation_id']),
-                repository_ids=[int(repository_id)], permissions={'metadata':'read'})
-            metadata = await client.repository_metadata(token=token, repository_id=int(repository_id))
-            if (not isinstance(metadata, dict) or metadata.get('id') != int(repository_id)
+                repository_ids=[int(connection['repository_id'])], permissions={'metadata':'read'})
+            metadata = await client.repository_metadata(token=token, repository_id=int(connection['repository_id']))
+            if (not isinstance(metadata, dict) or metadata.get('id') != int(connection['repository_id'])
                     or metadata.get('full_name') != connection['full_name']
                     or type(metadata.get('private')) is not bool):
                 return dict(owner_only=None, status='identity_unverified')
@@ -569,6 +575,46 @@ class GitHubConnections:
             return dict(owner_only=None,status='pagination_limit',collaborator_count=len(seen))
         except (StoreError, GitHubAppError):
             return dict(owner_only=None,status='unavailable')
+
+    async def voice_source_audience(self, *, capability):
+        from .voice_source import VoiceSourceCapability
+        import asyncio
+        if not isinstance(capability, VoiceSourceCapability):
+            return dict(owner_only=None,status='unavailable')
+        try:
+            before, installation = capability.authorize(None)
+            result = await asyncio.wait_for(self._repository_audience(before),timeout=8)
+            if capability.authorize(None) != (before,installation):
+                return dict(owner_only=None,status='changed_during_check')
+            return result
+        except (StoreError, TimeoutError):
+            return dict(owner_only=None,status='unavailable')
+
+    async def read_voice_source(self, *, capability, source):
+        # Only the in-process voice adapter constructs this server-bound object.
+        # There is no external caller-selected allow_unassigned/repository flag.
+        from .voice_source import VoiceSourceCapability
+        import asyncio
+        if not isinstance(capability, VoiceSourceCapability):
+            raise StoreError('VOICE_SOURCE_UNAVAILABLE','Trusted voice binding required')
+        source = dict(source)
+        before, installation = capability.authorize(source)
+        try:
+            audience = await asyncio.wait_for(self._repository_audience(before), timeout=8)
+            if audience.get('status') != 'verified' or audience.get('owner_only') is not True:
+                raise StoreError('VOICE_SOURCE_UNAVAILABLE','Source audience not verified owner-only')
+            if capability.authorize(source) != (before, installation):
+                raise StoreError('VOICE_SOURCE_CONFLICT','Source authorization changed')
+            client = self._require_client()
+            token = await client.installation_token(int(before['installation_id']),
+                repository_ids=[int(before['repository_id'])], permissions={'contents':'read'})
+            item = await client.repository_immutable_text(token=token, full_name=before['full_name'],
+                path=source['path'], commit_sha=source['commit_sha'])
+            if capability.authorize(source) != (before, installation):
+                raise StoreError('VOICE_SOURCE_CONFLICT','Source authorization changed')
+            return dict(item,full_name=before['full_name'],repository_id=before['repository_id'])
+        except (GitHubAppError, TimeoutError):
+            raise StoreError('VOICE_SOURCE_UNAVAILABLE','Immutable source read unavailable') from None
 
     async def read_repository_path(
         self,

@@ -155,14 +155,3 @@ async def test_metadata_reader_sends_only_scoped_read_requests():
     await client.repository_metadata(token='test-only',repository_id=123)
     await client.repository_collaborator_page(token='test-only',full_name='owner/private',page=2)
     assert urls==['https://api.github.com/repositories/123','https://api.github.com/repos/owner/private/collaborators?affiliation=all&per_page=100&page=2']
-
-@pytest.mark.asyncio
-async def test_unassigned_audit_is_opt_in_only_and_does_not_bind():
-    service,client=audience_service([[{'login':'owner'}]])
-    original=service.store.get_repository_connection
-    service.store.get_repository_connection=lambda *args:{**original(*args),'role':'unassigned'}
-    result=await service.repository_audience(actor_id='a',workspace_id='w',repository_id=123)
-    assert result['owner_only'] is None and not client.calls
-    result=await service.repository_audience(actor_id='a',workspace_id='w',repository_id=123,_allow_unassigned=True)
-    assert result['owner_only'] is True
-    assert service.store.get_repository_connection()['role']=='unassigned'
