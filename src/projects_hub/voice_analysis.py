@@ -38,6 +38,9 @@ class VoiceAnalysis:
                 created_ms INTEGER NOT NULL);
         ''')
 
+        from .voice_join import VoiceJoins
+        self.joins = VoiceJoins(self)
+
     def authorize(self, authorization):
         token = self.config.get('token', '')
         if not token or len(token) < 32 or not secrets.compare_digest(authorization, 'Bearer ' + token):
@@ -117,7 +120,8 @@ class VoiceAnalysis:
             if old and old['payload_json'] != data:
                 raise StoreError('VOICE_SOURCE_CONFLICT', 'Intent ID already has another immutable input')
             if old and old['request_id']:
-                self.redrive(old['binding_id'])
+                root, _ = self.joins.case(payload['intent_id'])
+                self.redrive(root['binding_id'])
                 return self.get(payload['intent_id'])
         transcripts = [await self._source(src, workspace) for src in payload['input_manifest']]
         transcript = transcripts[payload['input_manifest'].index(payload['source'])]
@@ -152,6 +156,7 @@ class VoiceAnalysis:
                     raise StoreError('VOICE_SOURCE_CONFLICT', 'Conflicting concurrent intent')
                 self.store.db.execute('INSERT OR IGNORE INTO voice_analysis_intents VALUES(?,?,?,?,?,?,NULL,?)',
                     (payload['intent_id'],data,c['owner_id'],c['project_id'],note_id,binding_id,now))
+                self.joins.register(payload['intent_id'])
                 fields = dict(id=note_id,workspace_id=workspace,project_id=c['project_id'],author_actor_id=c['owner_id'],
                     title='Голосовая заметка '+payload['session_id'],body=body,source_text=body,markdown=markdown,
                     author_roles_json='["owner"]',audience='project',status='ready',repository_id=int(repository['repository_id']),
@@ -198,29 +203,49 @@ class VoiceAnalysis:
                 self.store.db.execute('ROLLBACK'); raise
 
     def context(self, request_id):
-        request = self.store.db.execute('SELECT binding_id FROM mcp_test_requests WHERE id=?',(request_id,)).fetchone()
+        request = self.store.db.execute('SELECT * FROM mcp_test_requests WHERE id=?',(request_id,)).fetchone()
         if not request:
             return None
         row = self.store.db.execute('SELECT payload_json FROM voice_analysis_intents WHERE binding_id=?',(request['binding_id'],)).fetchone()
         if not row:
             return None
         context = json.loads(row['payload_json'])
+        context.update(self.joins.context(request,context))
         # Candidates only: temporal proximity does not merge topics or mutate this snapshot.
         context['related_source_candidates'] = [json.loads(r['payload_json'])['source'] for r in self.store.db.execute(
             'SELECT payload_json FROM voice_analysis_intents WHERE owner_id=? AND project_id=? AND binding_id!=? ORDER BY created_ms DESC,id DESC LIMIT 10',
             (self.config['owner_id'],self.config['project_id'],request['binding_id'])).fetchall()]
+        context['related_intent_candidates'] = []
+        for candidate in self.store.db.execute('SELECT id,payload_json FROM voice_analysis_intents WHERE owner_id=? AND project_id=? AND binding_id!=? ORDER BY created_ms DESC,id DESC LIMIT 10',
+                (self.config['owner_id'],self.config['project_id'],request['binding_id'])).fetchall():
+            root, version = self.joins.case(candidate['id'])
+            context['related_intent_candidates'].append(dict(intent_id=candidate['id'],canonical_intent_id=root['id'],case_revision=version['revision'],source=json.loads(candidate['payload_json'])['source']))
         context['trigger_semantics'] = 'Candidate only. Inspect the full transcript; a quotation, negation or discussion of this feature is not a command. An empty question_package with explanation completes a voice candidate without questions.'
         return context
 
     def get(self, intent_id):
+        # Projection, revision and terminal flag must describe one database snapshot.
+        with self.store._lock:
+            self.store.db.execute('SAVEPOINT voice_projection_read')
+            try:
+                result = self._get(intent_id)
+                self.store.db.execute('RELEASE SAVEPOINT voice_projection_read')
+                return result
+            except BaseException:
+                self.store.db.execute('ROLLBACK TO SAVEPOINT voice_projection_read')
+                self.store.db.execute('RELEASE SAVEPOINT voice_projection_read')
+                raise
+
+    def _get(self, intent_id):
         self._access()
         row = self.store.db.execute('SELECT * FROM voice_analysis_intents WHERE id=? AND owner_id=? AND project_id=?',
             (intent_id,self.config['owner_id'],self.config['project_id'])).fetchone()
         if not row:
             raise StoreError('REQUEST_UNAVAILABLE','Voice intent unavailable')
         payload = json.loads(row['payload_json'])
+        root, case_version = self.joins.case(intent_id)
         lines = ['## Вопросы от аналитика']
-        for analysis in self.store.db.execute('SELECT * FROM collaboration_analyses WHERE note_id=? AND model_alias=\'dot\' ORDER BY created_at_ms,id',(row['note_id'],)).fetchall():
+        for analysis in self.store.db.execute('SELECT * FROM collaboration_analyses WHERE note_id=? AND model_alias=\'dot\' ORDER BY created_at_ms,id',(root['note_id'],)).fetchall():
             lines.extend(['', 'Раунд '+analysis['id']+'; '+analysis['package_state']])
             for question in self.store.db.execute('SELECT prompt,state FROM collaboration_questions WHERE analysis_id=? ORDER BY id',(analysis['id'],)).fetchall():
                 lines.append('- '+question['prompt']+' ['+question['state']+']')
@@ -233,9 +258,15 @@ class VoiceAnalysis:
                     lines.append('Проверенный документ: '+result['artifact_url'])
         markdown = '\n'.join(lines)+'\n'
         request = self.store.db.execute('SELECT event_id FROM mcp_test_requests WHERE id=?',(row['request_id'],)).fetchone()
+        pending = bool(self.store.db.execute("SELECT 1 FROM mcp_test_requests WHERE binding_id=? AND state='awaiting_response' LIMIT 1",(root['binding_id'],)).fetchone())
+        rounds = self.store.db.execute("SELECT package_state FROM collaboration_analyses WHERE note_id=? AND model_alias='dot'",(root['note_id'],)).fetchall()
+        terminal = bool(rounds) and not pending and all(r['package_state'] in ('completed','partially_completed','cancelled') for r in rounds)
         return dict(intent_id=intent_id,source=payload['source'],state='accepted',request_id=row['request_id'],
+            projection_terminal=terminal,case_id=root['id'],input_revision=case_version['revision'],
+            member_intent_ids=[r[0] for r in self.store.db.execute('SELECT intent_id FROM voice_case_members WHERE root_id=? ORDER BY intent_id',(root['id'],)).fetchall()],
+            canonical_intent_id=root['id'],case_revision=case_version['revision'],
             event_id=request['event_id'] if request else None,
-            needs_redrive=bool(self.store.db.execute("SELECT 1 FROM mcp_test_requests WHERE binding_id=? AND state='awaiting_response' AND expires_ms<=?",(row['binding_id'],_now_ms())).fetchone()),
+            needs_redrive=bool(self.store.db.execute("SELECT 1 FROM mcp_test_requests WHERE binding_id=? AND state='awaiting_response' AND expires_ms<=?",(root['binding_id'],_now_ms())).fetchone()),
             projection=dict(revision=hashlib.sha256(markdown.encode()).hexdigest(),markdown=markdown))
 
 
