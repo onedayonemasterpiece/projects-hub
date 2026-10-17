@@ -1,0 +1,6 @@
+.analysis-result { position: fixed; z-index: 30; inset: 12% 1rem auto; max-width: 44rem; margin: auto; max-height: 65vh; overflow: auto; padding: 1rem; border-radius: 1rem; border: 1px solid #888; background: var(--surface, #17171b); color: var(--text, #fff); box-shadow: 0 12px 48px #0008; }
+.analysis-result header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.analysis-result nav, .analysis-result nav span { display: flex; flex-direction: column; gap: .65rem; }
+.analysis-result nav { margin: 1rem 0; }
+.analysis-result a { color: #79b8ff; overflow-wrap: anywhere; }
+.analysis-result pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; }

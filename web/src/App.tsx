@@ -48,6 +48,7 @@ import {
 import { replayLocalVoiceSource } from "./bufferedReplay";
 import CollaborationTimeline from "./CollaborationTimeline";
 import CollaborationQuestions from "./CollaborationQuestions";
+import AnalysisResult from "./AnalysisResult";
 import InlineBoard, { type BoardUiCommand } from "./InlineBoard";
 import { recoverServerVoiceSource } from "./serverRecovery";
 import { mergeTranscript, resolveTerminalVoiceState, selectProvisionalCaption, speechStartsNewUserBubble, voiceStartupFailureNotice, voiceStartupFailureState } from "./voiceUiContract.js";
@@ -1679,6 +1680,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
 
   return (
     <main className="shell">
+      <AnalysisResult workspaceId={boot.workspace.id} />
       <header className="context-wrap">
         <button
           className={"island context-island" + (contextOpen ? " is-open" : "")}

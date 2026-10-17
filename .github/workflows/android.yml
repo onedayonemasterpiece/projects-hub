@@ -71,3 +71,13 @@ jobs:
           disable-animations: false
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -timezone Etc/UTC
           script: bash scripts/android_emulator_smoke.sh
+      - name: Upload emulator evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-emulator-evidence
+          if-no-files-found: warn
+          path: |
+            android/smoke-evidence/
+            android/app/build/reports/androidTests/
+            android/app/build/outputs/androidTest-results/

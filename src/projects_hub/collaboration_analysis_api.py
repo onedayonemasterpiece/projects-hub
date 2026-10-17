@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request
 from pydantic import BaseModel, Field
 
 from .collaboration_analysis import CollaborationAnalysisService
+from .analysis_notifications import recent_analysis_completions
 
 
 class AnalysisStart(BaseModel):
@@ -46,6 +47,12 @@ def attach_collaboration_analysis_routes(
     service: CollaborationAnalysisService,
     actor_id_from_request: Callable[[Request], str],
 ) -> None:
+    @app.get("/api/device/analysis/completed")
+    async def device_analysis_completed(request: Request) -> dict[str, Any]:
+        device = app.state.device_commands.authenticate(request.headers.get("authorization"))
+        return {"items": recent_analysis_completions(service, actor_id=device["actor_id"],
+                                                     workspace_id=device["workspace_id"])}
+
     @app.post("/api/collaboration/analyses")
     async def start_analysis(payload: AnalysisStart, request: Request) -> dict[str, Any]:
         return await service.start_analysis(
