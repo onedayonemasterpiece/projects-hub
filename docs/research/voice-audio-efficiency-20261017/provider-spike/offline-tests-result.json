@@ -1,0 +1,9 @@
+{
+  "command": "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/workspace/scratch/0702e2310172/continuation-final/framework/python /workspace/scratch/0702e2310172/checkpoint-review/venv/bin/python -m pytest -q -p no:cacheprovider existing-provider-spike/test_provider_spike.py",
+  "scope": "offline fake SDK and fake WebSockets; real candidate provider module; no environment files/real credentials/provider calls",
+  "chunk_id": "c14a9b",
+  "wall_time_seconds": 0.498211812,
+  "exit_code": 0,
+  "original_token_count": 25,
+  "output": "..............                                                           [100%]\n14 passed in 0.38s\n"
+}

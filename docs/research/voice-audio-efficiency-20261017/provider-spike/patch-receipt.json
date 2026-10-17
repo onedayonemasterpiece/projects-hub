@@ -1,0 +1,34 @@
+{
+  "scope": "Existing runner local patch; no provider/network/credential calls, no remote mutations",
+  "source_basis": "Installed SDK client 651 lines; installed live 473 lines; framework candidate 3b852249",
+  "artifacts": {
+    "provider_spike.original.py": {
+      "sha256": "6f0e336314cffff511313ac9a2a13dbecf5a2815be0354a8e732b2f1058560e2",
+      "bytes": 9090
+    },
+    "provider_spike.py": {
+      "sha256": "9db76960ed8d0a710ac953f71129989333fc5813fe00d108b637df0612688668",
+      "bytes": 21484
+    },
+    "provider-spike-fixes.patch": {
+      "sha256": "a248da398525efefcec90b5a722d9a7a50ffb68e66b6956a29bd2d3df55ce2b4",
+      "bytes": 24801
+    },
+    "test_provider_spike.py": {
+      "sha256": "7c773b94da939c2de8cdd1d9263d78e9c374fc5348940874344410b29fd0375f",
+      "bytes": 16503
+    },
+    "offline-tests-result.json": {
+      "sha256": "150a045900d1f16a03bc53db2c045305ed84777c90a520c6edb86d25c53b0a47",
+      "bytes": 632
+    },
+    "HANDOFF.md": {
+      "sha256": "2c643deac253d6d6a3499a88f9aa3be057fad1f4426f3fe9085d6a3ec14279c3",
+      "bytes": 7581
+    }
+  },
+  "offline_result": "14 passed in 0.38s",
+  "real_provider_executed": false,
+  "product_sources_modified": false,
+  "syntax": "PASS"
+}
