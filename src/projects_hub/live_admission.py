@@ -67,8 +67,8 @@ class ProjectsHubAdmissionMixin:
         for session_id in candidates:
             # Re-check immediately before the stop so a successful WSS reconnect
             # wins over stale-session cleanup. A new /sessions POST for the same
-            # resource is an explicit replacement; browser reconnects use the
-            # socket-ticket endpoint instead.
+            # resource replaces an abandoned transport, preserving its checkpoint;
+            # browser reconnects use the socket-ticket endpoint instead.
             session = self.sessions.get(session_id)
             state = socket_states.get(session_id)
             if (
@@ -93,6 +93,7 @@ class ProjectsHubAdmissionMixin:
                 session_id=session.id,
                 resource_id=session.resource_id,
                 actor=session.actor,
+                reason="detached_reclaim",
             )
 
     async def start(

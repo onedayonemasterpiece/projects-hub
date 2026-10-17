@@ -1671,6 +1671,7 @@ class ProjectsHubLiveAdapter:
                 # socket; the provider rejects an expired handle and the shared
                 # transport then falls back to bounded history.
                 result["resume_handle"] = checkpoint["handle"]
+                result["state"]["_resumed_checkpoint_session_id"] = checkpoint["session_id"]
                 result["response"]["resumed_from_checkpoint"] = True
                 log.info(
                     "live checkpoint resume",
@@ -1681,7 +1682,8 @@ class ProjectsHubLiveAdapter:
 
     def on_checkpoint(self, session: Any, handle: str) -> None:
         state = session.state
-        if state.get("recovery_only") or state.get("audio_mode") != "realtime":
+        if (state.get("_checkpoint_stopped") or getattr(session, "closed", False)
+                or state.get("recovery_only") or state.get("audio_mode") != "realtime"):
             return
         self.store.save_live_checkpoint(
             state["actor_id"], state["conversation_id"],
@@ -2043,19 +2045,30 @@ class ProjectsHubLiveAdapter:
             diag.pop("turn_first_output_audio_provider_at", None)
 
     def on_stopped(self, session: Any) -> None:
+        state = session.state
+        # Fence provider callbacks before any cleanup can yield to another task.
+        state["_checkpoint_stopped"] = True
         pending = self._preference_applications.pop(getattr(session, "id", ""), None)
         if pending:
             pending["event"].set()
-        state = session.state
         utterances = state.get("_utterances")
         if isinstance(utterances, list):
             for utterance in utterances:
                 if isinstance(utterance, dict):
                     self._finalize_utterance(session, utterance, reason="session_stopped")
         self.store.mark_source_stopped(state["actor_id"], state["source_id"])
-        # Explicit Stop ends this provider conversation; only abandoned sessions
-        # (restart, lost client) may be resumed from their checkpoint.
-        self.store.invalidate_live_checkpoint(state["actor_id"], state["conversation_id"], session.id)
+        # Reclaim closes an abandoned source/provider while preserving continuity.
+        # The trusted host gives an explicit Stop precedence over internal reclaim.
+        if getattr(session, "stop_reason", None) != "detached_reclaim":
+            for checkpoint_session_id in {
+                session.id, state.get("_resumed_checkpoint_session_id"),
+            }:
+                if checkpoint_session_id:
+                    # Before the first new checkpoint, its row still belongs to
+                    # the predecessor whose handle this session resumed.
+                    self.store.invalidate_live_checkpoint(
+                        state["actor_id"], state["conversation_id"], checkpoint_session_id,
+                    )
         diag = state.get("_voice_diag") if isinstance(state.get("_voice_diag"), dict) else {}
         current = self._current_utterance(session)
         log.info(
