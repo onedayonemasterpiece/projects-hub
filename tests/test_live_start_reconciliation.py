@@ -118,3 +118,104 @@ async def test_same_attempt_is_not_rebound_to_another_tenant(request_context):
         assert len([x for x in provider.inputs if x["type"] == "start"]) == 1
     finally:
         await host.stop_all()
+
+
+class FailOnceWithCleanupProvider(Provider):
+    def __init__(self):
+        super().__init__()
+        self.cleanup_started = asyncio.Event()
+        self.cleanup_allowed = asyncio.Event()
+        self.active = 0
+        self.max_active = 0
+
+    async def run(self, *, load_key, reader, on_event):
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        try:
+            if not self.inputs:
+                self.inputs.append(json.loads(await reader.readline()))
+                try:
+                    on_event({"type": "error", "code": "LIVE_PROVIDER_SETUP_TIMEOUT",
+                              "message": "Synthetic transient setup failure"})
+                    await asyncio.Event().wait()
+                finally:
+                    self.cleanup_started.set()
+                    await self.cleanup_allowed.wait()
+            else:
+                await super().run(load_key=load_key, reader=reader, on_event=on_event)
+        finally:
+            self.active -= 1
+
+
+@pytest.mark.asyncio
+async def test_failed_start_retries_close_only_after_provider_cleanup(request_context):
+    store, args = request_context
+    provider = FailOnceWithCleanupProvider()
+    host = make_host(store, provider)
+    waiters = []
+    try:
+        first = asyncio.create_task(host.start(**args))
+        waiters.append(first)
+        await asyncio.wait_for(provider.cleanup_started.wait(), 1)
+        retry = asyncio.create_task(host.start(**args))
+        waiters.append(retry)
+        await asyncio.sleep(0)
+        assert not first.done() and not retry.done()
+        assert provider.active == 1
+        assert len(provider.inputs) == 1
+        with pytest.raises(LiveError) as busy:
+            await host.start(**{**args, "attempt_id": "premature-new-attempt"})
+        assert busy.value.code == "LIVE_BUSY"
+        assert len(provider.inputs) == 1
+
+        provider.cleanup_allowed.set()
+        failures = await asyncio.wait_for(asyncio.gather(*waiters, return_exceptions=True), 1)
+        assert all(isinstance(error, LiveError) and error.code == "LIVE_PROVIDER_SETUP_TIMEOUT"
+                   for error in failures)
+        assert provider.active == 0 and host.size() == 0
+        # The first waiters retain the actual failure. A later retry receives
+        # the terminal code already understood by the installed native APK.
+        with pytest.raises(LiveError) as closed:
+            await host.start(**args)
+        assert closed.value.code == "LIVE_ATTEMPT_CLOSED"
+        assert len(provider.inputs) == 1
+        fresh = await host.start(**{**args, "attempt_id": "native-start-after-cleanup"})
+        assert host.sessions[fresh["session_id"]].closed is False
+        assert provider.active == 1 and provider.max_active == 1
+        assert len([item for item in provider.inputs if item["type"] == "start"]) == 2
+    finally:
+        provider.cleanup_allowed.set()
+        await asyncio.gather(*waiters, return_exceptions=True)
+        await host.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_failed_start_with_live_session_is_not_declared_cleaned_up(request_context, monkeypatch):
+    store, args = request_context
+    provider = Provider()
+    host = make_host(store, provider)
+    issue_ticket = host.issue_socket_ticket
+
+    def fail_ticket_once(**kwargs):
+        monkeypatch.setattr(host, "issue_socket_ticket", issue_ticket)
+        raise LiveError("LIVE_SOCKET_TICKET_UNAVAILABLE", "Synthetic failure after provider-ready")
+
+    monkeypatch.setattr(host, "issue_socket_ticket", fail_ticket_once)
+    try:
+        with pytest.raises(LiveError) as first:
+            await host.start(**args)
+        assert first.value.code == "LIVE_SOCKET_TICKET_UNAVAILABLE"
+        session = next(iter(host.sessions.values()))
+        assert not session.closed and not session.task.done()
+        with pytest.raises(LiveError) as retry:
+            await host.start(**args)
+        assert retry.value.code == "LIVE_SOCKET_TICKET_UNAVAILABLE"
+        assert len([item for item in provider.inputs if item["type"] == "start"]) == 1
+        await host.stop(session_id=session.id, resource_id=args["resource_id"], actor=args["actor"])
+        assert session.task.done()
+        with pytest.raises(LiveError) as closed:
+            await host.start(**args)
+        assert closed.value.code == "LIVE_ATTEMPT_CLOSED"
+        assert len([item for item in provider.inputs if item["type"] == "start"]) == 1
+    finally:
+        await host.stop_all()
