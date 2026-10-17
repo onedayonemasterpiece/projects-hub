@@ -20,7 +20,7 @@
       "acceptance": [
         "Bootstrap returns a same-origin socket URL, one-use short-lived ticket, attempt identifier and versioned protocol.",
         "Tickets are transported only through the WebSocket subprotocol and are rejected when stale, reused, cross-resource, query-carried or foreign-origin.",
-        "PCM uses bounded binary frames with relay ACK/backpressure; model events and audio are pushed over the socket.",
+        "Audio uses a negotiated, versioned codec profile in bounded binary WSS frames with relay ACK/backpressure and separate encoded-byte, decoded-duration and decode-work limits. Native/mobile v2 requires audio-codec compression in both directions; model events and compressed output audio are pushed over WSS. Explicit wl-live-v1 PCM16 compatibility does not satisfy compressed-mobile acceptance. Codec changes and transport fallback are never silent.",
         "A transport gap during an open speech turn cannot execute a mutation until a later clean turn is admitted."
       ]
     },
@@ -222,8 +222,8 @@
     },
     {
       "id": "CORE-ANDROID-NATIVE-VOICE",
-      "critical": true,
       "statement": "Android uses a native microphone, capture/VAD, bounded audio queue, playback and reconnect lifecycle through the versioned shared live-interaction framework, independent of the WebView UI lifecycle. PWA remains a full browser/iOS client with explicitly stated platform limits; neither client opens a direct provider connection.",
+      "critical": true,
       "acceptance": [
         "WebView is a typed UI bridge; the Android voice session has exactly one active shared-framework transport, not parallel browser and native microphone/provider sessions.",
         "An explicitly user-started native microphone foreground service owns long-running capture and the visible stop control; screen lock or navigation to another app does not silently terminate accepted capture.",
@@ -235,21 +235,24 @@
     },
     {
       "id": "CORE-VOICE-SESSION-CONTINUITY",
-      "critical": true,
       "statement": "A transient transport outage must not silently erase accepted speech or destroy the logical conversation. Socket, provider session, source durability and business effects are independently tracked; reconnect preserves authorization, bounded resource use and damaged-turn safety.",
+      "critical": true,
       "acceptance": [
         "Transport I/O failures detach the socket within a documented bounded recovery policy rather than automatically stopping the logical session; explicit stop, authorization failure and protocol violations remain fail-closed.",
         "Capture continuity and safe durable recovery are distinct from blind retransmission: no expired or uncertain audio is replayed as a fresh executable owner command, and no accepted mutation is duplicated.",
         "Provider resume failure and capability transition preserve a durable conversation journal and expose degraded context instead of claiming full memory restored from a bounded bootstrap.",
         "Reconnect and queue limits are justified by reproducible network profiles and measured audio age; a lifetime retry counter cannot substitute for a bounded retry-rate policy.",
         "Structured privacy-safe telemetry correlates capture, relay admission, provider delivery, audible output, recovery and failure without logging audio, transcript contents or credentials.",
-        "Physical Android and foreground browser acceptance cover long sessions, mobile handover, bounded offline recovery and shared multi-user load; mocks and prepared audio are not physical microphone evidence."
+        "Physical Android and foreground browser acceptance cover long sessions, mobile handover, bounded offline recovery and shared multi-user load; mocks and prepared audio are not physical microphone evidence.",
+        "Supported mobile clients are validated on constrained bandwidth, variable latency/jitter, packet loss, transient outages and Wi-Fi/mobile handover; browser background capture limits are stated honestly.",
+        "While recording is active, native capture continues into a bounded on-device durable spool during transport outages. Storage or lifecycle limits are surfaced explicitly without silently discarding committed audio.",
+        "Explicit local Stop stops capture immediately, independently of transport and backlog. Recovery prioritizes fresh speech over deferred processing and resumes source delivery from committed receipts without duplicate semantic effects. Live, delayed and recording-only states remain distinct; an outage never implies zero-delay interaction."
       ]
     },
     {
       "id": "CORE-IMPORTED-AUDIO-AS-SOURCE",
-      "critical": true,
       "statement": "Imported call recordings, audio and transcripts are quoted external source material, never a new executable owner turn. Importing or structuring material does not authorize actions requested by recorded speakers or convert historical promises into current instructions.",
+      "critical": true,
       "acceptance": [
         "Current user authorization bounds the source, purpose and permitted import/structuring operation; captured participants' imperatives cannot grant permissions.",
         "Recorded decisions, requests and promises are attributable source claims or draft candidates until the current authorized user adopts them; project facts preserve source provenance and speaker uncertainty.",
