@@ -196,12 +196,12 @@ class CaptionSidecar:
             raw = message.get("audio_base64")
             if isinstance(raw, str) and raw:
                 try:
-                    self._pcm_buffer.extend(base64.b64decode(raw, validate=True))
+                    pcm = base64.b64decode(raw, validate=True)
                 except (ValueError, binascii.Error):
                     self._unavailable("CAPTION_INVALID_AUDIO")
                     asyncio.create_task(self.stop())
                     return False
-                if not self._flush_audio():
+                if not self.feed_pcm(pcm):
                     return False
         if message.get("activity_end"):
             if not self._flush_audio(all_bytes=True):
@@ -214,6 +214,17 @@ class CaptionSidecar:
             if not self._queue({"type": "audio_stream_end"}):
                 return False
         return True
+
+    def feed_pcm(self, pcm: bytes) -> bool:
+        """Reuse the shared decoder's PCM view without another base64 roundtrip."""
+        if not self.available or self.task is None:
+            return False
+        if not isinstance(pcm, bytes) or len(pcm) % 2 or len(pcm) > 12_000:
+            self._unavailable("CAPTION_INVALID_AUDIO")
+            asyncio.create_task(self.stop())
+            return False
+        self._pcm_buffer.extend(pcm)
+        return self._flush_audio()
 
     async def stop(self) -> None:
         async with self._stop_lock:

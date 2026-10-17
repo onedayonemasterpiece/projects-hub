@@ -16,3 +16,15 @@ dependencyResolutionManagement {
 
 rootProject.name = "ProjectsHubAndroid"
 include(":app")
+
+// Explicit candidate pairing only. Replace with a released immutable SDK
+// artifact before release qualification; this does not alter Python/web pins.
+def sharedAndroid = providers.gradleProperty("liveInteractionAndroidDir").orNull
+if (sharedAndroid) {
+    includeBuild(file(sharedAndroid)) {
+        dependencySubstitution {
+            substitute(module("org.onedayonemasterpiece.live:android-contracts")).using(project(":"))
+            substitute(module("org.onedayonemasterpiece.live:android-platform")).using(project(":platform"))
+        }
+    }
+}

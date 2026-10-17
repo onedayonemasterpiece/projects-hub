@@ -1,0 +1,72 @@
+{
+  "status": "NOT ACCEPTED: resume skipped and idle timed out",
+  "invocation_id": "81957d0e35dc4d6b9e1f6a62536e8f21",
+  "systemd_unit": "projects-hub-voice-spike-20261017.service",
+  "work_id": "work_1a8fe6975bc110f4c6bb49d4",
+  "started_at_utc": "2026-10-17T09:11:23Z",
+  "final_artifact_mtime_utc": "2026-10-17T09:25:06Z",
+  "provider_invocations": 1,
+  "runner_command": "existing run_spike.sh all",
+  "python": "3.14.4",
+  "source_attribution": "all expected hashes matched",
+  "synthetic_fixture": {
+    "speech_seconds": 13.3,
+    "provider_chunks": 134,
+    "language": "English"
+  },
+  "realtime": {
+    "completed": true,
+    "send_seconds": 13.53,
+    "activity_end_to_turn_complete_s": 3.22,
+    "first_input_transcript_after_end_s": 0.33,
+    "output_audio_events": 10,
+    "fresh_checkpoint_after_audio_end": false
+  },
+  "burst": {
+    "completed": true,
+    "send_seconds": 0.01,
+    "activity_end_to_turn_complete_s": 6.13,
+    "first_input_transcript_after_end_s": 3.43,
+    "output_audio_events": 12,
+    "fresh_checkpoint_after_audio_end": false
+  },
+  "resume": {
+    "status": "skipped",
+    "reason": "no fresh checkpoint after audio end"
+  },
+  "idle": {
+    "status": "failed",
+    "failure": "TimeoutError",
+    "go_away_at_s": null,
+    "resumed_at_s": null
+  },
+  "runner_completed": true,
+  "accounting": {
+    "acquire_attempts": 1,
+    "provider_connection_attempts": 3,
+    "provider_connection_cap": 6,
+    "authority_reservation_cap_units": 150000,
+    "authority_reserved_units": 4147,
+    "unknown_reserved_units_upper_bound": 0,
+    "authority_accounting_complete": true,
+    "authority_lease_release_confirmed": true,
+    "provider_billing_guaranteed": false
+  },
+  "not_proven": [
+    "90-minute conversation",
+    "session continuation through resumption",
+    "capability transition",
+    "audible long-tool progress",
+    "compressed Android path",
+    "mobile network quality",
+    "production capacity"
+  ],
+  "evidence": {
+    "source_file": "/home/dev/artifacts/projects-hub/20261016T134802Z-voice-continuity-impl-20261016/spike-all-20261017.jsonl",
+    "original_jsonl_bytes": 5723,
+    "stderr_bytes": 0,
+    "immutable_safe_session_evidence_sha256": "4abde84a6ef966a250f192897434b1c39d745f07904b41b178349a205e8989ad",
+    "redacted_text_sha256": "f0a7c5277c26085fdadc41b7e063b2ae8cadfbc074e93d84037f6c4fbd0b0bcf",
+    "note": "Safe evidence is a redacted terminal projection, not a byte-exact copy of the source JSONL; redacted provider usage fields are not reconstructed."
+  }
+}

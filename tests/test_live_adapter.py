@@ -11,6 +11,21 @@ from projects_hub.live_resources import ConversationScope
 from projects_hub.store import DurableStore, StoreError
 
 
+def test_long_external_functions_preserve_non_blocking_provider_contract():
+    from live_interaction.provider import setup_config
+    from projects_hub.live_adapter import _functions, _LONG_RUNNING_FUNCTIONS
+
+    declarations = _functions(expert_reviews=True, regional_knowledge=True, owner_development=True)
+    indexed = {item["name"]: item for item in declarations}
+    assert _LONG_RUNNING_FUNCTIONS <= indexed.keys()
+    setup = setup_config("gemini-3.8-live", {}, configuration={
+        "functions": [indexed["github_repository_read"], indexed["projects_list_accessible"]],
+    })
+    forwarded = {item["name"]: item for tool in setup["setup"]["tools"] for item in tool.get("functionDeclarations", [])}
+    assert forwarded["github_repository_read"]["behavior"] == "NON_BLOCKING"
+    assert "behavior" not in forwarded["projects_list_accessible"]
+
+
 @pytest.mark.asyncio
 async def test_live_adapter_persists_audio_transcript_and_verified_memory(tmp_path: Path):
     store = DurableStore(tmp_path)

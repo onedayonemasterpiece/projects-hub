@@ -1,0 +1,46 @@
+{
+  "reviewed_at_utc": "2026-10-17T10:51:54.305384+00:00",
+  "scope": "Read-only RC pairing review plus authorized Android README update; no build or test rerun.",
+  "candidate": {
+    "repository": "https://github.com/onedayonemasterpiece/live-interaction",
+    "version": "0.4.0-rc.1",
+    "ref": "c564f0c44c6fe783fd4932bd4633fada34e05c73",
+    "tree": "e4f36b3e6773e19a74a33de5389c1e3475f4b1c7",
+    "channel": "candidate",
+    "artifact_type": "git_source",
+    "status": "paired source candidate; signed release and physical acceptance pending"
+  },
+  "candidate_metadata_sha256": "4ddc0e8b6689d5288be5e8c69817f06a57cc07412070af135f48960db11d4c36",
+  "ci_workflow": {
+    "path": "/workspace/scratch/0702e2310172/continuation-final/consumer/.github/workflows/android.yml",
+    "sha256": "53debccbef54d8d65f8401f6432d9a03bda18cc650335f7771100e24147f6648",
+    "both_jobs_exact_ref": true,
+    "job_environment_property": "ORG_GRADLE_PROJECT_liveInteractionAndroidDir",
+    "release_workflow_pairing_added": false
+  },
+  "as_built_source_comparison": {
+    "consumer_android_recorded_files": 42,
+    "consumer_android_changes": [
+      {
+        "path": "README.md",
+        "as_built_sha256": "9969f80bad42da5b6dc77b394a90f511033f0e45da1ff68707241562d129dccb",
+        "current_sha256": "70748a710df691153ed7474f6935d84ebcdca5a7fe3d91b47ecef5f05c8b6bb9"
+      }
+    ],
+    "framework_android_recorded_files": 24,
+    "framework_android_changes": [],
+    "native_sdk_code_and_build_config_unchanged": true
+  },
+  "published_manifest": {
+    "path": "/workspace/scratch/0702e2310172/framework-publish-manifest.json",
+    "sha256": "6ad4cbc65baf061fea84266d54ffc29864350810e6de1a440a2ff2dca1dd8a85",
+    "matching_android_files": 21,
+    "remote_verification_owner": "root"
+  },
+  "apk": {
+    "path": "/workspace/scratch/0702e2310172/continuation-final/consumer/android/app/build/outputs/apk/debug/app-debug.apk",
+    "bytes": 3399365,
+    "sha256": "1cff757af14b04de9350ab88a12f20564aa3f3885b30ed87c37f663a75e1527f"
+  },
+  "conclusion": "Exact immutable candidate source pairing is consistent. The retained APK has unchanged consumer/native SDK build inputs. README and candidate CI/metadata document source pairing; signed release and physical acceptance remain separate gates."
+}

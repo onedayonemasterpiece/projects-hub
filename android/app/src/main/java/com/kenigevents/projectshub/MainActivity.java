@@ -52,6 +52,11 @@ public final class MainActivity extends Activity {
     private FrameLayout themeRoot;
     private final ThemePresentation themePresentation = new ThemePresentation();
     private WebView webView;
+    private NativeVoiceBridge nativeVoiceBridge;
+    private boolean activityResumed;
+    private Runnable pendingNativeVoiceGrant;
+    private Runnable pendingNativeVoiceDeny;
+    private boolean nativeVoiceGrantOnResume;
     private Button updateButton;
     private WebOriginPolicy webOriginPolicy;
     private SecureStore secureStore;
@@ -184,6 +189,14 @@ public final class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        activityResumed = true;
+        if (nativeVoiceGrantOnResume && pendingNativeVoiceGrant != null) {
+            Runnable grant = pendingNativeVoiceGrant;
+            pendingNativeVoiceGrant = null;
+            pendingNativeVoiceDeny = null;
+            nativeVoiceGrantOnResume = false;
+            grant.run();
+        }
         if (webView != null && webOriginPolicy.isTrustedPageUrl(webView.getUrl())) {
             // Fixed presentation notification, no reload or programmable native channel.
             webView.evaluateJavascript("window.dispatchEvent(new Event('projects-hub-theme-resume'))", null);
@@ -204,6 +217,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
+        activityResumed = false;
         main.removeCallbacks(pendingUpdateResume);
         main.removeCallbacks(pairingProbe);
         abandonVoiceAudioFocus(false);
@@ -212,6 +226,9 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (nativeVoiceBridge != null) nativeVoiceBridge.close();
+        pendingNativeVoiceGrant = null;
+        pendingNativeVoiceDeny = null;
         abandonVoiceAudioFocus(true);
         main.removeCallbacksAndMessages(null);
         PermissionRequest pendingPermission = pendingWebPermission;
@@ -237,6 +254,28 @@ public final class MainActivity extends Activity {
 
     private void configureWebView(WebView view) {
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            nativeVoiceBridge = new NativeVoiceBridge(this, view, webOriginPolicy, new NativeVoiceBridge.Host() {
+                @Override public boolean isForeground() { return activityResumed && !isFinishing() && !isDestroyed(); }
+                @Override public String sessionCookie() { return CookieManager.getInstance().getCookie(BuildConfig.HUB_URL); }
+                @Override public void requestMicrophone(Runnable granted, Runnable denied) {
+                    if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                        granted.run();
+                        return;
+                    }
+                    pendingNativeVoiceGrant = granted;
+                    pendingNativeVoiceDeny = denied;
+                    requestNativeMicrophonePermission();
+                }
+                @Override public void cancelMicrophoneRequest() {
+                    pendingNativeVoiceGrant = null;
+                    pendingNativeVoiceDeny = null;
+                    nativeVoiceGrantOnResume = false;
+                }
+                @Override public void activateForegroundService() {
+                    startForegroundService(new Intent(MainActivity.this, NativeVoiceService.class)
+                            .setAction(NativeVoiceService.ACTION_ACTIVATE));
+                }
+            });
             WebViewCompat.addWebMessageListener(view, "projectsHubTheme",
                     Collections.singleton(Uri.parse(BuildConfig.HUB_URL).buildUpon().path("").query(null).fragment(null).build().toString()),
                     (sourceView, message, sourceOrigin, isMainFrame, reply) -> {
@@ -298,11 +337,11 @@ public final class MainActivity extends Activity {
                     return true;
                 }
                 if (webOriginPolicy.isTrustedVoiceAudioFocusAcquireAction(currentUrl, targetUrl)) {
-                    acquireVoiceAudioFocus();
+                    if (nativeVoiceBridge == null) acquireVoiceAudioFocus();
                     return true;
                 }
                 if (webOriginPolicy.isTrustedVoiceAudioFocusReleaseAction(currentUrl, targetUrl)) {
-                    releaseVoiceAudioFocus();
+                    if (nativeVoiceBridge == null) releaseVoiceAudioFocus();
                     return true;
                 }
                 if (webOriginPolicy.isTrustedGitHubBrowserAction(currentUrl, targetUrl)) {
@@ -320,6 +359,7 @@ public final class MainActivity extends Activity {
             @Override
             public void onPageStarted(WebView webView, String url, android.graphics.Bitmap favicon) {
                 super.onPageStarted(webView, url, favicon);
+                if (nativeVoiceBridge != null) nativeVoiceBridge.onDocumentChanged();
                 themePresentation.reset();
                 applyThemeChrome("dark");
                 if (!webOriginPolicy.isTrustedPageUrl(url)) {
@@ -341,6 +381,12 @@ public final class MainActivity extends Activity {
         view.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onPermissionRequest(PermissionRequest request) {
+                if (nativeVoiceBridge != null) {
+                    // Updated native shell has one audio owner in its service.
+                    // Browser/PWA outside the shell retains the existing binding.
+                    request.deny();
+                    return;
+                }
                 String origin = request.getOrigin() == null
                         ? ""
                         : request.getOrigin().toString();
@@ -824,6 +870,17 @@ public final class MainActivity extends Activity {
             microphonePermissionInFlight = false;
             boolean granted = grantResults.length > 0
                     && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+            if (pendingNativeVoiceGrant != null || pendingNativeVoiceDeny != null) {
+                if (granted && !activityResumed) {
+                    nativeVoiceGrantOnResume = true;
+                } else {
+                    Runnable completion = granted ? pendingNativeVoiceGrant : pendingNativeVoiceDeny;
+                    pendingNativeVoiceGrant = null;
+                    pendingNativeVoiceDeny = null;
+                    nativeVoiceGrantOnResume = false;
+                    if (completion != null) completion.run();
+                }
+            }
             PermissionRequest request = pendingWebPermission;
             pendingWebPermission = null;
             if (request != null) {

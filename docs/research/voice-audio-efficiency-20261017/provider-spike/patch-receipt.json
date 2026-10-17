@@ -30,5 +30,8 @@
   "offline_result": "14 passed in 0.38s",
   "real_provider_executed": false,
   "product_sources_modified": false,
-  "syntax": "PASS"
+  "syntax": "PASS",
+  "host_original_sha256": "7c092a46d6378730d9f530142a977966067befe9ff4dd1b8c6b318c738978892",
+  "host_original_reconciliation": "prepared original added exactly one final newline; all code bytes equal after removing it",
+  "corrected_patch_sha256": "baf921b544216a3a4919491ff3cdcca3e1b2513be86e2578945b4b2a04220d5c"
 }

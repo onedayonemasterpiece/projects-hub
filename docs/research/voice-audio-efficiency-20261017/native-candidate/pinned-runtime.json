@@ -1,0 +1,15 @@
+{
+  "python": "3.12.14",
+  "module": "/workspace/scratch/0702e2310172/checkpoint-review/venv/lib/python3.12/site-packages/live_interaction/__init__.py",
+  "runtime_version": "0.4.0-rc.1",
+  "distribution_version": "0.4.0rc1",
+  "direct_url": {
+    "url": "https://github.com/onedayonemasterpiece/live-interaction.git",
+    "vcs_info": {
+      "commit_id": "c564f0c44c6fe783fd4932bd4633fada34e05c73",
+      "requested_revision": "c564f0c44c6fe783fd4932bd4633fada34e05c73",
+      "vcs": "git"
+    }
+  },
+  "av": "18.1.0"
+}

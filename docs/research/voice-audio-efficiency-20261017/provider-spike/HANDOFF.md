@@ -1,8 +1,29 @@
 # Existing provider spike: bounded continuation patch
 
+## Completed invocation — 17 October 2026
+
+The single authorized `run_spike.sh all` invocation has already completed.
+**Do not repeat it as an unfinished next step.** The retained receipt is
+[spike-all-20261017.summary.json](spike-all-20261017.summary.json); the adjacent
+redacted evidence is a safe terminal projection, not the original JSONL bytes.
+
+Realtime and burst phases produced model audio and completed turns. Neither
+phase yielded a currently resumable checkpoint after audio end, so recall was
+skipped; idle renewal ended with `TimeoutError`. The overall acceptance result
+is **NOT ACCEPTED**, even though the runner reached its final receipt. One
+authority lease, three provider connection attempts and 4,147 reserved units
+were recorded; release was confirmed. This is not a vendor billing audit.
+
+Source attribution passed on the host under Python 3.14.4. This run does not
+qualify the compressed Android path, 90-minute conversation, audible long-tool
+progress, mobile network recovery, or production capacity. Preparation and
+offline-test notes below describe the earlier patch stage. Another live
+invocation requires a concrete remaining hypothesis and its own bounded plan;
+a skipped/failed gate is not permission to silently repeat the completed run.
+
 This modifies the existing `provider_spike.py`; it does not add another live
 harness or change a product/shared SDK source file. No real SDK/provider call was
-made while preparing this patch. The original remains `provider_spike.original.py`.
+made while preparing this patch. The exact host original is `provider_spike.host-original.py` (SHA-256 `7c092a46d6378730d9f530142a977966067befe9ff4dd1b8c6b318c738978892`). The initially reconstructed `provider_spike.original.py` contains one extra final newline; its different hash is not a different implementation. The patch is now based on the exact host bytes.
 
 ## Run boundary
 

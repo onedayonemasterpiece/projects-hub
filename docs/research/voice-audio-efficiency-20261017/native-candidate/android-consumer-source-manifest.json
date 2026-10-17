@@ -1,0 +1,213 @@
+{
+  "consumer_base": "87824b7aa13d0add284e7b1174635dd0c2ffca69",
+  "framework_base": "599dc1caad8e0995ab65dc6b3fe2f684073af8f6",
+  "description": "Owned Android/bridge/native-contract/research changes on the existing Claude continuation. SHA256 values identify these local candidate source files; not a released dependency pin.",
+  "files": [
+    {
+      "repository": "consumer",
+      "path": "android/README.md",
+      "bytes": 6067,
+      "sha256": "70748a710df691153ed7474f6935d84ebcdca5a7fe3d91b47ecef5f05c8b6bb9",
+      "change": "added"
+    },
+    {
+      "repository": "consumer",
+      "path": "android/app/build.gradle",
+      "bytes": 3016,
+      "sha256": "70c72c6b6184dba35387e33dc1ca65e3483219b1aef06da66dccb1b2e52c38d0",
+      "change": "modified"
+    },
+    {
+      "repository": "consumer",
+      "path": "android/app/src/main/AndroidManifest.xml",
+      "bytes": 3260,
+      "sha256": "9271553eace257417680b2c8f2403a3d2a966f5e6c82aba93105a528958f619c",
+      "change": "modified"
+    },
+    {
+      "repository": "consumer",
+      "path": "android/app/src/main/java/com/kenigevents/projectshub/ApiClient.java",
+      "bytes": 10263,
+      "sha256": "2561cff67dafac87a02661c39ef7bb841369abc9d7b25c550904add2e9d44075",
+      "change": "modified"
+    },
+    {
+      "repository": "consumer",
+      "path": "android/app/src/main/java/com/kenigevents/projectshub/MainActivity.java",
+      "bytes": 39294,
+      "sha256": "cbae20a1d4e85d744d6ac53340f6d57747751cc3dc8e3d5ab81c229a3fe239e7",
+      "change": "modified"
+    },
+    {
+      "repository": "consumer",
+      "path": "android/app/src/main/java/com/kenigevents/projectshub/NativeSessionApi.java",
+      "bytes": 13825,
+      "sha256": "32d28a15e1901818fb532f19d6b130b7f5a255dc470e306ff7d09d28fb0893f1",
+      "change": "added"
+    },
+    {
+      "repository": "consumer",
+      "path": "android/app/src/main/java/com/kenigevents/projectshub/NativeStartAttempt.java",
+      "bytes": 1490,
+      "sha256": "c8af47f3f17354a87f4e739d9d3e9afbdd7614c8756fa63d5e2944f03b6ce0f6",
+      "change": "added"
+    },
+    {
+      "repository": "consumer",
+      "path": "android/app/src/main/java/com/kenigevents/projectshub/NativeVoiceBridge.java",
+      "bytes": 10733,
+      "sha256": "d69d466b22af4365932206cea5cefe320091bf3a4d6ccf8af6ba75a4de7ce5cc",
+      "change": "added"
+    },
+    {
+      "repository": "consumer",
+      "path": "android/app/src/main/java/com/kenigevents/projectshub/NativeVoiceOwner.java",
+      "bytes": 834,
+      "sha256": "b80975dd9f7d2350dd629dd8617e0b6ad2b13067fb1e0b5e590db588b74fa3e0",
+      "change": "added"
+    },
+    {
+      "repository": "consumer",
+      "path": "android/app/src/main/java/com/kenigevents/projectshub/NativeVoiceService.java",
+      "bytes": 19619,
+      "sha256": "0bcd0bd2bfe2f745735dd9d2164ce5d141d295c962f5e57ef8a9309d02374c39",
+      "change": "added"
+    },
+    {
+      "repository": "consumer",
+      "path": "android/app/src/main/java/com/kenigevents/projectshub/NativeVoiceStore.java",
+      "bytes": 31564,
+      "sha256": "dc07b1f936974153c0643fde69fe1e568a1a897fd5414e7422b3e2f2ed54ccf1",
+      "change": "added"
+    },
+    {
+      "repository": "consumer",
+      "path": "android/app/src/test/java/com/kenigevents/projectshub/NativeSessionRequestTest.java",
+      "bytes": 2507,
+      "sha256": "e99af0bd91a5d7d9f13092f08ed78ce5a2f08e8f596e55dbdc21c1ab57b29923",
+      "change": "added"
+    },
+    {
+      "repository": "consumer",
+      "path": "android/app/src/test/java/com/kenigevents/projectshub/NativeStartAttemptTest.java",
+      "bytes": 2116,
+      "sha256": "2adcdd8fa14d026876b34b885e809154832bdd553349ccd73f9f36396302a67a",
+      "change": "added"
+    },
+    {
+      "repository": "consumer",
+      "path": "android/app/src/test/java/com/kenigevents/projectshub/NativeVoiceOwnerTest.java",
+      "bytes": 1193,
+      "sha256": "31657e731e26a127dc9aeb204796bc8bc286640346e22ffdc69058a15266a8ce",
+      "change": "added"
+    },
+    {
+      "repository": "consumer",
+      "path": "android/app/src/test/java/com/kenigevents/projectshub/NativeVoiceStoreTest.java",
+      "bytes": 16734,
+      "sha256": "8c42dadf3dce6156e4881247b57ffb7cffa377d69b20d8267c37163fc275dc7c",
+      "change": "added"
+    },
+    {
+      "repository": "consumer",
+      "path": "android/app/src/test/resources/native-live-start.json",
+      "bytes": 578,
+      "sha256": "9d917a3c77759a375feb8398dfc857da4ef78aa0fd7745e0f5a5700f23be30fc",
+      "change": "added"
+    },
+    {
+      "repository": "consumer",
+      "path": "android/settings.gradle",
+      "bytes": 896,
+      "sha256": "2fe11c180bc3580f5d1ffd750e89d3e85a64daf0eff5175d1b04b714d635c39c",
+      "change": "modified"
+    },
+    {
+      "repository": "consumer",
+      "path": "web/src/nativeVoiceBridge.js",
+      "bytes": 7827,
+      "sha256": "da0035088ba5d1c95f0d8d9916f41dfb8ce8ae700727177df09b6b268e5cd368",
+      "change": "added"
+    },
+    {
+      "repository": "consumer",
+      "path": "web/src/nativeVoiceBridge.d.ts",
+      "bytes": 2052,
+      "sha256": "57fe1443afa0ff716a38daf5e680518c76b8e9d1a389eeca738ef304ae3e5a65",
+      "change": "added"
+    },
+    {
+      "repository": "consumer",
+      "path": "web/tests/native-voice-bridge.test.mjs",
+      "bytes": 6239,
+      "sha256": "56965d1d8664d8e4907d2caf94587a913ad348e6eb334dde1bd2d4023e3121ad",
+      "change": "added"
+    },
+    {
+      "repository": "consumer",
+      "path": "tests/test_native_start_contract.py",
+      "bytes": 844,
+      "sha256": "415023a3ff0daf5e4b00f5e7ecde1e1b7080f3cbb4a2298f251ac2fe5ebe4f6d",
+      "change": "added"
+    },
+    {
+      "repository": "consumer",
+      "path": "docs/research/voice-audio-efficiency-20261017/backend-go-scope.md",
+      "bytes": 13098,
+      "sha256": "44e38fb14bd0f79c8982a394b9227cb1a14bb8e0311c1ae27e4fa289d05c7891",
+      "change": "added"
+    },
+    {
+      "repository": "framework",
+      "path": "android/src/main/java/org/onedayonemasterpiece/live/DurableSourceStore.java",
+      "bytes": 3324,
+      "sha256": "a079104bad03c3e0ed742a69e10549ae77b681227a1be78e70cf9ddfed362c21",
+      "change": "added"
+    },
+    {
+      "repository": "framework",
+      "path": "android/src/main/java/org/onedayonemasterpiece/live/DurableOutputStore.java",
+      "bytes": 1325,
+      "sha256": "53faaa11023251c504ad57a791e0ab0926e43e233ec30f1844cdc27970a466a4",
+      "change": "added"
+    },
+    {
+      "repository": "consumer",
+      "path": "tests/test_native_v2_caption_boundary.py",
+      "bytes": 9909,
+      "sha256": "c94b276d737a02d2d7f9d20df650bc53c6e521f319033fde0a1d67f79e4e69db",
+      "change": "added"
+    },
+    {
+      "repository": "consumer",
+      "path": "tests/fixtures/native-v2-caption-opus.json",
+      "bytes": 2228,
+      "sha256": "a92b16c6993dee3963506e153938238dbee68655e6e92edd74e3b1e9433cd9fb",
+      "change": "added"
+    },
+    {
+      "repository": "consumer",
+      "path": "tests/test_native_timeline_projection.py",
+      "bytes": 6863,
+      "sha256": "f5e10ab4060efda386ade57eefc318ee9843711412bf12142f85cab02009a994",
+      "change": "added"
+    }
+  ],
+  "test_only_addendum": {
+    "created_at_utc": "2026-10-17T10:19:20.728655+00:00",
+    "files": [
+      "tests/test_native_v2_caption_boundary.py",
+      "tests/fixtures/native-v2-caption-opus.json",
+      "tests/test_native_timeline_projection.py"
+    ],
+    "note": "Authorized product-boundary tests after Android source freeze. The codec test now uses the shared terminal host.close() API; the new transcript projection test covers exact large Unicode originals and scoped targeted reads. Previously frozen Android/bridge/research/native-contract sources remain unchanged.",
+    "updated_at_utc": "2026-10-17T10:30:36.901101+00:00"
+  },
+  "documentation_only_addendum": {
+    "updated_at_utc": "2026-10-17T10:51:54.305384+00:00",
+    "files": [
+      "android/README.md"
+    ],
+    "note": "Explicit feature-branch RC pin and CI source pairing; production deployment and release qualification remain unchanged. No Android build input changed."
+  }
+}

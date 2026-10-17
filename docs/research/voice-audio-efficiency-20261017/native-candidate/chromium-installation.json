@@ -1,0 +1,10 @@
+{
+  "source_url": "https://storage.googleapis.com/chrome-for-testing-public/151.0.7922.34/linux64/chrome-headless-shell-linux64.zip",
+  "browser_version": "151.0.7922.34",
+  "playwright_version": "1.62.1",
+  "playwright_revision": "1234",
+  "bytes": 120231126,
+  "sha256": "3cfc2bd00d1bafcf8a68dc74c9c92bb7150ddc8d26ade948a776316e1cec4f14",
+  "installation": "/workspace/scratch/0702e2310172/browser-validation-tools/browsers/chromium_headless_shell-1234",
+  "zip_crc": "PASS"
+}

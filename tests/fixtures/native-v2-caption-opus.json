@@ -1,0 +1,43 @@
+{
+  "provenance": {
+    "repository": "https://github.com/onedayonemasterpiece/live-interaction",
+    "candidate_branch": "claude/voice-continuity-v0.4-20261016",
+    "path": "tests/fixtures/wl-live-v2-vectors.json",
+    "source_file_sha256": "7e7527f8751a0e0810b9c1474f88f1799eec52ff6fee0717bb2e9c42a262fa05",
+    "selection": "protocol, epoch, chunks, decoded_pcm_samples copied unchanged from the existing generated Opus conformance vector; no recorded user audio",
+    "purpose": "Product-boundary codec/control/durability test; not handset or speech-recognition acceptance"
+  },
+  "protocol": "wl-live-v2",
+  "epoch": {
+    "epoch_id": "ce_1",
+    "codec": "opus",
+    "container": "ogg",
+    "version": 1,
+    "channels": 1,
+    "decoded_sample_rate": 16000,
+    "clock_rate": 48000,
+    "pre_skip": 312,
+    "init_base64": "T2dnUwACAAAAAAAAAAAmWUExAAAAAOS+i8sBE09wdXNIZWFkAQE4AYA+AAAAAABPZ2dTAAAAAAAAAAAAACZZQTEBAAAABDiYMwEgT3B1c1RhZ3MQAAAAbGl2ZS1pbnRlcmFjdGlvbgAAAAA="
+  },
+  "chunks": [
+    {
+      "source_id": "local_vector",
+      "epoch_id": "ce_1",
+      "chunk_seq": 1,
+      "capture_start_us": 0,
+      "duration_us": 93500,
+      "flags": 2,
+      "payload_base64": "T2dnUwAAwBIAAAAAAAAmWUExAgAAAFz2wQcFgENCQkO4fwo001PrZonYUT1S79sVf6c+FblC0/7zrjqt6jqLaJHFe90JxuXVjIIf7OBgXcRCi1dWOQx+LbjHDwsLR1N6pppeBx8aaNuz9jUC/0as+8O7/QeIX8LZGLZM8EX0hIZRnNhgU+eEMdx6OtZZ29g/bMt6ZMDAaSFP0Bf+FNEU9rghzvPZxuvuKJq2Ss1ycaUFKKZhujZAO41/3XVZzWsw9XvV5XjkscLiKPGcIueivziW5tRpN7EcpfwIPA1/6U28E8+4Klfs/cBV0bdCFUZKmiT7zArxvpLyK9xJWzU/S7AOzlQF+13ZSdtXGAt31CMfYnIW29FZ2MmpSm37Ffh181zp7UC4DTK0G8unAS/h2wSzrlFXpEFqmcttqyL9Rk/z7aCMp2wwHxkFUCYHXHrcwq0wDSxXssm2ImHbRFGx9XBbKq/z/z24DWzbtVrDtvnu12sezlWvkkXAJZFxYmZoYThQnZaicWxUXh5Sw9Az1FxSOvyq+8XgDin1Bjnk6k9gtsrU4fe9qbkY"
+    },
+    {
+      "source_id": "local_vector",
+      "epoch_id": "ce_1",
+      "chunk_seq": 2,
+      "capture_start_us": 93500,
+      "duration_us": 6500,
+      "flags": 12,
+      "payload_base64": "T2dnUwAE+BMAAAAAAAAmWUExAwAAAB8oVvIBj7h7OCtoFxk4o3UKK7IOPGwPOav43WfqIoPjA05XHFOhB2OWWo13KpXzBEoFRb4GwQlM63z3purYoB5A0+czRlHu/nLhPyt4iNE3DF4BxmpulSgj85eaSVdaM6j58Dh0FurbZKkWMennT40SheDjV5gVP4yqA2Eh1DznXt1o68YxXxTTmKgtnmFu97ZCyhjl"
+    }
+  ],
+  "decoded_pcm_samples": 1600
+}

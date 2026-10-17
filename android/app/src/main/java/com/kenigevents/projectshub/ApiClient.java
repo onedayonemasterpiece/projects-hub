@@ -13,12 +13,23 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
 final class ApiClient {
+    interface SessionCookies {
+        String current();
+        void received(String setCookie);
+    }
+
     static final class ApiException extends IOException {
         final int statusCode;
+        final String code;
 
         ApiException(int statusCode, String message) {
+            this(statusCode, message, "HTTP_" + statusCode);
+        }
+
+        ApiException(int statusCode, String message, String code) {
             super(message);
             this.statusCode = statusCode;
+            this.code = code;
         }
     }
 
@@ -55,6 +66,13 @@ final class ApiClient {
     String bootstrapWorkspace(String cookie) throws Exception {
         JSONObject payload = request("GET", "api/bootstrap", null, null, cookie, false, 15000);
         return payload.getJSONObject("workspace").getString("id");
+    }
+
+    JSONObject sessionRequest(String method, String path, JSONObject body, SessionCookies cookies,
+                              int readTimeoutMs) throws Exception {
+        if (!path.startsWith("api/") || path.contains("..") || path.contains("://"))
+            throw new IllegalArgumentException("NATIVE_SESSION_ORIGIN");
+        return request(method, path, body, null, cookies.current(), true, readTimeoutMs, cookies);
     }
 
     String registerAndroidDevice(String cookie, String workspaceId, String displayName) throws Exception {
@@ -159,52 +177,71 @@ final class ApiClient {
             boolean sameOriginMutation,
             int readTimeoutMs
     ) throws Exception {
+        return request(method, path, body, authorization, cookie, sameOriginMutation, readTimeoutMs, null);
+    }
+
+    private JSONObject request(String method, String path, JSONObject body, String authorization,
+                               String cookie, boolean sameOriginMutation, int readTimeoutMs,
+                               SessionCookies sessionCookies) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL(baseUrl + path).openConnection();
-        connection.setRequestMethod(method);
-        connection.setConnectTimeout(10000);
-        connection.setReadTimeout(readTimeoutMs);
-        connection.setRequestProperty("Accept", "application/json");
-        connection.setRequestProperty("User-Agent", "ProjectsHubAndroid/" + BuildConfig.VERSION_NAME);
-        if (authorization != null) connection.setRequestProperty("Authorization", authorization);
-        if (cookie != null && !cookie.isBlank()) connection.setRequestProperty("Cookie", cookie);
-        if (sameOriginMutation) connection.setRequestProperty("Origin", origin);
+        try {
+            connection.setInstanceFollowRedirects(false);
+            connection.setRequestMethod(method);
+            connection.setConnectTimeout(10000);
+            connection.setReadTimeout(readTimeoutMs);
+            connection.setRequestProperty("Accept", "application/json");
+            connection.setRequestProperty("User-Agent", "ProjectsHubAndroid/" + BuildConfig.VERSION_NAME);
+            if (authorization != null) connection.setRequestProperty("Authorization", authorization);
+            if (cookie != null && !cookie.isBlank()) connection.setRequestProperty("Cookie", cookie);
+            if (sameOriginMutation) connection.setRequestProperty("Origin", origin);
 
-        if (body != null) {
-            byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
-            connection.setDoOutput(true);
-            connection.setRequestProperty("Content-Type", "application/json");
-            connection.setFixedLengthStreamingMode(bytes.length);
-            try (OutputStream output = connection.getOutputStream()) {
-                output.write(bytes);
+            if (body != null) {
+                byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
+                connection.setDoOutput(true);
+                connection.setRequestProperty("Content-Type", "application/json");
+                connection.setFixedLengthStreamingMode(bytes.length);
+                try (OutputStream output = connection.getOutputStream()) {
+                    output.write(bytes);
+                }
             }
-        }
 
-        int status = connection.getResponseCode();
-        InputStream stream = status >= 200 && status < 300
-                ? connection.getInputStream()
-                : connection.getErrorStream();
-        String text = readText(stream);
-        connection.disconnect();
-
-        if (status < 200 || status >= 300) {
-            String message = "HTTP " + status;
-            try {
-                JSONObject error = new JSONObject(text);
-                Object detail = error.opt("error");
-                if (detail instanceof JSONObject) {
-                    message = ((JSONObject) detail).optString("message", message);
-                } else {
-                    Object fallback = error.opt("detail");
-                    if (fallback instanceof JSONObject) {
-                        message = ((JSONObject) fallback).optString("message", message);
+            int status = connection.getResponseCode();
+            if (sessionCookies != null) {
+                for (var header : connection.getHeaderFields().entrySet()) {
+                    if (header.getKey() != null && header.getKey().equalsIgnoreCase("Set-Cookie")) {
+                        for (String value : header.getValue()) sessionCookies.received(value);
                     }
                 }
-            } catch (Exception ignored) {
-                // Keep the bounded HTTP status; never surface cookies/tokens.
             }
-            throw new ApiException(status, message);
-        }
-        return text.isBlank() ? new JSONObject() : new JSONObject(text);
+            InputStream stream = status >= 200 && status < 300
+                    ? connection.getInputStream()
+                    : connection.getErrorStream();
+            String text = readText(stream);
+
+            if (status < 200 || status >= 300) {
+                String message = "HTTP " + status;
+                String code = "HTTP_" + status;
+                try {
+                    JSONObject error = new JSONObject(text);
+                    Object detail = error.opt("error");
+                    if (detail instanceof JSONObject) {
+                        message = ((JSONObject) detail).optString("message", message);
+                        code = ((JSONObject) detail).optString("code", code);
+                    } else {
+                        Object fallback = error.opt("detail");
+                        if (fallback instanceof JSONObject) {
+                            message = ((JSONObject) fallback).optString("message", message);
+                            code = ((JSONObject) fallback).optString("code", code);
+                        }
+                    }
+                } catch (Exception ignored) {
+                    // Keep the bounded HTTP status; never surface cookies/tokens.
+                }
+                if (!code.matches("[A-Z0-9_]{1,96}")) code = "HTTP_" + status;
+                throw new ApiException(status, message, code);
+            }
+            return text.isBlank() ? new JSONObject() : new JSONObject(text);
+        } finally { connection.disconnect(); }
     }
 
     private static String readText(InputStream stream) throws IOException {

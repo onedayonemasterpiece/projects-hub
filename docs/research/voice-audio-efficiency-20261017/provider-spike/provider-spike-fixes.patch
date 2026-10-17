@@ -408,7 +408,7 @@
      out = s.summary()
      out.update({"go_away_at_s": (s.first("go_away") or {}).get("t"),
                  "go_away_time_left": (s.first("go_away") or {}).get("time_left"),
-@@ -187,25 +380,90 @@
+@@ -187,24 +380,90 @@
      print(json.dumps(out, ensure_ascii=False), flush=True)
  
  
@@ -486,7 +486,6 @@
 -
 -
 -asyncio.run(main())
--
 +    pcm = Path(args.pcm).read_bytes()
 +    if not pcm or len(pcm) % 2 or len(pcm) > 15 * 32000:
 +        parser.error("--pcm must be nonempty mono PCM16/16 kHz, at most 15 seconds")

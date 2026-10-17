@@ -321,8 +321,12 @@ def create_app(
                 yield
         finally:
             host = getattr(app.state, "live_host", None)
-            if host is not None and hasattr(host, "stop_all"):
+            if host is not None and hasattr(host, "close"):
+                await host.close()
+            elif host is not None and hasattr(host, "stop_all"):
                 await host.stop_all()
+            if host is not None and hasattr(host, "close_audio_storage"):
+                await host.close_audio_storage()
             if collaboration_analysis_service is not None:
                 await collaboration_analysis_service.close()
             if collaboration_service is not None and hasattr(collaboration_service, "close"):
@@ -901,6 +905,15 @@ def create_app(
             )
         }
 
+    @app.get("/api/conversations/{conversation_id}/timeline/messages/{message_id}")
+    async def conversation_timeline_message(
+        conversation_id: str, message_id: str, request: Request, workspace_id: str,
+    ) -> dict[str, Any]:
+        return store.get_conversation_timeline_message(
+            actor_id=actor_id_from_request(request), conversation_id=conversation_id,
+            workspace_id=workspace_id, message_id=message_id,
+        )
+
     @app.put("/api/conversations/{conversation_id}/timeline/messages/{message_id}")
     async def conversation_timeline_message(
         conversation_id: str,
@@ -1268,10 +1281,10 @@ def create_app(
     ) -> None:
         from live_interaction import LiveError
         from live_interaction.socket_transport import (
-            SOCKET_PROTOCOL,
             same_origin,
             serve_socket,
             socket_ticket as parse_socket_ticket,
+            socket_protocol,
         )
 
         if websocket.scope.get("query_string") or not same_origin(
@@ -1292,6 +1305,8 @@ def create_app(
             store.bootstrap(actor_id)
             _conversation, resource_id, _actor = live_context(actor_id, conversation_id)
             ticket = parse_socket_ticket(websocket.scope.get("subprotocols", []))
+            protocol = socket_protocol(websocket.scope.get("subprotocols", []),
+                                       allow_v2=bool(host().audio_v2))
             binding = host().open_socket(
                 session_id=session_id,
                 resource_id=resource_id,
@@ -1302,7 +1317,7 @@ def create_app(
             return
 
         try:
-            await websocket.accept(subprotocol=SOCKET_PROTOCOL)
+            await websocket.accept(subprotocol=protocol)
         except Exception:
             await binding.close()
             raise
@@ -1327,7 +1342,7 @@ def create_app(
         async def close(code: int, reason: str) -> None:
             await websocket.close(code=code, reason=reason)
 
-        await serve_socket(binding, receive=receive, send=send, close=close)
+        await serve_socket(binding, receive=receive, send=send, close=close, protocol=protocol)
 
     @app.post("/api/live/{conversation_id}/sessions/{session_id}/input")
     async def live_input(

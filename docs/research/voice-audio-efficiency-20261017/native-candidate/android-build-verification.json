@@ -1,0 +1,446 @@
+{
+  "completed_at_utc": "2026-10-17T10:13:40.997502+00:00",
+  "status": "candidate pairing build PASS; physical handset/provider/release acceptance not performed",
+  "command": "gradle -p consumer/android -PliveInteractionAndroidDir=/absolute/reviewed/framework/android --no-daemon --console=plain --max-workers=2 testDebugUnitTest assembleDebug",
+  "jdk": "17.0.20.1+1",
+  "gradle": "8.10.2",
+  "android_platform": 35,
+  "android_gradle_plugin": "8.7.3",
+  "min_sdk": 26,
+  "consumer_tests": {
+    "totals": {
+      "tests": 31,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "suites": [
+      {
+        "name": "com.kenigevents.projectshub.NativeSessionRequestTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "com.kenigevents.projectshub.NativeStartAttemptTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "com.kenigevents.projectshub.NativeVoiceOwnerTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "com.kenigevents.projectshub.NativeVoiceStoreTest",
+        "tests": 13,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "com.kenigevents.projectshub.PendingUpdateStateTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "com.kenigevents.projectshub.ThemePresentationTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "com.kenigevents.projectshub.UpdatePolicyTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "com.kenigevents.projectshub.WebOriginPolicyTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    ]
+  },
+  "shared_platform_tests": {
+    "totals": {
+      "tests": 20,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "suites": [
+      {
+        "name": "org.onedayonemasterpiece.live.platform.CompressedAudioTest",
+        "tests": 11,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.onedayonemasterpiece.live.platform.DurablePlaybackPumpTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "org.onedayonemasterpiece.live.platform.OutputResumeQueueTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    ]
+  },
+  "actual_native_start_contract": {
+    "cases": 2,
+    "result": "PASS",
+    "path": "/workspace/scratch/0702e2310172/continuation-final/consumer/android/app/build/native-contract/native-live-start.generated.json",
+    "sha256": "bb642f8ba52667b832e462aa0e565a4a9f3906d2a18231053d7c6cb7fec2d49f"
+  },
+  "apk": {
+    "path": "/workspace/scratch/0702e2310172/continuation-final/consumer/android/app/build/outputs/apk/debug/app-debug.apk",
+    "bytes": 3399365,
+    "sha256": "1cff757af14b04de9350ab88a12f20564aa3f3885b30ed87c37f663a75e1527f"
+  },
+  "build_log": {
+    "path": "/workspace/scratch/0702e2310172/android-validation-tools/consumer-final-build.log",
+    "sha256": "cf8f1d00bc9570ab29f170db51cd7dcc630641e47f58d952cb40ac39357dcd74"
+  },
+  "owned_source_manifest": {
+    "path": "/workspace/scratch/0702e2310172/android-validation-tools/native-consumer-source-manifest.json",
+    "sha256": "e5e6e816ddb5df6294a9f240d3addbd450a6c0d3ceb128875b179df67a6dd691",
+    "files": 27
+  },
+  "source_trees": {
+    "consumer_android": {
+      "path": "/workspace/scratch/0702e2310172/continuation-final/consumer/android",
+      "sha256": "74fc486b85031714669666cfc092a6e080899860bc05cdd1d9d52de4c7e755e6",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "9969f80bad42da5b6dc77b394a90f511033f0e45da1ff68707241562d129dccb"
+        },
+        {
+          "path": "app/build.gradle",
+          "sha256": "70c72c6b6184dba35387e33dc1ca65e3483219b1aef06da66dccb1b2e52c38d0"
+        },
+        {
+          "path": "app/proguard-rules.pro",
+          "sha256": "19e96ca513cdfdf2ec4c07ad729872c3ecaf63cdbafb2a02eeb986bcfe53ba18"
+        },
+        {
+          "path": "app/src/androidTest/java/com/kenigevents/projectshub/MainActivitySmokeTest.java",
+          "sha256": "08912c08a0e91f0efc919cb1758d9101d0bece62c6e591288f357df7c5a0e55d"
+        },
+        {
+          "path": "app/src/main/AndroidManifest.xml",
+          "sha256": "9271553eace257417680b2c8f2403a3d2a966f5e6c82aba93105a528958f619c"
+        },
+        {
+          "path": "app/src/main/java/com/kenigevents/projectshub/ApiClient.java",
+          "sha256": "2561cff67dafac87a02661c39ef7bb841369abc9d7b25c550904add2e9d44075"
+        },
+        {
+          "path": "app/src/main/java/com/kenigevents/projectshub/CalendarExecutor.java",
+          "sha256": "0ba430d82ba459e90e44fd22035447d29c1161b75382f02ae501118003879c52"
+        },
+        {
+          "path": "app/src/main/java/com/kenigevents/projectshub/DevelopmentCompletionJob.java",
+          "sha256": "fcf371c60de87cde613672f8f27008f782ad98592f55b5f736cbc065244eee9c"
+        },
+        {
+          "path": "app/src/main/java/com/kenigevents/projectshub/DeviceCommandLoop.java",
+          "sha256": "6b7f81ab8a8c19c941231b398ba05f2325f1a771be41b22a46457e38f1f4f0e2"
+        },
+        {
+          "path": "app/src/main/java/com/kenigevents/projectshub/MainActivity.java",
+          "sha256": "cbae20a1d4e85d744d6ac53340f6d57747751cc3dc8e3d5ab81c229a3fe239e7"
+        },
+        {
+          "path": "app/src/main/java/com/kenigevents/projectshub/NativeSessionApi.java",
+          "sha256": "32d28a15e1901818fb532f19d6b130b7f5a255dc470e306ff7d09d28fb0893f1"
+        },
+        {
+          "path": "app/src/main/java/com/kenigevents/projectshub/NativeStartAttempt.java",
+          "sha256": "c8af47f3f17354a87f4e739d9d3e9afbdd7614c8756fa63d5e2944f03b6ce0f6"
+        },
+        {
+          "path": "app/src/main/java/com/kenigevents/projectshub/NativeVoiceBridge.java",
+          "sha256": "d69d466b22af4365932206cea5cefe320091bf3a4d6ccf8af6ba75a4de7ce5cc"
+        },
+        {
+          "path": "app/src/main/java/com/kenigevents/projectshub/NativeVoiceOwner.java",
+          "sha256": "b80975dd9f7d2350dd629dd8617e0b6ad2b13067fb1e0b5e590db588b74fa3e0"
+        },
+        {
+          "path": "app/src/main/java/com/kenigevents/projectshub/NativeVoiceService.java",
+          "sha256": "0bcd0bd2bfe2f745735dd9d2164ce5d141d295c962f5e57ef8a9309d02374c39"
+        },
+        {
+          "path": "app/src/main/java/com/kenigevents/projectshub/NativeVoiceStore.java",
+          "sha256": "dc07b1f936974153c0643fde69fe1e568a1a897fd5414e7422b3e2f2ed54ccf1"
+        },
+        {
+          "path": "app/src/main/java/com/kenigevents/projectshub/Notifier.java",
+          "sha256": "6cd6abccf38b565effdaf854f680ca7c73695976b5740693ec5ad75eb0433fdf"
+        },
+        {
+          "path": "app/src/main/java/com/kenigevents/projectshub/PendingUpdateState.java",
+          "sha256": "338203ff649dbe3fd04ce3a5f7e447d2bab366ce4a9dadf8cee7c91889e92487"
+        },
+        {
+          "path": "app/src/main/java/com/kenigevents/projectshub/SecureStore.java",
+          "sha256": "39c5ca8334a4e42bd56d4f5967537ad411ba11d1fe09311f81090c9b5860c379"
+        },
+        {
+          "path": "app/src/main/java/com/kenigevents/projectshub/ThemePresentation.java",
+          "sha256": "123b946a734da54375c1d2835630b407794377112a824d125c72c3e810199560"
+        },
+        {
+          "path": "app/src/main/java/com/kenigevents/projectshub/UpdatePolicy.java",
+          "sha256": "aecb179621c97c15e63baba4519b4cd9172779b9d58cf1c5c1845864382737c1"
+        },
+        {
+          "path": "app/src/main/java/com/kenigevents/projectshub/Updater.java",
+          "sha256": "5895cb74c418b4bf7fcbad57045d2f61758196506c23ec3cc7524c32fdb91d97"
+        },
+        {
+          "path": "app/src/main/java/com/kenigevents/projectshub/WebOriginPolicy.java",
+          "sha256": "595258af644a44455cbd78bceda7443d9a369f371a41600c67fe015825ffc548"
+        },
+        {
+          "path": "app/src/main/res/drawable/ic_launcher_foreground.xml",
+          "sha256": "65476afb8bedbf3d65ee54b420eb99738e753eb254b473ef208dfd2a0ff577d6"
+        },
+        {
+          "path": "app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml",
+          "sha256": "32715ff646f6b9fef7c321138e4a14556c4a1f98a87b06070b56f41643dad718"
+        },
+        {
+          "path": "app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml",
+          "sha256": "32715ff646f6b9fef7c321138e4a14556c4a1f98a87b06070b56f41643dad718"
+        },
+        {
+          "path": "app/src/main/res/values/colors.xml",
+          "sha256": "ed2908186a6af1b1c123058c24f8fa55b763cf0bcdf6c01202c8deb9fedd4a26"
+        },
+        {
+          "path": "app/src/main/res/values/strings.xml",
+          "sha256": "dfb1d46743d0ebf5259fe5e53a72355809fdc49fdf0bd81baab1a5e60529f494"
+        },
+        {
+          "path": "app/src/main/res/values/styles.xml",
+          "sha256": "75d04009a9d3ea274e924e28a1d422b361057b772821e7549f097da99059a8e2"
+        },
+        {
+          "path": "app/src/main/res/xml/file_paths.xml",
+          "sha256": "43067a3c7ab4e5097265f4e9781125ec7b6ec35805613c5f9c245f884126ca7c"
+        },
+        {
+          "path": "app/src/test/java/com/kenigevents/projectshub/NativeSessionRequestTest.java",
+          "sha256": "e99af0bd91a5d7d9f13092f08ed78ce5a2f08e8f596e55dbdc21c1ab57b29923"
+        },
+        {
+          "path": "app/src/test/java/com/kenigevents/projectshub/NativeStartAttemptTest.java",
+          "sha256": "2adcdd8fa14d026876b34b885e809154832bdd553349ccd73f9f36396302a67a"
+        },
+        {
+          "path": "app/src/test/java/com/kenigevents/projectshub/NativeVoiceOwnerTest.java",
+          "sha256": "31657e731e26a127dc9aeb204796bc8bc286640346e22ffdc69058a15266a8ce"
+        },
+        {
+          "path": "app/src/test/java/com/kenigevents/projectshub/NativeVoiceStoreTest.java",
+          "sha256": "8c42dadf3dce6156e4881247b57ffb7cffa377d69b20d8267c37163fc275dc7c"
+        },
+        {
+          "path": "app/src/test/java/com/kenigevents/projectshub/PendingUpdateStateTest.java",
+          "sha256": "34345bdd0756dbe5166c15561cc5ad18933a64f65988a6e89d8e00efc5d38129"
+        },
+        {
+          "path": "app/src/test/java/com/kenigevents/projectshub/ThemePresentationTest.java",
+          "sha256": "38eb67285a459db81373f37390197e26d497c3d475777a5c0ddee12c8d4769fc"
+        },
+        {
+          "path": "app/src/test/java/com/kenigevents/projectshub/UpdatePolicyTest.java",
+          "sha256": "f1512db13e2d3c12ea37758dc82fc31f7552b64d134175c932c37dd4b0dc36f4"
+        },
+        {
+          "path": "app/src/test/java/com/kenigevents/projectshub/WebOriginPolicyTest.java",
+          "sha256": "7f1f5fe0c2130b9929641d7d8946246f4c42d121bb1a50743ff2a159b681f1c5"
+        },
+        {
+          "path": "app/src/test/resources/native-live-start.json",
+          "sha256": "9d917a3c77759a375feb8398dfc857da4ef78aa0fd7745e0f5a5700f23be30fc"
+        },
+        {
+          "path": "build.gradle",
+          "sha256": "9779e64941ef00fdb75ecd9ccbf290bad2a4924ea0e1688bb1c617884e2753b6"
+        },
+        {
+          "path": "gradle.properties",
+          "sha256": "e6b436ff6a08da8b8c05e0e2fc1a7f40f41701bb506cd80fc2ddfd7b6e3b3b2b"
+        },
+        {
+          "path": "settings.gradle",
+          "sha256": "2fe11c180bc3580f5d1ffd750e89d3e85a64daf0eff5175d1b04b714d635c39c"
+        }
+      ]
+    },
+    "framework_android": {
+      "path": "/workspace/scratch/0702e2310172/continuation-final/framework/android",
+      "sha256": "465ae9f2961f25fd4eed439dbe7d07a4cdad96818a2a83f1bc898f5680a9c902",
+      "files": [
+        {
+          "path": "build.gradle.kts",
+          "sha256": "8a479d5dcba09c7f925efc0ef5391dac79964a860484990bc7f646b1135e903f"
+        },
+        {
+          "path": "platform/README.md",
+          "sha256": "06c0282e7c0c813cf8d240801453b271115d808df93ae391b9f234fecf1eacf8"
+        },
+        {
+          "path": "platform/build.gradle.kts",
+          "sha256": "86cbffd7500062b7a165066ad7007f7ba7ac7b29413e2b749d9502820406d6ec"
+        },
+        {
+          "path": "platform/src/main/AndroidManifest.xml",
+          "sha256": "745185a9c5c54aac5d29007936b1371c91ce78482bc1904d4c59919ff1ce7a1e"
+        },
+        {
+          "path": "platform/src/main/java/org/onedayonemasterpiece/live/platform/CodecTimeline.java",
+          "sha256": "8487726eba65d43b0d708b9d680a692766a9a7f5220a0caccf2bd02f9a045402"
+        },
+        {
+          "path": "platform/src/main/java/org/onedayonemasterpiece/live/platform/CompressedAudio.java",
+          "sha256": "d952b9b24f36d7c1f706b498c4fe25a07ffbb2cd0c13336ba5022d934328cc8a"
+        },
+        {
+          "path": "platform/src/main/java/org/onedayonemasterpiece/live/platform/DurablePlaybackPump.java",
+          "sha256": "4ac3b1fbdadcbea352babd79124a165433c7517b39c2f50672dd55dc1915e5b3"
+        },
+        {
+          "path": "platform/src/main/java/org/onedayonemasterpiece/live/platform/NativeEncoder.java",
+          "sha256": "430ba864a6f8f19db83f30e7d8b73adeb2a72caea41b66ca9010f2fd88c69a5f"
+        },
+        {
+          "path": "platform/src/main/java/org/onedayonemasterpiece/live/platform/NativeLiveRuntime.java",
+          "sha256": "7dbbbba140018f264404c2063470c4551a86c378959e7d16c11a407799db3804"
+        },
+        {
+          "path": "platform/src/main/java/org/onedayonemasterpiece/live/platform/NativePlayer.java",
+          "sha256": "8eb660d9d3eff9444fa330bc21308a9e5f994939add239669859c44ad2f142b8"
+        },
+        {
+          "path": "platform/src/main/java/org/onedayonemasterpiece/live/platform/OutputResumeQueue.java",
+          "sha256": "b8255b5272a2398b18f0bf9e36ada00fc4c97d92bc5105ed5e2d537153fbb500"
+        },
+        {
+          "path": "platform/src/main/java/org/onedayonemasterpiece/live/platform/SessionApi.java",
+          "sha256": "62c77767fcc422700534b60931bfb845d55bbfb6ff83033613db6ecc1c4d468b"
+        },
+        {
+          "path": "platform/src/main/java/org/onedayonemasterpiece/live/platform/StartContext.java",
+          "sha256": "a3bfd4efbfed5d61dd491fc4c058b35a5759b55d05c3eb884f451b88fda32e64"
+        },
+        {
+          "path": "platform/src/test/java/org/onedayonemasterpiece/live/platform/CompressedAudioTest.java",
+          "sha256": "c4af8f9d041a35643466f15977a7248fe8772a9176c66889793cc79164a09376"
+        },
+        {
+          "path": "platform/src/test/java/org/onedayonemasterpiece/live/platform/DurablePlaybackPumpTest.java",
+          "sha256": "7d13127793ae8b7af8963a2b91d7029b885134a1467c7afcefaa54c1cf6b8fa5"
+        },
+        {
+          "path": "platform/src/test/java/org/onedayonemasterpiece/live/platform/OutputResumeQueueTest.java",
+          "sha256": "c06b7af34d96c47d98e9fe2a9cc63899fea5d89423b7dbad0d2cfffde4f84d89"
+        },
+        {
+          "path": "settings.gradle.kts",
+          "sha256": "9e8cb6872c673a8408fb4eac66b6ba4537538fb578f7d80d9e409687a1f55533"
+        },
+        {
+          "path": "src/main/java/org/onedayonemasterpiece/live/DurableOutputStore.java",
+          "sha256": "53faaa11023251c504ad57a791e0ab0926e43e233ec30f1844cdc27970a466a4"
+        },
+        {
+          "path": "src/main/java/org/onedayonemasterpiece/live/DurableSourceStore.java",
+          "sha256": "a079104bad03c3e0ed742a69e10549ae77b681227a1be78e70cf9ddfed362c21"
+        },
+        {
+          "path": "src/main/java/org/onedayonemasterpiece/live/LiveSocketTransport.java",
+          "sha256": "4b53caeff091fca967c002f00be1ac7feebfe51c0f9abf5578564820128b272c"
+        },
+        {
+          "path": "src/main/java/org/onedayonemasterpiece/live/LiveSocketTransportV2.java",
+          "sha256": "238b876a4fe23c40b2074e311083eb57c3d876a3203dd98e8abdaa52d6324b22"
+        },
+        {
+          "path": "src/main/java/org/onedayonemasterpiece/live/VoiceAudioV2.java",
+          "sha256": "ed26a1a8df9bdbb7235a60f625dc6ef041757fcbe86e43cca20e71e046145bb6"
+        },
+        {
+          "path": "src/test/java/org/onedayonemasterpiece/live/LiveSocketTransportTest.java",
+          "sha256": "e30f9570b3ac131e451da1e3be0fb20e1c351b16cd6b3cc85e149790a8b06b32"
+        },
+        {
+          "path": "src/test/java/org/onedayonemasterpiece/live/VoiceAudioV2Test.java",
+          "sha256": "ef1344ad235a3ff2037194bbff675dd9fb5a5252a1189a64fcbd84b0c8923de1"
+        }
+      ]
+    }
+  },
+  "post_build_test_only_addendum": {
+    "files": [
+      {
+        "repository": "consumer",
+        "path": "tests/test_native_v2_caption_boundary.py",
+        "bytes": 9909,
+        "sha256": "c94b276d737a02d2d7f9d20df650bc53c6e521f319033fde0a1d67f79e4e69db",
+        "change": "added"
+      },
+      {
+        "repository": "consumer",
+        "path": "tests/fixtures/native-v2-caption-opus.json",
+        "bytes": 2228,
+        "sha256": "a92b16c6993dee3963506e153938238dbee68655e6e92edd74e3b1e9433cd9fb",
+        "change": "added"
+      },
+      {
+        "repository": "consumer",
+        "path": "tests/test_native_timeline_projection.py",
+        "bytes": 6863,
+        "sha256": "f5e10ab4060efda386ade57eefc318ee9843711412bf12142f85cab02009a994",
+        "change": "added"
+      }
+    ],
+    "test": [
+      "tests/test_native_v2_caption_boundary.py",
+      "tests/test_native_timeline_projection.py"
+    ],
+    "result": "5 PASS in 2.92s; no failures or skips; one dependency Pydantic TypedDictExtraConfigWarning",
+    "runtime": "checkpoint-review/venv/bin/python; pinned PyAV18.1.0 via v2-codec-deps",
+    "command": "PYTHONPATH=/workspace/scratch/0702e2310172/continuation-final/framework/python:/workspace/scratch/0702e2310172/v2-codec-deps:/workspace/scratch/0702e2310172/continuation-final/consumer/src /workspace/scratch/0702e2310172/checkpoint-review/venv/bin/python -m pytest -q tests/test_native_timeline_projection.py tests/test_native_v2_caption_boundary.py",
+    "scope": "Production build_live_host + ProductEncodedAudioStore + actual wl-live-v2 socket framing + real PyAV Opus decode. Only resource/provider runner replaced. Main/caption control order and identical 3200-byte PCM; recovery retained without provider projection; original encoded bytes recover after store reopen; no .pcm files; terminal host.close() cleanup. Four additional cases cover input/output transcripts of 120000 Russian characters or non-BMP emoji: exact durable originals, escaped native events <=16384 bytes, no full text in ref events, signed-session targeted GET, denied foreign actor/workspace/conversation/message combinations.",
+    "android_apk_source_unchanged": true,
+    "completed_at_utc": "2026-10-17T10:30:36.902252+00:00"
+  },
+  "rc_pairing_review": {
+    "path": "/workspace/scratch/0702e2310172/android-validation-tools/native-rc-pairing-review.json",
+    "sha256": "69b71c1555fb7f7bba925bea8fe3a07b90e027db87583f67f862dbebef3d6672",
+    "apk_rebuilt": false,
+    "android_build_inputs_unchanged": true
+  }
+}

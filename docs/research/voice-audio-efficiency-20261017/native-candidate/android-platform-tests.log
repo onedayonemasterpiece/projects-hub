@@ -1,0 +1,28 @@
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.10.2/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+Warning: SDK processing. This version only understands SDK XML versions up to 3 but an SDK XML file of version 4 was encountered. This can happen if you use versions of Android Studio and the command-line tools that were released at different times.
+> Task :compileJava UP-TO-DATE
+> Task :processResources NO-SOURCE
+> Task :classes UP-TO-DATE
+> Task :jar UP-TO-DATE
+> Task :platform:preBuild UP-TO-DATE
+> Task :platform:preDebugBuild UP-TO-DATE
+> Task :platform:generateDebugResValues UP-TO-DATE
+> Task :platform:generateDebugResources UP-TO-DATE
+> Task :platform:packageDebugResources UP-TO-DATE
+> Task :platform:parseDebugLocalResources UP-TO-DATE
+> Task :platform:generateDebugRFile UP-TO-DATE
+> Task :platform:javaPreCompileDebug UP-TO-DATE
+> Task :platform:compileDebugJavaWithJavac
+> Task :platform:preDebugUnitTestBuild UP-TO-DATE
+> Task :platform:generateDebugUnitTestStubRFile UP-TO-DATE
+> Task :platform:javaPreCompileDebugUnitTest UP-TO-DATE
+> Task :platform:processDebugJavaRes NO-SOURCE
+> Task :platform:processDebugUnitTestJavaRes NO-SOURCE
+> Task :platform:bundleLibRuntimeToJarDebug
+> Task :platform:bundleLibCompileToJarDebug
+> Task :platform:compileDebugUnitTestJavaWithJavac
+> Task :platform:testDebugUnitTest
+
+BUILD SUCCESSFUL in 9s
+15 actionable tasks: 5 executed, 10 up-to-date

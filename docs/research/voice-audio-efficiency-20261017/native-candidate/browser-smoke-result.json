@@ -1,0 +1,46 @@
+{
+  "command": "PLAYWRIGHT_BROWSERS_PATH=/workspace/scratch/0702e2310172/browser-validation-tools/browsers node tests/theme-browser.mjs",
+  "cwd": "/workspace/scratch/0702e2310172/continuation-final/consumer/web",
+  "server": "npm run dev -- --port 5179 (Vite source, not dist)",
+  "node_version": "v24.19.0",
+  "playwright_version": "1.62.1",
+  "browser_version": "151.0.7922.34",
+  "browser_kind": "Chrome Headless Shell, Linux x64, revision1234",
+  "viewports": [
+    {
+      "width": 1280,
+      "height": 900,
+      "result": "PASS"
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "result": "PASS"
+    }
+  ],
+  "context": "viewport only, reducedMotion reduce, fake microphone device, prepared HTTP/WSS API fixtures; no Android/touch device emulation",
+  "initial_result": "FAIL assert.ok(socket), desktop; starting UI was incorrectly treated as WSS-ready",
+  "repair": "Existing smoke waits for state-listening after awaited WSS + microphone setup; two wait selectors and comment only",
+  "retry_exit_code": 0,
+  "screenshots": "Not saved by existing script",
+  "logs": [
+    "theme-browser-20261017.log",
+    "theme-browser-retry-20261017.log"
+  ],
+  "package_unchanged": true,
+  "lock_unchanged": true,
+  "source_hashes": {
+    "package.json": "dbcd9d8ab7ee66482a967c19acc5a9cb59a92ad420bed2dde2e60b82e56877bf",
+    "package-lock.json": "2575317933bd4a498f593ac874568961da8dfe0fc2cb283f6056b7eac85a1ed4",
+    "tests/theme-browser.mjs": "76d0c82a2fc5cfd56a305e29c372119656453fb45e3ca80edd67e4c550607427"
+  },
+  "shared_node_suite": {
+    "command": "node --test tests/*.test.mjs",
+    "files": 12,
+    "individual_pass": 98,
+    "fail": 0,
+    "skipped": 0,
+    "sandbox": "require_escalated; child-process IPC needed to report actual cases",
+    "log": "/workspace/scratch/0702e2310172/framework-node-unsandboxed-20261017.log"
+  }
+}

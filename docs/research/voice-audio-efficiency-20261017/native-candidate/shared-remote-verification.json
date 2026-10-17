@@ -1,0 +1,197 @@
+{
+  "commit": "c564f0c44c6fe783fd4932bd4633fada34e05c73",
+  "tree": "e4f36b3e6773e19a74a33de5389c1e3475f4b1c7",
+  "source_archive_sha256": "3dade3ac1547c24ae820470af7b4327f66c12b3f75505b2d9fc28eedf57ea1de",
+  "verified_files": [
+    {
+      "path": "package.json",
+      "sha256": "989831e77edb10999fc37fcbc3d162a4acb70aca0622d05b344099125729b0d8",
+      "matches": true
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "eae08aa0e39b1653c33e95c42c2d433c6d0dc799eb661ba969f14013e758db10",
+      "matches": true
+    },
+    {
+      "path": "android/settings.gradle.kts",
+      "sha256": "9e8cb6872c673a8408fb4eac66b6ba4537538fb578f7d80d9e409687a1f55533",
+      "matches": true
+    },
+    {
+      "path": "tests/tool_progress_test.py",
+      "sha256": "0e0d4beb3512b8640150c9b9f1d55500769b2b08d711021a6ab7fb00f65e059b",
+      "matches": true
+    },
+    {
+      "path": "tests/audio_v2_test.py",
+      "sha256": "4206878e2dcd11a905afe62a685fb450d59d7d2e54310fc78d2fe478296a476a",
+      "matches": true
+    },
+    {
+      "path": "docs/voice-continuity-contract.md",
+      "sha256": "08d988c724360579cb9522afba3fa6d5aaf001708afc9c50640dd7898e139aca",
+      "matches": true
+    },
+    {
+      "path": "docs/integration.md",
+      "sha256": "b4fbb83c15f2887a325a53c8ea1c455deb8318d99fc3f74f9c9e19b4e944b408",
+      "matches": true
+    },
+    {
+      "path": "docs/native-voice-candidate-20261017.md",
+      "sha256": "8d69afac433f7a1550f3800a5dfe82f56ee20329c584ca76ee7383697d06dce6",
+      "matches": true
+    },
+    {
+      "path": "android/platform/README.md",
+      "sha256": "06c0282e7c0c813cf8d240801453b271115d808df93ae391b9f234fecf1eacf8",
+      "matches": true
+    },
+    {
+      "path": "android/platform/build.gradle.kts",
+      "sha256": "86cbffd7500062b7a165066ad7007f7ba7ac7b29413e2b749d9502820406d6ec",
+      "matches": true
+    },
+    {
+      "path": "android/platform/src/main/AndroidManifest.xml",
+      "sha256": "745185a9c5c54aac5d29007936b1371c91ce78482bc1904d4c59919ff1ce7a1e",
+      "matches": true
+    },
+    {
+      "path": "android/platform/src/main/java/org/onedayonemasterpiece/live/platform/NativeEncoder.java",
+      "sha256": "430ba864a6f8f19db83f30e7d8b73adeb2a72caea41b66ca9010f2fd88c69a5f",
+      "matches": true
+    },
+    {
+      "path": "android/platform/src/main/java/org/onedayonemasterpiece/live/platform/OutputResumeQueue.java",
+      "sha256": "b8255b5272a2398b18f0bf9e36ada00fc4c97d92bc5105ed5e2d537153fbb500",
+      "matches": true
+    },
+    {
+      "path": "android/platform/src/main/java/org/onedayonemasterpiece/live/platform/CompressedAudio.java",
+      "sha256": "d952b9b24f36d7c1f706b498c4fe25a07ffbb2cd0c13336ba5022d934328cc8a",
+      "matches": true
+    },
+    {
+      "path": "android/platform/src/main/java/org/onedayonemasterpiece/live/platform/DurablePlaybackPump.java",
+      "sha256": "4ac3b1fbdadcbea352babd79124a165433c7517b39c2f50672dd55dc1915e5b3",
+      "matches": true
+    },
+    {
+      "path": "android/platform/src/main/java/org/onedayonemasterpiece/live/platform/NativePlayer.java",
+      "sha256": "8eb660d9d3eff9444fa330bc21308a9e5f994939add239669859c44ad2f142b8",
+      "matches": true
+    },
+    {
+      "path": "android/platform/src/main/java/org/onedayonemasterpiece/live/platform/SessionApi.java",
+      "sha256": "62c77767fcc422700534b60931bfb845d55bbfb6ff83033613db6ecc1c4d468b",
+      "matches": true
+    },
+    {
+      "path": "android/platform/src/main/java/org/onedayonemasterpiece/live/platform/StartContext.java",
+      "sha256": "a3bfd4efbfed5d61dd491fc4c058b35a5759b55d05c3eb884f451b88fda32e64",
+      "matches": true
+    },
+    {
+      "path": "android/platform/src/main/java/org/onedayonemasterpiece/live/platform/NativeLiveRuntime.java",
+      "sha256": "7dbbbba140018f264404c2063470c4551a86c378959e7d16c11a407799db3804",
+      "matches": true
+    },
+    {
+      "path": "android/platform/src/main/java/org/onedayonemasterpiece/live/platform/CodecTimeline.java",
+      "sha256": "8487726eba65d43b0d708b9d680a692766a9a7f5220a0caccf2bd02f9a045402",
+      "matches": true
+    },
+    {
+      "path": "android/platform/src/test/java/org/onedayonemasterpiece/live/platform/CompressedAudioTest.java",
+      "sha256": "c4af8f9d041a35643466f15977a7248fe8772a9176c66889793cc79164a09376",
+      "matches": true
+    },
+    {
+      "path": "android/platform/src/test/java/org/onedayonemasterpiece/live/platform/OutputResumeQueueTest.java",
+      "sha256": "c06b7af34d96c47d98e9fe2a9cc63899fea5d89423b7dbad0d2cfffde4f84d89",
+      "matches": true
+    },
+    {
+      "path": "android/platform/src/test/java/org/onedayonemasterpiece/live/platform/DurablePlaybackPumpTest.java",
+      "sha256": "7d13127793ae8b7af8963a2b91d7029b885134a1467c7afcefaa54c1cf6b8fa5",
+      "matches": true
+    },
+    {
+      "path": "android/src/main/java/org/onedayonemasterpiece/live/DurableSourceStore.java",
+      "sha256": "a079104bad03c3e0ed742a69e10549ae77b681227a1be78e70cf9ddfed362c21",
+      "matches": true
+    },
+    {
+      "path": "android/src/main/java/org/onedayonemasterpiece/live/LiveSocketTransportV2.java",
+      "sha256": "238b876a4fe23c40b2074e311083eb57c3d876a3203dd98e8abdaa52d6324b22",
+      "matches": true
+    },
+    {
+      "path": "android/src/main/java/org/onedayonemasterpiece/live/VoiceAudioV2.java",
+      "sha256": "ed26a1a8df9bdbb7235a60f625dc6ef041757fcbe86e43cca20e71e046145bb6",
+      "matches": true
+    },
+    {
+      "path": "android/src/main/java/org/onedayonemasterpiece/live/DurableOutputStore.java",
+      "sha256": "53faaa11023251c504ad57a791e0ab0926e43e233ec30f1844cdc27970a466a4",
+      "matches": true
+    },
+    {
+      "path": "android/src/test/java/org/onedayonemasterpiece/live/VoiceAudioV2Test.java",
+      "sha256": "ef1344ad235a3ff2037194bbff675dd9fb5a5252a1189a64fcbd84b0c8923de1",
+      "matches": true
+    },
+    {
+      "path": "python/live_interaction/session_host.py",
+      "sha256": "64debf4faf8dbdd494d4a0e6334c4cacb3750db34e395ee7439611db18bba93a",
+      "matches": true
+    },
+    {
+      "path": "python/live_interaction/audio_socket.py",
+      "sha256": "c8562a2e51df1106550364ce0db49f82223c41c04ec0f0749ff354dd8ea460c8",
+      "matches": true
+    },
+    {
+      "path": "python/live_interaction/__init__.py",
+      "sha256": "df7d179b724fd2f112636c56ad12f0bade567434bd0f5c5d762ab72e938d532a",
+      "matches": true
+    },
+    {
+      "path": "python/live_interaction/socket_host.py",
+      "sha256": "bb283e207064a2904a26d9ec225b5528beebfc97f9e39fc93bf33d3e35d06489",
+      "matches": true
+    },
+    {
+      "path": "python/live_interaction/socket_transport.py",
+      "sha256": "3dce040bc63ba9235ec2b1cc7022b9e3817a198427790b3bb3d8864c0d3d1bef",
+      "matches": true
+    },
+    {
+      "path": "python/live_interaction/audio_output.py",
+      "sha256": "32b2267ef093a3022e85adea14d29d3ba053b5a7a31babc2074c627368d57f4a",
+      "matches": true
+    },
+    {
+      "path": "python/live_interaction/audio_codec.py",
+      "sha256": "12c55f37a4728f38c3a9b3e75df470b7f84df1869314b3fa0eccee303da24eed",
+      "matches": true
+    },
+    {
+      "path": "python/live_interaction/audio_v2.py",
+      "sha256": "c9a2b5e5ec7a3d7b22e8279ffcba40c69549c2ed5549a4cd1579536090f7dbd6",
+      "matches": true
+    },
+    {
+      "path": "tests/fixtures/wl-live-v2-vectors.json",
+      "sha256": "7e7527f8751a0e0810b9c1474f88f1799eec52ff6fee0717bb2e9c42a262fa05",
+      "matches": true
+    },
+    {
+      "path": ".github/workflows/verify.yml",
+      "sha256": "6a445cce4bbe2a6911435bd2ac199c8c245d86b7140578474fc610f6895040ef",
+      "matches": true
+    }
+  ]
+}

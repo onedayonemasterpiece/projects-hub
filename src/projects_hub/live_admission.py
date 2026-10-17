@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import time
 from collections import Counter
 from typing import Any
@@ -40,6 +42,8 @@ class ProjectsHubAdmissionMixin:
         self._projects_hub_starting_by_actor: Counter[str] = Counter()
         self._projects_hub_starting_resources: set[tuple[str, str]] = set()
         self._projects_hub_starting_sources: set[tuple[str, str]] = set()
+        self._projects_hub_start_attempts: dict[tuple[str, str, str, str], tuple[str, asyncio.Task, float]] = {}
+        self._projects_hub_closing = False
 
     async def _reclaim_detached_sessions(self, actor_id: str, resource_id: str) -> None:
         socket_states = getattr(self, "_socket_states", None)
@@ -97,6 +101,90 @@ class ProjectsHubAdmissionMixin:
             )
 
     async def start(
+        self,
+        *,
+        resource_id: str,
+        actor: Any,
+        attempt_id: str | None = None,
+        client_instance_id: str | None = None,
+        client_source_id: str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Reconcile a lost native bootstrap response without another provider.
+
+        The explicit attempt belongs to an authenticated actor, conversation and
+        client instance. A HTTP waiter may disappear; its bounded shared start
+        continues and the same request can recover that one result and a fresh
+        one-use ticket. An incompatible body cannot reuse the attempt identity.
+        """
+        from live_interaction import LiveError
+
+        if self._projects_hub_closing:
+            raise LiveError("LIVE_SESSION_CLOSED", "Live host is stopping")
+        if not attempt_id or not client_instance_id:
+            return await self._start_new(resource_id=resource_id, actor=actor,
+                                         attempt_id=attempt_id, client_instance_id=client_instance_id,
+                                         client_source_id=client_source_id, **kwargs)
+        if (not isinstance(attempt_id, str) or not isinstance(client_instance_id, str)
+                or len(attempt_id) > 96 or len(client_instance_id) > 128):
+            raise LiveError("INVALID_ARGUMENT", "Invalid Live start identity")
+        actor_id = _actor_id(actor)
+        if not actor_id:
+            raise LiveError("INVALID_ARGUMENT", "Live actor identity is required")
+        key = (actor_id, resource_id, client_instance_id, attempt_id)
+        fingerprint = hashlib.sha256(json.dumps(
+            {"client_source_id": client_source_id,
+             **{name: value for name, value in kwargs.items()
+                if name not in {"history", "backend_version", "backend_release_sha"}}},
+            sort_keys=True, separators=(",", ":"),
+        ).encode()).hexdigest()
+        async with self._projects_hub_admission_lock:
+            now = time.monotonic()
+            for prior_key, (_, prior_task, expires) in tuple(self._projects_hub_start_attempts.items()):
+                # Keep the completed result, including failures and closed
+                # sessions, for the bounded retry lifetime. In particular, a
+                # delayed duplicate must not turn an explicit Stop into Start.
+                if prior_task.done() and expires <= now:
+                    self._projects_hub_start_attempts.pop(prior_key, None)
+            prior = self._projects_hub_start_attempts.get(key)
+            if prior and prior[0] != fingerprint:
+                raise LiveError("LIVE_ATTEMPT_CONFLICT", "A Live start attempt cannot change its request")
+            repeated = prior is not None
+            if prior:
+                task = prior[1]
+            else:
+                # Pending starts and completed retry receipts have independent
+                # bounds. Capacity pressure never silently evicts a Stop fence.
+                pending = sum(not value[1].done() for value in self._projects_hub_start_attempts.values())
+                if (pending >= self.max_sessions * 2
+                        or len(self._projects_hub_start_attempts) >= max(128, self.max_sessions * 64)):
+                    raise LiveError("LIVE_BUSY", "Live start reconciliation capacity reached")
+                task = asyncio.create_task(self._start_new(
+                    resource_id=resource_id, actor=actor, attempt_id=attempt_id,
+                    client_instance_id=client_instance_id, client_source_id=client_source_id, **kwargs,
+                ), name="projects-hub-live-start")
+                task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+                self._projects_hub_start_attempts[key] = (fingerprint, task, now + 24 * 60 * 60)
+        result = await asyncio.shield(task)
+        active = self.sessions.get(result["session_id"])
+        if active is None or active.closed or active.stop_reason == "explicit_stop":
+            raise LiveError("LIVE_ATTEMPT_CLOSED", "This Live start attempt has ended; a new Start requires a new identity")
+        if repeated:
+            ticket = self.issue_socket_ticket(session_id=result["session_id"], resource_id=resource_id, actor=actor)
+            return {**result, **ticket, "start_reconciled": True}
+        return result
+
+    async def stop_all(self) -> None:
+        self._projects_hub_closing = True
+        pending = [task for _, task, _ in self._projects_hub_start_attempts.values() if not task.done()]
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        self._projects_hub_start_attempts.clear()
+        await super().stop_all()
+
+    async def _start_new(
         self,
         *,
         resource_id: str,
