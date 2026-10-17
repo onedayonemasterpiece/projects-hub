@@ -160,6 +160,8 @@ def attach_mcp_routes(app, *, store, settings, actor_id_from_request, analysis_s
     if analysis_service is not None:
         from .voice_analysis import attach_voice_analysis_routes
         attach_voice_analysis_routes(app, settings, events, analysis_service.collaboration)
+        from .voice_analysis_setup import attach_voice_setup_routes
+        attach_voice_setup_routes(app, app.state.voice_analysis, actor_id_from_request, settings.public_origin)
     server = Server('projects-hub', version=__version__, instructions=(
         'React only to owner-approved Projects Hub requests. On projects_hub.request.created read get_project_request; '
         'verify project and event_id before work. Completed requests reuse the existing response; resume only unfinished destinations, never resend confirmed Slack messages. '

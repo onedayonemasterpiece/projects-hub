@@ -291,3 +291,24 @@ then read the configured source repository audience through the existing scoped
 request readiness. Only after that succeeds should the separately approved
 intake configuration mount be enabled. `enabled=true` in the unmounted intake
 file does not activate intake processing by itself.
+
+## Owner-session source connection control
+
+`GET /api/voice-analysis/setup` reports only the configured owner's own source
+connection state. `POST /api/voice-analysis/setup/connect-source` accepts no body
+or arbitrary targets. A real owner session is required; the voice bridge token
+and MCP service token are not owner sessions. No login invitation is minted.
+
+The explicit owner button may connect the configured, still-unassigned source to
+its configured owner-only project as `source_dataset`, `read_only`, restricted to
+the configured source prefix. It first verifies fresh owner-only GitHub audience
+using Metadata read, which is permitted for this exact existing installation even
+before an operational repository role is assigned. The normal content reader
+continues rejecting unassigned repositories. Unknown or shared audience refuses
+connection. Existing nonmatching bindings are never overwritten. A database
+transaction rechecks configuration context, project ACL and repository binding
+after network I/O; an exact existing binding is idempotent.
+
+Success means only that source read access has been connected. It does not mean
+intake was mounted, an analysis ran, a notification arrived, or results were
+written into a note. Parent/operator checks still govern staged intake activation.

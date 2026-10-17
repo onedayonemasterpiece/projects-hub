@@ -520,7 +520,7 @@ class GitHubConnections:
         )
         return token, connection
 
-    async def repository_audience(self, *, actor_id: str, workspace_id: str, repository_id: int) -> dict:
+    async def repository_audience(self, *, actor_id: str, workspace_id: str, repository_id: int, _allow_unassigned: bool = False) -> dict:
         """Metadata-only evidence for an existing authorized binding, no ACL changes.
 
         A personal installation owner is the expected GitHub owner. This does
@@ -531,7 +531,7 @@ class GitHubConnections:
             if connection.get('project_id'):
                 self.store.project_access(actor_id, workspace_id, connection['project_id'])
             if (connection.get('state') != 'available' or connection.get('installation_state') != 'active'
-                    or connection.get('role') == 'unassigned'):
+                    or (connection.get('role') == 'unassigned' and not _allow_unassigned)):
                 return dict(owner_only=None, status='unavailable')
             installation = self.store.github_installation(connection['installation_id'])
             expected = str((installation or {}).get('account_login') or '')

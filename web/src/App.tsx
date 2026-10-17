@@ -49,6 +49,7 @@ import { replayLocalVoiceSource } from "./bufferedReplay";
 import CollaborationTimeline from "./CollaborationTimeline";
 import CollaborationQuestions from "./CollaborationQuestions";
 import AnalysisResult from "./AnalysisResult";
+import VoiceSourceSetup from "./VoiceSourceSetup";
 import InlineBoard, { type BoardUiCommand } from "./InlineBoard";
 import { recoverServerVoiceSource } from "./serverRecovery";
 import { mergeTranscript, resolveTerminalVoiceState, selectProvisionalCaption, speechStartsNewUserBubble, voiceStartupFailureNotice, voiceStartupFailureState } from "./voiceUiContract.js";
@@ -1704,6 +1705,8 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
           {projectCount > 0 && <span className="context-count">+{projectCount}</span>}
           <span className="chevron">⌄</span>
         </button>
+
+        {boot.role === "owner" && <VoiceSourceSetup key={`${boot.actor.id}:${boot.workspace.id}`} />}
 
         {contextOpen && (
           <section className="island context-sheet" aria-label="Контекст проектов">
