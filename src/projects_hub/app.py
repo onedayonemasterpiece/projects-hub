@@ -234,6 +234,19 @@ def _error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=_http_for_code(code), detail=detail)
 
 
+def _live_start_error(exc: Exception) -> HTTPException:
+    # Shared provider errors may carry the Python exception name. A provider
+    # setup timeout is a temporary server failure, not an invalid phone request.
+    # Keep the wire code safe for the installed Android ApiClient contract.
+    if isinstance(exc, TimeoutError) or getattr(exc, "code", None) == "TimeoutError":
+        return HTTPException(status_code=503, detail={
+            "code": "LIVE_PROVIDER_SETUP_TIMEOUT",
+            "message": "The voice provider did not become ready in time",
+            "retry_after_ms": 2000,
+        })
+    return _error(exc)
+
+
 def _loopback_dev_request(request: Request) -> bool:
     # Development login is deliberately not a reverse-proxy authentication mode.
     # A future public deployment must use a real supported IdP/OIDC flow.
@@ -1179,8 +1192,23 @@ def create_app(
         actor_id = actor_id_from_request(request)
         payload = await _live_start_payload(request)
         conversation, resource_id, actor = live_context(actor_id, conversation_id)
+        phase = "host_initialization"
+        phase_started = time.monotonic()
         try:
-            started = await host().start(
+            active_host = host()
+            log.info(
+                "live host ready",
+                extra={
+                    "event": "live_start_stage",
+                    "conversation_id": conversation_id,
+                    "attempt_id": payload.attempt_id,
+                    "result": phase,
+                    "duration_ms": round((time.monotonic() - phase_started) * 1000),
+                },
+            )
+            phase = "provider_setup"
+            phase_started = time.monotonic()
+            started = await active_host.start(
                 resource_id=resource_id,
                 actor=actor,
                 model=settings.model,
@@ -1197,19 +1225,23 @@ def create_app(
                 attempt_id=payload.attempt_id,
             )
         except Exception as exc:
-            code = str(getattr(exc, "code", type(exc).__name__))
+            error = _live_start_error(exc)
             log.warning(
                 "live start failed",
+                exc_info=True,
                 extra={
                     "event": "live_session",
                     "conversation_id": conversation_id,
                     "result": "start_failed",
-                    "code": code,
+                    "code": error.detail["code"],
                     "exception_type": type(exc).__name__,
-                    "retry_after_ms": getattr(exc, "retry_after_ms", None),
+                    "retry_after_ms": error.detail.get("retry_after_ms"),
+                    "reason": phase,
+                    "attempt_id": payload.attempt_id,
+                    "duration_ms": round((time.monotonic() - phase_started) * 1000),
                 },
             )
-            raise _error(exc) from exc
+            raise error from exc
         log.info(
             "live started",
             extra={
@@ -1218,6 +1250,8 @@ def create_app(
                 "session_id": started.get("session_id"),
                 "source_id": started.get("source_id"),
                 "result": "started",
+                "attempt_id": payload.attempt_id,
+                "duration_ms": round((time.monotonic() - phase_started) * 1000),
             },
         )
         return {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 import json
 import logging
 from logging.handlers import RotatingFileHandler
@@ -7,6 +8,7 @@ import os
 from pathlib import Path
 import sys
 import time
+from types import TracebackType
 from typing import Any
 
 
@@ -84,6 +86,23 @@ class JsonFormatter(logging.Formatter):
             value = getattr(record, key, None)
             if value is not None:
                 payload[key] = value
+        if record.exc_info and record.exc_info[0] is not None:
+            exception_type, _exception, traceback = record.exc_info
+            payload.setdefault("exception_type", exception_type.__name__[:80])
+            # Keep only source coordinates: exception text, chained exceptions,
+            # source lines and frame locals can contain credentials or user data.
+            # Reading code metadata also avoids loading source files while logging.
+            frames: deque[dict[str, Any]] = deque(maxlen=8)
+            while isinstance(traceback, TracebackType):
+                code = traceback.tb_frame.f_code
+                frames.append({
+                    "file": Path(code.co_filename).name[:120],
+                    "function": code.co_name[:80],
+                    "line": traceback.tb_lineno,
+                })
+                traceback = traceback.tb_next
+            if frames:
+                payload["exception_frames"] = list(frames)
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 

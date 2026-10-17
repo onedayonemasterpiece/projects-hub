@@ -152,6 +152,25 @@ class ProjectsHubAdmissionMixin:
             repeated = prior is not None
             if prior:
                 task = prior[1]
+                if (task.done() and not task.cancelled() and task.exception() is not None
+                        and not any(
+                            _session_actor_id(session) == actor_id
+                            and getattr(session, "resource_id", None) == resource_id
+                            and (not session.closed
+                                 or (getattr(session, "task", None) is not None
+                                     and not session.task.done()))
+                            for session in self.sessions.values()
+                        )):
+                    # The shared Start awaits provider/lease cleanup before its
+                    # task completes. Pending HTTP retries must keep awaiting
+                    # that task; only a later retry of its completed failure may
+                    # obtain a new identity. Also retain the fence if a failure
+                    # after provider-ready left its session or cleanup alive.
+                    # Keep this receipt: reusing the old key never starts work.
+                    raise LiveError(
+                        "LIVE_ATTEMPT_CLOSED",
+                        "This Live start attempt failed and has ended; retry with a new identity",
+                    )
             else:
                 # Pending starts and completed retry receipts have independent
                 # bounds. Capacity pressure never silently evicts a Stop fence.
