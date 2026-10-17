@@ -277,6 +277,13 @@ class GitHubAppClient:
             )
         return payload
 
+    async def repository_metadata(self, *, token: str, repository_id: int):
+        return await self._json_request('GET', f"/repositories/{int(repository_id)}", token=token)
+
+    async def repository_collaborator_page(self, *, token: str, full_name: str, page: int):
+        return await self._json_request('GET',
+            f"/repos/{full_name}/collaborators?affiliation=all&per_page=100&page={page}", token=token)
+
     async def installation_token(
         self,
         installation_id: int,
