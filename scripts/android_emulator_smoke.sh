@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Preserve evidence even when instrumentation fails; do not turn failure green.
+collect_smoke_evidence() {
+  local status=$?
+  mkdir -p android/smoke-evidence
+  adb logcat -d -v threadtime > android/smoke-evidence/logcat.txt 2>&1 || true
+  adb shell dumpsys activity activities > android/smoke-evidence/activities.txt 2>&1 || true
+  return "$status"
+}
+trap collect_smoke_evidence EXIT
+
 adb_retry() {
   local attempt=0
   while [ "$attempt" -lt 30 ]; do

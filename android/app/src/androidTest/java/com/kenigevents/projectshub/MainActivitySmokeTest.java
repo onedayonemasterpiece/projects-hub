@@ -10,6 +10,8 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
+import android.webkit.WebResourceError;
+import org.json.JSONObject;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import androidx.test.core.app.ActivityScenario;
@@ -49,27 +51,54 @@ public class MainActivitySmokeTest {
     private void page(ActivityScenario<MainActivity> scenario, String url) throws Exception {
         CountDownLatch loaded = new CountDownLatch(1);
         java.util.concurrent.atomic.AtomicReference<String> location =
-                new java.util.concurrent.atomic.AtomicReference<>("no navigation");
+                new java.util.concurrent.atomic.AtomicReference<>("no callback");
+        java.util.concurrent.atomic.AtomicReference<String> dom =
+                new java.util.concurrent.atomic.AtomicReference<>("not checked");
         scenario.onActivity(activity -> {
             WebView view = activity.themeWebView();
             view.stopLoading();
             view.setWebViewClient(new WebViewClient() {
+                @Override public WebResourceResponse shouldInterceptRequest(
+                        WebView page, WebResourceRequest request) {
+                    // Exercise a real HTTPS document/origin, not the synthetic
+                    // history URL of loadDataWithBaseURL. Never use the network.
+                    String html = url.equals(request.getUrl().toString())
+                            ? "<!doctype html><html><body>Theme bridge fixture</body></html>" : "";
+                    return new WebResourceResponse("text/html", "UTF-8",
+                            new ByteArrayInputStream(html.getBytes(StandardCharsets.UTF_8)));
+                }
                 @Override public void onPageFinished(WebView page, String finished) {
-                    location.set(finished + " (current=" + page.getUrl() + ")");
-                    page.evaluateJavascript(
-                            "document.body?.textContent?.includes('Theme bridge fixture')===true",
-                            value -> { if ("true".equals(value)) loaded.countDown(); });
+                    location.set("finished=" + finished + " current=" + page.getUrl());
+                }
+                @Override public void onReceivedError(WebView page, WebResourceRequest request,
+                        WebResourceError error) {
+                    if (request.isForMainFrame()) location.set("error=" + error.getErrorCode()
+                            + " url=" + request.getUrl());
                 }
             });
-            // Deterministic local HTML with the exact HTTPS base AND history URL.
-            // No external network fixture is required; production still enforces
-            // its strict origin and current-page checks for the native bridge.
-            view.loadDataWithBaseURL(url,
-                    "<!doctype html><html><body>Theme bridge fixture</body></html>",
-                    "text/html", "UTF-8", url);
+            view.loadUrl(url);
         });
-        assertTrue("exact theme fixture must load before posting to bridge: " + location.get(),
-                loaded.await(15, TimeUnit.SECONDS));
+        // Page-finished is a navigation callback, not our fixture-readiness
+        // condition. Old startup callbacks can arrive after stopLoading; poll
+        // the exact current document and content before exercising the bridge.
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        while (System.nanoTime() < deadline && loaded.getCount() != 0) {
+            scenario.onActivity(activity -> {
+                WebView view = activity.themeWebView();
+                view.evaluateJavascript(
+                        "location.href===" + JSONObject.quote(url)
+                        + " && document.readyState==='complete'"
+                        + " && document.body?.textContent==='Theme bridge fixture'",
+                        value -> {
+                            dom.set("ready=" + value + " current=" + view.getUrl());
+                            if ("true".equals(value) && url.equals(view.getUrl())) loaded.countDown();
+                        });
+            });
+            loaded.await(50, TimeUnit.MILLISECONDS);
+        }
+        // Construct diagnostics AFTER waiting, not before await evaluated.
+        assertTrue("exact theme fixture must load before posting to bridge: "
+                + location.get() + "; " + dom.get(), loaded.getCount() == 0);
     }
 
     private int themedRootColor(MainActivity activity) {
