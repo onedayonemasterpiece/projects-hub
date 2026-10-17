@@ -227,3 +227,7 @@ Local tests cover two discussion routes, restart, strict SDK schemas, atomic
 failure, version conflicts, revocation and uncertain-send reconciliation. Live
 MVP0 PASS still requires actual dot/Slack receipts and two separate owner-approved
 discussion/thread routes. P0 alone is not that acceptance.
+
+## Related information-access design
+
+[Project information, unified lookup and Slack ↔ Hub](product/21-project-information-unified-access.md) is the canonical analytical track for shared Mira/dot information access, channel/discussion mapping, history coverage and conflicts. Its proposed lookup operations are not current MCP tools. It preserves this request/outbox/claim/receipt contract and does not authorize new subscriptions, bindings or persistent access.

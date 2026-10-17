@@ -219,16 +219,18 @@ Search/retrieval может быть полнотекстовым или век�
 
 Невозможно гарантировать восстановление звука, который физически не успел попасть ни в один durable checkpoint до уничтожения единственного устройства. Задача приёмки — измерить и минимизировать этот хвост, а не маскировать его красивым статусом.
 
-## 12. Текущие framework blockers, влияющие на память
+## 12. Исходные framework требования, влияющие на память
+
+**Статус 14 октября 2026:** ниже сохранён исходный checklist. В проверенном live-interaction 0.3.28 пункты о truncation 2000 и отсутствии manual markers уже исправлены; это не открытые текущие blockers. Durable archive/recovery acceptance остаётся отдельной проверкой.
 
 Реализация обязана учесть подтверждённые свойства текущего `live-interaction`:
 
 1. Provider уже включает input transcription — это и есть базовая транскрипция центрального агента.
-2. Provider сейчас обрезает каждый projected transcript event до 2000 символов. До source archive нужен full-event sink или иная lossless product projection.
+2. Исходный provider обрезал projected transcript до 2000 символов; pinned 0.3.28 передаёт полный transcript trusted observer. Source archive обязан сохранять эту полноту.
 3. Session host держит ring на 320 событий. Durable source observer должен писать события до вытеснения.
 4. Browser показывает только хвост transcript для UX. Он не источник архива.
 5. Provider reconnect сознательно не replay-ит потерянную речь. Projects Hub должен держать durable audio **выше transport** и намеренно feed-ить buffered recording после восстановления.
-6. Shared wire пока не имеет product-ready manual `activityStart/activityEnd` buffered mode — это обязательное версионируемое расширение framework.
+6. Pinned 0.3.28 поддерживает manual `activityStart/activityEnd`; полноту deliberate buffered replay и business-effect fencing проверяет потребитель.
 7. Bootstrap history ограничен; долговечная conversation memory должна читаться agent tools, а не помещаться целиком в provider history.
 
 Эти изменения усиливают центральную Live-архитектуру; они не оправдывают второй ASR/agent pipeline.
@@ -238,3 +240,41 @@ Search/retrieval может быть полнотекстовым или век�
 Полный доверенный transcript/source journal сохраняет исходную речь и текущую source policy. Лента — durable история message/turn IDs, текста и ссылок на виджеты; пагинация UI не должна удалять source. Поздняя каноническая транскрипция меняет свою часть сообщения по ID и не затирает сохранённые блоки.
 
 Команда «сохрани заметку в проекте» публикует выбранный предназначенный проекту текст, авторство и массив ролей, а не полный смешанный source. Для заметки V32 разрешает явный Gemini text structuring и Markdown-публикацию через подключённый repo с readback. Source memory commit не получает скрытый summarizer. Авторизованный участник читает заметку внутри приложения, не получая чужую личную историю или исходное аудио. Детали состояний/повторов и простая модель объектов — [20](20-basic-collaboration-and-personal-timeline.md).
+
+
+## 14. Slack-история и восстановление рабочего набора
+
+**Добавление к проектированию, 14 октября 2026; не claim об уже реализованном Slack index.** Проверенные limits и код — [06-live §13](06-live.md#13-ограниченный-контекст-миры-проверенный-baseline-14-октября-2026). Compression/resumption и 8×700-symbol history не заменяют durable memory.
+
+### Внешний индекс с проверкой доступа
+
+- Хранить историю Slack вне Live-сессии только для разрешённых workspace/channel/thread и согласованной аудитории. Техническая доступность канала боту не разрешает раскрыть его любому участнику проекта.
+- Source chunk: workspace/channel/thread/message IDs, автор/тип субъекта, captured/edited time, revision/hash, permalink из Slack, project/audience binding и provenance. Replies сохраняют связь с корнем; edits/deletions имеют явное состояние.
+- Поиск, snippets и full read проверяют текущие Slack/source/project grants на каждом запросе; ACL применяется до выдачи результатов. Отзыв доступа инвалидирует доступ к cached excerpts и собранному рабочему набору; при невозможности проверить права fail closed.
+- Индекс явно сообщает coverage, pagination cursor, sync time и gaps. Отсутствие в неполном индексе не доказывает отсутствие сообщения. Индексировать только фактически полученные данные; недоступную/удалённую историю не реконструировать как факт. Retention/deletion policy исходного источника и согласованные правила архива не обходятся созданием скрытой копии.
+
+### Retrieval contract
+
+Мира получает небольшой рабочий набор: текущая задача/вопрос, проверенные решения, ограничения, unresolved dependencies, актуальные source refs и receipts. Остальное — `search` и `read` по требованию, с пагинацией и отдельным bounded excerpt.
+
+Каждый результат сообщает source identity/revision, область и время проверки, completeness/`has_more`, cursor и причину усечения. При необходимости Мира дочитывает следующие страницы. Поиск не объявляется полным только потому, что достигнут бюджет. Старое сообщение является evidence, а не новым разрешением выполнить действие. URL без прочитанного текста не считается источником фактов.
+
+### Durable решения и restart
+
+До подтверждения человеку сохраняются точный ответ, question/source revision, автор, accepted turn, command ID и receipt. Решения/ограничения имеют canonical record и provenance; краткая сводка служит индексом, а не заменяет исходный ответ. Для question session сохраняются active/last-presented question, answered/unknown/skip/later, pause/filter, unresolved blockers и проверенный маршрут результата.
+
+После provider compression, capability switch, потери handle, полного process restart или истечения его срока рабочий набор собирается из этих записей, затем необходимые источники перечитываются с текущими ACL/revisions. Прежние mutations не повторяются; uncertain outcome сверяется по receipt. Новое соединение не создаёт новое согласие и не завершает пакет.
+
+Исходные аудио и полный transcript/source journal сохраняют прежний retention/disposition contract. При длинном offline replay отмечается фактически доставленное/обработанное покрытие. Разбиение по бюджету не разрешает объявлять весь источник прослушанным либо молча заменять аудио summary.
+
+### Приёмка
+
+- Решение старше 8 реплик и ответ в середине реплики длиннее 700 символов доступны после history fallback и process restart.
+- Compression, >10-минутный reconnect и недоступный/просроченный handle не теряют question state/receipts.
+- Отзыв grant закрывает cached/индексированные excerpts; edit/delete не выдаётся как прежняя актуальная версия.
+- Большие архивы/списки проектов paginated; `has_more` и gaps видимы, решений не теряют.
+- Budget denial/retry не дублирует ответ, mutation, continuation или Slack delivery.
+
+### Канонический трек интеграции
+
+[21. Проектная информация, общий доступ и Slack ↔ Hub](21-project-information-unified-access.md) связывает этот durable-memory контракт с онтологией, source coverage/backfill, revision ownership, общим lookup и failure matrix. Контекстные ограничения и правила §14 сохраняются; весь Slack-архив не становится Live bootstrap.
