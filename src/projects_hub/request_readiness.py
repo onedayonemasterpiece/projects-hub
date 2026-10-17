@@ -62,6 +62,10 @@ async def read_request_with_readiness(events, grant_id, project_id, request_id):
         if repo.get('state') != 'available' or not hasattr(github, 'repository_audience'):
             return dict(owner_only=None, status='unavailable')
         try:
+            voice = getattr(events, 'voice_analysis', None)
+            if (repo['purpose']=='configured_voice_source' and voice is not None
+                    and hasattr(github,'voice_source_audience')):
+                return await github.voice_source_audience(capability=voice.source_capability)
             return await asyncio.wait_for(github.repository_audience(actor_id=before['owner'],workspace_id=before['workspace'],
                                                repository_id=repo['repository_id']), timeout=8)
         except (TimeoutError, StoreError):

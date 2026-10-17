@@ -357,6 +357,20 @@ def unknown_sources_control(
     return fallback
 
 
+def launcher_anr_close_bounds(xml_text: str) -> tuple[int, int, int, int] | None:
+    """Recognize only the observed emulator Pixel Launcher ANR, not an app failure."""
+    root = ET.fromstring(xml_text)
+    titles = [node for node in root.iter("node")
+              if node.get("resource-id") == "android:id/alertTitle" and node.get("package") == "android"]
+    if not any(node.get("text", "").strip().casefold() == "pixel launcher isn't responding" for node in titles):
+        return None
+    for node in root.iter("node"):
+        if (node.get("resource-id") == "android:id/aerr_close" and node.get("package") == "android"
+                and node.get("enabled") == "true" and node.get("clickable") == "true"):
+            return _node_bounds(node)
+    return None
+
+
 def enable_unknown_sources_via_settings(timeout_seconds: int = 45) -> None:
     """Toggle the real Settings control and verify Android's resulting app-op."""
 
@@ -364,6 +378,7 @@ def enable_unknown_sources_via_settings(timeout_seconds: int = 45) -> None:
     last_xml = ""
     last_appop = ""
     tapped_fallback = False
+    launcher_anr_closed = False
     while time.time() < deadline:
         run(
             "adb",
@@ -386,9 +401,21 @@ def enable_unknown_sources_via_settings(timeout_seconds: int = 45) -> None:
             retries=1,
         )
         try:
+            launcher_close = launcher_anr_close_bounds(last_xml)
             control = unknown_sources_control(last_xml)
         except ET.ParseError:
+            launcher_close = None
             control = None
+        if launcher_close is not None:
+            if launcher_anr_closed:
+                raise RuntimeError("Pixel Launcher ANR recurred during Settings flow; emulator unhealthy")
+            left, top, right, bottom = launcher_close
+            print("Settings UI obstructed by Pixel Launcher ANR; closing launcher once", flush=True)
+            run("adb", "shell", "input", "tap", str((left + right) // 2), str((top + bottom) // 2),
+                timeout=15, retries=1)
+            launcher_anr_closed = True
+            time.sleep(1)
+            continue
 
         last_appop = run(
             "adb",
