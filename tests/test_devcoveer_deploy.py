@@ -259,3 +259,22 @@ def test_incident_retention_preserves_all_release_history(tmp_path, monkeypatch)
     result = prune_old_releases(shas[0], str(releases / shas[1]), preserve_all=True)
     assert result == {"removed": [], "skipped": [], "preserved": shas}
     assert sorted(p.name for p in releases.iterdir()) == shas
+
+
+def test_deploy_preserves_only_explicit_voice_binding_file(tmp_path, monkeypatch):
+    for name in ('STATE_ROOT','DATA_ROOT','LOG_ROOT'):
+        monkeypatch.setattr(deploy,name,tmp_path/name)
+    host=tmp_path/'host.env'
+    host.write_text('UNRELATED_SECRET=not-imported\n')
+    service=tmp_path/'service.env'
+    service.write_text('PROJECTS_HUB_VOICE_ANALYSIS_CONFIG_FILE="/private/voice-analysis.json"\nUNRELATED_SECRET=not-preserved\n')
+    monkeypatch.setattr(deploy,'HOST_ENV',host)
+    monkeypatch.setattr(deploy,'SERVICE_ENV',service)
+    monkeypatch.setattr(deploy,'PROVIDER_ENV',tmp_path/'provider.env')
+    monkeypatch.setattr(deploy,'select_provider_environment',lambda values:{})
+    monkeypatch.setattr(deploy,'ensure_session_secret',lambda:None)
+    deploy.write_runtime_environment('a'*40,tmp_path/'release')
+    assert deploy._parse_env(service)['PROJECTS_HUB_VOICE_ANALYSIS_CONFIG_FILE']=='/private/voice-analysis.json'
+    assert 'UNRELATED_SECRET' not in service.read_text()
+    deploy.write_runtime_environment('b'*40,tmp_path/'release2')
+    assert deploy._parse_env(service)['PROJECTS_HUB_VOICE_ANALYSIS_CONFIG_FILE']=='/private/voice-analysis.json'

@@ -83,7 +83,8 @@ async def test_result_publication_verified_and_retry_has_no_network(setup):
     assert saved["answer_receipts"][0]["command_id"] == "result-answer-001"
     assert saved["question_package"]["result_markdown"] == payload["result_markdown"]
     assert saved["destinations"]["slack_state"] == "pending"
-    assert saved["destinations"]["mira_state"] == "pending"
+    assert saved["destinations"]["mira_state"] == "available"
+    assert store.db.execute("SELECT COUNT(*) FROM collaboration_events WHERE kind='question_result_ready'").fetchone()[0] == 1
     assert "Private answer transcript" not in next(iter(repository.files.values()))
     writes, reads = repository.writes, repository.reads
     again = await events.bindings.record_result_async(service["id"], ready, payload)
@@ -163,3 +164,25 @@ async def test_result_rejects_public_repository_before_publication(setup):
     assert caught.value.code == "NOTE_AUDIENCE_REPOSITORY_MISMATCH"
     assert repository.writes == repository.reads == 0
     await analysis.close()
+
+@pytest.mark.asyncio
+async def test_followup_round_links_prior_receipts_and_replays(setup):
+    store, events, service, analysis, repository, ready, result = await ready_result(setup)
+    try:
+        read=events.get_project_request(service['id'],ready['project_id'],ready['id'])
+        payload=dict(kind='question_package',external_analysis_id='followup-analysis-001',source_kind='project_note',
+            source_id=read['note_id'],source_revision=read['source_revision'],source_repository_sha=read['source_repository_sha'],
+            purpose='requirements',summary='One remaining decision',questions=[dict(external_question_id='followup-question-001',
+            prompt='Which deadline?',context='Chosen approach',reason='Schedule delivery',blocking=True,priority='high',deadline_ms=None)])
+        saved=events.record_request_result(service['id'],ready['project_id'],ready['id'],ready['event_id'],payload)
+        scope=saved['question_package']['scope']
+        assert scope['parent_analysis_id']==ready['analysis_id']
+        assert scope['round_number']==2
+        assert any(r['command_id']=='result-answer-001' for r in scope['parent_answer_receipts'])
+        assert saved['analysis_id']!=ready['analysis_id']
+        assert events.record_request_result(service['id'],ready['project_id'],ready['id'],ready['event_id'],payload)['analysis_id']==saved['analysis_id']
+        with pytest.raises(StoreError):
+            events.record_request_result(service['id'],ready['project_id'],ready['id'],ready['event_id'],{**payload,'summary':'Changed'})
+        assert store.db.execute('SELECT COUNT(*) FROM collaboration_analyses').fetchone()[0]==2
+    finally:
+        await analysis.close()

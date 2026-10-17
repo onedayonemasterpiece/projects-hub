@@ -527,7 +527,10 @@ class GitHubConnections:
         workspace_id: str,
         repository_id: int,
         path: str = "",
+        ref: str | None = None,
     ) -> dict[str, Any]:
+        if ref is not None and not __import__('re').fullmatch(r'[a-f0-9]{40}', ref):
+            raise StoreError('INVALID_ARGUMENT', 'Immutable commit reference required')
         token, connection = await self.repository_token(
             actor_id=actor_id,
             workspace_id=workspace_id,
@@ -539,7 +542,7 @@ class GitHubConnections:
                 token=token,
                 full_name=str(connection["full_name"]),
                 path=path,
-                ref=str(connection["default_branch"]),
+                ref=ref or str(connection["default_branch"]),
             )
         except GitHubAppError as exc:
             raise StoreError(exc.code, str(exc)) from exc

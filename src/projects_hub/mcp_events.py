@@ -89,6 +89,10 @@ class MCPEvents:
             from .mcp_bindings import MCPBindings
             self.bindings = MCPBindings(store, auth, self)
 
+    def voice_context(self, request_id):
+        adapter = getattr(self, 'voice_analysis', None)
+        return adapter.context(request_id) if adapter else None
+
     def _encrypt(self, value: str) -> str:
         return self.cipher.encrypt(value.encode()).decode()
 
@@ -215,7 +219,7 @@ class MCPEvents:
                 self.store.project_access(context_actor_id, project['workspace_id'], project_id)
                 if (event_name not in (EVENT, REQUEST_EVENT) or (binding_id and event_name != REQUEST_EVENT)
                         or request_kind not in ('discussion','question_start')
-                        or origin not in ('mira','slack') or
+                        or origin not in ('mira','slack','voice') or
                         (request_kind == 'question_start' and (not binding_id or event_name != REQUEST_EVENT))):
                     raise StoreError('INVALID_ARGUMENT', 'Unknown request event')
                 binding = self.bindings.for_owner(actor_id, project_id, binding_id, context_actor_id) if binding_id else None
@@ -244,13 +248,13 @@ class MCPEvents:
                         eligible.append(sub)
                     except StoreError:
                         continue
-                if not eligible:
+                if not eligible and origin != 'voice':
                     raise StoreError('NO_SUBSCRIPTION', 'Connect and approve a verified project subscription first')
                 request_id, event_id = 'mcp_test_' + secrets.token_hex(16), 'evt_' + secrets.token_hex(16)
                 self.store.db.execute('''INSERT INTO mcp_test_requests
                     (id,project_id,actor_id,command_id,nonce,created_ms,expires_ms,state,event_id,context_actor_id,event_name,mode,binding_id,binding_revision,request_kind,source_revision,initiation_origin)
                     VALUES(?,?,?,?,?,?,?,'awaiting_response',?,?,?,?,?,?,?,?,?)''',
-                    (request_id, project_id, actor_id, command_id, secrets.token_urlsafe(32), now, now + ttl_seconds*1000, event_id, context_actor_id,
+                    (request_id, project_id, actor_id, command_id, secrets.token_urlsafe(32), now, now + (7*86400_000 if origin == 'voice' else ttl_seconds*1000), event_id, context_actor_id,
                      event_name, 'live' if binding else 'test', binding_id, binding['revision'] if binding else None,
                      request_kind,frozen_source_revision,origin))
                 for sub in eligible:

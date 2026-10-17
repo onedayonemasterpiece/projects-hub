@@ -98,10 +98,10 @@ async def test_confirmed_result_is_available_at_greeting_then_acknowledged_after
 
 
 @pytest.mark.asyncio
-async def test_unconfirmed_result_and_recovery_do_not_announce(setup):
+async def test_saved_result_available_without_slack_but_recovery_stays_silent(setup):
     store, events, analysis, ready, adapter, initialize = await result_context(setup, confirmed=False)
     try:
-        assert results(initialize()) == []
+        assert len(results(initialize())) == 1
         recovery = initialize(audio_mode="buffered", recovery_only=True)
         assert recovery["context"]["personal_brief"]["personal"] == []
         assert recovery["configuration"]["functions"] == []
