@@ -1,0 +1,419 @@
+{
+  "commit": "20020927de8ba733922d763146d71fa75872727e",
+  "tree": "9a5efb4539822c7cc217e0c71e5747f1e6e1ea74",
+  "source_archive_sha256": "340f3fadba1358009adfb94b5cc49b490d9c7d632b40c42c0c56d5b2ac1f477c",
+  "verified_files": [
+    {
+      "path": ".github/workflows/android.yml",
+      "sha256": "53debccbef54d8d65f8401f6432d9a03bda18cc650335f7771100e24147f6648",
+      "matches": true
+    },
+    {
+      "path": "android/README.md",
+      "sha256": "70748a710df691153ed7474f6935d84ebcdca5a7fe3d91b47ecef5f05c8b6bb9",
+      "matches": true
+    },
+    {
+      "path": "android/app/build.gradle",
+      "sha256": "70c72c6b6184dba35387e33dc1ca65e3483219b1aef06da66dccb1b2e52c38d0",
+      "matches": true
+    },
+    {
+      "path": "android/app/src/main/AndroidManifest.xml",
+      "sha256": "9271553eace257417680b2c8f2403a3d2a966f5e6c82aba93105a528958f619c",
+      "matches": true
+    },
+    {
+      "path": "android/app/src/main/java/com/kenigevents/projectshub/ApiClient.java",
+      "sha256": "2561cff67dafac87a02661c39ef7bb841369abc9d7b25c550904add2e9d44075",
+      "matches": true
+    },
+    {
+      "path": "android/app/src/main/java/com/kenigevents/projectshub/MainActivity.java",
+      "sha256": "cbae20a1d4e85d744d6ac53340f6d57747751cc3dc8e3d5ab81c229a3fe239e7",
+      "matches": true
+    },
+    {
+      "path": "android/app/src/main/java/com/kenigevents/projectshub/NativeSessionApi.java",
+      "sha256": "32d28a15e1901818fb532f19d6b130b7f5a255dc470e306ff7d09d28fb0893f1",
+      "matches": true
+    },
+    {
+      "path": "android/app/src/main/java/com/kenigevents/projectshub/NativeStartAttempt.java",
+      "sha256": "c8af47f3f17354a87f4e739d9d3e9afbdd7614c8756fa63d5e2944f03b6ce0f6",
+      "matches": true
+    },
+    {
+      "path": "android/app/src/main/java/com/kenigevents/projectshub/NativeVoiceBridge.java",
+      "sha256": "d69d466b22af4365932206cea5cefe320091bf3a4d6ccf8af6ba75a4de7ce5cc",
+      "matches": true
+    },
+    {
+      "path": "android/app/src/main/java/com/kenigevents/projectshub/NativeVoiceOwner.java",
+      "sha256": "b80975dd9f7d2350dd629dd8617e0b6ad2b13067fb1e0b5e590db588b74fa3e0",
+      "matches": true
+    },
+    {
+      "path": "android/app/src/main/java/com/kenigevents/projectshub/NativeVoiceService.java",
+      "sha256": "0bcd0bd2bfe2f745735dd9d2164ce5d141d295c962f5e57ef8a9309d02374c39",
+      "matches": true
+    },
+    {
+      "path": "android/app/src/main/java/com/kenigevents/projectshub/NativeVoiceStore.java",
+      "sha256": "dc07b1f936974153c0643fde69fe1e568a1a897fd5414e7422b3e2f2ed54ccf1",
+      "matches": true
+    },
+    {
+      "path": "android/app/src/test/java/com/kenigevents/projectshub/NativeSessionRequestTest.java",
+      "sha256": "e99af0bd91a5d7d9f13092f08ed78ce5a2f08e8f596e55dbdc21c1ab57b29923",
+      "matches": true
+    },
+    {
+      "path": "android/app/src/test/java/com/kenigevents/projectshub/NativeStartAttemptTest.java",
+      "sha256": "2adcdd8fa14d026876b34b885e809154832bdd553349ccd73f9f36396302a67a",
+      "matches": true
+    },
+    {
+      "path": "android/app/src/test/java/com/kenigevents/projectshub/NativeVoiceOwnerTest.java",
+      "sha256": "31657e731e26a127dc9aeb204796bc8bc286640346e22ffdc69058a15266a8ce",
+      "matches": true
+    },
+    {
+      "path": "android/app/src/test/java/com/kenigevents/projectshub/NativeVoiceStoreTest.java",
+      "sha256": "8c42dadf3dce6156e4881247b57ffb7cffa377d69b20d8267c37163fc275dc7c",
+      "matches": true
+    },
+    {
+      "path": "android/app/src/test/resources/native-live-start.json",
+      "sha256": "9d917a3c77759a375feb8398dfc857da4ef78aa0fd7745e0f5a5700f23be30fc",
+      "matches": true
+    },
+    {
+      "path": "android/live-interaction-candidate.json",
+      "sha256": "4ddc0e8b6689d5288be5e8c69817f06a57cc07412070af135f48960db11d4c36",
+      "matches": true
+    },
+    {
+      "path": "android/settings.gradle",
+      "sha256": "2fe11c180bc3580f5d1ffd750e89d3e85a64daf0eff5175d1b04b714d635c39c",
+      "matches": true
+    },
+    {
+      "path": "docs/decisions/native-voice-continuation-20261017.md",
+      "sha256": "ac3fdeaae79383b769e1a20964b7baf22407e8580966e0501b91e45501d26cde",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/backend-go-scope.md",
+      "sha256": "44e38fb14bd0f79c8982a394b9227cb1a14bb8e0311c1ae27e4fa289d05c7891",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/native-candidate/android-build-verification.json",
+      "sha256": "7acc4950a1cd8f0d2ac0702a4e1bab0d0b93bbc23b215e1d344c170b108df5f5",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/native-candidate/android-consumer-build.log",
+      "sha256": "cf8f1d00bc9570ab29f170db51cd7dcc630641e47f58d952cb40ac39357dcd74",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/native-candidate/android-consumer-source-manifest.json",
+      "sha256": "e5e6e816ddb5df6294a9f240d3addbd450a6c0d3ceb128875b179df67a6dd691",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/native-candidate/android-platform-source-manifest.json",
+      "sha256": "a5c25e17567bfeccfd65489d7e65a54c4fefd88c9af69237561ef5242e1c3eee",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/native-candidate/android-platform-tests.log",
+      "sha256": "14c3a43eab24e7baf61e82f54d5128995507d8add2e698ec98e18d5279083f49",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/native-candidate/android-rc-pairing-review.json",
+      "sha256": "69b71c1555fb7f7bba925bea8fe3a07b90e027db87583f67f862dbebef3d6672",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/native-candidate/browser-smoke-result.json",
+      "sha256": "2ff0db317e4d9ef7cb043836ccfb0db8158a37ef2e1aea58a45c2f63e8cd2414",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/native-candidate/chromium-installation.json",
+      "sha256": "e22c1d2ea39573f6bbacc1e1b08ded2ce3cc65520bd719738d6723b8e1815a08",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/native-candidate/consumer-backend-tests.log",
+      "sha256": "80a31ddfd8911ed01c49f3b457a611b27751f189461fdbdd3e51f86f24b40203",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/native-candidate/consumer-source-manifest.json",
+      "sha256": "70839ae3c2eddb47d57474bfce30397fd74f640b07db0f54fc58c0fd4ed26a33",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/native-candidate/consumer-web-build.log",
+      "sha256": "3dc6047ef718fd2de8aa030ef34c31f742db4c3f6db7f5c30666ee495c86eb68",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/native-candidate/consumer-web-tests.log",
+      "sha256": "91e8ffb351f7be0361e7e81cec6a0062b2eb23073ee05dc158f4218b2e99981f",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/native-candidate/pinned-runtime.json",
+      "sha256": "2a9e21e6b20db1a8b01400c04f83a69d89f58ed51ce36657584505ff2bd1ac09",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/native-candidate/shared-node-tests.log",
+      "sha256": "f10dac0d5a5ce5b4251ec249161e286c222851ccd2ba9e26d50c3ee6c45fd37d",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/native-candidate/shared-python-tests.log",
+      "sha256": "7b6401eb53a758199db5ad4290cde03adc0ffec2e2f3a1ae8276f271a91f30d2",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/native-candidate/shared-remote-verification.json",
+      "sha256": "6f9cdfa9c1a808a2fc611456d00d6c54ff1e00f88514d3921527dce3ddeefb26",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/native-candidate/shared-source-manifest.json",
+      "sha256": "6ad4cbc65baf061fea84266d54ffc29864350810e6de1a440a2ff2dca1dd8a85",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/native-candidate/theme-browser-20261017.log",
+      "sha256": "322736a1d129b0daa5486f6414a01e85ac6be2afc2ec445dc2aec4fab3a72252",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/native-candidate/theme-browser-readiness.patch",
+      "sha256": "cdac32c81b89fcb7450d6d27f222bfd2405deb72c74911e5f69d31b1bbb0932c",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/native-candidate/theme-browser-retry-20261017.log",
+      "sha256": "0cd39f9a7a296ac7fc78053b8fbb497ae15f6c16004cf3b165a5dc178b68da9b",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/native-candidate/verification.json",
+      "sha256": "b034d3537927f2e9edada797408ea69b72cf3d6e4a82c98844767ede96ec9190",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/provider-spike/HANDOFF.md",
+      "sha256": "8db667814fcfdebcc6f76bdf81736efb05eac927697abdf856f6c38da6321e78",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/provider-spike/patch-receipt.json",
+      "sha256": "f5a844ec94542c708490e0df16408d36a65fba30b7c987a37f68a1c51f569bda",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/provider-spike/provider-spike-fixes.patch",
+      "sha256": "baf921b544216a3a4919491ff3cdcca3e1b2513be86e2578945b4b2a04220d5c",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/provider-spike/provider_spike.host-original.py",
+      "sha256": "7c092a46d6378730d9f530142a977966067befe9ff4dd1b8c6b318c738978892",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/provider-spike/spike-all-20261017.redacted-evidence.txt",
+      "sha256": "f0a7c5277c26085fdadc41b7e063b2ae8cadfbc074e93d84037f6c4fbd0b0bcf",
+      "matches": true
+    },
+    {
+      "path": "docs/research/voice-audio-efficiency-20261017/provider-spike/spike-all-20261017.summary.json",
+      "sha256": "6f0e7a048981165387509b75652355b7fb796845065055c9dfd1056033c51218",
+      "matches": true
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "2f8ff3f25b62c24a25f05abbdb01de96d12e691874639de12f6e9ae8e5f99afa",
+      "matches": true
+    },
+    {
+      "path": "src/projects_hub/app.py",
+      "sha256": "7adeb7120857fb0c96d61c13687c3a1c2cad27a7305ce0d5a5d7ce816954f616",
+      "matches": true
+    },
+    {
+      "path": "src/projects_hub/encoded_voice_store.py",
+      "sha256": "58cbe5fd0239153a751704e26381165f6c0c5444abdfbb62158bdd94748b7e13",
+      "matches": true
+    },
+    {
+      "path": "src/projects_hub/live_adapter.py",
+      "sha256": "433f7ff330ba6f8823b9d0814aced2050b5928af824e4143a641f2611263780a",
+      "matches": true
+    },
+    {
+      "path": "src/projects_hub/live_admission.py",
+      "sha256": "26387641a5e7a3cea39826ee41994d1744d416eb8fa199ef0cc832d141407213",
+      "matches": true
+    },
+    {
+      "path": "src/projects_hub/live_runtime.py",
+      "sha256": "4a8b423cc9944c0da1a3cf9b3c4c4a3f639a8f4799181816e7ae7dad9d36a3f5",
+      "matches": true
+    },
+    {
+      "path": "src/projects_hub/live_transcription.py",
+      "sha256": "c392f6cf6f0e6b0d8d2675ce2df729397dc9498ca7f76ecfe624ca068b807690",
+      "matches": true
+    },
+    {
+      "path": "src/projects_hub/store.py",
+      "sha256": "21fe02fdebee0a5d7fbd43bc268e31e8cb2ff5644207aedd9b96c74c88689f6a",
+      "matches": true
+    },
+    {
+      "path": "tests/fixtures/native-v2-caption-opus.json",
+      "sha256": "a92b16c6993dee3963506e153938238dbee68655e6e92edd74e3b1e9433cd9fb",
+      "matches": true
+    },
+    {
+      "path": "tests/test_encoded_voice_store.py",
+      "sha256": "b7b36138afa1691809d328fa1d8ebf7e3d8334ab828477180824519867d82bc5",
+      "matches": true
+    },
+    {
+      "path": "tests/test_live_adapter.py",
+      "sha256": "a501aad5042b13929b9c2959e74958f58a4194972179b83298d326a1365934e4",
+      "matches": true
+    },
+    {
+      "path": "tests/test_live_framework_release.py",
+      "sha256": "aba6b5065090f5e4c0186ad60032d1c8efd550cbc0b1c9f45082275c8b86ee69",
+      "matches": true
+    },
+    {
+      "path": "tests/test_live_start_reconciliation.py",
+      "sha256": "00145d57789c1cc8e7055bfe83f71089c504ed4e0b235c32c4cc6c57a6a7c396",
+      "matches": true
+    },
+    {
+      "path": "tests/test_live_transcription.py",
+      "sha256": "074083ce89b27e88a89c5bdf24d6fe9ec10b42be674188306ee691c7b579a6f4",
+      "matches": true
+    },
+    {
+      "path": "tests/test_native_start_contract.py",
+      "sha256": "415023a3ff0daf5e4b00f5e7ecde1e1b7080f3cbb4a2298f251ac2fe5ebe4f6d",
+      "matches": true
+    },
+    {
+      "path": "tests/test_native_timeline.py",
+      "sha256": "05d74f396de0afe00a1d6fbd5332cf2929e6449c4136345a4f113984a259e73c",
+      "matches": true
+    },
+    {
+      "path": "tests/test_native_timeline_projection.py",
+      "sha256": "f5e10ab4060efda386ade57eefc318ee9843711412bf12142f85cab02009a994",
+      "matches": true
+    },
+    {
+      "path": "tests/test_native_v2_caption_boundary.py",
+      "sha256": "c94b276d737a02d2d7f9d20df650bc53c6e521f319033fde0a1d67f79e4e69db",
+      "matches": true
+    },
+    {
+      "path": "web/package-lock.json",
+      "sha256": "2575317933bd4a498f593ac874568961da8dfe0fc2cb283f6056b7eac85a1ed4",
+      "matches": true
+    },
+    {
+      "path": "web/package.json",
+      "sha256": "dbcd9d8ab7ee66482a967c19acc5a9cb59a92ad420bed2dde2e60b82e56877bf",
+      "matches": true
+    },
+    {
+      "path": "web/src/App.tsx",
+      "sha256": "758ceecd0cb46c8fc31781a0398088033aa6051e7b637f5e0c7ee35b20134d77",
+      "matches": true
+    },
+    {
+      "path": "web/src/api.ts",
+      "sha256": "9d0a269eb439baf62b8c10755e03835163f61ab9fcca944f65150a88e57b8535",
+      "matches": true
+    },
+    {
+      "path": "web/src/nativeTimelineLoader.d.ts",
+      "sha256": "86f5d16aa8f0e31ffc87199e01b077e2ca6525557d03d22d51604b73b143528d",
+      "matches": true
+    },
+    {
+      "path": "web/src/nativeTimelineLoader.js",
+      "sha256": "66d835588c3d731298694b4fbc553804c5c2ae3ff0b710a407ccdb0207b6b218",
+      "matches": true
+    },
+    {
+      "path": "web/src/nativeVoiceBridge.d.ts",
+      "sha256": "57fe1443afa0ff716a38daf5e680518c76b8e9d1a389eeca738ef304ae3e5a65",
+      "matches": true
+    },
+    {
+      "path": "web/src/nativeVoiceBridge.js",
+      "sha256": "da0035088ba5d1c95f0d8d9916f41dfb8ce8ae700727177df09b6b268e5cd368",
+      "matches": true
+    },
+    {
+      "path": "web/src/voiceUiContract.js",
+      "sha256": "5a44266027325ec3db702fa8a6b86b4a1309557d2bf92018aabd378ca1f881bc",
+      "matches": true
+    },
+    {
+      "path": "web/tests/app-voice-lifecycle.test.mjs",
+      "sha256": "20bd9fff17252d89b8f048b7ba1b0f2e74e4a512683c3b63fd31ce31550655f0",
+      "matches": true
+    },
+    {
+      "path": "web/tests/native-timeline-app.test.mjs",
+      "sha256": "b872aac57e3057d3383b622f8ee185f069070165342e8215a04cbfb0a3aeae29",
+      "matches": true
+    },
+    {
+      "path": "web/tests/native-timeline-loader.test.mjs",
+      "sha256": "ee21d9184507a1d40e3630289f2243d5d7d3d280380ca7a00ce96a929fde6d63",
+      "matches": true
+    },
+    {
+      "path": "web/tests/native-voice-bridge.test.mjs",
+      "sha256": "56965d1d8664d8e4907d2caf94587a913ad348e6eb334dde1bd2d4023e3121ad",
+      "matches": true
+    },
+    {
+      "path": "web/tests/theme-browser.mjs",
+      "sha256": "76d0c82a2fc5cfd56a305e29c372119656453fb45e3ca80edd67e4c550607427",
+      "matches": true
+    },
+    {
+      "path": "web/tests/voice-release-r5.test.mjs",
+      "sha256": "377cd2e6f44df3a3ca9deda6b2a76ecf5035a5c27e82955aaa14ac970134baa3",
+      "matches": true
+    },
+    {
+      "path": "web/tests/voice-tool-progress.test.mjs",
+      "sha256": "f0d1e27558abc6cc015d5d1aadd18fd27a811bb3de397d2653f95472e780d9ba",
+      "matches": true
+    }
+  ],
+  "approved_requirements_preserved": true,
+  "normalized_requirements_digest": "1483d58ad9e746354cee50c9c0aedd9dfea4cccde6665c9f570da330dfffea0e"
+}

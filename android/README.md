@@ -23,11 +23,13 @@ This feature branch is paired with the shared `0.4.0-rc.1` source candidate at
 same candidate. These feature-branch bindings do not change the production
 deployment or satisfy release qualification.
 
-Android CI checks out that immutable commit and sets
-`ORG_GRADLE_PROJECT_liveInteractionAndroidDir` for both the debug build and
-emulator smoke job. A local pairing build must use the same reviewed checkout
-through the property below. A released Android SDK artifact and the existing
-signing, device acceptance and merge gates remain required for release.
+Android CI and the existing signed release workflow check out that immutable
+commit and set `ORG_GRADLE_PROJECT_liveInteractionAndroidDir`. This supplies the
+SDK to debug, emulator smoke and signed release builds. A local pairing build
+uses the same reviewed checkout through the property below. The source candidate
+is therefore a concrete build dependency; stable SDK promotion, provider R1,
+physical device acceptance and release approval remain separate qualification
+steps.
 
 Requirements: JDK 17, Gradle 8.10.2, Android SDK platform 35 and the build tools
 selected by the unchanged Android Gradle Plugin 8.7.3. The minimum SDK remains 26.
@@ -48,8 +50,11 @@ gradle -p android \
 
 Run from the Projects Hub repository root. `android/app/build/outputs/apk/debug/`
 contains the debug APK. Record both source revisions with the build result; a
-path alone does not identify the paired SDK. A normal release build still needs
-a reviewed immutable SDK artifact and the existing signing/release gates.
+path alone does not identify the paired SDK. The signed workflow retains its
+existing signing key checks, APK verification, update manifest and publication
+steps. It is prepared to build this source candidate, but it is not an automatic
+RC publication channel: its existing publish step creates a normal release.
+Running it and approving that release remain separate delivery decisions.
 
 ## Durability and lifecycle boundary
 
@@ -98,5 +103,6 @@ must prove actual microphone/codec/AudioTrack operation, screen-off and backgrou
 capture, process death with recovery, permission denial, audio focus and device
 routes, repeated Start/Stop/reload, constrained bandwidth/jitter/loss/outages and
 Wi-Fi/mobile handover, and the original long-session/latency acceptance. A browser
-or JVM pass is not evidence for those physical device gates. Provider R1 and an
-immutable SDK release remain separate prerequisites for release qualification.
+or JVM pass is not evidence for those physical device gates. Provider R1, stable
+SDK promotion and release approval remain separate prerequisites for release
+qualification.
