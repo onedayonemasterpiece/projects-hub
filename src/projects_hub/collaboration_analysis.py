@@ -449,6 +449,32 @@ class CollaborationAnalysisService:
             )
         return created
 
+    def _result_delivery_links(self, row: Any) -> dict[str, Any]:
+        links = dict(source_note_url=None,source_notes=[],slack_result_url=None,slack_thread_url=None)
+        if self.question_events is None or row['model_alias'] != 'dot':
+            return links
+        if row['origin'] == 'voice' and getattr(self.question_events,'voice_analysis',None):
+            try:
+                links['source_notes'] = self.question_events.voice_analysis.source_note_links(row)
+                if links['source_notes']:
+                    links['source_note_url'] = links['source_notes'][0]['url']
+            except StoreError:
+                # A previously authorized source connection can be revoked.
+                # Preserve the readable PH result, never invent a live source URL.
+                pass
+        receipt = self.store.db.execute("""SELECT d.slack_message_id FROM mcp_response_destinations d
+            JOIN mcp_test_requests r ON r.id=d.request_id
+            WHERE r.analysis_id=? AND d.slack_state='confirmed' ORDER BY d.updated_ms DESC LIMIT 1""",
+            (row['id'],)).fetchone()
+        channel, thread = row['slack_channel_id'],row['slack_thread_ts']
+        if (receipt and re.fullmatch(r'[CG][A-Z0-9]{8,}',str(channel))
+                and re.fullmatch(r'[0-9]{10}\.[0-9]{6}',str(thread))
+                and re.fullmatch(r'[0-9]{10}\.[0-9]{6}',str(receipt['slack_message_id']))):
+            base='https://app.slack.com/archives/'+channel+'/p'
+            links['slack_thread_url']=base+thread.replace('.','')
+            links['slack_result_url']=base+receipt['slack_message_id'].replace('.','')+'?thread_ts='+thread+'&cid='+channel
+        return links
+
     def _analysis_public(self, actor_id: str, workspace_id: str, row: Any) -> dict[str, Any]:
         self.store.project_access(actor_id, workspace_id, row["project_id"])
         with self.store._lock:
@@ -507,6 +533,7 @@ class CollaborationAnalysisService:
             "repair_attempt_count": int(row["repair_attempt_count"] or 0),
             "repair_model": row["repair_model_alias"],
             "result_markdown": row["result_markdown"],
+            "delivery_links": self._result_delivery_links(row),
             "result": json.loads(row["result_json"]) if row["result_json"] else None,
             "error_code": row["error_code"],
             "questions": [self._question_public(item) for item in questions],
