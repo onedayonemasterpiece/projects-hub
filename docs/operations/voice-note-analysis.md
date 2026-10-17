@@ -261,3 +261,33 @@ owner workflow; project creation is not provided by this readiness response.
 Do not use `GET /api/github/status` as a strictly read-only audit: its existing
 implementation can auto-bind exact repository/project name matches. Readiness
 does not invoke that path.
+
+## Approved one-time private binding provisioning
+
+`scripts/provision_voice_analysis_binding.py` is a scoped operator helper, not an
+API or grant manager. Pass the separately approved owner, existing project,
+service client, and source repository identity through `--owner-id`,
+`--project-id`, `--client-id`, `--source-repository-id` and `--source-repository`.
+These identifiers are strictly validated and not printed or embedded in source.
+The product defaults remain `inbox/voice` source prefix and `main` branch.
+The prefix matches the actual intake renderer's `paths_for` source path.
+
+Pass `--ph-config`, `--intake-config`, and the existing `--service-env` absolute
+paths. Their immediate parent directories must already be owned by the executing
+user with mode 0700; all parent components must be nonsymlinks. The existing
+service environment must be a nonsymlink, single-link, owner-owned 0600 file.
+Default execution only checks preconditions. Explicit `--apply` creates two new
+0600 JSON files with one shared internally generated token and appends only the
+PH config-file pointer, preserving all earlier environment bytes. Tokens are
+never printed or accepted through command-line arguments.
+
+Existing config files or either existing voice config setting cause refusal,
+not replacement or rotation. A partial apply preserves generated credentials
+and requires reconciliation; do not delete/retry blindly. No database access,
+repository rebind, participant change, service restart or intake mount occurs.
+
+Activation remains staged: restart PH through its approved deployment path,
+then read the configured source repository audience through the existing scoped
+request readiness. Only after that succeeds should the separately approved
+intake configuration mount be enabled. `enabled=true` in the unmounted intake
+file does not activate intake processing by itself.
