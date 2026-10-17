@@ -11,6 +11,21 @@ from projects_hub.live_resources import ConversationScope
 from projects_hub.store import DurableStore, StoreError
 
 
+def test_long_external_functions_preserve_non_blocking_provider_contract():
+    from live_interaction.provider import setup_config
+    from projects_hub.live_adapter import _functions, _LONG_RUNNING_FUNCTIONS
+
+    declarations = _functions(expert_reviews=True, regional_knowledge=True, owner_development=True)
+    indexed = {item["name"]: item for item in declarations}
+    assert _LONG_RUNNING_FUNCTIONS <= indexed.keys()
+    setup = setup_config("gemini-3.8-live", {}, configuration={
+        "functions": [indexed["github_repository_read"], indexed["projects_list_accessible"]],
+    })
+    forwarded = {item["name"]: item for tool in setup["setup"]["tools"] for item in tool.get("functionDeclarations", [])}
+    assert forwarded["github_repository_read"]["behavior"] == "NON_BLOCKING"
+    assert "behavior" not in forwarded["projects_list_accessible"]
+
+
 @pytest.mark.asyncio
 async def test_live_adapter_persists_audio_transcript_and_verified_memory(tmp_path: Path):
     store = DurableStore(tmp_path)
@@ -880,5 +895,69 @@ async def test_simple_greeting_stays_in_core_without_expensive_live_transition(t
         assert adapter.resolve_capability(session, call) is None
         same = await adapter.execute_tool(session, call)
         assert same["already_active"] is True
+    finally:
+        store.close()
+
+
+def _checkpoint_fixture(tmp_path: Path):
+    store = DurableStore(tmp_path)
+    boot = store.ensure_dev_workspace("Checkpoint")
+    actor_id = boot["actor"]["id"]
+    workspace_id = boot["workspace"]["id"]
+    conversation = store.create_conversation(actor_id, workspace_id, boot["projects"][0]["id"])
+    binding = ConversationScope(workspace_id, actor_id, conversation["id"]).resource_binding()
+    adapter = ProjectsHubLiveAdapter(store)
+
+    def start(**extra):
+        return adapter.initialize(
+            resource_id=binding,
+            actor={"subject": actor_id, "tenant_id": workspace_id},
+            model="gemini-3.8-live",
+            conversation_id=conversation["id"],
+            **extra,
+        )
+
+    return store, adapter, start, actor_id, conversation["id"]
+
+
+def test_abandoned_session_checkpoint_resumes_same_provider_conversation(tmp_path: Path):
+    store, adapter, start, actor_id, conversation_id = _checkpoint_fixture(tmp_path)
+    try:
+        first = start()
+        assert "resume_handle" not in first
+        session = SimpleNamespace(id="live_first", model="gemini-3.8-live", state=first["state"])
+        adapter.on_checkpoint(session, "provider-handle-1")
+        # Backend restart: no explicit Stop happened, so the next start resumes.
+        second = start()
+        assert second["resume_handle"] == "provider-handle-1"
+        assert second["response"]["resumed_from_checkpoint"] is True
+        assert "provider-handle-1" not in json.dumps(second["response"])
+        assert "provider-handle-1" not in json.dumps(second["context"])
+    finally:
+        store.close()
+
+
+def test_explicit_stop_and_buffered_recovery_never_resume_checkpoint(tmp_path: Path):
+    store, adapter, start, actor_id, conversation_id = _checkpoint_fixture(tmp_path)
+    try:
+        first = start()
+        session = SimpleNamespace(id="live_first", model="gemini-3.8-live", state=first["state"])
+        adapter.on_checkpoint(session, "provider-handle-1")
+        buffered = start(audio_mode="buffered", recovery_only=True)
+        assert "resume_handle" not in buffered
+        adapter.on_stopped(session)
+        assert "resume_handle" not in start()
+    finally:
+        store.close()
+
+
+def test_expired_checkpoint_is_not_offered(tmp_path: Path, monkeypatch):
+    store, adapter, start, actor_id, conversation_id = _checkpoint_fixture(tmp_path)
+    try:
+        first = start()
+        adapter.on_checkpoint(SimpleNamespace(id="live_first", model="gemini-3.8-live", state=first["state"]), "h")
+        import projects_hub.live_adapter as live_adapter
+        monkeypatch.setattr(live_adapter, "CHECKPOINT_MAX_AGE_MS", -1)
+        assert "resume_handle" not in start()
     finally:
         store.close()

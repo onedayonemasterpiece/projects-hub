@@ -17,6 +17,7 @@ import {
   getOrCreatePersonalConversation,
   getConversation,
   getPersonalTimeline,
+  getPersonalTimelineMessage,
   upsertPersonalTimelineMessage,
   getGitHubStatus,
   getMemories,
@@ -51,7 +52,9 @@ import CollaborationQuestions from "./CollaborationQuestions";
 import AnalysisResult from "./AnalysisResult";
 import InlineBoard, { type BoardUiCommand } from "./InlineBoard";
 import { recoverServerVoiceSource } from "./serverRecovery";
-import { mergeTranscript, resolveTerminalVoiceState, selectProvisionalCaption, speechStartsNewUserBubble, voiceStartupFailureNotice, voiceStartupFailureState } from "./voiceUiContract.js";
+import { createNativeVoiceAdapter, type NativeVoiceBridge, type NativeVoiceState } from "./nativeVoiceBridge.js";
+import { createNativeTimelineLoader, type NativeTimelineHint } from "./nativeTimelineLoader.js";
+import { mergeTranscript, nativeVoiceFailure, reduceVoiceToolProgress, resolveTerminalVoiceState, selectProvisionalCaption, speechStartsNewUserBubble, voiceStartupFailureNotice, voiceStartupFailureState } from "./voiceUiContract.js";
 import {
   acknowledgeDeliveredSource,
   createLocalPersistSink,
@@ -63,11 +66,16 @@ import {
 } from "./offlineSources";
 
 type WaitState = null | { elapsed_ms: number; stage: string; can_restart: boolean };
+type NativeTimelineContext = {
+  actorId: string; workspaceId: string; conversationId: string; sessionId: string;
+  owner: ReturnType<typeof createNativeVoiceAdapter>; placeholderId: string | null;
+};
 type CollaborationCard = { view: "activity" | "questions" | "note"; noteId?: string };
 type CollaborationUiCommand = { kind: "collaboration"; action: "show" | "close"; view?: CollaborationCard["view"]; note_id?: string };
 type ChatRole = "user" | "assistant";
 type ChatMessage = {
   id: string;
+  conversationId?: string;
   turnId: string;
   role: ChatRole;
   text: string;
@@ -124,6 +132,7 @@ function timelineFingerprint(message: ChatMessage) {
 function timelineMessageFromServer(message: PersonalTimelineMessage): ChatMessage {
   return {
     id: message.id,
+    conversationId: message.conversation_id,
     turnId: message.turn_id,
     role: message.role,
     text: message.text,
@@ -170,6 +179,10 @@ const stateLabel: Record<string, string> = {
   provider_failure: "Ошибка Live-провайдера",
   connection_failure: "Соединение прервано",
   capture_error: "Ошибка записи",
+  delayed: "Речь передаётся с задержкой",
+  recording_only: "Записываю на устройстве",
+  stopping: "Завершаю запись…",
+  native_unsupported: "Голосовой модуль недоступен",
 };
 
 const inactiveVoiceStates = new Set([
@@ -181,6 +194,7 @@ const inactiveVoiceStates = new Set([
   "provider_failure",
   "connection_failure",
   "capture_error",
+  "native_unsupported",
 ]);
 
 function MicIcon() {
@@ -220,15 +234,23 @@ function friendlyStartError(error: unknown) {
 
 export default function App() {
   const [identityGeneration, setIdentityGeneration] = useState(0);
-  const resetIdentity = useCallback(() => setIdentityGeneration(value => value + 1), []);
+  const [identityNotice, setIdentityNotice] = useState<string | null>(null);
+  const resetIdentity = useCallback((message: string | null = null) => {
+    setIdentityNotice(message);
+    setIdentityGeneration(value => value + 1);
+  }, []);
   // Disposing this subtree discards every private object and pending React update.
-  return <ActorApp key={identityGeneration} resetIdentity={resetIdentity} />;
+  return <ActorApp key={identityGeneration} resetIdentity={resetIdentity} initialNotice={identityNotice} />;
 }
 
-function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
+function ActorApp({ resetIdentity, initialNotice }: { resetIdentity: (message?: string | null) => void; initialNotice: string | null }) {
   const activeIdentity = useRef(true);
   const identityAbort = useRef(new AbortController());
   const isAndroidApp = navigator.userAgent.includes("ProjectsHubAndroid/");
+  const nativeBridge = useMemo(() => (window as Window & { projectsHubVoice?: NativeVoiceBridge }).projectsHubVoice, []);
+  const nativeSurface = isAndroidApp || Boolean(nativeBridge);
+  const nativeVoiceRef = useRef<ReturnType<typeof createNativeVoiceAdapter> | null>(null);
+  const nativeStateRef = useRef<NativeVoiceState | null>(null);
   const nativeVersion = useMemo(() => {
     const queryVersion = new URLSearchParams(window.location.search).get("native_version");
     if (queryVersion) return queryVersion;
@@ -259,6 +281,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [voiceState, setVoiceState] = useState("off");
   const [voiceClientReady, setVoiceClientReady] = useState(false);
+  const [nativeSessionId, setNativeSessionId] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [timelineLoadedConversationId, setTimelineLoadedConversationId] = useState<string | null>(null);
   const [collaborationRefresh, setCollaborationRefresh] = useState(0);
@@ -271,9 +294,10 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
   const [speechPending, setSpeechPending] = useState(false);
   const [playbackProblem, setPlaybackProblem] = useState<string | null>(null);
   const [recoverableSourceId, setRecoverableSourceId] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(initialNotice);
   const [microphoneSettingsAvailable, setMicrophoneSettingsAvailable] = useState(false);
   const [wait, setWait] = useState<WaitState>(null);
+  const [toolProgress, setToolProgress] = useState<null | { id: string; elapsed_ms: number }>(null);
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [eventCards, setEventCards] = useState<EventCard[]>([]);
   const [backlogTasks, setBacklogTasks] = useState<TaskItem[]>([]);
@@ -298,18 +322,21 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
     onStatus: (message: string) => setNotice(message),
   }));
   const clientRef = useRef<LiveClient | null>(null);
-  const clearPrivateIdentity = useCallback((reason: string) => {
+  const clearPrivateIdentity = useCallback((reason: string, message: string | null = null) => {
     if (!activeIdentity.current) return;
     activeIdentity.current = false;
     identityAbort.current.abort();
+    void nativeVoiceRef.current?.stop({ reason: reason === "actor_change" ? "account_changed" : "logout" }).catch(() => {});
     clientRef.current?.stop({ reason });
+    setToolProgress(null);
+    setWait(null);
     setAndroidVoiceAudioFocus(false);
     void themeRef.current.reset();
     setCompletedDevelopment([]);
     setCompletedDevelopmentActor(null);
     setBoot(null); setConversation(null); conversationRef.current = null;
     setCollaborationCard(null);
-    resetIdentity();
+    resetIdentity(message);
   }, [resetIdentity, setAndroidVoiceAudioFocus]);
   useEffect(() => {
     const requestGeneration = beginIdentityRequests();
@@ -415,6 +442,11 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
   const timelinePersistedRef = useRef<Map<string, string>>(new Map());
   const timelineInFlightRef = useRef<Set<string>>(new Set());
   const userTranscriptIndex = useRef(-1);
+  const nativeUserPlaceholderId = useRef<string | null>(null);
+  const nativeTimelineLoader = useRef<{
+    request: (hint: NativeTimelineHint, context: NativeTimelineContext) => boolean;
+    close: () => void;
+  } | null>(null);
   const assistantTranscriptIndex = useRef(-1);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const chatFollowRef = useRef(true);
@@ -707,11 +739,14 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
   const reserveUserVoiceBubble = useCallback(() => {
     userTurnAwaitingFinalRef.current = true;
     const turnId = opaqueTimelineId("turn");
+    const placeholderId = opaqueTimelineId("msg");
+    nativeUserPlaceholderId.current = placeholderId;
     currentTurnIdRef.current = turnId;
     setChatMessages(previous => {
       const messages = [...previous];
       messages.push({
-        id: opaqueTimelineId("msg"),
+        id: placeholderId,
+        conversationId: conversationRef.current?.id,
         turnId,
         role: "user",
         text: VOICE_TURN_PLACEHOLDER,
@@ -768,8 +803,96 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
     });
   }, [reconcilePreferences]);
 
+  const applyNativeTimeline = useCallback((event: LiveEvent, placeholderId?: string | null): boolean => {
+    const raw = event.timeline_message;
+    if (!raw || typeof raw !== "object") return false;
+    const item = raw as PersonalTimelineMessage;
+    if (item.conversation_id !== conversationRef.current?.id
+        || typeof item.id !== "string" || typeof item.turn_id !== "string"
+        || !["user", "assistant"].includes(item.role) || typeof item.text !== "string"
+        || !Number.isSafeInteger(item.revision) || !Array.isArray(item.blocks)) return false;
+    const canonical = timelineMessageFromServer(item);
+    const preferred = item.role === "user" ? userTranscriptIndex : assistantTranscriptIndex;
+    setChatMessages(previous => {
+      const messages = [...previous];
+      let index = messages.findIndex(message => message.id === item.id);
+      if (index >= 0 && messages[index].revision > item.revision) return previous;
+      const pendingIndex = placeholderId === undefined ? preferred.current
+        : messages.findIndex(message => message.id === placeholderId);
+      if (index < 0 && item.role === "user" && pendingIndex >= 0
+          && messages[pendingIndex]?.awaitingTranscript
+          && messages[pendingIndex]?.conversationId === item.conversation_id) {
+        index = pendingIndex;
+      }
+      if (index < 0) {
+        index = messages.length;
+        messages.push(canonical);
+      } else messages[index] = canonical;
+      timelinePersistedRef.current.set(item.id, timelineFingerprint(canonical));
+      // An HTTP completion may belong to a previous turn. It may update its
+      // own row, but cannot move the current capture/transcript cursor.
+      if (placeholderId === undefined || (placeholderId && nativeUserPlaceholderId.current === placeholderId)) {
+        preferred.current = index;
+        if (item.role === "user") nativeUserPlaceholderId.current = item.id;
+      }
+      return messages;
+    });
+    if (placeholderId === undefined) currentTurnIdRef.current = item.turn_id;
+    return true;
+  }, []);
+
+  useEffect(() => {
+    if (!nativeSurface || !boot || !nativeSessionId) return;
+    const actorId = boot.actor.id;
+    const workspaceId = boot.workspace.id;
+    const loader = createNativeTimelineLoader<NativeTimelineContext, PersonalTimelineMessage>({
+      load: (hint, signal) => getPersonalTimelineMessage(hint.conversation_id, workspaceId, hint.id, signal),
+      isCurrent: context => activeIdentity.current && !userStoppedVoiceRef.current
+        && context.actorId === actorId && context.workspaceId === workspaceId
+        && conversationRef.current?.id === context.conversationId
+        && nativeVoiceRef.current === context.owner
+        && context.owner.state?.session_id === context.sessionId
+        && context.owner.state?.conversation_id === context.conversationId,
+      apply: (message, context) => {
+        applyNativeTimeline({ type: message.role === "user" ? "input_transcript" : "output_transcript",
+          timeline_message: message }, context.placeholderId);
+      },
+      onError: () => setNotice("Текст сохранён на сервере. Не удалось полностью загрузить сообщение; откройте разговор снова после восстановления связи."),
+    });
+    nativeTimelineLoader.current = loader;
+    return () => {
+      loader.close();
+      if (nativeTimelineLoader.current === loader) nativeTimelineLoader.current = null;
+    };
+  }, [nativeSurface, boot?.actor.id, boot?.workspace.id, nativeSessionId, applyNativeTimeline]);
+
   const applyLiveEvent = useCallback((event: LiveEvent) => {
     if (!activeIdentity.current) return;
+    setToolProgress(current => reduceVoiceToolProgress(current, event));
+    if (event.type === "tool_progress" && event.status === "pending") setSpeechPending(false);
+    const timelineRef = event.timeline_ref;
+    if (nativeSurface && (event.type === "input_transcript" || event.type === "output_transcript")
+        && timelineRef && typeof timelineRef === "object") {
+      const hint = timelineRef as NativeTimelineHint;
+      const owner = nativeVoiceRef.current;
+      const state = owner?.state;
+      const currentConversation = conversationRef.current;
+      if (owner && state?.session_id && currentConversation
+          && hint.conversation_id === currentConversation.id) {
+        if (event.type === "input_transcript") {
+          setInputTranscriptSeen(true);
+          setInterimInputTranscript("");
+          userTurnAwaitingFinalRef.current = false;
+          turnHasInput.current = true;
+        }
+        nativeTimelineLoader.current?.request(hint, {
+          actorId: currentConversation.actor_id, workspaceId: currentConversation.workspace_id,
+          conversationId: hint.conversation_id, sessionId: state.session_id, owner,
+          placeholderId: event.type === "input_transcript" ? nativeUserPlaceholderId.current : null,
+        });
+      }
+      return;
+    }
     if (event.type === "caption_interim_transcript" && typeof event.text === "string") {
       setInputTranscriptSeen(true);
       setInterimInputTranscript("");
@@ -800,9 +923,13 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
       setInterimInputTranscript("");
       userTurnAwaitingFinalRef.current = false;
       if (!turnHasInput.current) turnHasInput.current = true;
-      mergeChatMessage("user", event.text, userTranscriptIndex);
+      if (!nativeSurface || !applyNativeTimeline(event)) {
+        mergeChatMessage("user", event.text, userTranscriptIndex);
+      }
     } else if (event.type === "output_transcript" && typeof event.text === "string") {
-      mergeChatMessage("assistant", event.text, assistantTranscriptIndex);
+      if (!nativeSurface || !applyNativeTimeline(event)) {
+        mergeChatMessage("assistant", event.text, assistantTranscriptIndex);
+      }
     } else if (event.type === "turn_complete" || event.type === "interrupted") {
       // Provider input transcription can arrive after the turn boundary.
       // Preserve the provisional text and current user bubble until either that
@@ -884,7 +1011,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
     } else if (event.type === "capability_unavailable" && event.code !== "NOT_CONFIGURED") {
       setNotice("Одна из дополнительных возможностей сейчас недоступна.");
     }
-  }, [applyCaptionToUserBubble, loadBacklog, loadEventCards, loadMemories, mergeChatMessage, updateWidgetBlocks]);
+  }, [applyCaptionToUserBubble, applyNativeTimeline, nativeSurface, loadBacklog, loadEventCards, loadMemories, mergeChatMessage, updateWidgetBlocks]);
 
   useEffect(() => {
     if (!boot || !conversation) {
@@ -909,7 +1036,18 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
         assistantTranscriptIndex.current = -1;
         currentTurnIdRef.current = null;
         timelinePersistedRef.current = persisted;
-        setChatMessages(restored);
+        setChatMessages(previous => {
+          if (!nativeSurface) return restored;
+          // A native event can arrive while this HTTP history read is in flight.
+          // Keep only this conversation and the newest revision of each message.
+          const merged = new Map(restored.map(message => [message.id, message]));
+          for (const message of previous) {
+            if (message.conversationId !== conversationId) continue;
+            const saved = merged.get(message.id);
+            if (!saved || message.revision > saved.revision) merged.set(message.id, message);
+          }
+          return [...merged.values()];
+        });
         setTimelineLoadedConversationId(conversationId);
       })
       .catch(error => {
@@ -920,7 +1058,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
     return () => {
       cancelled = true;
     };
-  }, [boot?.workspace.id, conversation?.id]);
+  }, [boot?.workspace.id, conversation?.id, nativeSurface]);
 
   useEffect(() => {
     if (
@@ -932,6 +1070,9 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
 
     const sync = async () => {
       for (const message of chatMessages) {
+        // Native canonical text is already committed before its WSS event.
+        // Only presentation widgets retain the existing browser write path.
+        if (nativeSurface && message.id !== widgetMessageId(conversation.id)) continue;
         if (
           !message.text.trim()
           && message.blocks.length === 0
@@ -989,6 +1130,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
     conversation?.id,
     timelineLoadedConversationId,
     chatMessages,
+    nativeSurface,
   ]);
 
   useEffect(() => {
@@ -1052,13 +1194,13 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
   }, [boot, loadEventCards]);
 
   useEffect(() => {
-    if (!boot) return;
+    if (!boot || nativeSurface) return;
     void recoverInterruptedVoiceSources(boot.workspace.id)
       .then(refreshPendingSources)
       .catch(error => {
         setNotice(error instanceof Error ? error.message : "Не удалось восстановить локальные записи.");
       });
-  }, [boot, refreshPendingSources]);
+  }, [boot, nativeSurface, refreshPendingSources]);
 
   useEffect(() => {
     if (!boot || boot.role !== "owner") return;
@@ -1077,12 +1219,141 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
       });
   }, [boot, refreshGitHub]);
 
+  const applyVoiceTiming = useCallback((event: string) => {
+    if (!activeIdentity.current) return;
+    if (event === "speech_end") {
+      setSpeechActive(false);
+      setSpeechPending(true);
+      return;
+    }
+    if (event === "first_output_audio") setSpeechPending(false);
+    if (event === "audio_scheduled") setPlaybackProblem(null);
+    if (!speechStartsNewUserBubble(event)) return;
+    setToolProgress(current => reduceVoiceToolProgress(current, { type: event }));
+    setSpeechActive(true);
+    setSpeechPending(false);
+    if (userTurnAwaitingFinalRef.current) settleCurrentVoiceBubble();
+    userTurnBoundaryPendingRef.current = false;
+    userTranscriptIndex.current = -1;
+    assistantTranscriptIndex.current = -1;
+    turnHasInput.current = false;
+    setInterimInputTranscript("");
+    setInputTranscriptSeen(false);
+    reserveUserVoiceBubble();
+  }, [reserveUserVoiceBubble, settleCurrentVoiceBubble]);
+
   useEffect(() => {
     if (!boot) {
       setVoiceClientReady(false);
       return;
     }
     setVoiceClientReady(false);
+    if (nativeSurface) {
+      let attached = true;
+      if (!nativeBridge) {
+        setVoiceState("native_unsupported");
+        setNotice("Для голосовой связи требуется обновление приложения.");
+        return;
+      }
+      const native = createNativeVoiceAdapter({
+        bridge: nativeBridge,
+        onState: state => {
+          if (!attached || !activeIdentity.current) return;
+          nativeStateRef.current = state;
+          setNativeSessionId(["idle", "error", "unsupported"].includes(state.status) ? null : state.session_id);
+          currentSourceIdRef.current = state.source_id;
+          const failure = nativeVoiceFailure(state.code ?? (state.status === "unsupported" ? "NATIVE_VOICE_UNSUPPORTED" : null));
+          const mapped = state.status === "live" ? (state.playing ? "answering" : "listening")
+            : state.status === "idle" ? "off"
+              : state.status === "error" ? failure.state
+                : state.status === "unsupported" ? "native_unsupported" : state.status;
+          setVoiceState(mapped);
+          if (state.status === "idle" || state.status === "error" || state.status === "unsupported") {
+            setSpeechActive(false);
+            setSpeechPending(false);
+            setWait(null);
+            setToolProgress(null);
+          }
+          if (failure.reauthenticate) {
+            clearPrivateIdentity("authentication_expired", failure.notice);
+            return;
+          }
+          if (state.status === "live") {
+            setNotice(null);
+            setMicrophoneSettingsAvailable(false);
+          } else if (state.status === "delayed") {
+            setNotice("Связь замедлилась. Речь сохраняется и передаётся с задержкой.");
+          } else if (state.status === "recording_only") {
+            setNotice("Ответы пока недоступны. Запись сохраняется на устройстве; уже записанные фрагменты будут доставлены после восстановления связи.");
+          } else if (state.status === "error" || state.status === "unsupported") {
+            setNotice(failure.notice);
+            setMicrophoneSettingsAvailable(isAndroidApp && failure.microphoneSettings);
+          }
+          if (state.conversation_id && conversationRef.current?.id !== state.conversation_id) {
+            const nativeConversationId = state.conversation_id;
+            void getConversation(nativeConversationId).then(restored => {
+              if (!attached || !activeIdentity.current || native.state?.conversation_id !== nativeConversationId) return;
+              if (restored.actor_id !== boot.actor.id || restored.workspace_id !== boot.workspace.id) {
+                clearPrivateIdentity("actor_change");
+                return;
+              }
+              conversationRef.current = restored;
+              setConversation(restored);
+              localStorage.setItem("projects-hub-conversation", restored.id);
+            }).catch(() => {});
+          }
+        },
+        onEvent: event => {
+          if (!attached || !activeIdentity.current || nativeVoiceRef.current !== native) return;
+          const state = native.state;
+          if (!state || (event.conversation_id && event.conversation_id !== state.conversation_id)
+              || (event.session_id && event.session_id !== state.session_id)) return;
+          if (event.type === "native_timing" && typeof event.stage === "string") {
+            applyVoiceTiming(event.stage);
+            return;
+          }
+          if (["speech_start", "speech_end", "first_output_audio", "audio_scheduled"].includes(event.type)) {
+            applyVoiceTiming(event.type);
+            return;
+          }
+          if (conversationRef.current?.id !== state.conversation_id) return;
+          const current = () => attached && activeIdentity.current && nativeVoiceRef.current === native
+            && native.state?.session_id === event.session_id && native.state?.conversation_id === event.conversation_id;
+          applyPreferenceEvent(event as LiveEvent, current);
+          applyLiveEvent(event as LiveEvent);
+        },
+        onError: error => {
+          if (!attached || !activeIdentity.current) return;
+          const failure = nativeVoiceFailure(error);
+          if (failure.reauthenticate) {
+            clearPrivateIdentity("authentication_expired", failure.notice);
+          } else {
+            // A UI/bridge failure does not override the native capture state or disable Stop.
+            setNotice(failure.notice);
+            setMicrophoneSettingsAvailable(isAndroidApp && failure.microphoneSettings);
+          }
+        },
+      });
+      nativeVoiceRef.current = native;
+      void native.attach().then(result => {
+        if (!attached || !activeIdentity.current) return;
+        setVoiceClientReady(result.supported || result.state.capturing || result.state.playing);
+        if (!result.supported && !result.state.capturing && !result.state.playing) {
+          setVoiceState("native_unsupported");
+          setNotice("На этом устройстве не удалось включить сжатую голосовую связь. Переписка остаётся доступной.");
+        }
+      }).catch(() => {
+        if (!attached || !activeIdentity.current) return;
+        setVoiceState("native_unsupported");
+        setNotice("Не удалось связаться с голосовым модулем. Откройте приложение снова.");
+      });
+      return () => {
+        attached = false;
+        native.detach();
+        if (nativeVoiceRef.current === native) nativeVoiceRef.current = null;
+        setVoiceClientReady(false);
+      };
+    }
     const client = createLiveClient({
       transport: "wss",
       voiceControl: null,
@@ -1101,31 +1372,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
       speechStartMs: 180,
       longSpeechEndSilenceMs: 2500,
       longSpeechAfterMs: 2500,
-      onTiming: event => {
-        if (!activeIdentity.current) return;
-        if (event === "speech_end") {
-          setSpeechActive(false);
-          setSpeechPending(true);
-          return;
-        }
-        if (event === "first_output_audio") setSpeechPending(false);
-        if (event === "audio_scheduled") setPlaybackProblem(null);
-        if (!speechStartsNewUserBubble(event)) return;
-        setSpeechActive(true);
-        setSpeechPending(false);
-        // A real microphone/VAD speech start is the user-turn boundary. If a
-        // prior turn never received Mira's canonical transcript, keep whatever
-        // the user already saw and settle it instead of silently reusing or
-        // deleting that bubble.
-        if (userTurnAwaitingFinalRef.current) settleCurrentVoiceBubble();
-        userTurnBoundaryPendingRef.current = false;
-        userTranscriptIndex.current = -1;
-        assistantTranscriptIndex.current = -1;
-        turnHasInput.current = false;
-        setInterimInputTranscript("");
-        setInputTranscriptSeen(false);
-        reserveUserVoiceBubble();
-      },
+      onTiming: applyVoiceTiming,
       onState: (state, detail) => {
         if (!activeIdentity.current) return;
         const terminalReason = resolveTerminalVoiceState(state, detail);
@@ -1136,6 +1383,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
         if (terminalReason || inactiveVoiceStates.has(state) || state === "reconnecting" || state === "budget_wait") {
           setSpeechActive(false);
           setSpeechPending(false);
+          setToolProgress(null);
         }
         if (state === "starting") setPlaybackProblem(null);
         if (state === "listening" || state === "reconnecting") reconcilePreferences();
@@ -1232,7 +1480,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
       if (clientRef.current === client) clientRef.current = null;
       setVoiceClientReady(false);
     };
-  }, [applyLiveEvent, applyPreferenceEvent, reconcilePreferences, clearPrivateIdentity, boot, reserveUserVoiceBubble, setAndroidVoiceAudioFocus, settleCurrentVoiceBubble]);
+  }, [applyLiveEvent, applyPreferenceEvent, applyVoiceTiming, reconcilePreferences, clearPrivateIdentity, boot, nativeSurface, nativeBridge, setAndroidVoiceAudioFocus, settleCurrentVoiceBubble]);
 
   async function signIn() {
     setBusy(true);
@@ -1385,6 +1633,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
   }
 
   async function recoverLiveConversation() {
+    if (nativeSurface) return;
     const client = clientRef.current;
     const current = conversationRef.current;
     if (
@@ -1449,6 +1698,45 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
   }
 
   async function toggleVoice() {
+    const native = nativeVoiceRef.current;
+    if (nativeSurface) {
+      if (!native || !boot) return;
+      const state = native.state;
+      if (state?.capturing || state?.playing || (state && ["starting", "live", "delayed", "recording_only", "stopping"].includes(state.status))) {
+        userStoppedVoiceRef.current = true;
+        setNativeSessionId(null);
+        // Posting Stop precedes every network/flush await; the service releases
+        // microphone and playback itself. A pending Start cannot re-enable it.
+        void native.stop({ reason: "user" }).catch(() => {
+          setNotice("Не получено подтверждение остановки. Используйте «Стоп» в уведомлении голосовой связи.");
+        });
+        setWait(null);
+        setToolProgress(null);
+        return;
+      }
+      setBusy(true);
+      setNotice(null);
+      userStoppedVoiceRef.current = false;
+      try {
+        const current = await ensureConversation();
+        if (!activeIdentity.current || nativeVoiceRef.current !== native || userStoppedVoiceRef.current) return;
+        await native.start({ conversationId: current.id });
+      } catch (error) {
+        if (!activeIdentity.current || nativeVoiceRef.current !== native || userStoppedVoiceRef.current) return;
+        const failure = nativeVoiceFailure(error);
+        if (failure.reauthenticate) {
+          clearPrivateIdentity("authentication_expired", failure.notice);
+        } else {
+          // An unacknowledged Start can already own the microphone. Keep its Stop available.
+          if (!native.state || ["idle", "error", "unsupported"].includes(native.state.status)) setVoiceState(failure.state);
+          setNotice(failure.notice);
+          setMicrophoneSettingsAvailable(isAndroidApp && failure.microphoneSettings);
+        }
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     const client = clientRef.current;
     if (!client || !boot || replayingRef.current) return;
     if (offlineCaptureRef.current) {
@@ -1461,6 +1749,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
       setAndroidVoiceAudioFocus(false);
       client.stop({ reason: "user_stop" });
       setWait(null);
+      setToolProgress(null);
       return;
     }
     userStoppedVoiceRef.current = false;
@@ -1657,18 +1946,25 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
     );
   }
 
-  const voiceActive = !inactiveVoiceStates.has(voiceState);
+  const voiceActive = !inactiveVoiceStates.has(voiceState)
+    || Boolean(nativeSurface && (nativeStateRef.current?.capturing || nativeStateRef.current?.playing));
   const showWork = Boolean(
-    eventOpen || memoryOpen || backlogOpen || ((notice || wait) && chatMessages.length === 0)
+    eventOpen || memoryOpen || backlogOpen || ((notice || wait || toolProgress) && chatMessages.length === 0)
   );
   const projectCount = Math.max(0, boot.projects.length - 1);
-  const pendingCount = pendingSources.length;
+  const pendingCount = nativeSurface ? 0 : pendingSources.length;
   const voiceHeadline =
     voiceState === "off" && !networkOnline
       ? "Можно говорить без сети"
       : stateLabel[voiceState] ?? "Live";
   const voiceHint =
-    voiceState === "offline_recording"
+    voiceState === "recording_only"
+      ? "Речь сохраняется; ответы появятся после восстановления связи"
+      : voiceState === "delayed"
+        ? "Новая речь имеет приоритет при восстановлении связи"
+        : voiceState === "native_unsupported"
+          ? "Переписка остаётся доступной"
+          : voiceState === "offline_recording"
       ? "Нажмите, чтобы надёжно закрыть запись"
       : voiceState === "replaying"
         ? "Сохранённая речь уже передаётся"
@@ -1917,7 +2213,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
                   </div>
                 </div>
               )}
-              {voiceActive && speechPending && !notice && (
+              {voiceActive && speechPending && !notice && !toolProgress && (
                 <div className="chat-status" aria-live="polite">
                   Жду ответ Миры…
                 </div>
@@ -1925,9 +2221,9 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
               {playbackProblem && (
                 <div className="chat-status" role="alert">{playbackProblem}</div>
               )}
-              {(wait || notice) && (
-                <div className="chat-status" role={notice ? "alert" : undefined}>
-                  {notice ?? (wait?.stage === "action" ? "Мира выполняет действие…" : "Мира думает…")}
+              {(wait || notice || toolProgress) && (
+                <div className="chat-status" role={notice ? "alert" : undefined} aria-live="polite">
+                  {notice ?? (toolProgress ? "Мира ждёт результат…" : wait?.stage === "action" ? "Мира выполняет действие…" : "Мира думает…")}
                   {recoverableSourceId && networkOnline && !voiceActive && (
                     <button className="mini-action" onClick={recoverFailedVoiceSource} disabled={busy}>
                       Восстановить фразу
@@ -2174,6 +2470,11 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
                   <p className="empty-copy">Пока ничего не сохранено. Скажите, что нужно запомнить.</p>
                 )}
               </div>
+            ) : toolProgress ? (
+              <div className="wait-card" aria-live="polite">
+                <p className="eyebrow">Мира ждёт результат</p>
+                <p>Можно продолжить разговор или остановить его в любой момент.</p>
+              </div>
             ) : wait ? (
               <div className="wait-card">
                 <p className="eyebrow">{wait.stage === "action" ? "Выполняю действие" : "Live думает"}</p>
@@ -2216,7 +2517,7 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
           <button
             className={"voice-orb" + (voiceActive ? " active" : "")}
             onClick={toggleVoice}
-            disabled={busy || !voiceClientReady}
+            disabled={!voiceActive && (busy || !voiceClientReady)}
             aria-label={voiceActive ? "Остановить разговор" : "Начать голосовой разговор"}
           >
             <span className="pulse pulse-one" />
@@ -2230,6 +2531,12 @@ function ActorApp({ resetIdentity }: { resetIdentity: () => void }) {
               <button
                 className="mini-action finish-turn-action"
                 onClick={() => {
+                  if (nativeVoiceRef.current) {
+                    void nativeVoiceRef.current.finishTurn().then(accepted => {
+                      if (accepted) { setSpeechActive(false); setSpeechPending(true); }
+                    }).catch(() => setNotice("Не удалось подтвердить конец реплики. Запись продолжается."));
+                    return;
+                  }
                   if (clientRef.current?.finishTurn()) {
                     setSpeechActive(false);
                     setSpeechPending(true);

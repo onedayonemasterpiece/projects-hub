@@ -70,7 +70,7 @@ async def test_sidecar_is_smart_ui_only_and_maps_transcripts():
     sidecar.start()
     await asyncio.sleep(0)
     assert sidecar.feed({"activity_start": True})
-    assert sidecar.feed({"audio_base64": "AAAA"})
+    assert sidecar.feed({"audio_base64": "AAAAAA=="})  # two complete PCM16 samples
     assert sidecar.feed({"activity_end": True})
     await asyncio.sleep(0.02)
     await sidecar.stop()

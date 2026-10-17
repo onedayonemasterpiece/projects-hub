@@ -1,0 +1,321 @@
+{
+  "schema_version": 1,
+  "work_id": "work_1a8fe6975bc110f4c6bb49d4",
+  "incident_id": "inc_1226d5d5948dbc9b20dd893f",
+  "source": {
+    "production_base": "adec24c3e2923f44a92eebc68542fab572afe5ab",
+    "publication_base": "334588240fc7e57ef94a05a4b703586465cc3bac",
+    "continued_native_candidate": "e7ff19b8ae11458ac105d43ac79ea5b8814006d8",
+    "shared": "c564f0c44c6fe783fd4932bd4633fada34e05c73"
+  },
+  "verification": {
+    "observed_at": "2026-10-17",
+    "python": "3.12.14",
+    "shared_version": "0.4.0-rc.1",
+    "shared_distribution": "0.4.0rc1",
+    "pyav": "18.1.0",
+    "direct_url": {
+      "url": "https://github.com/onedayonemasterpiece/live-interaction.git",
+      "vcs_info": {
+        "vcs": "git",
+        "commit_id": "c564f0c44c6fe783fd4932bd4633fada34e05c73",
+        "requested_revision": "c564f0c44c6fe783fd4932bd4633fada34e05c73"
+      }
+    },
+    "backend_tests": {
+      "passed": 561,
+      "failed": 0,
+      "duration_seconds": 58.82,
+      "scope": "Python3.12 installed sharedc564 withaudio; synthetic fixtures, no real provider or production DB"
+    },
+    "web_tests": {
+      "passed": 106,
+      "failed": 0,
+      "duration_ms": 955.234258
+    },
+    "web_build": {
+      "status": "pass",
+      "vite": "7.3.6",
+      "module_count": 776,
+      "seconds": 6.49,
+      "entry": "index-Dwf6Dm_X.js"
+    },
+    "native_app_regression": {
+      "passed": 7,
+      "browser_microphone_requests": 0,
+      "actual_app_callbacks": true,
+      "physical_device": false
+    }
+  },
+  "migration": {
+    "scope": "isolated synthetic SQLite data, exact prod adec -> combined candidate -> prod adec -> candidate",
+    "provider_calls": 0,
+    "production_data_accessed": false,
+    "legacy_source_fields_events_pcm_preserved": true,
+    "legacy_pcm_sha256": "c8f5d0341d54d951a71b136e6e2afcb14d11ed8489a7ae126a8fee0df6ecf193",
+    "candidate_encoded_original_guards": {
+      "voice_source_audio_path": "SOURCE_AUDIO_ENCODED",
+      "reset_source_for_replay": "SOURCE_IMMUTABLE",
+      "append_audio": "SOURCE_AUDIO_FORMAT"
+    },
+    "old_release_can_open_additive_schema": true,
+    "old_release_preserves_stored_encoded_payloads_on_open": true,
+    "encoded_fixture_payload_sha256": [
+      "b514c54ffc1bf05ec1f34ca47da8134bd6a45ffc5ea87a706f8de9c2ca324c44",
+      "588de48351f735b6b9b6d22965a72cb5ac1cff9c5b5d8deae791c25fbbccb3dc"
+    ],
+    "old_release_incorrectly_lists_downlink_as_pending_user_source": true,
+    "old_release_incorrectly_advertises_encoded_source_pcm_replay": true,
+    "integrity_check": "ok",
+    "complete_post_voice_rollback_acceptance": false
+  },
+  "scope": {
+    "real_provider_calls": 0,
+    "production_activation": false,
+    "physical_android_acceptance": false,
+    "target_simultaneous_speakers": 4,
+    "measured_multiuser_capacity": false
+  },
+  "source_file_blobs": [
+    {
+      "path": ".devcoveer/requirements.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9a3c9bafb2088a33800da02396d1f05a2f62750b"
+    },
+    {
+      "path": "docs/operations/native-voice-paired-service-20261017.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3a21cbbcc1e6ad8bf49c90c6a625d571baa96324"
+    },
+    {
+      "path": "pyproject.toml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c7e46a467a76589c5f16add3a2e6bebddbf7533f"
+    },
+    {
+      "path": "src/projects_hub/app.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c487c3ed4a09c5901763dcbb91c09852bb466234"
+    },
+    {
+      "path": "src/projects_hub/encoded_voice_store.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9a75b81d1a745cf30fd7966b7fac0f05cf2258d2"
+    },
+    {
+      "path": "src/projects_hub/live_adapter.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f9839e4dbda8d649e499eceb39a0b7471ae8dd13"
+    },
+    {
+      "path": "src/projects_hub/live_admission.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1d7aaa14fc8fc6d6bf62f8ebc3d516e83dc01f7c"
+    },
+    {
+      "path": "src/projects_hub/live_runtime.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d18a24aef7e04177216490636a9e7db10064c3e8"
+    },
+    {
+      "path": "src/projects_hub/live_transcription.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e5e5c2a0df86a51960b994ef38f7b04bb1f18d83"
+    },
+    {
+      "path": "src/projects_hub/store.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a757fdcb40fad1731a759a91783c3590ae85748b"
+    },
+    {
+      "path": "tests/fixtures/native-live-start.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1d98d0de6b3e59a04d0b98eddb1cc84df4c9bf04"
+    },
+    {
+      "path": "tests/fixtures/native-v2-caption-opus.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "bfa23c5cd0b7921c7db27b801640749c5197e76f"
+    },
+    {
+      "path": "tests/fixtures/native-v2-installed-candidate.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1ca9869444dff6640147d9a3c92690a6db44659b"
+    },
+    {
+      "path": "tests/test_encoded_voice_store.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5103f02162777aef1b04a389e5a5838ef91b796e"
+    },
+    {
+      "path": "tests/test_live_adapter.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1f85b9f3ab91a3c8c67ee58c6c949d57e6050498"
+    },
+    {
+      "path": "tests/test_live_checkpoint_lifecycle.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "71de09af110b8089bf613447ca6d3e82f1e99ede"
+    },
+    {
+      "path": "tests/test_live_framework_release.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2695835389afaeac16fabcffac651dd00d48e277"
+    },
+    {
+      "path": "tests/test_live_start_reconciliation.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "af3f2ccb7bf2bfef74b9c15438e628c2f4ad7d0e"
+    },
+    {
+      "path": "tests/test_live_transcription.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "15f76e9bddff23172fe2826e4d4f3080580549e0"
+    },
+    {
+      "path": "tests/test_native_start_contract.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9bd58e976c6425dbd1d3896973c41d3cdeb3f9ca"
+    },
+    {
+      "path": "tests/test_native_timeline.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2092cd8a9c4b7c2c562504fa308fded1fe5b1f71"
+    },
+    {
+      "path": "tests/test_native_timeline_projection.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "36f16416d2a044d14242380f5b33681c63b7caf2"
+    },
+    {
+      "path": "tests/test_native_v2_caption_boundary.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c57524c72dc0cd66c2e229d4be74c852afe93f6b"
+    },
+    {
+      "path": "web/package-lock.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2e1837bca134c949c91cceaed7ce3534294d420f"
+    },
+    {
+      "path": "web/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2e03a41a52453a8eacc81202c352107648d10f40"
+    },
+    {
+      "path": "web/src/App.tsx",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8f5dabd954f290540eb6a346765d07a3462c775e"
+    },
+    {
+      "path": "web/src/api.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3687dddd6dcc99aac3549dd197638db4379dc25a"
+    },
+    {
+      "path": "web/src/nativeTimelineLoader.d.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "bf1b0f6043d8bee50035f34e472d02c93e8d40d5"
+    },
+    {
+      "path": "web/src/nativeTimelineLoader.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "806c9a7d8345dac9e8112c8a41cb91fcaf5329da"
+    },
+    {
+      "path": "web/src/nativeVoiceBridge.d.ts",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "84d5ebfcf914c53946f41d4cfd3cfb4dcc402b57"
+    },
+    {
+      "path": "web/src/nativeVoiceBridge.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "93211d69ee6ec41cc5673f08ba42780b411d5298"
+    },
+    {
+      "path": "web/src/voiceUiContract.js",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "49a4c325b90f4bf9dff1a9150948583ad837c9f1"
+    },
+    {
+      "path": "web/tests/app-voice-lifecycle.test.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "853868d2335458a6b9c99f820fc9490297a66d45"
+    },
+    {
+      "path": "web/tests/native-timeline-app.test.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "23cddea3207ea0d3ad4f243df7d87365b9652ed3"
+    },
+    {
+      "path": "web/tests/native-timeline-loader.test.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a5216e7d02ca2941babc777e6e090d0d31f0bc77"
+    },
+    {
+      "path": "web/tests/native-voice-app.test.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "09f2db4c33ec836754dba5cd0396282aadba3320"
+    },
+    {
+      "path": "web/tests/native-voice-bridge.test.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "55a84ab784af9a2ff1bb37b717758e15305bedcc"
+    },
+    {
+      "path": "web/tests/theme-browser.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d49452a27d10d643ca3af382744b09e54b61ca86"
+    },
+    {
+      "path": "web/tests/voice-release-r5.test.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "503d8b12c364ad246d42f90603cc24f123c256cb"
+    },
+    {
+      "path": "web/tests/voice-tool-progress.test.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7cc0c1a131718b390f397fbbf9f0b8615116da9e"
+    }
+  ]
+}
