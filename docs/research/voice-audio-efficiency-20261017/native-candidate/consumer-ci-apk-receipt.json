@@ -1,0 +1,26 @@
+{
+  "artifact_id": 12099042605,
+  "run_id": 39027475944,
+  "head_sha": "20020927de8ba733922d763146d71fa75872727e",
+  "artifact_url": "https://github.com/onedayonemasterpiece/projects-hub/actions/runs/39027475944/artifacts/12099042605",
+  "zip_sha256": "fd9ec8321d71c9941fc6374549bb778bc1ce6cadf3f02ae331f00925f724639c",
+  "apk_filename": "projects-hub-native-voice-candidate-2002092.apk",
+  "apk_bytes": 3157902,
+  "apk_sha256": "8cc466f881f44c68eec7276de94cacd158b2d557b8cd61330e70691042d04c76",
+  "kind": "GitHub PR debug build; not signed production update",
+  "note": "PR workflow normally checks out its merge ref; source head and immutable shared candidate are recorded. This APK is distinct from the local build artifact.",
+  "apk_badging": [
+    "package: name='com.kenigevents.projectshub.debug' versionCode='1' versionName='0.1.1-debug' platformBuildVersionName='15' platformBuildVersionCode='35' compileSdkVersion='35' compileSdkVersionCodename='15'",
+    "sdkVersion:'26'",
+    "targetSdkVersion:'35'",
+    "application-label:'Projects Hub'"
+  ],
+  "native_code_markers": {
+    "Lcom/kenigevents/projectshub/NativeVoiceService;": true,
+    "Lcom/kenigevents/projectshub/NativeSessionApi;": true,
+    "Lorg/onedayonemasterpiece/live/platform/NativeLiveRuntime;": true,
+    "Lorg/onedayonemasterpiece/live/platform/NativeEncoder;": true,
+    "wl-live-v2": true
+  },
+  "native_service_in_manifest": true
+}

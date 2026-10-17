@@ -1,0 +1,26 @@
+{
+  "completed_at_utc": "2026-10-17T11:19:34.907530+00:00",
+  "scope": "Authorized source-only preparation of the existing signed release workflow; no workflow dispatch, signing, publication, deployment or provider calls.",
+  "files": [
+    {
+      "path": ".github/workflows/android-release.yml",
+      "sha256": "eeaf70b8d4b2683cbeb1e4c563ba10716e6ccef4c211527e279ab02f6432b989",
+      "bytes": 5204
+    },
+    {
+      "path": "android/README.md",
+      "sha256": "635a5c104b334f46c9df06ff7651728dc8fa2d7e28b3cc420097a4a495848b51",
+      "bytes": 6437
+    }
+  ],
+  "validation": {
+    "yaml_parse": "PASS",
+    "metadata_debug_release_sha_and_environment": "PASS",
+    "remaining_release_workflow_byte_identical": "PASS"
+  },
+  "shared_ref": "c564f0c44c6fe783fd4932bd4633fada34e05c73",
+  "changes": "Only the existing release job gets the same fixed shared checkout and Gradle project property as successful debug/emulator CI. README distinguishes this build dependency from release qualification and unchanged full-release publication behavior.",
+  "unchanged": "Signing secrets/checks, versioning, Gradle build command, apksigner verification, update manifest, publish steps, release triggers and permissions are byte-identical after removing the two added YAML blocks. Android/SDK build source and configuration are unchanged.",
+  "source_freeze": true,
+  "release_run_performed": false
+}

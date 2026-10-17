@@ -1,0 +1,27 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> projects-hub-web@0.1.0 build
+> tsc --noEmit && vite build
+
+vite v7.3.6 building client environment for production...
+transforming...
+✓ 773 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                               0.75 kB │ gzip:   0.43 kB
+dist/assets/index-DWn1Dqk1.css               20.78 kB │ gzip:   5.37 kB
+dist/assets/Filter-D_dmZbov.js                0.95 kB │ gzip:   0.51 kB │ map:     4.03 kB
+dist/assets/getTexelRangeRects-hXIyB4H7.js   11.45 kB │ gzip:   3.03 kB │ map:    30.22 kB
+dist/assets/webworkerAll-Bu8peso0.js         15.07 kB │ gzip:   4.73 kB │ map:    54.36 kB
+dist/assets/CanvasRenderer-4Eu8OgHE.js       17.90 kB │ gzip:   6.01 kB │ map:    78.87 kB
+dist/assets/browserAll-fs5ITUJe.js           43.98 kB │ gzip:  11.43 kB │ map:   164.68 kB
+dist/assets/RenderTargetSystem-LoVp61FJ.js   53.53 kB │ gzip:  14.68 kB │ map:   201.48 kB
+dist/assets/WebGPURenderer-CQl4x4kk.js       55.91 kB │ gzip:  16.00 kB │ map:   193.09 kB
+dist/assets/WebGLRenderer-cImhoMUr.js        73.68 kB │ gzip:  20.17 kB │ map:   247.45 kB
+dist/assets/index-DImam6QD.js               648.15 kB │ gzip: 203.93 kB │ map: 2,987.85 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 3.98s

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Any, Callable
@@ -19,6 +20,7 @@ from .live_resources import live_resource_environment
 from .live_transcription import CaptionSidecar
 from .readiness import ReadinessService
 from .store import DurableStore
+from .encoded_voice_store import EncodedVoiceIO, ProductEncodedAudioStore
 
 log = logging.getLogger("projects_hub.live")
 
@@ -73,6 +75,7 @@ def build_live_host(
     regional_knowledge_factory: (
         Callable[[str, str], RegionalKnowledgeAdapter | None] | None
     ) = None,
+    audio_v2_codecs: Any | None = None,
 ) -> Any:
     """Build the canonical shared host lazily so offline store/API tests need no provider SDK."""
 
@@ -80,6 +83,8 @@ def build_live_host(
         from live_interaction import LiveSocketSessionHost
         from live_interaction.provider import run as provider_run
         from live_interaction.transcribe import run as transcribe_run
+        from live_interaction.audio_v2 import AudioV2Services
+        from live_interaction.audio_codec import PyAVAudioCodecFactory
     except ImportError as exc:
         raise RuntimeError("LIVE_INTERACTION_PACKAGE_MISSING") from exc
 
@@ -90,6 +95,29 @@ def build_live_host(
     device_commands = device_commands or DeviceCommandService(store)
     readiness = readiness or ReadinessService(store)
     development = development or DevelopmentService(store, readiness)
+    encoded_io = EncodedVoiceIO()
+    encoded_stores: dict[str, ProductEncodedAudioStore] = {}
+    output_stores: dict[str, ProductEncodedAudioStore] = {}
+
+    def encoded_store(session: Any) -> ProductEncodedAudioStore:
+        # This factory is entered by negotiated v2 capture. Canonical text must
+        # survive a detached presentation WebView just like the original audio.
+        session.state["_native_timeline"] = True
+        if session.id not in encoded_stores:
+            encoded_stores[session.id] = ProductEncodedAudioStore(
+                store, actor_id=session.state["actor_id"],
+                conversation_id=session.state["conversation_id"], io=encoded_io,
+            )
+        return encoded_stores[session.id]
+
+    def output_store(session: Any) -> ProductEncodedAudioStore:
+        if session.id not in output_stores:
+            output_stores[session.id] = ProductEncodedAudioStore(
+                store, actor_id=session.state["actor_id"],
+                conversation_id=session.state["conversation_id"], io=encoded_io,
+                direction="downlink",
+            )
+        return output_stores[session.id]
 
     async def managed_runner(*, session: Any, reader: Any, on_event: Any) -> None:
         try:
@@ -138,6 +166,7 @@ def build_live_host(
             if (
                 session.state.get("audio_mode") == "realtime"
                 and not session.state.get("recovery_only")
+                and session.id not in self._caption_sidecars
             ):
                 sidecar = CaptionSidecar(
                     environment=resource_environment,
@@ -174,7 +203,13 @@ def build_live_host(
             )
             sidecar = self._caption_sidecars.get(session_id)
             if sidecar is not None:
-                sidecar.feed(message)
+                projection = kwargs.get("_audio_projection")
+                current = self.sessions.get(session_id)
+                if current is not None and not current.closed and current.stop_reason != "explicit_stop":
+                    if projection is not None:
+                        sidecar.feed_pcm(projection.pcm16)
+                    else:
+                        sidecar.feed(message)
             return result
 
         async def _discard(self, session: Any, graceful: bool = False) -> None:
@@ -182,6 +217,11 @@ def build_live_host(
             if sidecar is not None:
                 await sidecar.stop()
             await super()._discard(session, graceful=graceful)
+            encoded_stores.pop(session.id, None)
+            output_stores.pop(session.id, None)
+
+        async def close_audio_storage(self) -> None:
+            await asyncio.to_thread(encoded_io.close)
 
     def live_diagnostic(record: dict[str, Any]) -> None:
         safe = {
@@ -226,6 +266,7 @@ def build_live_host(
         diagnostic=live_diagnostic,
         adapter_factory=lambda **shared: ProjectsHubLiveAdapter(
             store,
+            encoded_store_factory=encoded_store,
             board=board,
             board_hub=board_hub,
             board_view_context=board_view_context,
@@ -244,4 +285,7 @@ def build_live_host(
         max_sessions=max_sessions,
         max_sessions_per_actor=max_sessions_per_actor,
         client_liveness_timeout_ms=30_000,
+        audio_v2=AudioV2Services(store_factory=encoded_store,
+                               codecs=audio_v2_codecs if audio_v2_codecs is not None else PyAVAudioCodecFactory(),
+                               output_store_factory=output_store),
     )

@@ -67,6 +67,26 @@ export function resolveTerminalVoiceState(state, detail) {
 export function speechStartsNewUserBubble(event) {
   return event === "speech_start";
 }
+
+/**
+ * A filler utterance ending is not completion of the underlying operation.
+ * Match receipts/cancellation by call id so a late old result cannot clear a
+ * newer wait. This is presentation state; durable action receipts stay server-side.
+ * @param {null | { id: string, elapsed_ms: number }} current
+ * @param {{ type: string, id?: unknown, ids?: unknown, status?: unknown, elapsed_ms?: unknown }} event
+ * @returns {null | { id: string, elapsed_ms: number }}
+ */
+export function reduceVoiceToolProgress(current, event) {
+  if (event.type === "speech_start" || event.type === "voice_stopped" || event.type === "interrupted") return null;
+  if (event.type === "tool_progress" && event.status === "pending"
+      && typeof event.id === "string" && event.id.length > 0 && event.id.length <= 256
+      && typeof event.elapsed_ms === "number" && Number.isFinite(event.elapsed_ms) && event.elapsed_ms >= 0) {
+    return { id: event.id, elapsed_ms: event.elapsed_ms };
+  }
+  if (current && ((event.type === "tool_result" && event.id === current.id)
+      || (event.type === "tool_cancelled" && Array.isArray(event.ids) && event.ids.includes(current.id)))) return null;
+  return current;
+}
 /**
  * Translate a failed Live *session start* into user-facing status. A provider
  * capacity refusal is not a lost chat, completed task or failed development.

@@ -16,8 +16,16 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      ORG_GRADLE_PROJECT_liveInteractionAndroidDir: ${{ github.workspace }}/.dependencies/live-interaction/android
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout immutable native voice candidate
+        uses: actions/checkout@v4
+        with:
+          repository: onedayonemasterpiece/live-interaction
+          ref: c564f0c44c6fe783fd4932bd4633fada34e05c73
+          path: .dependencies/live-interaction
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

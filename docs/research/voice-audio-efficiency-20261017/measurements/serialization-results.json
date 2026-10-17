@@ -1,0 +1,490 @@
+{
+  "method": {
+    "network": false,
+    "keys": false,
+    "production": false,
+    "store_disk_IO": false,
+    "guard_sdk": false,
+    "websocket_TLS_compression": false,
+    "real_time_pacing": false,
+    "warning": "Serial hot-loop microbenchmarks; not provider latency, browser/device battery, VPS capacity, concurrency or per-session RAM. Tracemalloc is a separate 256-iteration probe, not included in timing."
+  },
+  "environment": {
+    "python": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]",
+    "platform": "Linux-6.18.55-x86_64-with-glibc2.39",
+    "cpu_model": "AMD EPYC 9V74 80-Core Processor",
+    "visible_logical_cpus": 9,
+    "process_peak_rss_kib_including_imports": 20724
+  },
+  "declared_source_refs": {
+    "framework": "3b852249",
+    "consumer_code": "4a4d658",
+    "consumer_head_docs": "ffa3b508"
+  },
+  "source_sha256": {
+    "continuation-final/framework/python/live_interaction/socket_transport.py": "1f2187b96357b89aae2ba9aa58e08ed65cd190da2ae568899b3d3f8253d7db08",
+    "continuation-final/framework/python/live_interaction/session_host.py": "57e0b64b36affe1fbb4929029bf35c98325b0a678678016b8915acbbfc0b14fc",
+    "continuation-final/framework/python/live_interaction/provider.py": "22b8aa8d3901d09953bc4378383af8c121b875a81ad13dc7b430e5af7d1d59f5",
+    "continuation-final/framework/python/live_interaction/transcribe.py": "9e961f7b685ac6c428deb83102a5fdab351553fb0512b6442d81547295b24d1e",
+    "continuation-final/consumer/src/projects_hub/live_transcription.py": "c474dbd533805c7adef7c0fd9f2f858958098d3cad4aa9b6ee2273dc5113c00d"
+  },
+  "byte_examples": [
+    {
+      "pcm_bytes": 1280,
+      "audio_ms": 40.0,
+      "phone_wss_application_bytes": 1292,
+      "base64_ascii_bytes": 1708,
+      "main_ndjson_bytes": 1787,
+      "provider_json_bytes": 1786
+    },
+    {
+      "pcm_bytes": 3200,
+      "audio_ms": 100.0,
+      "phone_wss_application_bytes": 3212,
+      "base64_ascii_bytes": 4268,
+      "main_ndjson_bytes": 4347,
+      "provider_json_bytes": 4346
+    },
+    {
+      "pcm_bytes": 11000,
+      "audio_ms": 343.75,
+      "phone_wss_application_bytes": 11012,
+      "base64_ascii_bytes": 14668,
+      "main_ndjson_bytes": 14747,
+      "provider_json_bytes": 14746
+    }
+  ],
+  "results": [
+    {
+      "case": "existing_wss_decode_base64_encode_and_adapter_decode",
+      "input_pcm_bytes": 1280,
+      "iterations_per_trial": 18623,
+      "trials": 5,
+      "cpu_ns_per_iteration_median": 4785.004403157386,
+      "cpu_us_per_iteration_median": 4.785004403157386,
+      "cpu_ms_per_audio_second": 0.11962511007893464,
+      "wall_ns_per_iteration_median": 4785.273049454975,
+      "python_tracemalloc_peak_bytes_256_serial_iterations": 8329,
+      "python_tracemalloc_retained_bytes": 136,
+      "raw": [
+        {
+          "cpu_ns": 86817838,
+          "wall_ns": 86823268,
+          "checksum": 23837440
+        },
+        {
+          "cpu_ns": 94114116,
+          "wall_ns": 94118917,
+          "checksum": 23837440
+        },
+        {
+          "cpu_ns": 82941725,
+          "wall_ns": 82946964,
+          "checksum": 23837440
+        },
+        {
+          "cpu_ns": 102908986,
+          "wall_ns": 102914355,
+          "checksum": 23837440
+        },
+        {
+          "cpu_ns": 89111137,
+          "wall_ns": 89116140,
+          "checksum": 23837440
+        }
+      ]
+    },
+    {
+      "case": "existing_main_NDJSON_queue_parse_and_provider_JSON",
+      "input_pcm_bytes": 1280,
+      "iterations_per_trial": 7502,
+      "trials": 5,
+      "cpu_ns_per_iteration_median": 16343.703279125566,
+      "cpu_us_per_iteration_median": 16.343703279125567,
+      "cpu_ms_per_audio_second": 0.4085925819781392,
+      "wall_ns_per_iteration_median": 16344.230738469741,
+      "python_tracemalloc_peak_bytes_256_serial_iterations": 14868,
+      "python_tracemalloc_retained_bytes": 1336,
+      "raw": [
+        {
+          "cpu_ns": 120112184,
+          "wall_ns": 120115728,
+          "checksum": 13398572
+        },
+        {
+          "cpu_ns": 122610462,
+          "wall_ns": 122614419,
+          "checksum": 13398572
+        },
+        {
+          "cpu_ns": 124144439,
+          "wall_ns": 124156104,
+          "checksum": 13398572
+        },
+        {
+          "cpu_ns": 124220691,
+          "wall_ns": 124243124,
+          "checksum": 13398572
+        },
+        {
+          "cpu_ns": 122322815,
+          "wall_ns": 122326773,
+          "checksum": 13398572
+        }
+      ]
+    },
+    {
+      "case": "existing_caption_decode_rechunk_100ms_NDJSON_provider_JSON",
+      "input_pcm_bytes": 1280,
+      "iterations_per_trial": 6809,
+      "trials": 5,
+      "cpu_ns_per_iteration_median": 16877.64121016302,
+      "cpu_us_per_iteration_median": 16.87764121016302,
+      "cpu_ms_per_audio_second": 0.4219410302540754,
+      "wall_ns_per_iteration_median": 16879.294463210455,
+      "python_tracemalloc_peak_bytes_256_serial_iterations": 29650,
+      "python_tracemalloc_retained_bytes": 1648,
+      "raw": [
+        {
+          "cpu_ns": 114919859,
+          "wall_ns": 114931116,
+          "checksum": 11836796
+        },
+        {
+          "cpu_ns": 119315732,
+          "wall_ns": 119321356,
+          "checksum": 11836796
+        },
+        {
+          "cpu_ns": 115152333,
+          "wall_ns": 115156994,
+          "checksum": 11836796
+        },
+        {
+          "cpu_ns": 110873452,
+          "wall_ns": 110877891,
+          "checksum": 11836796
+        },
+        {
+          "cpu_ns": 109916281,
+          "wall_ns": 109922018,
+          "checksum": 11836796
+        }
+      ]
+    },
+    {
+      "case": "existing_wss_decode_base64_encode_and_adapter_decode",
+      "input_pcm_bytes": 3200,
+      "iterations_per_trial": 13615,
+      "trials": 5,
+      "cpu_ns_per_iteration_median": 10172.44531766434,
+      "cpu_us_per_iteration_median": 10.17244531766434,
+      "cpu_ms_per_audio_second": 0.1017244531766434,
+      "wall_ns_per_iteration_median": 10173.22203452075,
+      "python_tracemalloc_peak_bytes_256_serial_iterations": 19849,
+      "python_tracemalloc_retained_bytes": 136,
+      "raw": [
+        {
+          "cpu_ns": 133808742,
+          "wall_ns": 134316098,
+          "checksum": 43568000
+        },
+        {
+          "cpu_ns": 152669127,
+          "wall_ns": 152679353,
+          "checksum": 43568000
+        },
+        {
+          "cpu_ns": 152916604,
+          "wall_ns": 153184412,
+          "checksum": 43568000
+        },
+        {
+          "cpu_ns": 138497843,
+          "wall_ns": 138508418,
+          "checksum": 43568000
+        },
+        {
+          "cpu_ns": 133404934,
+          "wall_ns": 133422869,
+          "checksum": 43568000
+        }
+      ]
+    },
+    {
+      "case": "existing_main_NDJSON_queue_parse_and_provider_JSON",
+      "input_pcm_bytes": 3200,
+      "iterations_per_trial": 3721,
+      "trials": 5,
+      "cpu_ns_per_iteration_median": 29527.095941951087,
+      "cpu_us_per_iteration_median": 29.52709594195109,
+      "cpu_ms_per_audio_second": 0.29527095941951087,
+      "wall_ns_per_iteration_median": 29531.32598763773,
+      "python_tracemalloc_peak_bytes_256_serial_iterations": 24620,
+      "python_tracemalloc_retained_bytes": 1336,
+      "raw": [
+        {
+          "cpu_ns": 105666803,
+          "wall_ns": 105674342,
+          "checksum": 16171466
+        },
+        {
+          "cpu_ns": 109882260,
+          "wall_ns": 109891910,
+          "checksum": 16171466
+        },
+        {
+          "cpu_ns": 106022752,
+          "wall_ns": 106030412,
+          "checksum": 16171466
+        },
+        {
+          "cpu_ns": 109870324,
+          "wall_ns": 109886064,
+          "checksum": 16171466
+        },
+        {
+          "cpu_ns": 178074654,
+          "wall_ns": 178086182,
+          "checksum": 16171466
+        }
+      ]
+    },
+    {
+      "case": "existing_caption_decode_rechunk_100ms_NDJSON_provider_JSON",
+      "input_pcm_bytes": 3200,
+      "iterations_per_trial": 3388,
+      "trials": 5,
+      "cpu_ns_per_iteration_median": 38564.47284533648,
+      "cpu_us_per_iteration_median": 38.56447284533648,
+      "cpu_ms_per_audio_second": 0.38564472845336484,
+      "wall_ns_per_iteration_median": 38567.19628099174,
+      "python_tracemalloc_peak_bytes_256_serial_iterations": 28546,
+      "python_tracemalloc_retained_bytes": 1648,
+      "raw": [
+        {
+          "cpu_ns": 128267829,
+          "wall_ns": 128284679,
+          "checksum": 14724248
+        },
+        {
+          "cpu_ns": 120689171,
+          "wall_ns": 120705596,
+          "checksum": 14724248
+        },
+        {
+          "cpu_ns": 130656434,
+          "wall_ns": 130665661,
+          "checksum": 14724248
+        },
+        {
+          "cpu_ns": 139542653,
+          "wall_ns": 139553107,
+          "checksum": 14724248
+        },
+        {
+          "cpu_ns": 135948399,
+          "wall_ns": 135956723,
+          "checksum": 14724248
+        }
+      ]
+    },
+    {
+      "case": "existing_wss_decode_base64_encode_and_adapter_decode",
+      "input_pcm_bytes": 11000,
+      "iterations_per_trial": 3781,
+      "trials": 5,
+      "cpu_ns_per_iteration_median": 31986.711451996827,
+      "cpu_us_per_iteration_median": 31.98671145199683,
+      "cpu_ms_per_audio_second": 0.09305225149671806,
+      "wall_ns_per_iteration_median": 31989.745569955037,
+      "python_tracemalloc_peak_bytes_256_serial_iterations": 66649,
+      "python_tracemalloc_retained_bytes": 136,
+      "raw": [
+        {
+          "cpu_ns": 120941756,
+          "wall_ns": 120953228,
+          "checksum": 41591000
+        },
+        {
+          "cpu_ns": 143179311,
+          "wall_ns": 143183432,
+          "checksum": 41591000
+        },
+        {
+          "cpu_ns": 123777474,
+          "wall_ns": 123789162,
+          "checksum": 41591000
+        },
+        {
+          "cpu_ns": 107997498,
+          "wall_ns": 108001700,
+          "checksum": 41591000
+        },
+        {
+          "cpu_ns": 114214951,
+          "wall_ns": 114224277,
+          "checksum": 41591000
+        }
+      ]
+    },
+    {
+      "case": "existing_main_NDJSON_queue_parse_and_provider_JSON",
+      "input_pcm_bytes": 11000,
+      "iterations_per_trial": 1543,
+      "trials": 5,
+      "cpu_ns_per_iteration_median": 80690.58327932599,
+      "cpu_us_per_iteration_median": 80.69058327932599,
+      "cpu_ms_per_audio_second": 0.23473624226713016,
+      "wall_ns_per_iteration_median": 80693.24821775762,
+      "python_tracemalloc_peak_bytes_256_serial_iterations": 66100,
+      "python_tracemalloc_retained_bytes": 1336,
+      "raw": [
+        {
+          "cpu_ns": 132164729,
+          "wall_ns": 132167887,
+          "checksum": 22753078
+        },
+        {
+          "cpu_ns": 124505570,
+          "wall_ns": 124509682,
+          "checksum": 22753078
+        },
+        {
+          "cpu_ns": 144621142,
+          "wall_ns": 144649620,
+          "checksum": 22753078
+        },
+        {
+          "cpu_ns": 123201705,
+          "wall_ns": 123230921,
+          "checksum": 22753078
+        },
+        {
+          "cpu_ns": 122019424,
+          "wall_ns": 122048407,
+          "checksum": 22753078
+        }
+      ]
+    },
+    {
+      "case": "existing_caption_decode_rechunk_100ms_NDJSON_provider_JSON",
+      "input_pcm_bytes": 11000,
+      "iterations_per_trial": 874,
+      "trials": 5,
+      "cpu_ns_per_iteration_median": 132060.79061784898,
+      "cpu_us_per_iteration_median": 132.06079061784897,
+      "cpu_ms_per_audio_second": 0.3841768454337425,
+      "wall_ns_per_iteration_median": 132065.72425629292,
+      "python_tracemalloc_peak_bytes_256_serial_iterations": 47354,
+      "python_tracemalloc_retained_bytes": 1648,
+      "raw": [
+        {
+          "cpu_ns": 115232211,
+          "wall_ns": 115244536,
+          "checksum": 13057062
+        },
+        {
+          "cpu_ns": 115150290,
+          "wall_ns": 115153752,
+          "checksum": 13057062
+        },
+        {
+          "cpu_ns": 127483876,
+          "wall_ns": 127487481,
+          "checksum": 13057062
+        },
+        {
+          "cpu_ns": 115421131,
+          "wall_ns": 115425443,
+          "checksum": 13057062
+        },
+        {
+          "cpu_ns": 121314528,
+          "wall_ns": 121319069,
+          "checksum": 13057062
+        }
+      ]
+    },
+    {
+      "case": "existing_downlink_base64_decode_and_binary_frame",
+      "input_pcm_bytes": 2400,
+      "iterations_per_trial": 20982,
+      "trials": 5,
+      "cpu_ns_per_iteration_median": 5224.169812219998,
+      "cpu_us_per_iteration_median": 5.224169812219998,
+      "cpu_ms_per_audio_second": 0.10448339624439995,
+      "wall_ns_per_iteration_median": 5224.39357544562,
+      "python_tracemalloc_peak_bytes_256_serial_iterations": 6098,
+      "python_tracemalloc_retained_bytes": 112,
+      "raw": [
+        {
+          "cpu_ns": 109086940,
+          "wall_ns": 109090755,
+          "checksum": 50608584
+        },
+        {
+          "cpu_ns": 106559709,
+          "wall_ns": 106564028,
+          "checksum": 50608584
+        },
+        {
+          "cpu_ns": 110767024,
+          "wall_ns": 110778641,
+          "checksum": 50608584
+        },
+        {
+          "cpu_ns": 120472861,
+          "wall_ns": 120485025,
+          "checksum": 50608584
+        },
+        {
+          "cpu_ns": 109613531,
+          "wall_ns": 109618226,
+          "checksum": 50608584
+        }
+      ],
+      "sample_rate_hz": 24000
+    },
+    {
+      "case": "existing_downlink_base64_decode_and_binary_frame",
+      "input_pcm_bytes": 4800,
+      "iterations_per_trial": 15183,
+      "trials": 5,
+      "cpu_ns_per_iteration_median": 9030.564710531515,
+      "cpu_us_per_iteration_median": 9.030564710531515,
+      "cpu_ms_per_audio_second": 0.09030564710531515,
+      "wall_ns_per_iteration_median": 9030.889152341435,
+      "python_tracemalloc_peak_bytes_256_serial_iterations": 11698,
+      "python_tracemalloc_retained_bytes": 112,
+      "raw": [
+        {
+          "cpu_ns": 166683707,
+          "wall_ns": 166686920,
+          "checksum": 73060596
+        },
+        {
+          "cpu_ns": 135732699,
+          "wall_ns": 135739705,
+          "checksum": 73060596
+        },
+        {
+          "cpu_ns": 140762785,
+          "wall_ns": 140774330,
+          "checksum": 73060596
+        },
+        {
+          "cpu_ns": 137111064,
+          "wall_ns": 137115990,
+          "checksum": 73060596
+        },
+        {
+          "cpu_ns": 136503593,
+          "wall_ns": 136516823,
+          "checksum": 73060596
+        }
+      ],
+      "sample_rate_hz": 24000
+    }
+  ]
+}

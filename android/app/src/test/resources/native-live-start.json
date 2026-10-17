@@ -1,0 +1,20 @@
+{
+  "normal": {
+    "transport": "wss",
+    "audio_mode": "realtime",
+    "recovery_only": false,
+    "client_version": "contract-fixture",
+    "client_instance_id": "android_contract_instance",
+    "attempt_id": "native_contract_attempt",
+    "client_timezone": "Europe/Kaliningrad"
+  },
+  "recovery": {
+    "transport": "wss",
+    "audio_mode": "buffered",
+    "recovery_only": true,
+    "client_version": "contract-fixture",
+    "client_instance_id": "android_contract_instance",
+    "attempt_id": "native_contract_attempt",
+    "client_timezone": "Europe/Kaliningrad"
+  }
+}

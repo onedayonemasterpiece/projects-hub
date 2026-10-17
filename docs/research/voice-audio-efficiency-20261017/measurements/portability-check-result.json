@@ -1,0 +1,68 @@
+{
+  "purpose": "Portable invocation smoke-check only; these are new runs, not replacements for the original measurements.",
+  "started_at_utc": "2026-10-17T07:56:17.863943+00:00",
+  "cwd": "/tmp",
+  "checks": [
+    {
+      "probe": "serialization",
+      "argv": [
+        "/workspace/scratch/0702e2310172/checkpoint-review/venv/bin/python",
+        "-B",
+        "/workspace/scratch/0702e2310172/continuation-final/consumer/docs/research/voice-audio-efficiency-20261017/probes/serialization_benchmark.py"
+      ],
+      "explicit_environment": {
+        "PYTHONPATH": "/workspace/scratch/0702e2310172/continuation-final/framework/python:/workspace/scratch/0702e2310172/continuation-final/consumer/src",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "AUDIO_PROBE_OUTPUT": "/workspace/scratch/0702e2310172/continuation-final/consumer/docs/research/voice-audio-efficiency-20261017/measurements/portability-check-serialization.json"
+      },
+      "exit_code": 0,
+      "wall_seconds": 7.284551714001282,
+      "stderr": "",
+      "output_file": "portability-check-serialization.json",
+      "case_count": 11
+    },
+    {
+      "probe": "browser-helpers",
+      "argv": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--expose-gc",
+        "/workspace/scratch/0702e2310172/continuation-final/consumer/docs/research/voice-audio-efficiency-20261017/probes/browser_helpers_benchmark.mjs"
+      ],
+      "explicit_environment": {
+        "FRAMEWORK_ROOT": "/workspace/scratch/0702e2310172/continuation-final/framework",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "AUDIO_PROBE_OUTPUT": "/workspace/scratch/0702e2310172/continuation-final/consumer/docs/research/voice-audio-efficiency-20261017/measurements/portability-check-browser-helpers.json"
+      },
+      "exit_code": 0,
+      "wall_seconds": 2.2923871160001,
+      "stderr": "",
+      "output_file": "portability-check-browser-helpers.json",
+      "case_count": 5
+    },
+    {
+      "probe": "opus",
+      "argv": [
+        "/workspace/scratch/0702e2310172/checkpoint-review/venv/bin/python",
+        "-B",
+        "/workspace/scratch/0702e2310172/continuation-final/consumer/docs/research/voice-audio-efficiency-20261017/probes/opus_probe.py"
+      ],
+      "explicit_environment": {
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "AUDIO_PROBE_OUTPUT": "/workspace/scratch/0702e2310172/continuation-final/consumer/docs/research/voice-audio-efficiency-20261017/measurements/portability-check-opus.json"
+      },
+      "exit_code": 0,
+      "wall_seconds": 2.1924198659999092,
+      "stderr": "",
+      "output_file": "portability-check-opus.json",
+      "case_count": 6
+    }
+  ],
+  "completed_at_utc": "2026-10-17T07:56:29.634602+00:00",
+  "verification": {
+    "original_JSON_unchanged": true,
+    "portable_script_hashes_match_manifest": true,
+    "helper_source_hashes_match_original_measurements": true,
+    "libopus_version_matches_original": "libopus 1.4",
+    "timed_functions_unchanged_check": "See provenance.json"
+  }
+}
