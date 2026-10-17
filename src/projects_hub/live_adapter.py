@@ -37,6 +37,10 @@ from .live_capabilities import BUNDLES, ROUTER, PREFERENCES, OVERLAYS
 
 log = logging.getLogger("projects_hub.live")
 
+# Gemini Live documents resumption tokens as valid for 2 h after the last
+# session ends; keep a margin so an expiring handle is not offered.
+CHECKPOINT_MAX_AGE_MS = 100 * 60 * 1000
+
 _BASE_TRANSCRIPTION_VOCABULARY = ["Мира", "Projects Hub", "Codex", "DevCoveer", "Калининград"]
 
 
@@ -53,6 +57,21 @@ def _transcription_vocabulary(projects: list[dict[str, Any]]) -> list[str]:
         if len(terms) >= 100:
             break
     return terms
+
+
+# These declarations cross an external service/device boundary. NON_BLOCKING
+# allows the shared host to report one honest pending result while the same
+# operation continues; it does not grant concurrency or change authorization.
+_LONG_RUNNING_FUNCTIONS = frozenset({
+    "github_repositories_list", "github_repository_read",
+    "calendar_create_event_on_device", "calendar_command_status", "calendar_list_events_on_device",
+    "project_note_create", "project_note_reply", "project_note_analyze",
+    "collaboration_questions_request", "collaboration_questions_answer",
+    "collaboration_question_respond", "collaboration_continuation_status",
+    "knowledge_search", "expert_reviews_list_assigned", "expert_reviews_get",
+    "expert_reviews_accept", "expert_reviews_resolve", "expert_reviews_request_research",
+    "development_codex_status", "development_execute_backlog", "development_execution_status",
+})
 
 
 def _functions(
@@ -874,6 +893,9 @@ def _functions(
                 },
             ]
         )
+    for declaration in functions:
+        if declaration["name"] in _LONG_RUNNING_FUNCTIONS:
+            declaration["behavior"] = "NON_BLOCKING"
     return functions
 
 
@@ -881,6 +903,7 @@ SYSTEM_INSTRUCTION = """# ROLE
 Ты Мира, центральный Live-агент Projects Hub, единственный семантический оркестратор; сама слышишь аудио.
 # DIALOGUE
 Отвечай по-русски кратко и естественно. Не проси повторять уже услышанное. Не считай шум, цитату или отрицание командой. Reconnect и смена capability продолжают тот же разговор.
+Перед долгим обращением к источнику или устройству коротко скажи, что проверишь. При tool response status=pending один раз сообщи, что ещё ждёшь результат; это не успех. Не повторяй заполнители паузы, не выдумывай ход работы. Новая речь пользователя важнее ожидания.
 # TRUTH AND SECURITY
 Доступ определяет backend, не tool arguments. Не утверждай успех без authoritative receipt/readback. При отказе объясни результат. Напрямую доступны только функции текущего bundle; остальные разрешённые в context.allowed_capabilities загружаются через activate_capability. Отсутствие функции сейчас НЕ означает отсутствие этой возможности.
 # RUNTIME VERSION
@@ -1147,11 +1170,13 @@ class ProjectsHubLiveAdapter:
         regional_knowledge_factory: (
             Callable[[str, str], RegionalKnowledgeAdapter | None] | None
         ) = None,
+        encoded_store_factory: Callable[[Any], Any] | None = None,
         **_shared: Any,
     ):
         self.emit = _shared.get("emit")
         self._preference_applications: dict[str, dict[str, Any]] = {}
         self.store = store
+        self.encoded_store_factory = encoded_store_factory
         self.device_commands = device_commands or DeviceCommandService(store)
         self.readiness = readiness or ReadinessService(store)
         self.development = development or DevelopmentService(store, self.readiness)
@@ -1173,6 +1198,9 @@ class ProjectsHubLiveAdapter:
             "audio_start_bytes": utterance["audio_start_bytes"],
             "audio_end_bytes": utterance["audio_end_bytes"],
         }
+        for key in ("audio_start_us", "audio_end_us", "audio_format"):
+            if key in utterance:
+                payload[key] = utterance[key]
         payload.update(extra)
         return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -1186,7 +1214,7 @@ class ProjectsHubLiveAdapter:
         state = session.state
         self.store.append_source_event(
             state["actor_id"],
-            state["source_id"],
+            utterance.get("source_id", state["source_id"]),
             kind,
             text=self._utterance_payload(utterance, **extra),
         )
@@ -1253,9 +1281,10 @@ class ProjectsHubLiveAdapter:
         sequence = int(state.get("_utterance_sequence", 0)) + 1
         state["_utterance_sequence"] = sequence
         source = self.store.get_source(state["actor_id"], state["source_id"])
-        audio_start = int(source["audio_bytes"])
+        audio_start = int(source["audio_projection_bytes"] if source.get("audio_format") == "encoded-v2" else source["audio_bytes"])
         utterance = {
             "id": f"utt_{state['source_id'][4:20]}_{sequence}",
+            "source_id": state["source_id"],
             "sequence": sequence,
             "audio_start_bytes": audio_start,
             "audio_end_bytes": audio_start,
@@ -1269,6 +1298,26 @@ class ProjectsHubLiveAdapter:
         state["_current_utterance"] = utterance
         self._utterance_event(session, "utterance_started", utterance)
         return utterance
+
+    def _native_event_turn(self, session: Any, kind: str) -> dict[str, str]:
+        state = session.state
+        response = state.get("_native_response_turn")
+        if kind in {"audio", "output_transcript", "turn_complete", "interrupted"} and response:
+            return response
+        current = self._current_utterance(session)
+        utterance = self._semantic_utterance(session) or state.get("_native_ended_utterance") or current
+        if utterance:
+            source_id = utterance["source_id"]
+            identity = session.id + ":" + utterance["id"]
+        else:
+            source_id = state["source_id"]
+            identity = session.id + ":greeting:" + str(state.get("_native_greeting_turn", 0))
+        turn = {"source_id": source_id, "turn_id": "turn_live_" + hashlib.sha256(identity.encode()).hexdigest()[:40]}
+        if utterance:
+            turn["utterance_id"] = utterance["id"]
+        if kind in {"audio", "output_transcript"}:
+            state["_native_response_turn"] = turn
+        return turn
 
     def _semantic_utterance(self, session: Any) -> dict[str, Any] | None:
         current = self._current_utterance(session)
@@ -1444,7 +1493,7 @@ class ProjectsHubLiveAdapter:
             client_source_id=client_source_id,
         )
         source_reused = bool(source.pop("_reused", False))
-        if source_reused and source["status"] not in {"archived", "ephemeral_processed"}:
+        if source_reused and source.get("audio_format") != "encoded-v2" and source["status"] not in {"archived", "ephemeral_processed"}:
             source = self.store.reset_source_for_replay(actor_id, source["id"])
         pending_voice_sources = self.store.list_pending_voice_sources(
             actor_id,
@@ -1663,7 +1712,35 @@ class ProjectsHubLiveAdapter:
 
         result["state"]["_base_configuration"] = dict(result["configuration"])
         result["state"]["_product_context"] = dict(result["context"])
+        result["state"]["_model"] = model
+        if audio_mode == "realtime" and not recovery_only:
+            checkpoint = self.store.usable_live_checkpoint(
+                actor_id, conversation_id, model=model, max_age_ms=CHECKPOINT_MAX_AGE_MS
+            )
+            if checkpoint is not None:
+                # Same provider conversation after a backend restart or abandoned
+                # socket; the provider rejects an expired handle and the shared
+                # transport then falls back to bounded history.
+                result["resume_handle"] = checkpoint["handle"]
+                result["state"]["_resumed_checkpoint_session_id"] = checkpoint["session_id"]
+                result["response"]["resumed_from_checkpoint"] = True
+                log.info(
+                    "live checkpoint resume",
+                    extra={"event": "live_checkpoint_resume", "conversation_id": conversation_id,
+                           "previous_session_id": checkpoint["session_id"], "age_ms": checkpoint["age_ms"]},
+                )
         return result
+
+    def on_checkpoint(self, session: Any, handle: str) -> None:
+        state = session.state
+        if (state.get("_checkpoint_stopped") or getattr(session, "closed", False)
+                or state.get("recovery_only") or state.get("audio_mode") != "realtime"):
+            return
+        self.store.save_live_checkpoint(
+            state["actor_id"], state["conversation_id"],
+            model=str(state.get("_model") or getattr(session, "model", "")),
+            handle=handle, session_id=session.id,
+        )
 
     def _allowed_capabilities(self, session: Any) -> list[str]:
         state = session.state
@@ -1830,6 +1907,53 @@ class ProjectsHubLiveAdapter:
         return {**result, "current": current, "application_status": status,
                 **{key: request[key] for key in ("web_status", "native_status") if key in request}}
 
+    async def activate_audio_source(self, session: Any, bound: Any) -> None:
+        """Activate only the live lane's authenticated, durable source binding."""
+        from live_interaction.audio_v2 import BoundSource
+        if not isinstance(bound, BoundSource) or self.encoded_store_factory is None:
+            raise StoreError("SOURCE_BINDING", "Native source adapter is unavailable")
+        encoded = self.encoded_store_factory(session)
+        session.state["_native_timeline"] = True
+        source = await encoded.io.run(encoded._bound, bound)
+        if getattr(session, "closed", False) or getattr(session, "stop_reason", None) == "explicit_stop":
+            raise StoreError("LIVE_SESSION_CLOSED", "Stopped voice cannot activate a new capture source")
+        state = session.state
+        if state["source_id"] != source["id"]:
+            prior = self._current_utterance(session)
+            if prior is not None:
+                self._finalize_utterance(session, prior, reason="live_source_changed")
+            state.pop("_current_utterance", None)
+            state["source_id"] = source["id"]
+        state["client_source_id"] = bound.source.source_id
+        state["_source_audio_format"] = "encoded-v2"
+
+    async def input_audio(self, session: Any, projection: Any) -> None:
+        """Admit a private decoded view of a committed compressed original.
+
+        No PCM is appended to the source. The shared host checks transport and
+        Stop fencing again after this asynchronous durable admission boundary.
+        """
+        from live_interaction.audio_v2 import DurablePCMProjection
+        if not isinstance(projection, DurablePCMProjection) or self.encoded_store_factory is None:
+            raise StoreError("SOURCE_PROJECTION", "Durable native audio adapter is unavailable")
+        state = session.state
+        if state["source_id"] != projection.commit.server_source_id:
+            raise StoreError("SOURCE_BINDING", "Only the active live source can reach the provider")
+        encoded = self.encoded_store_factory(session)
+        utterance = self._current_utterance(session) or self._start_utterance(session)
+        receipt = await encoded.io.run(encoded.claim_projection, projection)
+        if (getattr(session, "closed", False) or getattr(session, "stop_reason", None) == "explicit_stop"
+                or state["source_id"] != projection.commit.server_source_id):
+            raise StoreError("LIVE_SESSION_CLOSED", "Stopped or replaced input remains a saved source only")
+        utterance["audio_end_bytes"] = int(receipt["audio_bytes"])
+        utterance.setdefault("audio_start_us", projection.capture_start_us)
+        utterance["audio_end_us"] = projection.capture_start_us + len(projection.pcm16) * 1_000_000 // 32_000
+        utterance["audio_format"] = "encoded-v2"
+        if not utterance["pcm_accepted"]:
+            utterance["pcm_accepted"] = True
+            self._utterance_event(session, "utterance_pcm_accepted", utterance,
+                                  audio_chunks=int(receipt["audio_chunks"]))
+
     def input(self, session: Any, message: dict[str, Any]) -> None:
         state = session.state
         actor_id = state["actor_id"]
@@ -1862,6 +1986,7 @@ class ProjectsHubLiveAdapter:
             utterance = self._current_utterance(session)
             if utterance is not None and not utterance["activity_end"]:
                 utterance["activity_end"] = True
+                session.state["_native_ended_utterance"] = utterance
                 self._utterance_event(
                     session,
                     "utterance_activity_end",
@@ -1871,6 +1996,9 @@ class ProjectsHubLiveAdapter:
     def on_event(self, session: Any, event: dict[str, Any]) -> None:
         kind = str(event.get("type") or "")
         state = session.state
+        native_turn = self._native_event_turn(session, kind) if state.get("_native_timeline") and kind in {
+            "audio", "input_transcript", "output_transcript", "turn_complete", "interrupted", "interim_input_transcript",
+        } else None
         if kind == "capability_ready":
             state["_capability_ready"] = True
         elif kind == "turn_complete" and state.get("_capability_ready") and not (
@@ -1890,6 +2018,7 @@ class ProjectsHubLiveAdapter:
                     if (isinstance(utterance, dict)
                             and utterance.get("pcm_accepted")
                             and utterance.get("activity_end")
+                            and (native_turn is None or native_turn.get("utterance_id") == utterance.get("id"))
                             and "canonical_text" not in utterance):
                         utterance["canonical_text"] = canonical[:4000]
                         break
@@ -1897,6 +2026,7 @@ class ProjectsHubLiveAdapter:
                 session,
                 committed=True,
                 evidence="canonical_input_transcript",
+                utterance_id=native_turn.get("utterance_id") if native_turn else None,
             )
         elif kind in {"audio", "output_transcript", "turn_complete", "interrupted"}:
             # Any model-derived output proves that the semantic turn was
@@ -1906,6 +2036,7 @@ class ProjectsHubLiveAdapter:
                 session,
                 committed=True,
                 evidence=f"provider_{kind}",
+                utterance_id=native_turn.get("utterance_id") if native_turn else None,
             )
         if kind == "output_transcript" and str(event.get("text") or "").strip():
             state["_brief_output_observed"] = True
@@ -1941,13 +2072,30 @@ class ProjectsHubLiveAdapter:
             return
         text = event.get("text") if isinstance(event.get("text"), str) else None
         if kind in durable_kinds:
-            self.store.append_source_event(
-                state["actor_id"],
-                state["source_id"],
-                kind,
-                text=text,
-                provider_at_ms=provider_at,
-            )
+            if native_turn and kind in {"input_transcript", "output_transcript"} and text:
+                event["timeline_message"] = self.store.append_voice_timeline_event(
+                    actor_id=state["actor_id"], source_id=native_turn["source_id"],
+                    turn_id=native_turn["turn_id"], kind=kind, text=text,
+                    provider_at_ms=provider_at,
+                )
+                # Both a cumulative provider fragment and the complete canonical
+                # row may be large. Keep originals intact; the presentation UI
+                # resolves a small scoped reference through the existing timeline.
+                # Use the stricter current WSS queue accounting (escaped JSON).
+                if len(json.dumps(event).encode("utf-8")) > 16_384:
+                    canonical = event.pop("timeline_message")
+                    event["timeline_ref"] = {key: canonical[key] for key in (
+                        "id", "conversation_id", "turn_id", "source_id", "role", "revision", "transcript_revision",
+                    )}
+                    event.pop("text", None)
+            else:
+                self.store.append_source_event(
+                    state["actor_id"], native_turn["source_id"] if native_turn else state["source_id"],
+                    kind, text=text, provider_at_ms=provider_at,
+                )
+        if kind in {"turn_complete", "interrupted"} and native_turn:
+            state.pop("_native_response_turn", None)
+            state["_native_greeting_turn"] = int(state.get("_native_greeting_turn", 0)) + 1
         counts[kind] = int(counts.get(kind, 0)) + 1
         if text is not None:
             diag["last_text_length"] = len(text)
@@ -2019,16 +2167,30 @@ class ProjectsHubLiveAdapter:
             diag.pop("turn_first_output_audio_provider_at", None)
 
     def on_stopped(self, session: Any) -> None:
+        state = session.state
+        # Fence provider callbacks before any cleanup can yield to another task.
+        state["_checkpoint_stopped"] = True
         pending = self._preference_applications.pop(getattr(session, "id", ""), None)
         if pending:
             pending["event"].set()
-        state = session.state
         utterances = state.get("_utterances")
         if isinstance(utterances, list):
             for utterance in utterances:
                 if isinstance(utterance, dict):
                     self._finalize_utterance(session, utterance, reason="session_stopped")
         self.store.mark_source_stopped(state["actor_id"], state["source_id"])
+        # Reclaim closes an abandoned source/provider while preserving continuity.
+        # The trusted host gives an explicit Stop precedence over internal reclaim.
+        if getattr(session, "stop_reason", None) != "detached_reclaim":
+            for checkpoint_session_id in {
+                session.id, state.get("_resumed_checkpoint_session_id"),
+            }:
+                if checkpoint_session_id:
+                    # Before the first new checkpoint, its row still belongs to
+                    # the predecessor whose handle this session resumed.
+                    self.store.invalidate_live_checkpoint(
+                        state["actor_id"], state["conversation_id"], checkpoint_session_id,
+                    )
         diag = state.get("_voice_diag") if isinstance(state.get("_voice_diag"), dict) else {}
         current = self._current_utterance(session)
         log.info(

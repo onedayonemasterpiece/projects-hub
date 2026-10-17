@@ -293,6 +293,14 @@ export const getPersonalTimeline = (
   );
 };
 
+export const getPersonalTimelineMessage = (
+  conversationId: string, workspaceId: string, messageId: string, signal?: AbortSignal,
+) => api<PersonalTimelineMessage>(
+  `/api/conversations/${encodeURIComponent(conversationId)}/timeline/messages/${encodeURIComponent(messageId)}?`
+    + new URLSearchParams({ workspace_id: workspaceId }),
+  { signal },
+);
+
 export const upsertPersonalTimelineMessage = (
   conversationId: string,
   message: {

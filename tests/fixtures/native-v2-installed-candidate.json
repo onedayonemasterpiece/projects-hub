@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "purpose": "Pair this backend/PWA delivery with the already built and installed native Android candidate. This metadata does not replace APK digest verification or physical acceptance.",
+  "repository": "https://github.com/onedayonemasterpiece/projects-hub",
+  "consumer_source_head": "20020927de8ba733922d763146d71fa75872727e",
+  "ci_merge_checkout": "03c3d37ef65dbedc2a8f56aa17b781cb6b5c1988",
+  "framework": {
+    "repository": "https://github.com/onedayonemasterpiece/live-interaction",
+    "version": "0.4.0-rc.1",
+    "ref": "c564f0c44c6fe783fd4932bd4633fada34e05c73",
+    "tree": "e4f36b3e6773e19a74a33de5389c1e3475f4b1c7",
+    "channel": "candidate",
+    "artifact_type": "git_source",
+    "status": "paired source candidate; signed release and physical acceptance pending"
+  },
+  "apk": {
+    "artifact_id": 12099042605,
+    "run_id": 39027475944,
+    "artifact_url": "https://github.com/onedayonemasterpiece/projects-hub/actions/runs/39027475944/artifacts/12099042605",
+    "apk_bytes": 3157902,
+    "apk_sha256": "8cc466f881f44c68eec7276de94cacd158b2d557b8cd61330e70691042d04c76",
+    "kind": "GitHub PR debug build; not signed production update"
+  },
+  "start_fixture": {
+    "file": "native-live-start.json",
+    "source_path": "android/app/src/test/resources/native-live-start.json",
+    "source_ref": "20020927de8ba733922d763146d71fa75872727e",
+    "git_blob_sha": "1d98d0de6b3e59a04d0b98eddb1cc84df4c9bf04",
+    "sha256": "9d917a3c77759a375feb8398dfc857da4ef78aa0fd7745e0f5a5700f23be30fc",
+    "producer_test_path": "android/app/src/test/java/com/kenigevents/projectshub/NativeSessionRequestTest.java",
+    "producer_validation": "Original Android CI invokes NativeSessionRequestTest on the native producer. This service delivery tests the preserved payload against its actual HTTP request model."
+  },
+  "source_provenance_url": "https://github.com/onedayonemasterpiece/projects-hub/blob/e7ff19b8ae11458ac105d43ac79ea5b8814006d8/docs/research/voice-audio-efficiency-20261017/native-candidate/consumer-ci-apk-receipt.json",
+  "production_android_source_is_not_this_candidate": true,
+  "new_android_publication_requested_by_this_delivery": false
+}

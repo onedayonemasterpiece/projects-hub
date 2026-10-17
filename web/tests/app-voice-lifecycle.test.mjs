@@ -12,7 +12,7 @@ test("Projects Hub preflights microphone and cleans failed Live startup", async 
   assert.match(source, /Открыть настройки микрофона/);
 });
 
-test("Projects Hub enables the voice orb only after the Live client exists", async () => {
+test("Projects Hub gates a fresh Start on readiness but always allows an active Stop", async () => {
   const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(source, /const \[voiceClientReady, setVoiceClientReady\] = useState\(false\)/);
   assert.match(
@@ -23,7 +23,13 @@ test("Projects Hub enables the voice orb only after the Live client exists", asy
     source,
     /client\.stop\(\{ reason: "ui_unmount" \}\);[\s\S]*setVoiceClientReady\(false\)/,
   );
-  assert.match(source, /disabled=\{busy \|\| !voiceClientReady\}/);
+  const expression = source.match(/disabled=\{(!voiceActive[^\n]+)\}/)?.[1];
+  assert.ok(expression, "exercise the actual Start/Stop control condition");
+  const disabled = new Function("voiceActive", "busy", "voiceClientReady", `return ${expression}`);
+  assert.equal(disabled(false, false, false), true, "fresh Start needs a ready client");
+  assert.equal(disabled(false, true, true), true, "another pending fresh Start stays disabled");
+  assert.equal(disabled(false, false, true), false);
+  assert.equal(disabled(true, true, false), false, "Stop remains usable during native bootstrap/recovery");
 });
 
 test("Android package grants Chromium full microphone audio capability", async () => {
@@ -39,7 +45,10 @@ test("Projects Hub renders both sides of the Live conversation as a bounded mess
   const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.match(source, /event\.type === "input_transcript"[\s\S]*mergeChatMessage\("user"/);
   assert.match(source, /event\.type === "output_transcript"[\s\S]*mergeChatMessage\("assistant"/);
-  assert.match(source, /import \{ mergeTranscript, resolveTerminalVoiceState, selectProvisionalCaption, speechStartsNewUserBubble, voiceStartupFailureNotice, voiceStartupFailureState \} from "\.\/voiceUiContract\.js"/);
+  const uiContractImports = source.match(/import \{([^}]+)\} from "\.\/voiceUiContract\.js"/)?.[1].split(",").map(name => name.trim());
+  for (const name of ["mergeTranscript", "resolveTerminalVoiceState", "selectProvisionalCaption", "speechStartsNewUserBubble", "voiceStartupFailureNotice", "voiceStartupFailureState"]) {
+    assert.ok(uiContractImports?.includes(name), `App uses the executable ${name} contract`);
+  }
   assert.match(source, /mergeTranscript\(current\.text, clean\)/);
   assert.match(source, /getPersonalTimeline\(/);
   assert.match(source, /upsertPersonalTimelineMessage\(/);
@@ -270,7 +279,9 @@ test("Projects Hub keeps long provider transcript intact and exposes terminal vo
 
 test("a new microphone speech start cannot append to the prior final-only user bubble", async () => {
   const source = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
-  assert.match(source, /onTiming:\s*event\s*=>\s*\{[\s\S]*speechStartsNewUserBubble\(event\)/);
+  assert.match(source, /onTiming:\s*applyVoiceTiming/);
+  assert.match(source, /applyVoiceTiming\(event.stage\)/);
+  assert.match(source, /const applyVoiceTiming = useCallback\([\s\S]*speechStartsNewUserBubble\(event\)/);
   assert.match(source, /speechStartsNewUserBubble\(event\)[\s\S]*userTranscriptIndex\.current\s*=\s*-1/);
   assert.match(source, /speechStartsNewUserBubble\(event\)[\s\S]*turnHasInput\.current\s*=\s*false/);
 });

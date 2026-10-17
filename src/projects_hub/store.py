@@ -146,6 +146,16 @@ class DurableStore:
         );
         CREATE INDEX IF NOT EXISTS conversations_personal_idx
             ON conversations(actor_id, workspace_id, updated_at_ms DESC);
+        CREATE TABLE IF NOT EXISTS live_checkpoints(
+            actor_id TEXT NOT NULL REFERENCES actors(id),
+            conversation_id TEXT NOT NULL REFERENCES conversations(id),
+            model TEXT NOT NULL,
+            handle TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            usable INTEGER NOT NULL DEFAULT 1,
+            updated_at_ms INTEGER NOT NULL,
+            PRIMARY KEY(actor_id, conversation_id)
+        );
         CREATE TABLE IF NOT EXISTS personal_conversations(
             actor_id TEXT NOT NULL REFERENCES actors(id),
             workspace_id TEXT NOT NULL REFERENCES workspaces(id),
@@ -338,6 +348,16 @@ class DurableStore:
             }
             if "client_source_id" not in columns:
                 self.db.execute("ALTER TABLE sources ADD COLUMN client_source_id TEXT")
+            if "audio_format" not in columns:
+                self.db.execute("ALTER TABLE sources ADD COLUMN audio_format TEXT NOT NULL DEFAULT 'pcm16'")
+            if "audio_duration_us" not in columns:
+                self.db.execute("ALTER TABLE sources ADD COLUMN audio_duration_us INTEGER NOT NULL DEFAULT 0")
+            if "audio_projection_bytes" not in columns:
+                self.db.execute("ALTER TABLE sources ADD COLUMN audio_projection_bytes INTEGER NOT NULL DEFAULT 0")
+            if "audio_direction" not in columns:
+                self.db.execute("ALTER TABLE sources ADD COLUMN audio_direction TEXT NOT NULL DEFAULT 'uplink'")
+            from .encoded_voice_store import initialize_encoded_voice_schema
+            initialize_encoded_voice_schema(self.db)
             self.db.execute(
                 """CREATE UNIQUE INDEX IF NOT EXISTS sources_actor_client_source_idx
                    ON sources(actor_id, client_source_id)
@@ -2415,6 +2435,22 @@ class DurableStore:
             ).fetchone()
             return self._timeline_message_public(row)
 
+    def get_conversation_timeline_message(
+        self, *, actor_id: str, conversation_id: str, workspace_id: str, message_id: str,
+    ) -> dict[str, Any]:
+        """Read one canonical row without replaying a whole conversation to the UI."""
+        with self._lock:
+            row = self.db.execute(
+                """SELECT m.* FROM conversation_timeline_messages m
+                   JOIN conversations c ON c.id=m.conversation_id
+                   WHERE m.id=? AND m.conversation_id=? AND c.actor_id=? AND c.workspace_id=?""",
+                (message_id, conversation_id, actor_id, workspace_id),
+            ).fetchone()
+            if not row:
+                raise StoreError("TIMELINE_MESSAGE_NOT_FOUND", "Message is not available in this conversation")
+            self._membership(actor_id, workspace_id)
+            return self._timeline_message_public(row)
+
     def list_conversation_timeline_messages(
         self,
         *,
@@ -2773,6 +2809,46 @@ class DurableStore:
             )
             return {"project_id": project_id, "project_name": project["name"], "revision": now}
 
+    # Provider resumption checkpoints let a backend restart continue the same
+    # provider conversation. The handle is a server-only secret: never returned
+    # to clients or logged. Explicit user Stop makes it unusable.
+    def save_live_checkpoint(
+        self, actor_id: str, conversation_id: str, *, model: str, handle: str, session_id: str
+    ) -> None:
+        if not isinstance(handle, str) or not 0 < len(handle) <= 4096:
+            raise StoreError("INVALID_ARGUMENT", "Checkpoint handle is invalid")
+        with self._lock:
+            self.get_conversation(actor_id, conversation_id)
+            self.db.execute(
+                """INSERT INTO live_checkpoints(actor_id,conversation_id,model,handle,session_id,usable,updated_at_ms)
+                   VALUES(?,?,?,?,?,1,?)
+                   ON CONFLICT(actor_id,conversation_id) DO UPDATE SET
+                     model=excluded.model,handle=excluded.handle,session_id=excluded.session_id,
+                     usable=1,updated_at_ms=excluded.updated_at_ms""",
+                (actor_id, conversation_id, model, handle, session_id, _now_ms()),
+            )
+
+    def usable_live_checkpoint(
+        self, actor_id: str, conversation_id: str, *, model: str, max_age_ms: int
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            row = self.db.execute(
+                """SELECT handle,session_id,updated_at_ms FROM live_checkpoints
+                   WHERE actor_id=? AND conversation_id=? AND model=? AND usable=1""",
+                (actor_id, conversation_id, model),
+            ).fetchone()
+        if row is None or _now_ms() - int(row["updated_at_ms"]) > max_age_ms:
+            return None
+        return {"handle": row["handle"], "session_id": row["session_id"],
+                "age_ms": _now_ms() - int(row["updated_at_ms"])}
+
+    def invalidate_live_checkpoint(self, actor_id: str, conversation_id: str, session_id: str) -> None:
+        with self._lock:
+            self.db.execute(
+                "UPDATE live_checkpoints SET usable=0 WHERE actor_id=? AND conversation_id=? AND session_id=?",
+                (actor_id, conversation_id, session_id),
+            )
+
     def recent_conversation_history(
         self,
         actor_id: str,
@@ -2975,10 +3051,11 @@ class DurableStore:
                 params.append(exclude_source_id)
             params.append(bounded)
             rows = self.db.execute(
-                """SELECT id,status,audio_bytes,audio_chunks,transcript_revision,
+                """SELECT id,status,audio_bytes,audio_chunks,audio_format,audio_duration_us,transcript_revision,
                           captured_at_ms,updated_at_ms
                    FROM sources
                    WHERE actor_id=? AND conversation_id=?
+                     AND audio_direction='uplink'
                      AND status NOT IN ('archived','ephemeral_processed')"""
                 + exclude_sql
                 + " ORDER BY updated_at_ms DESC LIMIT ?",
@@ -3000,6 +3077,8 @@ class DurableStore:
                         "status": row["status"],
                         "audio_bytes": int(row["audio_bytes"]),
                         "audio_chunks": int(row["audio_chunks"]),
+                        "audio_format": row["audio_format"],
+                        "audio_duration_us": int(row["audio_duration_us"]),
                         "transcript_revision": int(row["transcript_revision"]),
                         "provisional_chars": len(str(interim["text"])) if interim else 0,
                         **verdict,
@@ -3057,7 +3136,11 @@ class DurableStore:
                 "total_chars": total,
                 "audio_bytes": int(source["audio_bytes"]),
                 "audio_chunks": int(source["audio_chunks"]),
-                "needs_audio_replay": not finalized and int(source["audio_bytes"]) > 0,
+                "audio_format": source["audio_format"],
+                "audio_direction": source["audio_direction"],
+                "audio_duration_us": int(source["audio_duration_us"]),
+                "needs_audio_replay": not finalized and int(source["audio_bytes"]) > 0 and source["audio_format"] == "pcm16",
+                "needs_source_analysis": not finalized and int(source["audio_bytes"]) > 0 and source["audio_format"] == "encoded-v2" and source["audio_direction"] == "uplink",
             }
 
     def voice_source_audio_path(
@@ -3073,6 +3156,8 @@ class DurableStore:
                     "FORBIDDEN",
                     "Voice source does not belong to the current conversation",
                 )
+            if source.get("audio_format") == "encoded-v2":
+                raise StoreError("SOURCE_AUDIO_ENCODED", "Compressed source requires its ordered codec stream")
             if int(source["audio_bytes"]) <= 0:
                 raise StoreError("SOURCE_AUDIO_EMPTY", "Voice source has no durable audio")
             root = self.data_dir.resolve()
@@ -3085,6 +3170,8 @@ class DurableStore:
         terminal = {"archived", "ephemeral_processed"}
         with self._lock:
             source = self.get_source(actor_id, source_id)
+            if source.get("audio_format") == "encoded-v2":
+                raise StoreError("SOURCE_IMMUTABLE", "Committed compressed source cannot be reset for replay")
             if not source.get("client_source_id"):
                 raise StoreError(
                     "INVALID_ARGUMENT",
@@ -3119,6 +3206,8 @@ class DurableStore:
             return {"audio_bytes": 0, "audio_chunks": 0}
         with self._lock:
             source = self.get_source(actor_id, source_id)
+            if source.get("audio_format") == "encoded-v2":
+                raise StoreError("SOURCE_AUDIO_FORMAT", "Decoded PCM cannot replace a compressed original")
             path = self.data_dir / source["audio_path"]
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("ab", buffering=0) as handle:
@@ -3179,6 +3268,53 @@ class DurableStore:
             return self.db.execute(
                 "SELECT transcript_revision FROM sources WHERE id=?", (source_id,)
             ).fetchone()[0]
+
+    def append_voice_timeline_event(
+        self, *, actor_id: str, source_id: str, turn_id: str, kind: str,
+        text: str, provider_at_ms: int | None = None,
+    ) -> dict[str, Any]:
+        """Commit native transcript and the existing personal timeline together.
+
+        Native capture outlives the WebView. Its canonical transcript cannot
+        depend on a browser receiving an event and then POSTing it back. The
+        message identity is stable for the original server turn and role.
+        """
+        if kind not in {"input_transcript", "output_transcript"}:
+            raise StoreError("INVALID_ARGUMENT", "A canonical transcript event is required")
+        role = "user" if kind == "input_transcript" else "assistant"
+        message_id = "msg_live_" + hashlib.sha256((turn_id + ":" + role).encode()).hexdigest()[:40]
+        clean = text.strip()
+        with self._lock:
+            source = self.get_source(actor_id, source_id)
+            prior = self.db.execute("SELECT * FROM conversation_timeline_messages WHERE id=?", (message_id,)).fetchone()
+            current = str(prior["text"]) if prior else ""
+            # The same transcript merge rule used by the existing browser:
+            # providers can emit either cumulative text or overlapping pieces.
+            if not current or clean.startswith(current):
+                merged = clean
+            elif not clean or current.endswith(clean):
+                merged = current
+            else:
+                overlap = min(len(current), len(clean))
+                while overlap >= 3 and current[-overlap:] != clean[:overlap]:
+                    overlap -= 1
+                merged = current + (clean[overlap:] if overlap >= 3 else " " + clean)
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                source_revision = self.append_source_event(actor_id, source_id, kind, text, provider_at_ms)
+                result = self.upsert_conversation_timeline_message(
+                    actor_id=actor_id, conversation_id=source["conversation_id"],
+                    workspace_id=source["workspace_id"], message_id=message_id,
+                    turn_id=turn_id, role=role, text=merged, source_id=source_id,
+                    transcript_revision=source_revision if role == "user" else 0,
+                    revision=int(prior["revision"]) + 1 if prior else 1,
+                    blocks=json.loads(prior["blocks_json"]) if prior else [],
+                )
+                self.db.execute("COMMIT")
+                return result
+            except BaseException:
+                self.db.execute("ROLLBACK")
+                raise
 
     def mark_source_stopped(self, actor_id: str, source_id: str) -> None:
         now = _now_ms()
