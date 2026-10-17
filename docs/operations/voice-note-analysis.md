@@ -184,3 +184,47 @@ For joined requests, inspect `external_source.triggered_sources` for candidates
 actually present in the frozen manifest, together with prior dispositions. Do not
 reclassify the whole case solely from the original anchor's trigger: a new donor
 may express the active request while an older supporting candidate was a quote.
+
+## Owner-visible result links and briefing
+
+Verified `question_result_ready` already enters the addressed owner's personal
+Mira briefing, without waiting for Slack. Startup reads do not mark it announced;
+existing `collaboration_brief_seen` presentation receipts still govern that.
+The briefing and `collaboration_questions_inbox(analysis_id=...)` now expose
+`delivery_links`:
+
+- `source_note_url` and `source_notes`: original Record note(s) at the currently
+  authorized source repository's approved publishing branch (or explicitly labeled
+  repository-default fallback; see the binding requirement below);
+- each source's `snapshot_url`: the distinct immutable analysis input;
+- `slack_result_url` / `slack_thread_url`: only after a confirmed send receipt in
+  the existing authorized Slack destination; otherwise null.
+
+The original note URL is not the Projects Hub frozen anchor or result artifact.
+Source links fail closed if the repository connection is revoked/unavailable,
+its identity differs or its configured branch is missing. Only triggered accepted
+members actually present in that analysis's frozen manifest are listed as source
+notes. Supporting references are not falsely presented as notes receiving writes.
+The intake CAS publisher remains responsible for applying questions/results to
+those original files. A link itself does not claim the latest projection has
+already been written; `projection_state=managed_by_intake` makes that distinction.
+Mira offers a brief summary and can read the actual stored result on request.
+
+### Phone notification boundary
+
+A personal briefing event is not a delivered phone push. This backend has no FCM
+or Web Push provider/registration/outbox for analytics. The existing Android
+`DevelopmentCompletionJob` polls only development completions, filters `devrun_`
+identities and uses a development-specific local notification. Analyses must not
+masquerade as development runs to reach that path. Adding analytics notifications
+to that client path requires separately approved native work; no such changes or
+credentials are included in this backend-only patch.
+
+Configure optional `source_branch` in the approved private voice binding to match
+intake's actual publishing branch (`_branch_url`), which can differ from the
+repository default. This field does not expand repository permissions. If it is
+absent, links explicitly carry `branch_source=repository_default_fallback` and use
+the authorized connection's default branch, never an assumed `main`. Before
+claiming that the link matches the one in Record's app, activation must verify
+that this fallback really is intake's publishing branch or set `source_branch`.
+An explicit binding is labeled `branch_source=approved_source_binding`.

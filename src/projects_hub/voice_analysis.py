@@ -223,6 +223,46 @@ class VoiceAnalysis:
         context['trigger_semantics'] = 'Candidate only. Inspect the full transcript; a quotation, negation or discussion of this feature is not a command. An empty question_package with explanation completes a voice candidate without questions.'
         return context
 
+    def source_note_links(self, analysis):
+        """Live original note URLs, not the frozen PH anchor or result artifact.
+
+        Links are projections of the current authorized source connection. They
+        do not assert that intake has already applied the latest Markdown block.
+        """
+        workspace = self._access()
+        connection = self.store.get_repository_connection(self.config['owner_id'],workspace,
+            int(self.config['source_repository_id']))
+        if (connection.get('state') != 'available' or connection.get('installation_state') != 'active'
+                or connection.get('role') == 'unassigned'
+                or connection.get('full_name') != self.config['source_repository']):
+            raise StoreError('VOICE_SOURCE_UNAVAILABLE','Original note link unavailable')
+        branch = self.config.get('source_branch') or connection.get('default_branch')
+        if not isinstance(branch,str) or not branch.strip() or len(branch)>250 or any(ord(c)<32 for c in branch):
+            raise StoreError('VOICE_SOURCE_UNAVAILABLE','Original note publishing branch unavailable')
+        branch_source = 'approved_source_binding' if self.config.get('source_branch') else 'repository_default_fallback'
+        if connection.get('project_id'):
+            self.store.project_access(self.config['owner_id'],workspace,connection['project_id'])
+        result = json.loads(analysis['result_json']) if analysis['result_json'] else {}
+        snapshot = result.get('provenance',{}).get('voice_input_snapshot') or json.loads(analysis['scope_json']).get('voice_input_snapshot')
+        if not snapshot:
+            return []
+        root = self.joins.intent(snapshot['canonical_intent_id'])
+        if root['note_id'] != analysis['note_id']:
+            raise StoreError('VOICE_SOURCE_CONFLICT','Analysis source binding differs')
+        links = []
+        for row in self.store.db.execute('SELECT i.id,i.payload_json FROM voice_case_members m JOIN voice_analysis_intents i ON i.id=m.intent_id WHERE m.root_id=? ORDER BY i.created_ms,i.id',(root['id'],)).fetchall():
+            source = json.loads(row['payload_json'])['source']
+            if source not in snapshot['input_manifest']:
+                continue
+            base = 'https://github.com/' + source['repository'] + '/blob/'
+            links.append(dict(intent_id=row['id'],repository=source['repository'],path=source['path'],
+                url=base+quote(branch,safe='')+'/'+quote(source['path'],safe='/'),
+                branch=branch,branch_source=branch_source,
+                snapshot_url=base+source['commit_sha']+'/'+quote(source['path'],safe='/'),
+                projection_state='managed_by_intake'))
+        links.sort(key=lambda item: item['intent_id'] != root['id'])
+        return links
+
     def get(self, intent_id):
         # Projection, revision and terminal flag must describe one database snapshot.
         with self.store._lock:
