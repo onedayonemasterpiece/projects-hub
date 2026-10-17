@@ -520,6 +520,56 @@ class GitHubConnections:
         )
         return token, connection
 
+    async def repository_audience(self, *, actor_id: str, workspace_id: str, repository_id: int) -> dict:
+        """Metadata-only evidence for an existing authorized binding, no ACL changes.
+
+        A personal installation owner is the expected GitHub owner. This does
+        not infer ownership of organization accounts or disclose collaborator names.
+        """
+        try:
+            connection = self.store.get_repository_connection(actor_id, workspace_id, repository_id)
+            if connection.get('project_id'):
+                self.store.project_access(actor_id, workspace_id, connection['project_id'])
+            if (connection.get('state') != 'available' or connection.get('installation_state') != 'active'
+                    or connection.get('role') == 'unassigned'):
+                return dict(owner_only=None, status='unavailable')
+            installation = self.store.github_installation(connection['installation_id'])
+            expected = str((installation or {}).get('account_login') or '')
+            if ((installation or {}).get('account_type') != 'User' or not expected
+                    or connection['full_name'].split('/')[0].casefold() != expected.casefold()):
+                return dict(owner_only=None, status='owner_identity_unverified')
+            client = self._require_client()
+            token = await client.installation_token(int(connection['installation_id']),
+                repository_ids=[int(repository_id)], permissions={'metadata':'read'})
+            metadata = await client.repository_metadata(token=token, repository_id=int(repository_id))
+            if (not isinstance(metadata, dict) or metadata.get('id') != int(repository_id)
+                    or metadata.get('full_name') != connection['full_name']
+                    or type(metadata.get('private')) is not bool):
+                return dict(owner_only=None, status='identity_unverified')
+            if not metadata['private']:
+                return dict(owner_only=False, status='public_repository')
+            seen, others = set(), set()
+            for page in range(1, 6):
+                rows = await client.repository_collaborator_page(token=token,full_name=connection['full_name'],page=page)
+                if not isinstance(rows, list) or len(rows)>100:
+                    return dict(owner_only=None,status='invalid_response')
+                for row in rows:
+                    if not isinstance(row,dict) or not isinstance(row.get('login'),str) or not row['login']:
+                        return dict(owner_only=None,status='invalid_response')
+                    login=row['login'].casefold()
+                    if login in seen:
+                        return dict(owner_only=None,status='incomplete_pagination')
+                    seen.add(login)
+                    if login != expected.casefold():
+                        others.add(login)
+                if len(rows)<100:
+                    return dict(owner_only=not others,
+                        status='verified', collaborator_count=len(seen), other_collaborator_count=len(others),
+                        owner_basis='existing_personal_installation_account')
+            return dict(owner_only=None,status='pagination_limit',collaborator_count=len(seen))
+        except (StoreError, GitHubAppError):
+            return dict(owner_only=None,status='unavailable')
+
     async def read_repository_path(
         self,
         *,

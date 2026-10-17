@@ -228,3 +228,36 @@ the authorized connection's default branch, never an assumed `main`. Before
 claiming that the link matches the one in Record's app, activation must verify
 that this fallback really is intake's publishing branch or set `source_branch`.
 An explicit binding is labeled `branch_source=approved_source_binding`.
+
+## Scoped activation readiness
+
+The existing `get_project_request` MCP response adds `binding_readiness` for live
+requests after its normal current binding and actor authorization succeeds. This
+is not a project inventory, administrator endpoint, or repair operation. It
+reports whether that exact project's active grants are owner-only and metadata
+for the request's existing note repository. The configured voice source is also
+included only when the configuration matches this bound owner and project.
+Without that configuration no unrelated source repository is discovered.
+
+Each repository's audience check uses its existing GitHub App installation,
+narrowed to Metadata read for that repository. It checks current repository ID,
+name and private visibility, then all collaborator pages, with a five-page cap
+and an eight-second overall deadline per repository. Only counts are returned,
+not collaborator identities. A personal installation account is the explicit
+GitHub owner basis; organization accounts return unknown. Permission errors,
+missing resources, incomplete pagination and timeouts are unknown, never proof
+of owner-only access. Authorization and binding/repository identity are checked
+again after I/O. These are point-in-time checks, not a guarantee against later
+ACL changes or proof of a human-to-GitHub account identity beyond the existing
+approved installation.
+
+`owner_only=false` means this project is not eligible as the private voice inbox.
+The read never revokes other participants, rebinds repositories, creates a project,
+or enables credentials. Owner approval for the dedicated bridge does not approve
+copying private notes to an unexpectedly shared repository. If no suitable current
+project exists, choose another already verified owner-only project through the
+owner workflow; project creation is not provided by this readiness response.
+
+Do not use `GET /api/github/status` as a strictly read-only audit: its existing
+implementation can auto-bind exact repository/project name matches. Readiness
+does not invoke that path.

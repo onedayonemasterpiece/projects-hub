@@ -233,7 +233,8 @@ def attach_mcp_routes(app, *, store, settings, actor_id_from_request, analysis_s
                     raise StoreError('REQUEST_UNAVAILABLE','Voice analysis is not enabled')
                 result=await events.voice_analysis.joins.link(principal['id'],**args)
             elif params.name == 'get_project_request' and set(args)=={'project_id','request_id'} and all(isinstance(v,str) and v for v in args.values()):
-                result=events.get_project_request(principal['id'],**args)
+                from .request_readiness import read_request_with_readiness
+                result=await read_request_with_readiness(events,principal['id'],**args)
             elif params.name == 'record_request_result' and set(args)=={'project_id','request_id','event_id','result'} and all(isinstance(args[k],str) and args[k] for k in ('project_id','request_id','event_id')) and isinstance(args['result'],dict):
                 result=await events.record_request_result_async(principal['id'],**args)
             elif params.name == 'get_test_request' and set(args) == {'request_id', 'project_id', 'actor_id'} and all(isinstance(v, str) for v in args.values()):
