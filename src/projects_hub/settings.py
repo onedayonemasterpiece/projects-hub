@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
+import json
 from pathlib import Path
 import secrets
 import stat
@@ -63,6 +64,8 @@ class Settings:
     github_app_slug: str = ""
     github_app_private_key: str = ""
     github_app_webhook_secret: str = ""
+
+    voice_analysis_config: dict | None = field(default=None, repr=False)
 
     @property
     def public_auth_enabled(self) -> bool:
@@ -157,6 +160,15 @@ class Settings:
                 min_length=20,
             )
 
+        voice_config = env.get("PROJECTS_HUB_VOICE_ANALYSIS_CONFIG") or ""
+        voice_file = env.get("PROJECTS_HUB_VOICE_ANALYSIS_CONFIG_FILE") or ""
+        if voice_config and voice_file:
+            raise RuntimeError("Configure only one voice analysis binding source")
+        if voice_file:
+            voice_config = _read_private_text(Path(voice_file).expanduser(), "PROJECTS_HUB_VOICE_ANALYSIS_CONFIG_FILE")
+        voice_binding = json.loads(voice_config) if voice_config else None
+        if voice_binding is not None and not isinstance(voice_binding, dict):
+            raise RuntimeError("Voice analysis binding must be an object")
         return cls(
             data_dir=root,
             static_dir=static,
@@ -173,4 +185,5 @@ class Settings:
             github_app_slug=github_slug,
             github_app_private_key=github_private_key,
             github_app_webhook_secret=github_webhook_secret,
+            voice_analysis_config=voice_binding,
         )

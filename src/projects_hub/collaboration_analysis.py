@@ -22,7 +22,7 @@ MAX_ANALYSIS_REPAIR_ATTEMPTS = 1
 PURPOSES = {"requirements", "edge_cases", "architecture", "code_review", "ideas"}
 JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.S)
 
-ANALYSIS_ORIGINS = {"mira", "slack"}
+ANALYSIS_ORIGINS = {"mira", "slack", "voice"}
 SOURCE_KINDS = {"project_note", "project_document", "project_task", "feature_idea", "board_object"}
 QUESTION_PRIORITIES = {"critical", "high", "normal", "low"}
 CONTINUATION_KINDS = {"analysis_followup", "external_continuation"}
@@ -760,7 +760,7 @@ class CollaborationAnalysisService:
                 or len(questions) > 6 or not isinstance(summary, str)
                 or len(summary) > 4000 or type(binding_revision) is not int
                 or binding_revision < 1 or not all(isinstance(x, str) and x for x in (
-                    binding_id, slack_workspace_id, slack_channel_id, slack_thread_ts))):
+                    binding_id,)) or (origin != "voice" and not all(isinstance(x, str) and x for x in (slack_workspace_id, slack_channel_id, slack_thread_ts)))):
             raise StoreError("INVALID_ARGUMENT", "Invalid external question package")
         clean_questions: list[dict[str, Any]] = []
         external_ids: set[str] = set()
@@ -1389,9 +1389,8 @@ class CollaborationAnalysisService:
                 or anchor["project_id"] != analysis["project_id"]
                 or int(anchor["revision"]) != scope.get("note_anchor_revision")):
             raise StoreError("QUESTION_SOURCE_STALE", "Question source has changed")
-        binding = self.store.db.execute(
-            "SELECT * FROM mcp_discussion_bindings WHERE id=?", (scope.get("binding_id"),)
-        ).fetchone()
+        binding = (self.question_events.bindings._row(scope.get("binding_id")) if self.question_events else
+                   self.store.db.execute("SELECT * FROM mcp_discussion_bindings WHERE id=?",(scope.get("binding_id"),)).fetchone())
         if (not binding or binding["state"] != "active" or not binding["questions_allowed"]
                 or binding["revision"] != analysis["slack_binding_revision"]
                 or binding["project_id"] != analysis["project_id"]
