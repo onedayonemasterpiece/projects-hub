@@ -11,6 +11,10 @@ import android.webkit.WebViewClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebResourceError;
+import android.webkit.ServiceWorkerClient;
+import android.webkit.ServiceWorkerController;
+import androidx.test.platform.app.InstrumentationRegistry;
+import org.junit.After;
 import org.json.JSONObject;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
@@ -23,6 +27,18 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public class MainActivitySmokeTest {
+    @After public void restoreServiceWorkerClient() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() ->
+                ServiceWorkerController.getInstance().setServiceWorkerClient(null));
+    }
+
+    private WebResourceResponse fixtureResponse(String url, WebResourceRequest request) {
+        String html = url.equals(request.getUrl().toString())
+                ? "<!doctype html><html><body>Theme bridge fixture</body></html>" : "";
+        return new WebResourceResponse("text/html", "UTF-8",
+                new ByteArrayInputStream(html.getBytes(StandardCharsets.UTF_8)));
+    }
+
     @Test public void activityLaunches() {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
             scenario.onActivity(activity -> assertNotNull(activity));
@@ -54,18 +70,27 @@ public class MainActivitySmokeTest {
                 new java.util.concurrent.atomic.AtomicReference<>("no callback");
         java.util.concurrent.atomic.AtomicReference<String> dom =
                 new java.util.concurrent.atomic.AtomicReference<>("not checked");
+        java.util.concurrent.atomic.AtomicInteger viewRequests = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger workerRequests = new java.util.concurrent.atomic.AtomicInteger();
         scenario.onActivity(activity -> {
             WebView view = activity.themeWebView();
             view.stopLoading();
+            // Earlier launch tests can install the PWA service worker for this
+            // origin. Its network-first fetches bypass WebViewClient, so intercept
+            // BOTH request paths; otherwise a live/cached app shell replaces HTML.
+            ServiceWorkerController.getInstance().setServiceWorkerClient(new ServiceWorkerClient() {
+                @Override public WebResourceResponse shouldInterceptRequest(WebResourceRequest request) {
+                    workerRequests.incrementAndGet();
+                    return fixtureResponse(url, request);
+                }
+            });
             view.setWebViewClient(new WebViewClient() {
                 @Override public WebResourceResponse shouldInterceptRequest(
                         WebView page, WebResourceRequest request) {
                     // Exercise a real HTTPS document/origin, not the synthetic
                     // history URL of loadDataWithBaseURL. Never use the network.
-                    String html = url.equals(request.getUrl().toString())
-                            ? "<!doctype html><html><body>Theme bridge fixture</body></html>" : "";
-                    return new WebResourceResponse("text/html", "UTF-8",
-                            new ByteArrayInputStream(html.getBytes(StandardCharsets.UTF_8)));
+                    viewRequests.incrementAndGet();
+                    return fixtureResponse(url, request);
                 }
                 @Override public void onPageFinished(WebView page, String finished) {
                     location.set("finished=" + finished + " current=" + page.getUrl());
@@ -96,7 +121,20 @@ public class MainActivitySmokeTest {
             });
             loaded.await(50, TimeUnit.MILLISECONDS);
         }
-        // Construct diagnostics AFTER waiting, not before await evaluated.
+        // Capture individual failed predicates, not only an opaque false. This is
+        // synthetic test content; never collect real app/account document text.
+        if (loaded.getCount() != 0) {
+            CountDownLatch inspected = new CountDownLatch(1);
+            scenario.onActivity(activity -> activity.themeWebView().evaluateJavascript(
+                    "JSON.stringify({href:location.href,state:document.readyState,"
+                    + "fixture:document.body?.textContent==='Theme bridge fixture',"
+                    + "bodyLength:document.body?.textContent?.length,"
+                    + "worker:navigator.serviceWorker?.controller?.scriptURL||null})",
+                    value -> { dom.set(value); inspected.countDown(); }));
+            inspected.await(2, TimeUnit.SECONDS);
+        }
+        android.util.Log.i("ThemeFixture", "viewRequests=" + viewRequests.get()
+                + " workerRequests=" + workerRequests.get() + " " + dom.get());
         assertTrue("exact theme fixture must load before posting to bridge: "
                 + location.get() + "; " + dom.get(), loaded.getCount() == 0);
     }
