@@ -91,7 +91,26 @@ test "$ready" -eq 1
 adb wait-for-device
 test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1
 "${ANDROID_HOME}/emulator/emulator" -version > "$EVIDENCE/emulator-version.txt" 2>&1
-adb shell cat /proc/asound/cards > "$EVIDENCE/android-audio-cards.txt" 2>&1 || true
+# Configure only this disposable google_apis emulator. API 35 did not auto-load
+# Intel HDA after VirtioSndCard was disabled: its HAL silently supplied a 220 Hz
+# synthetic microphone and NullSink. Require a real guest card before app tests.
+# No app permission, security policy or input implementation is altered here.
+adb root > "$EVIDENCE/adb-emulator-root.txt" 2>&1
+adb wait-for-device
+adb shell cat /proc/asound/cards > "$EVIDENCE/android-audio-cards.txt" 2>&1
+if ! rg -q 'HDA|Intel' "$EVIDENCE/android-audio-cards.txt"; then
+  adb shell 'for d in /vendor/lib/modules /vendor_dlkm/lib/modules /lib/modules; do
+    if [ -f "$d/snd-hda-intel.ko" ]; then
+      modprobe -a -d "$d" snd-hda-intel || exit 1
+      exit 0
+    fi
+  done
+  echo "Intel HDA kernel module unavailable in this emulator image" >&2
+  exit 1' > "$EVIDENCE/android-audio-module.txt" 2>&1
+  adb shell cat /proc/asound/cards > "$EVIDENCE/android-audio-cards.txt" 2>&1
+fi
+adb shell ls -l /dev/snd > "$EVIDENCE/android-audio-devices.txt" 2>&1
+rg -q 'HDA|Intel' "$EVIDENCE/android-audio-cards.txt"
 adb emu avd hostmicon | tee "$EVIDENCE/host-mic.txt"
 if rg -q '^KO:' "$EVIDENCE/host-mic.txt"; then exit 1; fi
 gradle -p android -PvoiceE2e=true assembleDebug assembleDebugAndroidTest --stacktrace

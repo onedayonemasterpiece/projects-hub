@@ -62,7 +62,12 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
 
   emulator-smoke:
+    name: emulator-voice (API ${{ matrix.api-level }})
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        api-level: [34, 35]
     env:
       ORG_GRADLE_PROJECT_liveInteractionAndroidDir: ${{ github.workspace }}/.dependencies/live-interaction/android
       DISPLAY: ":99"
@@ -112,7 +117,7 @@ jobs:
           sudo chmod 0666 /dev/kvm
       - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
-          api-level: 35
+          api-level: ${{ matrix.api-level }}
           target: google_apis
           arch: x86_64
           profile: pixel_7
@@ -130,7 +135,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-emulator-evidence
+          name: android-emulator-evidence-api-${{ matrix.api-level }}
           if-no-files-found: warn
           path: |
             android/smoke-evidence/
