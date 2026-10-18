@@ -64,10 +64,11 @@ final class Updater {
         this.executor = executor;
         this.listener = listener;
         this.preferences = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        this.pendingInstall = restorePendingInstall();
+        this.pendingInstall = skipDebugSelfUpdate() ? null : restorePendingInstall();
     }
 
     void checkForUpdate() {
+        if (skipDebugSelfUpdate()) return;
         if (!checking.compareAndSet(false, true)) return;
         executor.execute(() -> {
             try {
@@ -116,6 +117,7 @@ final class Updater {
     }
 
     void downloadAndInstall(AvailableUpdate update) {
+        if (skipDebugSelfUpdate()) return;
         if (!activity.getPackageManager().canRequestPackageInstalls()) {
             pendingInstall = update;
             if (!persistPendingInstall(update)) {
@@ -163,6 +165,7 @@ final class Updater {
     }
 
     void resumePendingInstall() {
+        if (skipDebugSelfUpdate()) return;
         AvailableUpdate update = pendingInstall;
         if (update == null) {
             update = restorePendingInstall();
@@ -176,6 +179,15 @@ final class Updater {
         }
         Log.i(TAG, "resume_pending_ready versionCode=" + update.versionCode);
         downloadAndInstall(update);
+    }
+
+    private boolean skipDebugSelfUpdate() {
+        if (!BuildConfig.DEBUG) return false;
+        // Debug has a separate package/signature and cannot update from the
+        // stable release feed. Also discard offers saved by older debug builds.
+        pendingInstall = null;
+        clearPersistedPendingInstall();
+        return true;
     }
 
     private boolean persistPendingInstall(AvailableUpdate update) {

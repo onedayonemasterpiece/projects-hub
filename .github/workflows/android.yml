@@ -6,10 +6,24 @@ on:
       - main
     paths:
       - "android/**"
+      - "scripts/android_emulator_smoke.sh"
+      - "scripts/android_emulator_image.py"
+      - "scripts/prepare_live_framework.py"
+      - "scripts/android_voice_fixture.py"
+      - "pyproject.toml"
+      - "web/**"
+      - "src/projects_hub/live*.py"
       - ".github/workflows/android.yml"
   pull_request:
     paths:
       - "android/**"
+      - "scripts/android_emulator_smoke.sh"
+      - "scripts/android_emulator_image.py"
+      - "scripts/prepare_live_framework.py"
+      - "scripts/android_voice_fixture.py"
+      - "pyproject.toml"
+      - "web/**"
+      - "src/projects_hub/live*.py"
       - ".github/workflows/android.yml"
   workflow_dispatch:
 
@@ -19,8 +33,15 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      ORG_GRADLE_PROJECT_liveInteractionAndroidDir: ${{ github.workspace }}/.dependencies/live-interaction/android
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Prepare checksum-verified published SDK RC
+        run: python scripts/prepare_live_framework.py
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -46,10 +67,47 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
 
   emulator-smoke:
+    name: emulator-voice (API ${{ matrix.api-level }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        # New API 34/35 images omit Intel HDA modules; their virtio capture
+        # failed the real-audio gate. Use the Android 12 HDA image to qualify
+        # the complete app path; the normal APK still compiles/targets API 35.
+        api-level: [31]
+    env:
+      ORG_GRADLE_PROJECT_liveInteractionAndroidDir: ${{ github.workspace }}/.dependencies/live-interaction/android
+      DISPLAY: ":99"
+      QT_QPA_PLATFORM: xcb
+      QEMU_AUDIO_DRV: pa
+      QEMU_PA_SOURCE: ph_ci_mic.monitor
+      QEMU_PA_SINK: ph_ci_speaker
+      PULSE_SOURCE: ph_ci_mic.monitor
+      PULSE_SINK: ph_ci_speaker
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      ANDROID_SERIAL: emulator-5554
+      PH_ANDROID_DISPOSABLE: "1"
+      PH_ANDROID_IMAGE_CACHE: ${{ github.workspace }}/.dependencies/android-system-image-cache
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - name: Check disposable emulator host before setup
+        run: |
+          if [ -c /dev/kvm ]; then sudo chmod 0666 /dev/kvm; fi
+          bash scripts/android_emulator_smoke.sh --preflight
+      - name: Restore verified Android system image archive
+        id: voice-image-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .dependencies/android-system-image-cache
+          key: ph-voice-api31-7e7081f5784e98dd391ddae52573a75bc1db17a2fd286cb20be46d3eec251f94
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Prepare checksum-verified published SDK RC
+        run: python scripts/prepare_live_framework.py
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -57,27 +115,85 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.10.2"
-      - name: Enable KVM
-        run: |
-          test -c /dev/kvm
-          sudo chmod 0666 /dev/kvm
-      - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+      - uses: actions/setup-node@v4
         with:
-          api-level: 35
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build actual web and controlled backend fixture
+        run: |
+          python -m pip install -e . 'numpy>=2,<3'
+          npm ci --prefix web
+          npm run build --prefix web
+      - name: Configure audible emulator and test certificates
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y pulseaudio pulseaudio-utils ffmpeg espeak-ng xvfb openssl libxcb-cursor0 ripgrep
+          bash scripts/android_emulator_smoke.sh --prepare
+      - name: Record exact application checkout and verified SDK archive
+        env:
+          CANDIDATE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          python - <<'PY'
+          import json, os, pathlib, subprocess, sys
+          sys.path.insert(0, "scripts")
+          from prepare_live_framework import read_manifest, verify_prepared
+          def revision(path, ref):
+              return subprocess.check_output(["git", "-C", path, "rev-parse", ref], text=True).strip()
+          evidence = {
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "event_name": os.environ["GITHUB_EVENT_NAME"],
+              "candidate_head_sha": os.environ["CANDIDATE_HEAD_SHA"],
+              "checkout_sha": revision(".", "HEAD"),
+              "checkout_tree": revision(".", "HEAD^{tree}"),
+              "shared_artifact": verify_prepared(
+                  pathlib.Path(".dependencies/live-interaction"),
+                  read_manifest("android/live-interaction-candidate.json")),
+          }
+          pathlib.Path("android/smoke-evidence/checkout.json").write_text(json.dumps(evidence, indent=2) + "\n")
+          PY
+      - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        env:
+          # The guest HDA capture deadline is about 18 ms. Request smaller
+          # Pulse fragments for this emulator; delayed capture inserted silence.
+          PULSE_LATENCY_MSEC: "5"
+          # QEMU's default 100 Hz audio tick can exceed the guest's 3 ms
+          # capture jitter allowance. Keep the timer quantum below it.
+          QEMU_AUDIO_TIMER_PERIOD: "1000"
+        with:
+          api-level: ${{ matrix.api-level }}
           target: google_apis
           arch: x86_64
           profile: pixel_7
+          # Pin the emulator for reproducible audio acceptance. Both 37.2.12
+          # and 36.6.11 with virtio-snd returned guest pcm_readi/pcm_writei I/O
+          # errors. Exercise the supported Intel HDA path with the same real
+          # host-microphone and speaker waveform assertions.
+          emulator-build: '15507667'
           emulator-boot-timeout: 900
           disable-animations: false
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -timezone Etc/UTC
-          script: bash scripts/android_emulator_smoke.sh
+          pre-emulator-launch-script: python scripts/android_emulator_image.py
+          # Keep the established Xvfb audio path while checking Pulse latency.
+          emulator-options: -gpu swiftshader_indirect -no-snapshot -wipe-data -no-boot-anim -camera-back none -camera-front none -timezone Etc/UTC -allow-host-audio -feature -VirtioSndCard
+          script: env -u PULSE_LATENCY_MSEC -u QEMU_AUDIO_TIMER_PERIOD bash scripts/android_emulator_smoke.sh
+      - name: Clean up owned audio and display resources
+        if: always()
+        run: bash scripts/android_emulator_smoke.sh --cleanup
+      - name: Save verified Android image for subsequent runs
+        if: always() && steps.voice-image-cache.outputs.cache-hit != 'true' && hashFiles('android/smoke-evidence/system-image.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .dependencies/android-system-image-cache
+          key: ph-voice-api31-7e7081f5784e98dd391ddae52573a75bc1db17a2fd286cb20be46d3eec251f94
       - name: Upload emulator evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-emulator-evidence
+          name: android-emulator-evidence-api-${{ matrix.api-level }}
           if-no-files-found: warn
           path: |
             android/smoke-evidence/
             android/app/build/reports/androidTests/
             android/app/build/outputs/androidTest-results/
+            android/app/build/outputs/connected_android_test_additional_output/

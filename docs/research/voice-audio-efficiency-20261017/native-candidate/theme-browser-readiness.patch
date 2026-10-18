@@ -1,0 +1,22 @@
+--- a/web/tests/theme-browser.mjs
++++ b/web/tests/theme-browser.mjs
+@@ -120,7 +120,9 @@
+     await page.evaluate(()=>window.fixtureButton=document.activeElement);
+     await page.getByRole('button',{name:'Начать голосовой разговор',exact:true}).click();
+     try {
+-      await page.waitForFunction(()=>{const button=document.querySelector('.voice-orb');return button && !button.disabled && button.getAttribute('aria-label')==='Остановить разговор';},null,{timeout:15000});
++      // Stop is deliberately enabled in "starting", before POST /sessions or
++      // WSS hello. "listening" follows the awaited socket and microphone setup.
++      await page.waitForFunction(()=>{const button=document.querySelector('.voice-island.state-listening .voice-orb');return button && !button.disabled && button.getAttribute('aria-label')==='Остановить разговор';},null,{timeout:15000});
+     } catch (error) {
+       const debug=await page.evaluate(()=>({
+         button:document.querySelector('.voice-orb')?.outerHTML?.slice(0,500),
+@@ -179,7 +181,7 @@
+ 
+     // Authentication expiry disposes B before a fresh login of the same actor.
+     await page.getByRole('button',{name:'Начать голосовой разговор',exact:true}).click();
+-    await page.waitForFunction(()=>{const button=document.querySelector('.voice-orb');return button && !button.disabled && button.getAttribute('aria-label')==='Остановить разговор';});
++    await page.waitForFunction(()=>{const button=document.querySelector('.voice-island.state-listening .voice-orb');return button && !button.disabled && button.getAttribute('aria-label')==='Остановить разговор';});
+     emit({type:'input_transcript',text:'Private conversation B'});
+     await page.getByText('Private conversation B',{exact:true}).waitFor();
+     const localId=await page.evaluate(async()=>{

@@ -1,0 +1,115 @@
+{
+  "status": "failed",
+  "job_id": "job_2725835d850d107f13a36318",
+  "duration_ms": 78862,
+  "source_commit": "5b676ed54b8e9a118a6931d9b88a365e64bc9e68",
+  "source_tree": "abf317b6249f490be6a106b07bd71ad6050dd836",
+  "shared_commit": "132d59b73a137051904bc75bb03dd7d7d13bc49c",
+  "sdk_commit": "7c9b9ec1cca8a9c90760b4828922fe936bbd3166",
+  "full_report": {
+    "bytes": 3520,
+    "sha256": "8d8b6cbd93ee4a3445b325e1f3b84b602bcda67609041c45ac91ea087467a677"
+  },
+  "sqlite_diagnostic_sha256": "3cca733284095a4a8bca46fc377942d10eb248f476a82ef478bd4e2709785d1a",
+  "local_decode_sha256": "3ee98e3c471789357ab32a54983fdee475b08760e786a49a5324bb0b0af69df2",
+  "recording": {
+    "original_source_id": "src_4103cdaa9e7049a9aa9a0b043e6f69e1",
+    "original_conversation_id": "conv_09ebfd0e0473449dbd1d1658b2b5d988",
+    "capture_start_us": 0,
+    "capture_end_us": 13940000,
+    "chunks": 698,
+    "speech_portions": [
+      {
+        "capture_start_us": 1453500,
+        "capture_end_us": 5153500
+      },
+      {
+        "capture_start_us": 8833500,
+        "capture_end_us": 12313500
+      }
+    ],
+    "encoded_bytes": 45907,
+    "payloads_sha256": "ec18457ecfd5eef50673e851f338a974c50e3992db9412dcde5d92d0d2c233f1",
+    "metadata_sha256": "23618392a981c20b4d7275b97172e52af3942735f75be57dc54cb89f1e34c262"
+  },
+  "implementation_sha256": {
+    "projects_hub.live_runtime": "865bdac2c4b785c3dc6373d1a2083ef6e4c64d4f5fceceec75c4ca07f3756f4d",
+    "projects_hub.live_transcription": "60f8e6e850c9f9d62a1c93b80eef5676189ac78dc616a3d9598cd1437cd87ea3",
+    "live_interaction.provider": "9fd061458cc5470c2aa6a05f0c52da954fd85786faae510f0e5c93a0285928fc",
+    "live_interaction.transcribe": "826e7dcbc49a3707aca0e74b74bde3ddaf5a663c3925fd8e93dab1dd11bb66bf",
+    "live_interaction.caption_provenance": "cc61f89716350b7ed576d8c36228dc22088af5bb9fde5d6dd4af69eeaf7b7d7d",
+    "ai_resource_control.client": "178973d5ffcdb516cfadb44c5bbf8b412280eb5f9c96aa830a96eecee3fbac6b",
+    "ai_resource_control.live": "a21d8e366a7670b95c6bb467cdad648f906aeb557d02d1c5ce76fcdefb68867d"
+  },
+  "caption_qualification": {
+    "requested": false,
+    "observer_enabled": false,
+    "status": "not_requested"
+  },
+  "errors": [
+    {
+      "phase": "run",
+      "error_type": "TimeoutError"
+    }
+  ],
+  "primary_passed": false,
+  "replay_receipt_count": 0,
+  "final_input_events": [
+    {
+      "event_id": 6,
+      "text_length": 13,
+      "text_sha256": "cbe5973274855a974dab852eeb259dc7a10b9fc7f1b15d08320335dc0b1702f0"
+    },
+    {
+      "event_id": 17,
+      "text_length": 55,
+      "text_sha256": "062daec453ac81d3bf529a527d3f4b15b30471979f6a3ca9c10184ccf510fe7a"
+    }
+  ],
+  "interim_input_events": 0,
+  "exact_phrase_matches": {
+    "chunks": 2,
+    "harness_space_join_phrase_matches": [
+      false,
+      false
+    ],
+    "source_concat_phrase_matches": [
+      false,
+      false
+    ]
+  },
+  "projection_portions": [
+    {
+      "capture_start_us": 1453500,
+      "capture_end_us": 5153500,
+      "claims": 186,
+      "sample_count": 59200,
+      "first_start_us": 1453500,
+      "last_end_us": 5153500,
+      "gap_count": 0,
+      "pcm_chunk_hashes_sha256": "122894e1f1d9575c57ef66088baa0c38a50ed25d6a0c77706d49393c23fe5f48"
+    },
+    {
+      "capture_start_us": 8833500,
+      "capture_end_us": 12313500,
+      "claims": 175,
+      "sample_count": 55680,
+      "first_start_us": 8833500,
+      "last_end_us": 12313500,
+      "gap_count": 0,
+      "pcm_chunk_hashes_sha256": "bce94da03c739b3655ab89b7c86780a6ea7bdea4e07fab7593d624f511f351db"
+    }
+  ],
+  "projection_claims_are_not_successful_provider_write_receipts": true,
+  "turn_complete_events": 2,
+  "interrupted_events": 1,
+  "host_sessions_after_close": 0,
+  "caption_sidecars_after_close": 0,
+  "diagnosis": [
+    "Complete immutable Android source and its decoded PCM projections match local and isolated server evidence.",
+    "Both strict whole-phrase predicates are false in raw canonical finalized provider text; no interim events exist.",
+    "First response is interrupted by the original timing of the second speech portion.",
+    "Timeout discarded the incomplete replay receipt in this harness version; missing phrase is proven, other replay predicates require independent partial-result reporting.",
+    "No provider retry, clock-policy change or relaxed phrase assertion follows from this failed receipt."
+  ]
+}

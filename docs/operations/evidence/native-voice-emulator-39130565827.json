@@ -1,0 +1,154 @@
+{
+  "schema": 1,
+  "candidate": "b7d801bbc87fa3016641e72ba2b45b2e5a957691",
+  "run_id": 39130565827,
+  "artifact": {
+    "bytes": 3294074,
+    "sha256": "c4093cfb7acdb6e5b635044924baa1aedf65e7851ad4fec2f5453d7f8c0d0555",
+    "verification": "download/hash verified by parent"
+  },
+  "inputs": {
+    "smoke-evidence/logcat.txt": {
+      "bytes": 642112,
+      "sha256": "cb291be9141649c83af2c4de35738d950d0b771c68fd37a3def908b01454d93f"
+    },
+    "smoke-evidence/audio-flinger.txt": {
+      "bytes": 14702,
+      "sha256": "d940a195f553a4b6ea48bd5412ecdb4203c63f17eb660a23e15b9b39d833384f"
+    },
+    "smoke-evidence/guest-background.json": {
+      "bytes": 1271,
+      "sha256": "f1a65bc2a5259fefd01905120ff616d3803f38a9c66e4e1f94fa31caf34bc4c9"
+    },
+    "app/build/outputs/connected_android_test_additional_output/debugAndroidTest/connected/emulator-5554 - 12/voice-e2e/voice-flow.json": {
+      "bytes": 13418,
+      "sha256": "53313a6be419871ecc41832ac526fc92219d9924e4d69bb54022ad6a05497f51"
+    },
+    "smoke-evidence/fixture-data/projects-hub.sqlite3": {
+      "bytes": 905216,
+      "sha256": "35da61264cd96e38cfdde4d61838e77e39025c39510af5df3479f22822917ff4"
+    }
+  },
+  "guest_profile": {
+    "passed": true,
+    "disabled_and_stopped_packages": [
+      "com.google.android.gms",
+      "com.google.android.googlequicksearchbox"
+    ]
+  },
+  "capture": {
+    "hardware_state_true_at": "13:19:56.486",
+    "hardware_state_true_line": 3926,
+    "hardware_state_false_at": "13:20:00.131",
+    "hardware_state_false_line": 4073,
+    "span_ms": 3645.0,
+    "first_codec_pools_ready_at": "13:19:56.978",
+    "first_codec_pools_ready_line": 4002,
+    "startup_to_codec_ready_ms": 492,
+    "hal_late_read_events": 43,
+    "hal_inserted_silence_us": 655234,
+    "log_events": 148,
+    "top_tags": [
+      [
+        "android.hardware.audio@6.0-impl.ranchu",
+        45
+      ],
+      [
+        "CCodec",
+        22
+      ],
+      [
+        "CCodecConfig",
+        18
+      ],
+      [
+        "GoogleApiAvailability",
+        13
+      ],
+      [
+        "BufferPoolAccessor2.0",
+        8
+      ],
+      [
+        "EGL_emulation",
+        7
+      ],
+      [
+        "ReflectedParamUpdater",
+        7
+      ],
+      [
+        "InterruptionStateProvider",
+        5
+      ]
+    ]
+  },
+  "audio_flinger": {
+    "sample_rate_hz": 44100,
+    "frames_read": 149856,
+    "recorded_ms": 3398.095238,
+    "timestamp_discontinuities": 0,
+    "timestamp_errors": 0,
+    "timestamp_rate": 1,
+    "max_hal_read_jitter_ms": 145.737,
+    "max_threadloop_read_latency_ms": 241.199,
+    "mean_threadloop_read_latency_ms": 22.4721
+  },
+  "app_render_delays": [
+    {
+      "line": 3443,
+      "at": "13:19:48.320",
+      "duration_ms": 1509,
+      "draw_to_swap_ms": 53.560924
+    },
+    {
+      "line": 3917,
+      "at": "13:19:55.844",
+      "duration_ms": 6968,
+      "draw_to_swap_ms": 6895.754534
+    },
+    {
+      "line": 3918,
+      "at": "13:19:56.285",
+      "duration_ms": 6404,
+      "draw_to_swap_ms": 7.288258
+    },
+    {
+      "line": 4032,
+      "at": "13:19:58.679",
+      "duration_ms": 1822,
+      "draw_to_swap_ms": 1776.217728
+    },
+    {
+      "line": 4087,
+      "at": "13:20:00.703",
+      "duration_ms": 1789,
+      "draw_to_swap_ms": 1681.688352
+    }
+  ],
+  "meminfo_kib_after_instrumentation": {
+    "MemTotal": 2015572,
+    "MemFree": 212424,
+    "MemAvailable": 793816,
+    "SwapTotal": 1511672,
+    "SwapFree": 1388280,
+    "Dirty": 4512,
+    "Writeback": 16
+  },
+  "result": {
+    "status": "FAIL",
+    "instrumentation_passed": 5,
+    "instrumentation_total": 6,
+    "error_code": "LIVE_NATIVE_STORAGE_BACKPRESSURE",
+    "queued_audio_ms": 1180,
+    "speaker_acceptance_reached": false,
+    "signed_rc_eligible": false
+  },
+  "limitations": [
+    "queued_audio_ms is durable audio awaiting server commit, not PCM queue length.",
+    "No measured encoder/store monitor/fsync latency or ENOSPC evidence.",
+    "SERVICE_DISABLED is observed during capture; exact onset of Contacts Sync crash is unknown.",
+    "Software screenrecord is a concurrent workload; no isolated CPU-cost or causal measurement."
+  ],
+  "analysis_sha256": "a1c2b30aa4fd4659e0c383bdf3254894bd65618cf30be4baaa5569d208841a3d"
+}

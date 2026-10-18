@@ -167,6 +167,11 @@ def test_initial_live_setup_has_bounded_authoritative_budget_and_core_routing(tm
                 "functions": function_bundle,
                 "system_instruction": instruction + "\n" + OVERLAYS[capability],
             }
+            # Validate every exposed bundle against the real shared hard limit,
+            # including the router; otherwise a capability can be advertised but unusable.
+            from live_interaction.session_host import _validate_capability_spec
+            validated = _validate_capability_spec({"capability": capability, "configuration": switched})
+            assert validated["function_count"] <= 9
             switched_setup = setup_config(
                 "gemini-3.8-live",
                 initialized["context"],
@@ -295,6 +300,113 @@ def test_voice_first_router_advertises_authorized_owner_development_and_theme(tm
         assert "backlog_list" in BUNDLES["owner_development"]
         assert "BACKLOG AND OWNER DEVELOPMENT" in _live_instruction("owner_development")
         assert "BACKLOG AND OWNER DEVELOPMENT" not in _live_instruction("core")
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owner", [False, True])
+async def test_collaboration_answers_keep_analysis_and_route_owner_execution_separately(tmp_path: Path, owner):
+    from unittest.mock import AsyncMock, Mock
+    from live_interaction.session_host import _validate_capability_spec
+
+    store = DurableStore(tmp_path)
+    try:
+        boot = store.ensure_platform_owner("Owner") if owner else store.ensure_dev_workspace("Participant")
+        actor, workspace = boot["actor"]["id"], boot["workspace"]["id"]
+        conversation = store.create_conversation(actor, workspace, boot["projects"][0]["id"])
+        adapter = ProjectsHubLiveAdapter(store)
+        initialized = adapter.initialize(
+            resource_id=ConversationScope(workspace, actor, conversation["id"]).resource_binding(),
+            actor={"subject": actor, "tenant_id": workspace}, model="gemini-3.8-live",
+            conversation_id=conversation["id"],
+        )
+        session = SimpleNamespace(id="domain-routing", state=initialized["state"], capability="core")
+        # Service results are fixtures; router, actor permissions and command
+        # binding still use the real adapter/store.
+        adapter.collaboration = SimpleNamespace()
+        adapter.collaboration_analysis = SimpleNamespace()
+        adapter.input(session, {"activity_start": True})
+        adapter.input(session, {"audio_base64": base64.b64encode(b"\x01\x00" * 320).decode()})
+        adapter.input(session, {"activity_end": True})
+        spec = adapter._resolve_capability(session, {"name": "activate_capability",
+            "args": {"capability": "collaboration", "intent": "Ответить на адресованный вопрос"}})
+        assert _validate_capability_spec(spec)["function_count"] == 9
+        names = {item["name"] for item in spec["configuration"]["functions"]}
+        assert {"collaboration_questions_answer", "collaboration_continuation_status"} <= names
+        assert "collaboration_question_respond" not in names
+        assert "activate_capability(owner_development)" in spec["configuration"]["system_instruction"]
+        session.capability = "collaboration"
+        answer_analysis = Mock(return_value={"status": "recorded", "source_kind": "analysis"})
+        adapter.collaboration_analysis.answer_questions = answer_analysis
+        result = await adapter.execute_tool(session, {"name": "collaboration_questions_answer",
+            "args": {"analysis_id": "analysis-fixture", "responses": [
+                {"question_id": "question-fixture", "disposition": "answer", "body": "Согласен"}]}})
+        assert result["source_kind"] == "analysis"
+        assert answer_analysis.call_count == 1
+        owner_call = {"name": "collaboration_question_respond",
+            "args": {"question_id": "owner-question-fixture", "disposition": "answer", "body": "Продолжить"}}
+        with pytest.raises(StoreError, match="Function not in active capability"):
+            await adapter.execute_tool(session, owner_call)
+        route = {"name": "activate_capability",
+            "args": {"capability": "owner_development", "intent": "Ответить на вопрос исполнения"}}
+        if not owner:
+            with pytest.raises(StoreError, match="Capability unavailable"):
+                adapter._resolve_capability(session, route)
+        else:
+            selected = adapter._resolve_capability(session, route)
+            assert _validate_capability_spec(selected)["function_count"] == 7
+            assert "collaboration_question_respond" in {
+                item["name"] for item in selected["configuration"]["functions"]}
+            instruction = selected["configuration"]["system_instruction"]
+            assert instruction.count("НЕ разрешают запуск разработки") == 1
+            assert "попроси владельца явно выбрать модель/effort" in instruction
+            assert "Не выбирай Astra/другую модель сама и не обходи отказ" in instruction
+            assert "phase=recovering" in instruction
+            session.capability = "owner_development"
+            respond = AsyncMock(return_value={"status": "recorded", "source_kind": "owner_development"})
+            adapter.collaboration_analysis.answer_owner_development_question = respond
+            result = await adapter.execute_tool(session, owner_call)
+            assert result["source_kind"] == "owner_development"
+            assert respond.await_count == 1
+    finally:
+        store.close()
+
+
+def test_transition_and_resource_diagnostics_survive_json_projection_without_payloads(tmp_path: Path, caplog):
+    from projects_hub.logging_config import JsonFormatter
+    store, adapter, start, _actor, _conversation = _checkpoint_fixture(tmp_path)
+    try:
+        initialized = start()
+        session = SimpleNamespace(id="live-diagnostics", state=initialized["state"])
+        caplog.set_level("INFO", logger="projects_hub.live")
+        observations = [
+            {"type": "capability_transition_started", "transition_id": "cap_fixture", "capability": "collaboration"},
+            {"type": "capability_transition_acknowledged", "transition_id": "cap_fixture", "capability": "collaboration"},
+            {"type": "resource_budget_wait", "input_type": "setup", "retry": 2, "wait_ms": 3000},
+            {"type": "resource_budget_ready", "input_type": "setup", "retries": 2},
+            {"type": "resumed", "transition_id": "cap_fixture", "connection_generation": 2,
+             "resumption_mode": "history_restore"},
+            {"type": "capability_ready", "transition_id": "cap_fixture", "capability": "collaboration"},
+            {"type": "capability_transition_error", "transition_id": "cap_fixture", "capability": "collaboration",
+             "code": "LIVE_CAPABILITY_TIMEOUT"},
+        ]
+        for observation in observations:
+            adapter.on_event(session, {**observation, "text": "PRIVATE transcript",
+                "message": "PRIVATE error text", "configuration": {"prompt": "PRIVATE prompt"},
+                "headers": {"Authorization": "PRIVATE token"}, "data": "PRIVATE audio"})
+        records = [r for r in caplog.records if getattr(r, "event", None) == "live_provider_event"]
+        assert len(records) == len(observations)
+        for observation, record in zip(observations, records):
+            encoded = JsonFormatter().format(record)
+            projected = json.loads(encoded)
+            assert projected["kind"] == observation["type"]
+            for key, value in observation.items():
+                if key != "type":
+                    assert projected[key] == value
+            assert "PRIVATE" not in encoded
+            assert not ({"text", "configuration", "headers", "data"} & projected.keys())
+        assert store.get_source(initialized["state"]["actor_id"], initialized["response"]["source_id"])["transcript"] == ""
     finally:
         store.close()
 

@@ -4,12 +4,29 @@ from collections import deque
 import json
 import logging
 from logging.handlers import RotatingFileHandler
+import math
 import os
 from pathlib import Path
 import sys
 import time
 from types import TracebackType
 from typing import Any
+
+
+def live_diagnostic_scalars(values: dict[str, Any]) -> dict[str, Any]:
+    """Only bounded protocol identifiers and numeric transition/budget evidence."""
+    result: dict[str, Any] = {}
+    for key in ("transition_id", "from_capability", "to_capability", "input_type",
+                "resumption_mode", "configuration_digest"):
+        value = values.get(key)
+        if isinstance(value, str) and len(value) <= 160:
+            result[key] = value
+    for key in ("retry", "retries", "wait_ms", "function_count", "schema_bytes",
+                "configuration_bytes"):
+        value = values.get(key)
+        if type(value) in (int, float) and 0 <= value < 2**53 and math.isfinite(value):
+            result[key] = value
+    return result
 
 
 class JsonFormatter(logging.Formatter):
@@ -86,6 +103,7 @@ class JsonFormatter(logging.Formatter):
             value = getattr(record, key, None)
             if value is not None:
                 payload[key] = value
+        payload.update(live_diagnostic_scalars(vars(record)))
         if record.exc_info and record.exc_info[0] is not None:
             exception_type, _exception, traceback = record.exc_info
             payload.setdefault("exception_type", exception_type.__name__[:80])

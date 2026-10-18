@@ -1,0 +1,164 @@
+{
+  "status": "passed",
+  "scope": "Android emulator real capture/codec/socket/durable store/playback with controlled AI; not real-provider ASR, physical handset or 90-minute qualification",
+  "run_url": "https://github.com/onedayonemasterpiece/projects-hub/actions/runs/39118401444",
+  "artifact": {
+    "id": 12133462264,
+    "bytes": 6334218,
+    "sha256": "245e04776098e0d3b9d0a80aa274ed918ab7271c2aae102e1cfc2b63cee85aaa"
+  },
+  "checkout": {
+    "repository": "onedayonemasterpiece/projects-hub",
+    "run_id": 39118401444,
+    "event_name": "pull_request",
+    "candidate_head_sha": "5b676ed54b8e9a118a6931d9b88a365e64bc9e68",
+    "checkout_sha": "866dba1041ef183ad35820e914a85a69a4a93d91",
+    "checkout_tree": "abf317b6249f490be6a106b07bd71ad6050dd836",
+    "shared_checkout_sha": "132d59b73a137051904bc75bb03dd7d7d13bc49c",
+    "shared_checkout_tree": "1bd7a97c4e5c721d0fcbaa12248d414dcf683d64"
+  },
+  "source_receipts": {
+    "audio_verification": "784cc55897460d69dea3134587c7de9449ec36e9f23d3d9c18a00d58f3a5f528",
+    "voice_flow": "0c975e897dfeb81d5e359750b1848057a1e1edbf05e03e2e92d28ae7923cc496",
+    "instrumentation_xml": "c5caa1c8739b1df801081384a5b240e3a4532c812b83f16e8466ef64c3f7a153"
+  },
+  "instrumentation": {
+    "passed": 6,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 52.974,
+    "cases": [
+      {
+        "class": "com.kenigevents.projectshub.MainActivitySmokeTest",
+        "name": "completionSchedulingCannotBreakStartupOrReopen"
+      },
+      {
+        "class": "com.kenigevents.projectshub.MainActivitySmokeTest",
+        "name": "nativeVoicePublicationKeepsEveryPublicChangeAndCurrentSnapshot"
+      },
+      {
+        "class": "com.kenigevents.projectshub.MainActivitySmokeTest",
+        "name": "debugUpdaterDiscardsStableOffersAtEveryEntryPoint"
+      },
+      {
+        "class": "com.kenigevents.projectshub.MainActivitySmokeTest",
+        "name": "activityLaunches"
+      },
+      {
+        "class": "com.kenigevents.projectshub.MainActivitySmokeTest",
+        "name": "trustedPageAppliesBothPalettesWithoutReplacingWebView"
+      },
+      {
+        "class": "com.kenigevents.projectshub.NativeVoiceFlowTest",
+        "name": "actualUiVoiceCapturePlaybackOutageRecoveryAndStop"
+      }
+    ]
+  },
+  "audio": {
+    "passed": true,
+    "checks": {
+      "speaker_waveform_matches_reply": true,
+      "live_input_waveform_matches_hello": true,
+      "fresh_input_after_reconnect_matches": true,
+      "offline_recording_not_executed": true,
+      "compressed_sources_persisted": true,
+      "binary_compressed_audio_both_directions": true,
+      "reconnected": true,
+      "controlled_provider_boundary_explicit": true
+    },
+    "speaker_match": {
+      "matched": true,
+      "correlation": 0.94145,
+      "offset_ms": 48020,
+      "rms": 485.21,
+      "reference_ms": 1270,
+      "reference_start_ms": 130,
+      "observed_ms": 61990,
+      "minimum_correlation": 0.68,
+      "pcm_correlation": 0.53079,
+      "minimum_pcm_correlation": 0.45
+    },
+    "input_matches": [
+      {
+        "name": "hello",
+        "matched": true,
+        "correlation": 0.95611,
+        "offset_ms": 160,
+        "rms": 1610.82,
+        "reference_ms": 2910,
+        "reference_start_ms": 160,
+        "observed_ms": 3700,
+        "minimum_correlation": 0.68,
+        "pcm_correlation": 0.97022,
+        "minimum_pcm_correlation": 0.45
+      },
+      {
+        "name": "overlap",
+        "matched": true,
+        "correlation": 0.97146,
+        "offset_ms": 170,
+        "rms": 1710.48,
+        "reference_ms": 2710,
+        "reference_start_ms": 150,
+        "observed_ms": 3480,
+        "minimum_correlation": 0.68,
+        "pcm_correlation": 0.96454,
+        "minimum_pcm_correlation": 0.45
+      }
+    ],
+    "input_match_failures": [],
+    "claim": "Real emulator microphone/codec/socket/store/playback path with a controlled AI runner; not real-provider ASR acceptance."
+  },
+  "voice": {
+    "passed": true,
+    "offline_queued_audio_ms": 5680,
+    "stopped_revision": 102,
+    "durable_output_positions": [
+      {
+        "received_chunks": 19,
+        "played_us": 1854958,
+        "duration_us": 1854958
+      },
+      {
+        "received_chunks": 19,
+        "played_us": 1854958,
+        "duration_us": 1854958
+      }
+    ],
+    "durable_input_sources": 3,
+    "pending_after_stop_us": 73125
+  },
+  "final_native": {
+    "status": "idle",
+    "capturing": false,
+    "playing": false,
+    "session_id": null,
+    "queued_audio_ms": 40,
+    "code": null
+  },
+  "public_snapshots": 102,
+  "fixture_counters": {
+    "turns": 2,
+    "output_turns": 2,
+    "connection_count": 2,
+    "main_audio_bytes": 229760,
+    "main_rms": 1573.49,
+    "outages": 1,
+    "speaking": false,
+    "binary_uplink_bytes": 150435,
+    "binary_downlink_bytes": 23642,
+    "encoded_chunks": 1354,
+    "outage": false
+  },
+  "configuration": {
+    "api_level": 31,
+    "PULSE_LATENCY_MSEC": 5,
+    "QEMU_AUDIO_TIMER_PERIOD": 1000,
+    "latency_environment_scope": "emulator only; both variables unset for client harness"
+  },
+  "qualification_limits": [
+    "Latest short tail remains represented by durable local outbox; pending_after_stop_us is not a server-sealed receipt.",
+    "HAL timer and UI publication changes were in the same candidate; no isolated CPU/RAM or causal performance claim.",
+    "Real-provider ASR is assessed separately."
+  ]
+}

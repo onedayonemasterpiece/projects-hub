@@ -1,0 +1,62 @@
+{
+  "original_measurements": {
+    "serialization-results.json": {
+      "sha256": "3f8197ea0868f300a17aab01a701b7ce0fcc2570a18f510c800decdef0587d21",
+      "source_filename": "/workspace/scratch/0702e2310172/audio-efficiency-local/serialization-results.json",
+      "copied_byte_for_byte": true
+    },
+    "browser-helpers-results.json": {
+      "sha256": "289c3df1d83c0d3f04fea632b5b8c2541b37330e49c59a61d5713267facb4c73",
+      "source_filename": "/workspace/scratch/0702e2310172/audio-efficiency-local/browser-helpers-results.json",
+      "copied_byte_for_byte": true
+    },
+    "opus_probe_results.json": {
+      "sha256": "171ca836db616b4ef07c98af15f292d054bbff457591118f01d00120d704c58b",
+      "source_filename": "/workspace/scratch/0702e2310172/opus_probe_results.json",
+      "copied_byte_for_byte": true
+    }
+  },
+  "scripts": {
+    "serialization_benchmark.py": {
+      "original_sha256": "ef35f9bc59449923307e9bd15ccbfff6de96884e3873e66bfc4ce5e0c856396b",
+      "portable_sha256": "36917d0f925f89802463b63297595c032859c05f77e34a523a05ba989dd01def",
+      "adjustments": "Source/output path resolution and metadata only; timed functions/cases unchanged."
+    },
+    "browser_helpers_benchmark.mjs": {
+      "original_sha256": "cc3e3b4fdb7164720f43d2edb280d10c383f011fb10014dcc41c7978eaba03d8",
+      "portable_sha256": "247ac9f62673e2bcbd6f576a1a12f0e3c4ef59437cf42b4ef4914927d824a27c",
+      "adjustments": "Source/output path resolution and metadata only; timed functions/cases unchanged."
+    },
+    "opus_probe.py": {
+      "original_sha256": "69fb9388fd9f078a35e0b65ea1c3b3896ae6486072f027e802d14fcd66482f4b",
+      "portable_sha256": "bfa0a0291bb8945642c1b0d776b93109580010bde8e77ad30d67d40a6ea5c799",
+      "adjustments": "Source/output path resolution and metadata only; timed functions/cases unchanged."
+    }
+  },
+  "unchanged_timed_operations_check": {
+    "serialization_benchmark.py": [
+      "measure",
+      "synthetic_pcm",
+      "relay_roundtrip",
+      "main_queue",
+      "captions",
+      "downlink"
+    ],
+    "opus_probe.py": [
+      "signal",
+      "percentile",
+      "run"
+    ],
+    "browser_helpers_benchmark.mjs": "byte-identical from const median through all timed cases, before source metadata"
+  },
+  "baseline_refs": {
+    "framework": "3b85224962c396e1a52977d6b81eee659db0cacc",
+    "consumer_code": "4a4d658cc5209429c7ed584ed0c1a8b51700743d",
+    "consumer_documentation_head": "ffa3b508"
+  },
+  "notes": [
+    "Original browser helper JSON/source gained only file-hash metadata after its timing run; no timed operations changed.",
+    "Raw original measurement files are preserved without rewriting source path metadata.",
+    "Portable invocations write separate portability-check files; they are not replacements for original results."
+  ]
+}

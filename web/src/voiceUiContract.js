@@ -19,20 +19,17 @@ export function mergeTranscript(current, fragment) {
 }
 
 /**
- * Sidecar captions are provisional UI only. Interim hypotheses may revise in
- * either direction, but a final sidecar result must never visibly truncate a
- * longer hypothesis that the user has already seen. Mira's canonical
+ * Sidecar captions are provisional UI only. Both interim hypotheses and final
+ * results may correct earlier text in either direction. Mira's canonical
  * input_transcript remains authoritative and may replace the whole caption.
  * @param {string} current
  * @param {string} fragment
- * @param {boolean} final
+ * @param {boolean} _final
  * @returns {string}
  */
-export function selectProvisionalCaption(current, fragment, final = false) {
+export function selectProvisionalCaption(current, fragment, _final = false) {
   const clean = String(fragment ?? "").trim();
   if (!clean) return current;
-  const visible = String(current ?? "").trim();
-  if (final && visible.length > clean.length) return current;
   return clean;
 }
 
@@ -59,8 +56,8 @@ export function resolveTerminalVoiceState(state, detail) {
 
 
 /**
- * A local VAD speech start is the authoritative UI boundary between user
- * utterances even when the provider emits only final input transcription.
+ * Legacy PWA uses local VAD to reserve its next user message. Native capture
+ * uses the same event for voice status; its message identities come from the server.
  * @param {string} event
  * @returns {boolean}
  */
@@ -173,10 +170,12 @@ export function nativeVoiceFailure(error) {
     case "VOICE_STORE_IN_USE":
     case "NATIVE_VOICE_STORAGE_UNAVAILABLE":
     case "LIVE_NATIVE_SOURCE_STORE_FAILED":
+      return { ...failure, state: "capture_error",
+        notice: "Не удалось сохранить голосовую запись. Проверьте свободное место и снова откройте приложение. Сохранённые записи автоматически не удаляются." };
     case "LIVE_NATIVE_STORAGE_BACKPRESSURE":
     case "LIVE_NATIVE_OUTPUT_STORAGE_BACKPRESSURE":
       return { ...failure, state: "capture_error",
-        notice: "Не удалось сохранить голосовую запись. Проверьте свободное место и снова откройте приложение. Сохранённые записи автоматически не удаляются." };
+        notice: "Устройство не успевает обрабатывать звук. Голосовой разговор остановлен; сохранённая часть записи остаётся в приложении. Подождите немного и попробуйте снова." };
     case "LIVE_NATIVE_SESSION_UNAVAILABLE":
     case "LIVE_NATIVE_SOCKET_UNAVAILABLE":
     case "NATIVE_VOICE_SESSION_BACKPRESSURE":

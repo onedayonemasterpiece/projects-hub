@@ -7,7 +7,7 @@ BUNDLES = {
     "collaboration": [
         "collaboration_personal_brief", "collaboration_brief_seen",
         "collaboration_general_news_set", "collaboration_questions_inbox",
-        "collaboration_questions_request", "collaboration_questions_answer", "collaboration_question_respond",
+        "collaboration_questions_request", "collaboration_questions_answer",
         "collaboration_continuation_status", "collaboration_view",
     ],
     "notes": [
@@ -21,7 +21,7 @@ BUNDLES = {
     "readiness": ["event_cards_list", "event_readiness_set", "task_create_follow_up", "task_set_state"],
     "knowledge": ["knowledge_search"],
     "expert_reviews": ["expert_reviews_list_assigned", "expert_reviews_get", "expert_reviews_accept", "expert_reviews_resolve", "expert_reviews_request_research"],
-    "owner_development": ["backlog_list", "backlog_create", "development_codex_status", "development_execute_backlog", "development_execution_status"],
+    "owner_development": ["backlog_list", "backlog_create", "development_codex_status", "development_execute_backlog", "development_execution_status", "collaboration_question_respond"],
 }
 
 # Gemini Live function_declarations use a restricted Schema proto: no
@@ -109,33 +109,10 @@ OVERLAYS = {'core': 'Read allowed projects before choosing focus. Use runtime_ve
                    '- Verification score — сила evidence, а не вероятность истины.\n'
                    '- "Нужны ещё источники" является нормальным экспертным исходом.\n'
                    '- Объявляй решение сохранённым только после receipt/readback owning service.\n',
- 'owner_development': '- Backlog — первичная сущность работы. Для продуктовой/разработческой задачи '
-                      'владельца используй backlog_create; это только сохраняет задачу и никогда не '
-                      'запускает разработку.\n'
-                      '- Не смешивай readiness/event follow-up с development backlog.\n'
-                      '- backlog_list показывает backlog и latest_execution. Никогда не делай вывод '
-                      '«разработка не запущена» только из task.state=accepted: accepted — состояние '
-                      'backlog, а запуск/фаза находятся в latest_execution.\n'
-                      '- Обычное обсуждение, приоритизация, формулировка или добавление задачи в '
-                      'backlog НЕ разрешают запуск разработки.\n'
-                      '- development_execute_backlog вызывай только если текущий platform owner явно '
-                      'попросил реализовать/запустить конкретную существующую задачу или выбранный '
-                      'набор задач прямо сейчас.\n'
-                      '- Можно запускать 1–5 задач одного проекта одним execution. Задачи разных '
-                      'проектов запускай отдельными execution.\n'
-                      '- Перед стартом backend сам проверяет owner, native Codex quota >10%, live model '
-                      'catalog и отсутствие другого активного owner-run. Если owner profile недоступен, '
-                      'сначала вызови development_codex_status, назови доступные native модели и '
-                      'попроси владельца явно выбрать модель/effort. Не выбирай Astra/другую модель '
-                      'сама и не обходи отказ.\n'
-                      '- development_codex_status используй для вопросов об остатке лимита/доступности '
-                      'Codex; сообщай фактический remaining_percent и reset/status из tool result.\n'
-                      '- development_execution_status используй для «что сейчас делает Codex», '
-                      '«закончилось ли», «какой результат». Это только чтение durable state и не '
-                      'двигает execution. Не объявляй разработку завершённой раньше terminal status.\n'
-                      '- ChatGPT/Codex, запущенные владельцем вне Projects Hub, остаются допустимыми '
-                      'способами выполнить ту же backlog-задачу; execution Миры — только один из путей '
-                      'исполнения backlog.\n',
+ # Base owner rules are already included by _live_instruction; keep only the
+ # additional tool routing here instead of charging the same rules twice.
+ 'owner_development': '- На вопрос source_kind=owner_development отвечай через collaboration_question_respond: '
+                      'это продолжение того же execution, не новый запуск.\n',
  'preferences': 'Read preferences_get, then set an explicit enum with its revision for a clear user '
                 'request. A toggle means read and set the opposite explicitly. Ambiguous brightness '
                 'needs clarification; device brightness is unavailable. A same-value request is a '

@@ -4,6 +4,8 @@ plugins {
 
 def versionCodeOverride = providers.gradleProperty("versionCodeOverride").orNull
 def versionNameOverride = providers.gradleProperty("versionNameOverride").orNull
+// This source overlay is only assembled by the isolated emulator fixture job.
+def voiceE2e = providers.gradleProperty("voiceE2e").orNull == "true"
 def hasReleaseSigning = System.getenv("ANDROID_KEYSTORE_PATH") &&
         System.getenv("ANDROID_KEYSTORE_PASSWORD") &&
         System.getenv("ANDROID_KEY_ALIAS") &&
@@ -22,6 +24,7 @@ android {
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField "String", "HUB_URL", "\"https://projects-hub.kenigevents.ru/\""
+        buildConfigField "boolean", "VOICE_E2E", "false"
         buildConfigField "String", "UPDATE_REPOSITORY", "\"onedayonemasterpiece/projects-hub\""
     }
 
@@ -40,6 +43,10 @@ android {
         debug {
             applicationIdSuffix ".debug"
             versionNameSuffix "-debug"
+            if (voiceE2e) {
+                buildConfigField "String", "HUB_URL", "\"https://10.0.2.2:8443/\""
+                buildConfigField "boolean", "VOICE_E2E", "true"
+            }
         }
         release {
             minifyEnabled false
@@ -55,7 +62,17 @@ android {
         buildConfig true
     }
 
+    sourceSets {
+        debug {
+            if (voiceE2e) {
+                manifest.srcFile "src/voiceE2e/AndroidManifest.xml"
+                res.srcDir "src/voiceE2e/res"
+            }
+        }
+    }
+
     compileOptions {
+        coreLibraryDesugaringEnabled true
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
@@ -66,10 +83,18 @@ android {
 }
 
 dependencies {
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.5"
+    if (!providers.gradleProperty("liveInteractionAndroidDir").isPresent()) {
+        throw new GradleException("Prepare the pinned SDK with scripts/prepare_live_framework.py, then build with " +
+                "-PliveInteractionAndroidDir=/absolute/path/to/projects-hub/.dependencies/live-interaction/android. " +
+                "The verified SDK RC archive remains subject to product release qualification.")
+    }
+    implementation "org.onedayonemasterpiece.live:android-platform:candidate"
     implementation "androidx.core:core:1.15.0"
     implementation "androidx.webkit:webkit:1.12.1"
 
     testImplementation "junit:junit:4.13.2"
+    testImplementation "org.json:json:20250517"
 
     androidTestImplementation "androidx.test:core:1.6.1"
     androidTestImplementation "androidx.test.ext:junit:1.2.1"

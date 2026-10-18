@@ -1,0 +1,94 @@
+{
+  "readback_at_utc": "2026-10-17T11:16:57.970Z",
+  "repository": "onedayonemasterpiece/projects-hub",
+  "workflow": "Android",
+  "run_id": 39027475944,
+  "run_url": "https://github.com/onedayonemasterpiece/projects-hub/actions/runs/39027475944",
+  "run_attempt": 1,
+  "event": "pull_request",
+  "status": "completed",
+  "conclusion": "success",
+  "completed_at_utc": "2026-10-17T11:10:51Z",
+  "consumer_head_sha": "20020927de8ba733922d763146d71fa75872727e",
+  "consumer_head_tree": "9a5efb4539822c7cc217e0c71e5747f1e6e1ea74",
+  "tested_pr_merge_sha": "03c3d37ef65dbedc2a8f56aa17b781cb6b5c1988",
+  "shared_checkout_sha": "c564f0c44c6fe783fd4932bd4633fada34e05c73",
+  "jobs": [
+    {
+      "id": 117381201227,
+      "name": "build",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/onedayonemasterpiece/projects-hub/actions/runs/39027475944/job/117381201227",
+      "verified_steps": [
+        {
+          "name": "Checkout immutable native voice candidate",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run gradle -p android testDebugUnitTest assembleDebug --stacktrace",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/upload-artifact@v4",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 117381201629,
+      "name": "emulator-smoke",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/onedayonemasterpiece/projects-hub/actions/runs/39027475944/job/117381201629",
+      "verified_steps": [
+        {
+          "name": "Checkout immutable native voice candidate",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d",
+          "conclusion": "success"
+        },
+        {
+          "name": "Upload emulator evidence",
+          "conclusion": "success"
+        }
+      ]
+    }
+  ],
+  "evidence": {
+    "build": "testDebugUnitTest + assembleDebug: BUILD SUCCESSFUL in 1m 15s; debug APK archive uploaded.",
+    "emulator": "API35 emulator launched installed app (ANDROID_LAUNCH_PASS); connectedDebugAndroidTest: 3/3 completed, 0 skipped, 0 failed; BUILD SUCCESSFUL in 26s; emulator evidence archive uploaded.",
+    "instrumentation_scope": [
+      "Activity launch",
+      "Completion job scheduling and Activity recreation",
+      "Trusted-origin theme bridge / foreign-origin rejection"
+    ],
+    "read_only_actions": "GitHub workflow/job/log/artifact metadata GETs only; no reruns, deployments, provider calls or source edits."
+  },
+  "artifacts": [
+    {
+      "id": 12099610022,
+      "name": "android-emulator-evidence",
+      "size_in_bytes": 1396696,
+      "archive_sha256": "sha256:642893026b7ed0a76d35ba13cf8ea7c95c033259ac0f167195f9eedf9f317c03",
+      "url": "https://github.com/onedayonemasterpiece/projects-hub/actions/runs/39027475944/artifacts/12099610022",
+      "expires_at": "2027-01-15T11:07:12Z"
+    },
+    {
+      "id": 12099042605,
+      "name": "projects-hub-debug-apk",
+      "size_in_bytes": 3097253,
+      "archive_sha256": "sha256:fd9ec8321d71c9941fc6374549bb778bc1ce6cadf3f02ae331f00925f724639c",
+      "url": "https://github.com/onedayonemasterpiece/projects-hub/actions/runs/39027475944/artifacts/12099042605",
+      "expires_at": "2027-01-15T11:07:12Z"
+    }
+  ],
+  "limits": [
+    "PR merge-candidate CI with an exact shared source SHA; not a production deployment or signed release.",
+    "Instrumentation covers installed shell/presentation/origin smoke, not native microphone/codec/playback handset acceptance.",
+    "Physical-device audible audio, background capture, route/focus behavior, process-death recovery, unstable mobile network, long-session and provider acceptance remain separate gates.",
+    "Artifact digests are GitHub archive ZIP digests, not the SHA256 of the APK file inside."
+  ]
+}

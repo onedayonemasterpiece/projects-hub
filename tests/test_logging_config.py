@@ -6,6 +6,34 @@ import sys
 from projects_hub.logging_config import JsonFormatter
 
 
+def test_json_formatter_bounds_new_transition_resource_fields_to_safe_scalars():
+    record = logging.LogRecord("projects_hub.live", logging.INFO, __file__, 1,
+                               "live provider event", (), None)
+    record.transition_id = "cap_fixture"
+    record.from_capability = "core"
+    record.to_capability = "collaboration"
+    record.function_count = 9
+    record.schema_bytes = 5000
+    record.retry = 2
+    record.wait_ms = 3000.0
+    record.input_type = {"prompt": "PRIVATE nested content"}
+    record.resumption_mode = "PRIVATE" * 100
+    record.retries = True
+    record.configuration_bytes = 10**400
+    record.headers = {"Authorization": "PRIVATE token"}
+    encoded = JsonFormatter().format(record)
+    payload = json.loads(encoded)
+    assert payload["transition_id"] == "cap_fixture"
+    assert payload["from_capability"] == "core"
+    assert payload["to_capability"] == "collaboration"
+    assert payload["function_count"] == 9
+    assert payload["schema_bytes"] == 5000
+    assert payload["retry"] == 2
+    assert payload["wait_ms"] == 3000.0
+    assert not ({"input_type", "resumption_mode", "retries", "configuration_bytes", "headers"} & payload.keys())
+    assert "PRIVATE" not in encoded
+
+
 def test_json_formatter_keeps_voice_output_audio_turn_telemetry():
     record = logging.LogRecord(
         name="projects_hub.live",

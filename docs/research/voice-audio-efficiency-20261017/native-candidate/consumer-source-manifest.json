@@ -1,0 +1,987 @@
+[
+  {
+    "path": ".github/workflows/android-release.yml",
+    "bytes": 4813,
+    "sha256": "565f0eb3d1f4c3ece0924789e111252be78367c93168c72ddf8de706b4f2a9b7"
+  },
+  {
+    "path": ".github/workflows/android-self-update.yml",
+    "bytes": 1066,
+    "sha256": "246fec966f895b954bef0b9e83e04c8e5037a2dd76e6ba6c60c8d2ad9e1a6024"
+  },
+  {
+    "path": ".github/workflows/android.yml",
+    "bytes": 3018,
+    "sha256": "53debccbef54d8d65f8401f6432d9a03bda18cc650335f7771100e24147f6648"
+  },
+  {
+    "path": ".github/workflows/tests.yml",
+    "bytes": 1289,
+    "sha256": "b7d39558d2287f004777008502a2e171945ff42bed9b7d84b318c943fb324949"
+  },
+  {
+    "path": "android/README.md",
+    "bytes": 6067,
+    "sha256": "70748a710df691153ed7474f6935d84ebcdca5a7fe3d91b47ecef5f05c8b6bb9"
+  },
+  {
+    "path": "android/app/build.gradle",
+    "bytes": 3016,
+    "sha256": "70c72c6b6184dba35387e33dc1ca65e3483219b1aef06da66dccb1b2e52c38d0"
+  },
+  {
+    "path": "android/app/proguard-rules.pro",
+    "bytes": 99,
+    "sha256": "19e96ca513cdfdf2ec4c07ad729872c3ecaf63cdbafb2a02eeb986bcfe53ba18"
+  },
+  {
+    "path": "android/app/src/androidTest/java/com/kenigevents/projectshub/MainActivitySmokeTest.java",
+    "bytes": 7175,
+    "sha256": "08912c08a0e91f0efc919cb1758d9101d0bece62c6e591288f357df7c5a0e55d"
+  },
+  {
+    "path": "android/app/src/main/AndroidManifest.xml",
+    "bytes": 3260,
+    "sha256": "9271553eace257417680b2c8f2403a3d2a966f5e6c82aba93105a528958f619c"
+  },
+  {
+    "path": "android/app/src/main/java/com/kenigevents/projectshub/ApiClient.java",
+    "bytes": 10263,
+    "sha256": "2561cff67dafac87a02661c39ef7bb841369abc9d7b25c550904add2e9d44075"
+  },
+  {
+    "path": "android/app/src/main/java/com/kenigevents/projectshub/CalendarExecutor.java",
+    "bytes": 7662,
+    "sha256": "0ba430d82ba459e90e44fd22035447d29c1161b75382f02ae501118003879c52"
+  },
+  {
+    "path": "android/app/src/main/java/com/kenigevents/projectshub/DevelopmentCompletionJob.java",
+    "bytes": 5251,
+    "sha256": "fcf371c60de87cde613672f8f27008f782ad98592f55b5f736cbc065244eee9c"
+  },
+  {
+    "path": "android/app/src/main/java/com/kenigevents/projectshub/DeviceCommandLoop.java",
+    "bytes": 4951,
+    "sha256": "6b7f81ab8a8c19c941231b398ba05f2325f1a771be41b22a46457e38f1f4f0e2"
+  },
+  {
+    "path": "android/app/src/main/java/com/kenigevents/projectshub/MainActivity.java",
+    "bytes": 39294,
+    "sha256": "cbae20a1d4e85d744d6ac53340f6d57747751cc3dc8e3d5ab81c229a3fe239e7"
+  },
+  {
+    "path": "android/app/src/main/java/com/kenigevents/projectshub/NativeSessionApi.java",
+    "bytes": 13825,
+    "sha256": "32d28a15e1901818fb532f19d6b130b7f5a255dc470e306ff7d09d28fb0893f1"
+  },
+  {
+    "path": "android/app/src/main/java/com/kenigevents/projectshub/NativeStartAttempt.java",
+    "bytes": 1490,
+    "sha256": "c8af47f3f17354a87f4e739d9d3e9afbdd7614c8756fa63d5e2944f03b6ce0f6"
+  },
+  {
+    "path": "android/app/src/main/java/com/kenigevents/projectshub/NativeVoiceBridge.java",
+    "bytes": 10733,
+    "sha256": "d69d466b22af4365932206cea5cefe320091bf3a4d6ccf8af6ba75a4de7ce5cc"
+  },
+  {
+    "path": "android/app/src/main/java/com/kenigevents/projectshub/NativeVoiceOwner.java",
+    "bytes": 834,
+    "sha256": "b80975dd9f7d2350dd629dd8617e0b6ad2b13067fb1e0b5e590db588b74fa3e0"
+  },
+  {
+    "path": "android/app/src/main/java/com/kenigevents/projectshub/NativeVoiceService.java",
+    "bytes": 19619,
+    "sha256": "0bcd0bd2bfe2f745735dd9d2164ce5d141d295c962f5e57ef8a9309d02374c39"
+  },
+  {
+    "path": "android/app/src/main/java/com/kenigevents/projectshub/NativeVoiceStore.java",
+    "bytes": 31564,
+    "sha256": "dc07b1f936974153c0643fde69fe1e568a1a897fd5414e7422b3e2f2ed54ccf1"
+  },
+  {
+    "path": "android/app/src/main/java/com/kenigevents/projectshub/Notifier.java",
+    "bytes": 2316,
+    "sha256": "6cd6abccf38b565effdaf854f680ca7c73695976b5740693ec5ad75eb0433fdf"
+  },
+  {
+    "path": "android/app/src/main/java/com/kenigevents/projectshub/PendingUpdateState.java",
+    "bytes": 3251,
+    "sha256": "338203ff649dbe3fd04ce3a5f7e447d2bab366ce4a9dadf8cee7c91889e92487"
+  },
+  {
+    "path": "android/app/src/main/java/com/kenigevents/projectshub/SecureStore.java",
+    "bytes": 3229,
+    "sha256": "39c5ca8334a4e42bd56d4f5967537ad411ba11d1fe09311f81090c9b5860c379"
+  },
+  {
+    "path": "android/app/src/main/java/com/kenigevents/projectshub/ThemePresentation.java",
+    "bytes": 836,
+    "sha256": "123b946a734da54375c1d2835630b407794377112a824d125c72c3e810199560"
+  },
+  {
+    "path": "android/app/src/main/java/com/kenigevents/projectshub/UpdatePolicy.java",
+    "bytes": 454,
+    "sha256": "aecb179621c97c15e63baba4519b4cd9172779b9d58cf1c5c1845864382737c1"
+  },
+  {
+    "path": "android/app/src/main/java/com/kenigevents/projectshub/Updater.java",
+    "bytes": 13885,
+    "sha256": "5895cb74c418b4bf7fcbad57045d2f61758196506c23ec3cc7524c32fdb91d97"
+  },
+  {
+    "path": "android/app/src/main/java/com/kenigevents/projectshub/WebOriginPolicy.java",
+    "bytes": 7046,
+    "sha256": "595258af644a44455cbd78bceda7443d9a369f371a41600c67fe015825ffc548"
+  },
+  {
+    "path": "android/app/src/main/res/drawable/ic_launcher_foreground.xml",
+    "bytes": 1361,
+    "sha256": "65476afb8bedbf3d65ee54b420eb99738e753eb254b473ef208dfd2a0ff577d6"
+  },
+  {
+    "path": "android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml",
+    "bytes": 270,
+    "sha256": "32715ff646f6b9fef7c321138e4a14556c4a1f98a87b06070b56f41643dad718"
+  },
+  {
+    "path": "android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml",
+    "bytes": 270,
+    "sha256": "32715ff646f6b9fef7c321138e4a14556c4a1f98a87b06070b56f41643dad718"
+  },
+  {
+    "path": "android/app/src/main/res/values/colors.xml",
+    "bytes": 121,
+    "sha256": "ed2908186a6af1b1c123058c24f8fa55b763cf0bcdf6c01202c8deb9fedd4a26"
+  },
+  {
+    "path": "android/app/src/main/res/values/strings.xml",
+    "bytes": 114,
+    "sha256": "dfb1d46743d0ebf5259fe5e53a72355809fdc49fdf0bd81baab1a5e60529f494"
+  },
+  {
+    "path": "android/app/src/main/res/values/styles.xml",
+    "bytes": 640,
+    "sha256": "75d04009a9d3ea274e924e28a1d422b361057b772821e7549f097da99059a8e2"
+  },
+  {
+    "path": "android/app/src/main/res/xml/file_paths.xml",
+    "bytes": 165,
+    "sha256": "43067a3c7ab4e5097265f4e9781125ec7b6ec35805613c5f9c245f884126ca7c"
+  },
+  {
+    "path": "android/app/src/test/java/com/kenigevents/projectshub/NativeSessionRequestTest.java",
+    "bytes": 2507,
+    "sha256": "e99af0bd91a5d7d9f13092f08ed78ce5a2f08e8f596e55dbdc21c1ab57b29923"
+  },
+  {
+    "path": "android/app/src/test/java/com/kenigevents/projectshub/NativeStartAttemptTest.java",
+    "bytes": 2116,
+    "sha256": "2adcdd8fa14d026876b34b885e809154832bdd553349ccd73f9f36396302a67a"
+  },
+  {
+    "path": "android/app/src/test/java/com/kenigevents/projectshub/NativeVoiceOwnerTest.java",
+    "bytes": 1193,
+    "sha256": "31657e731e26a127dc9aeb204796bc8bc286640346e22ffdc69058a15266a8ce"
+  },
+  {
+    "path": "android/app/src/test/java/com/kenigevents/projectshub/NativeVoiceStoreTest.java",
+    "bytes": 16734,
+    "sha256": "8c42dadf3dce6156e4881247b57ffb7cffa377d69b20d8267c37163fc275dc7c"
+  },
+  {
+    "path": "android/app/src/test/java/com/kenigevents/projectshub/PendingUpdateStateTest.java",
+    "bytes": 1782,
+    "sha256": "34345bdd0756dbe5166c15561cc5ad18933a64f65988a6e89d8e00efc5d38129"
+  },
+  {
+    "path": "android/app/src/test/java/com/kenigevents/projectshub/ThemePresentationTest.java",
+    "bytes": 767,
+    "sha256": "38eb67285a459db81373f37390197e26d497c3d475777a5c0ddee12c8d4769fc"
+  },
+  {
+    "path": "android/app/src/test/java/com/kenigevents/projectshub/UpdatePolicyTest.java",
+    "bytes": 671,
+    "sha256": "f1512db13e2d3c12ea37758dc82fc31f7552b64d134175c932c37dd4b0dc36f4"
+  },
+  {
+    "path": "android/app/src/test/java/com/kenigevents/projectshub/WebOriginPolicyTest.java",
+    "bytes": 7219,
+    "sha256": "7f1f5fe0c2130b9929641d7d8946246f4c42d121bb1a50743ff2a159b681f1c5"
+  },
+  {
+    "path": "android/app/src/test/resources/native-live-start.json",
+    "bytes": 578,
+    "sha256": "9d917a3c77759a375feb8398dfc857da4ef78aa0fd7745e0f5a5700f23be30fc"
+  },
+  {
+    "path": "android/build.gradle",
+    "bytes": 73,
+    "sha256": "9779e64941ef00fdb75ecd9ccbf290bad2a4924ea0e1688bb1c617884e2753b6"
+  },
+  {
+    "path": "android/gradle.properties",
+    "bytes": 109,
+    "sha256": "e6b436ff6a08da8b8c05e0e2fc1a7f40f41701bb506cd80fc2ddfd7b6e3b3b2b"
+  },
+  {
+    "path": "android/live-interaction-candidate.json",
+    "bytes": 359,
+    "sha256": "4ddc0e8b6689d5288be5e8c69817f06a57cc07412070af135f48960db11d4c36"
+  },
+  {
+    "path": "android/settings.gradle",
+    "bytes": 896,
+    "sha256": "2fe11c180bc3580f5d1ffd750e89d3e85a64daf0eff5175d1b04b714d635c39c"
+  },
+  {
+    "path": "pyproject.toml",
+    "bytes": 772,
+    "sha256": "2f8ff3f25b62c24a25f05abbdb01de96d12e691874639de12f6e9ae8e5f99afa"
+  },
+  {
+    "path": "src/projects_hub/__init__.py",
+    "bytes": 667,
+    "sha256": "1b3679922356ecf78d7723b418a9ea24597a255ac9888ea87cbb06203d9d9be0"
+  },
+  {
+    "path": "src/projects_hub/analytics_client.py",
+    "bytes": 10659,
+    "sha256": "65c673735da6c5f1a1335cd8d6425299221172aa71a5f839c15f22231238b2ae"
+  },
+  {
+    "path": "src/projects_hub/app.py",
+    "bytes": 54511,
+    "sha256": "7adeb7120857fb0c96d61c13687c3a1c2cad27a7305ce0d5a5d7ce816954f616"
+  },
+  {
+    "path": "src/projects_hub/auth.py",
+    "bytes": 1917,
+    "sha256": "c9928b84f5127e6739ad25840ff4bbfb3eb2646537e07db4a35375ab60994b65"
+  },
+  {
+    "path": "src/projects_hub/board.py",
+    "bytes": 34101,
+    "sha256": "3dc72b66df4ef579fafeca80986031051c1bb63a33c8d8f9c97e83f0e8e55bf9"
+  },
+  {
+    "path": "src/projects_hub/board_api.py",
+    "bytes": 13079,
+    "sha256": "a6de6a932ff7c96b0b43babc7dd2c96db7052430a020afa8e6ad06bf054c54c4"
+  },
+  {
+    "path": "src/projects_hub/board_view_context.py",
+    "bytes": 9455,
+    "sha256": "dc3d91eeabc708157c192d19fb243cfc86a870ac6aec3b5daa1fda827df2669e"
+  },
+  {
+    "path": "src/projects_hub/board_view_context_api.py",
+    "bytes": 1863,
+    "sha256": "ed2d6685f117fe1a7ea3ab37deba3c36f4838624676b0892a4c91e4c1bcd101d"
+  },
+  {
+    "path": "src/projects_hub/chatgpt_note_analysis.py",
+    "bytes": 16614,
+    "sha256": "36cec8dbd9d59b8e06df8b7c803800b89855b3b2a15e14ee77e7e7daf3d3cc33"
+  },
+  {
+    "path": "src/projects_hub/collaboration.py",
+    "bytes": 52939,
+    "sha256": "95e23b4c8dc6d9e25c486a5d5e47ef647fdc001a487157fa80f50c878f771634"
+  },
+  {
+    "path": "src/projects_hub/collaboration_analysis.py",
+    "bytes": 103605,
+    "sha256": "b2d87f5a9f5d2baae057822651fa8feaf31632b60f81917703f31d522561fe8c"
+  },
+  {
+    "path": "src/projects_hub/collaboration_analysis_api.py",
+    "bytes": 4822,
+    "sha256": "b975e3fb1ac35f8985dde8e476d270a844274e3d7c7b32fd3fe7a344b1cb7d29"
+  },
+  {
+    "path": "src/projects_hub/collaboration_api.py",
+    "bytes": 6317,
+    "sha256": "84dee29c3044e1cdb4fa14da1198b3cb8a1b90147841fa1efdb7d3540dd160ca"
+  },
+  {
+    "path": "src/projects_hub/devcoveer_client.py",
+    "bytes": 11560,
+    "sha256": "86c34be5f66166caea53722298610ba80bcb55bc673568a59ff4168a79876494"
+  },
+  {
+    "path": "src/projects_hub/development.py",
+    "bytes": 231074,
+    "sha256": "4d89cee2584b75ea46c4357494d5d53d82a1e496860cc5d3fadf6d6ba8d44827"
+  },
+  {
+    "path": "src/projects_hub/device_commands.py",
+    "bytes": 20397,
+    "sha256": "c4757cb00e5771d9f9f6c17638216681cf2e172bcbe1f6d72cede62e5620d899"
+  },
+  {
+    "path": "src/projects_hub/encoded_voice_store.py",
+    "bytes": 36489,
+    "sha256": "58cbe5fd0239153a751704e26381165f6c0c5444abdfbb62158bdd94748b7e13"
+  },
+  {
+    "path": "src/projects_hub/expert_reviews.py",
+    "bytes": 17099,
+    "sha256": "0497a3427e67262c66d15dba82ed6501b072d2836e1aa7209d2285c44337d7ce"
+  },
+  {
+    "path": "src/projects_hub/github_app.py",
+    "bytes": 13669,
+    "sha256": "0034195ba04d0dd0b2e9f6ee81939c85b4f6fe9efb5caf217fb7438ccce4c28c"
+  },
+  {
+    "path": "src/projects_hub/github_connections.py",
+    "bytes": 28921,
+    "sha256": "2659d3ffd79bed85a010e7da5d282b10182c916c8f5f4509e62be83d5eadaebe"
+  },
+  {
+    "path": "src/projects_hub/live_adapter.py",
+    "bytes": 183947,
+    "sha256": "433f7ff330ba6f8823b9d0814aced2050b5928af824e4143a641f2611263780a"
+  },
+  {
+    "path": "src/projects_hub/live_admission.py",
+    "bytes": 12594,
+    "sha256": "26387641a5e7a3cea39826ee41994d1744d416eb8fa199ef0cc832d141407213"
+  },
+  {
+    "path": "src/projects_hub/live_capabilities.py",
+    "bytes": 18020,
+    "sha256": "fcf2972b6fc4d6c7c93ee39f25a48f69e4b83b30a955b50af5b09fe9383179ac"
+  },
+  {
+    "path": "src/projects_hub/live_resources.py",
+    "bytes": 4469,
+    "sha256": "fb2ff657c6438576eb8012c1024001f0bd7439f56c3c56df3191fec8e5ecf52b"
+  },
+  {
+    "path": "src/projects_hub/live_runtime.py",
+    "bytes": 12049,
+    "sha256": "4a8b423cc9944c0da1a3cf9b3c4c4a3f639a8f4799181816e7ae7dad9d36a3f5"
+  },
+  {
+    "path": "src/projects_hub/live_transcription.py",
+    "bytes": 9033,
+    "sha256": "c392f6cf6f0e6b0d8d2675ce2df729397dc9498ca7f76ecfe624ca068b807690"
+  },
+  {
+    "path": "src/projects_hub/logging_config.py",
+    "bytes": 3294,
+    "sha256": "ba226e618c0cbe641a6e77c79b7225ade88b4854c787df9e9c7a3739cb4f8998"
+  },
+  {
+    "path": "src/projects_hub/mcp_api.py",
+    "bytes": 28043,
+    "sha256": "2029be66c924ba6ddd46891a159b1b1098fed8a4536afcbd71f324135ead75a7"
+  },
+  {
+    "path": "src/projects_hub/mcp_auth.py",
+    "bytes": 20872,
+    "sha256": "8c52aeff473a13c329dff4cd5de67003ac64ed75f604ca0a7950b6c80d2f57c9"
+  },
+  {
+    "path": "src/projects_hub/mcp_bindings.py",
+    "bytes": 35304,
+    "sha256": "aeb124db91421dbd89a3a704e9025e685314376f5ebee78138f69eaec2635259"
+  },
+  {
+    "path": "src/projects_hub/mcp_events.py",
+    "bytes": 37085,
+    "sha256": "b59c206665123c6cb59ddb3a3de6fbb0784dbb1a5389dffd55e1c0808e5f01bf"
+  },
+  {
+    "path": "src/projects_hub/mcp_webhooks.py",
+    "bytes": 5536,
+    "sha256": "3cd47259fa39cfddb6aad78f04eef04ff2209fff8b4af62d24d34c24a0c9d013"
+  },
+  {
+    "path": "src/projects_hub/note_processing.py",
+    "bytes": 29949,
+    "sha256": "2db0c3453c19237e8bc1d6d9b6351f33b973f70e52caa555df8cfa2605463ab4"
+  },
+  {
+    "path": "src/projects_hub/readiness.py",
+    "bytes": 14999,
+    "sha256": "baead1a875269edb131c3e57b48d5e3bf059b937091a2d8d7be209e82019ebcf"
+  },
+  {
+    "path": "src/projects_hub/regional_knowledge.py",
+    "bytes": 7230,
+    "sha256": "643613d2ed7633659b09ce4501d20a288a7d46e37e2a32b5171aea96825cac3f"
+  },
+  {
+    "path": "src/projects_hub/settings.py",
+    "bytes": 6745,
+    "sha256": "88890d8966bea69bf6127741380f209af3e69a8d87d0caa5ee2d5c5186c675c8"
+  },
+  {
+    "path": "src/projects_hub/store.py",
+    "bytes": 154697,
+    "sha256": "21fe02fdebee0a5d7fbd43bc268e31e8cb2ff5644207aedd9b96c74c88689f6a"
+  },
+  {
+    "path": "src/projects_hub/version.py",
+    "bytes": 23,
+    "sha256": "73048a597f5c1b5aacd08e82f7d4d292dcb94294dad74ba2a927a25e7b283a0d"
+  },
+  {
+    "path": "tests/fixtures/native-v2-caption-opus.json",
+    "bytes": 2228,
+    "sha256": "a92b16c6993dee3963506e153938238dbee68655e6e92edd74e3b1e9433cd9fb"
+  },
+  {
+    "path": "tests/live_tools.py",
+    "bytes": 2679,
+    "sha256": "c938e1ae8bbb60a14e340b4ac0b9eb5fbc4c126f8c22200e59408a17f2425f3d"
+  },
+  {
+    "path": "tests/test_android_self_update_e2e_helpers.py",
+    "bytes": 1267,
+    "sha256": "262b9d219be167e10e71b76fc3162d4cec8930c01259ea5f91d80839fbddd7ea"
+  },
+  {
+    "path": "tests/test_android_update_lifecycle_contract.py",
+    "bytes": 1890,
+    "sha256": "a7dee1c83e8376124d94e7e0bd3472d46b0af3c568074ec6adfe1a40d1f84894"
+  },
+  {
+    "path": "tests/test_api.py",
+    "bytes": 4015,
+    "sha256": "8c9e59b5a78b6432120ae0d79c2194aaa3502bf376bd7943f588200ff83f25f2"
+  },
+  {
+    "path": "tests/test_basic_collaboration_live_canary_contract.py",
+    "bytes": 1156,
+    "sha256": "eb9aa813a128e3ab8a989c4734454c60985688840b8f5a442ce68a8c732a8b91"
+  },
+  {
+    "path": "tests/test_buffered_product_mode.py",
+    "bytes": 2084,
+    "sha256": "00a063a3432c1b114120f5dad094a8213ee53412b1cabd89d4dcdcc368b016db"
+  },
+  {
+    "path": "tests/test_caption_sidecar_lifecycle.py",
+    "bytes": 1025,
+    "sha256": "882c5be2652db43e4d811c35b17b8b48af2537fb629c8197569ffad00a4da544"
+  },
+  {
+    "path": "tests/test_chatgpt_note_analysis.py",
+    "bytes": 8345,
+    "sha256": "48e9d7da2972744a3919be6aec80aa640a665ae01f9d7534cd5b701ea52fedfb"
+  },
+  {
+    "path": "tests/test_collaboration.py",
+    "bytes": 29201,
+    "sha256": "2d53175c41475439168225d4e6121a5d830861248e544a73db5e9e56fd129b7d"
+  },
+  {
+    "path": "tests/test_collaboration_analysis.py",
+    "bytes": 42594,
+    "sha256": "bab66a06f166dc83da32cdbf2836b5d20dc226e12c17966ab0b2aef91aeee9d1"
+  },
+  {
+    "path": "tests/test_collaboration_board.py",
+    "bytes": 13196,
+    "sha256": "3d5993a25aabf1e777ed6d8f64b2e79451dd1ce934b8ce2b982fea9ee4084ba5"
+  },
+  {
+    "path": "tests/test_collaboration_brief.py",
+    "bytes": 5660,
+    "sha256": "c4da52379f92726e7f9acdab9a69e44b29509af2f727f0807b768fa06e45a5b7"
+  },
+  {
+    "path": "tests/test_collaboration_live_tools.py",
+    "bytes": 5541,
+    "sha256": "8d9e87ae890638257844ad3af0ccd1e247daf57091679030ee739cb7d691d5ca"
+  },
+  {
+    "path": "tests/test_collaboration_owner_resume.py",
+    "bytes": 16620,
+    "sha256": "83a0be1ce65beea07f5835c69613317b4e4ac4e521e4253a17dd43fc655c8a7a"
+  },
+  {
+    "path": "tests/test_devcoveer_client.py",
+    "bytes": 9661,
+    "sha256": "640aaee7e41809c86195de17fac2c054879e1bee6fc6306cd1eb0f0c92be500e"
+  },
+  {
+    "path": "tests/test_devcoveer_deploy.py",
+    "bytes": 8836,
+    "sha256": "1ce86a2269bc5ff3f09fc3c4dfd17d81d6f85a9522662d2416993f997dc8b8d0"
+  },
+  {
+    "path": "tests/test_development.py",
+    "bytes": 118044,
+    "sha256": "4e140a2709fdf1d3be9ace3545b0ea21331229238460eb2a19fdddacd64b9aca"
+  },
+  {
+    "path": "tests/test_device_api.py",
+    "bytes": 10174,
+    "sha256": "a1b20e233727e25b3978af85b3a2971ea3275834cb39b922a7375bbdbd24a358"
+  },
+  {
+    "path": "tests/test_device_commands.py",
+    "bytes": 19755,
+    "sha256": "18cf966b9209fa70963b45ff693c8e4900c6134d7f74d4f87e0ef192380a5304"
+  },
+  {
+    "path": "tests/test_encoded_voice_store.py",
+    "bytes": 16002,
+    "sha256": "b7b36138afa1691809d328fa1d8ebf7e3d8334ab828477180824519867d82bc5"
+  },
+  {
+    "path": "tests/test_expert_reviews.py",
+    "bytes": 7826,
+    "sha256": "8f6f03eb8367a9391673b9675bf7563c326eabe4f6db49e5e85cb55c5bdea0c0"
+  },
+  {
+    "path": "tests/test_github_api.py",
+    "bytes": 10061,
+    "sha256": "4d2890933d7dd7d147bed66c5bca2999750aa0b784aed7052fb042bf1a8c065a"
+  },
+  {
+    "path": "tests/test_github_app_client.py",
+    "bytes": 7224,
+    "sha256": "90b22ee75d459f17ad012733f855f5126bebd303e6be61910202ef0f0f56a7e5"
+  },
+  {
+    "path": "tests/test_github_connections.py",
+    "bytes": 20390,
+    "sha256": "f876fd1435013314a09534039a152428831bd96fbe8606130d832e4e7cf91c79"
+  },
+  {
+    "path": "tests/test_github_live_contract.py",
+    "bytes": 5380,
+    "sha256": "9676650268bda4e64f1241a9bc7a56ee1d815cab046d7c27bc91d06b6baa6d1a"
+  },
+  {
+    "path": "tests/test_github_settings.py",
+    "bytes": 2584,
+    "sha256": "a16f95d526537d751e076d6c432cfb4f7c2c7dbb5f7f5d0e4447847ec018f2fd"
+  },
+  {
+    "path": "tests/test_input_boundaries.py",
+    "bytes": 1533,
+    "sha256": "b2a7bc76fec360c4f010355cecc7e783dc95deb66c0552f481df40666c87c8e0"
+  },
+  {
+    "path": "tests/test_live_adapter.py",
+    "bytes": 43839,
+    "sha256": "a501aad5042b13929b9c2959e74958f58a4194972179b83298d326a1365934e4"
+  },
+  {
+    "path": "tests/test_live_checkpoint_lifecycle.py",
+    "bytes": 8262,
+    "sha256": "c0c147cedce63e0dd890fbd2ab1b65ce5353861099c866eaf729f177f292fa00"
+  },
+  {
+    "path": "tests/test_live_framework_release.py",
+    "bytes": 2606,
+    "sha256": "aba6b5065090f5e4c0186ad60032d1c8efd550cbc0b1c9f45082275c8b86ee69"
+  },
+  {
+    "path": "tests/test_live_product_contract.py",
+    "bytes": 7531,
+    "sha256": "ab184336b778cc6b928e120ac83b59dd363cceef50fe9e0f3dd61c6a5c5699bf"
+  },
+  {
+    "path": "tests/test_live_resources.py",
+    "bytes": 4656,
+    "sha256": "824f8684648383cc93927603f99e0f6c2bae52673727b9c683c9f3e2edaeafac"
+  },
+  {
+    "path": "tests/test_live_start_errors.py",
+    "bytes": 1917,
+    "sha256": "a9c44a96ff23a481afc0c6d459bc1eb5085c2b3b75f1e02f1de0ce10f66e50dc"
+  },
+  {
+    "path": "tests/test_live_start_reconciliation.py",
+    "bytes": 4856,
+    "sha256": "00145d57789c1cc8e7055bfe83f71089c504ed4e0b235c32c4cc6c57a6a7c396"
+  },
+  {
+    "path": "tests/test_live_transcription.py",
+    "bytes": 6580,
+    "sha256": "074083ce89b27e88a89c5bdf24d6fe9ec10b42be674188306ee691c7b579a6f4"
+  },
+  {
+    "path": "tests/test_live_utterance_durability.py",
+    "bytes": 8244,
+    "sha256": "6493404530c9c5dfd4c1c9f34ad3191a6ccb66e6dedff50ddf28fdcc75e4d7a1"
+  },
+  {
+    "path": "tests/test_live_wss.py",
+    "bytes": 28965,
+    "sha256": "0e74e6797651cfdf66bf77b183c8ee8993c6bfb6475f14468472c716637f84cd"
+  },
+  {
+    "path": "tests/test_logging_config.py",
+    "bytes": 1945,
+    "sha256": "8b48cd96a029b6f8948017f23d9676612342bca7901bb394ccb242901a80cc99"
+  },
+  {
+    "path": "tests/test_mcp_events.py",
+    "bytes": 62351,
+    "sha256": "6819c336630050c57ab2e1c435ca19062efcef8f77f730f0263b72c9f90732bb"
+  },
+  {
+    "path": "tests/test_multi_project_memory.py",
+    "bytes": 7678,
+    "sha256": "7830f7a3149febf84cfb7a03f3cc16ec5f7a2fc865392895471952fe86ea4271"
+  },
+  {
+    "path": "tests/test_native_start_contract.py",
+    "bytes": 844,
+    "sha256": "415023a3ff0daf5e4b00f5e7ecde1e1b7080f3cbb4a2298f251ac2fe5ebe4f6d"
+  },
+  {
+    "path": "tests/test_native_timeline.py",
+    "bytes": 5376,
+    "sha256": "05d74f396de0afe00a1d6fbd5332cf2929e6449c4136345a4f113984a259e73c"
+  },
+  {
+    "path": "tests/test_native_timeline_projection.py",
+    "bytes": 6863,
+    "sha256": "f5e10ab4060efda386ade57eefc318ee9843711412bf12142f85cab02009a994"
+  },
+  {
+    "path": "tests/test_native_v2_caption_boundary.py",
+    "bytes": 9909,
+    "sha256": "c94b276d737a02d2d7f9d20df650bc53c6e521f319033fde0a1d67f79e4e69db"
+  },
+  {
+    "path": "tests/test_note_processing.py",
+    "bytes": 7159,
+    "sha256": "1106c237f2b4695c5ed3c5fe1e881538537a3b765746b634ef870826fb942960"
+  },
+  {
+    "path": "tests/test_offline_capture_contract.py",
+    "bytes": 1350,
+    "sha256": "b6c1815657ae51d6dbdb94bc038e5229d8989a5512bc889c55d11e4c569a856d"
+  },
+  {
+    "path": "tests/test_offline_source_identity.py",
+    "bytes": 5861,
+    "sha256": "1347d8467e12eb0ed132454145be008a02a3ac6668662a9380cf0ca66d50c146"
+  },
+  {
+    "path": "tests/test_personal_timeline.py",
+    "bytes": 6069,
+    "sha256": "f54a9c5e32596f1bf08eba5cd1fc50a42614b55a2374a22612fa73d854c51f5c"
+  },
+  {
+    "path": "tests/test_product_spec.py",
+    "bytes": 3361,
+    "sha256": "3c62afc0a446b989e262d6adcbe59a1f2006b06008f87606e35f7494f68aaf24"
+  },
+  {
+    "path": "tests/test_public_auth.py",
+    "bytes": 7069,
+    "sha256": "1ba8b5659532c645706ff03d4ad1b0cb59e7eec18092806ecb92b869125d1e0c"
+  },
+  {
+    "path": "tests/test_public_auth_settings.py",
+    "bytes": 1116,
+    "sha256": "ec830334881ddc081a0031fd02f94c1b79010c61efd81313970e1cfc5893661c"
+  },
+  {
+    "path": "tests/test_question_request_provenance.py",
+    "bytes": 3647,
+    "sha256": "ac09efbf1a742f0ae1ea643fd5586dc7d1b94747f64afe84961be1208886f5a0"
+  },
+  {
+    "path": "tests/test_question_result_greeting.py",
+    "bytes": 8807,
+    "sha256": "43ef21797ea97c68d5d80e18561be1a20f669c63f31e8ab1fd344471be7fa9b7"
+  },
+  {
+    "path": "tests/test_question_session_controls.py",
+    "bytes": 16412,
+    "sha256": "29cb136d1509c5485131bf24c41503f1d50cc62a7b555c91cf0281633ef850ab"
+  },
+  {
+    "path": "tests/test_question_session_delivery.py",
+    "bytes": 5761,
+    "sha256": "a2ba67dd2eacae9583dda9248bc7675987799dd3f22115c2a5b9ab9a1851a63a"
+  },
+  {
+    "path": "tests/test_question_session_live_adapter.py",
+    "bytes": 2431,
+    "sha256": "b5731bae17cba34a20a9a8b6194d6ef113ddf2ceddfc3376dfea7bc52665e280"
+  },
+  {
+    "path": "tests/test_question_session_owner_cli.py",
+    "bytes": 3173,
+    "sha256": "57fa4e575d14747a0ed073ebedc5fbc13bfd94dd77ee34b2561ee1884d5e3273"
+  },
+  {
+    "path": "tests/test_question_session_results.py",
+    "bytes": 9543,
+    "sha256": "3bbfda41abbf6bfbf4692cb38edad3437c4fc04d0b36be72af75c28c00855e2a"
+  },
+  {
+    "path": "tests/test_question_startup_route.py",
+    "bytes": 5040,
+    "sha256": "099ac9ec638f5f9082fe772a18af6904756d750d9741b9d1f6d72ae5767b163e"
+  },
+  {
+    "path": "tests/test_readiness.py",
+    "bytes": 3519,
+    "sha256": "5597009bb3ff90476b5199a519085f17ac89e5543c30e7c67b7f5585ee0bea45"
+  },
+  {
+    "path": "tests/test_readiness_live.py",
+    "bytes": 8392,
+    "sha256": "92d9c72c1724dd4980e7797703e9f2188d0744cfa4c3bc61683f10c1b3bf2ed7"
+  },
+  {
+    "path": "tests/test_regional_knowledge.py",
+    "bytes": 9621,
+    "sha256": "124aa2f09a3f096f5d2ac4d301bd583c6d644a238a8822aee70dddf57b881080"
+  },
+  {
+    "path": "tests/test_release_version.py",
+    "bytes": 919,
+    "sha256": "4c3058be41a020af69e6af128ddd8759ca9bba9e5995e6e09a1b64587cfffff2"
+  },
+  {
+    "path": "tests/test_settings_runtime.py",
+    "bytes": 1285,
+    "sha256": "f2d3423627f29790548b1b8c4c36c904cc4ef274c0e2fac0b1efb859fca63422"
+  },
+  {
+    "path": "tests/test_store_runtime.py",
+    "bytes": 8588,
+    "sha256": "f1a8836e17e09e29ea3ffb1a7c811f9323c067468b68753beba06f2ab1755968"
+  },
+  {
+    "path": "tests/test_theme_preferences.py",
+    "bytes": 23557,
+    "sha256": "7e40bd71267c5b4b7e8d6284a2dfb3ea3655dea1278415d5f314069ab627a0bf"
+  },
+  {
+    "path": "tests/test_voice_latency_telemetry.py",
+    "bytes": 1475,
+    "sha256": "d2d29198be4d7e0caa904e1110f9416117a72812e5dca7db56f2ef0ced89a47f"
+  },
+  {
+    "path": "tests/test_wss_reconnect_canary.py",
+    "bytes": 6097,
+    "sha256": "a4c98f655fd2fc254af49f427c12a3d588ef09dc5ecdec1c68a22dc8d9db4b7b"
+  },
+  {
+    "path": "web/package-lock.json",
+    "bytes": 51426,
+    "sha256": "2575317933bd4a498f593ac874568961da8dfe0fc2cb283f6056b7eac85a1ed4"
+  },
+  {
+    "path": "web/package.json",
+    "bytes": 1075,
+    "sha256": "dbcd9d8ab7ee66482a967c19acc5a9cb59a92ad420bed2dde2e60b82e56877bf"
+  },
+  {
+    "path": "web/src/App.tsx",
+    "bytes": 113978,
+    "sha256": "758ceecd0cb46c8fc31781a0398088033aa6051e7b637f5e0c7ee35b20134d77"
+  },
+  {
+    "path": "web/src/CollaborationQuestions.tsx",
+    "bytes": 6040,
+    "sha256": "7a753a20c40c0d4302b2759643311fb34b7ad1ef89344da1c3d2c1746db024fe"
+  },
+  {
+    "path": "web/src/CollaborationTimeline.tsx",
+    "bytes": 7518,
+    "sha256": "9b936cb1c9b2cc29a332448866c3e8c4acf1b5850659093c5954df53f44697b4"
+  },
+  {
+    "path": "web/src/InlineBoard.tsx",
+    "bytes": 13345,
+    "sha256": "d25b00caf7f61c74d9b0216b2ee42b1af15d58537680373f6de5f3a11967f98b"
+  },
+  {
+    "path": "web/src/api.ts",
+    "bytes": 19783,
+    "sha256": "9d0a269eb439baf62b8c10755e03835163f61ab9fcca944f65150a88e57b8535"
+  },
+  {
+    "path": "web/src/boardApi.ts",
+    "bytes": 5830,
+    "sha256": "989f0d393155aae24a0db11219a3263f0ea18991469c93dfb08341779ef8bf4a"
+  },
+  {
+    "path": "web/src/bufferedReplay.ts",
+    "bytes": 6799,
+    "sha256": "1b7b6b0df7b40fb68c4ca6ed40ba7742e3eaa742cee7564d15b42922b4806463"
+  },
+  {
+    "path": "web/src/collaboration-questions.css",
+    "bytes": 589,
+    "sha256": "3ab1d4883a0e394c965aa732f58508b68f132e14a3a7f96dee815e06ff51a5d4"
+  },
+  {
+    "path": "web/src/collaboration.css",
+    "bytes": 1287,
+    "sha256": "7145ca0d8549f34b172f7582de09a53414e163fe74711ddb6b230d11cb7935af"
+  },
+  {
+    "path": "web/src/inline-board.css",
+    "bytes": 1422,
+    "sha256": "b277484826a347c10da1ed342a6405fbf525b3badc02aac87e0cd7c91fc7eb19"
+  },
+  {
+    "path": "web/src/live-interaction.d.ts",
+    "bytes": 2717,
+    "sha256": "def3c0dfec23da19d2335fe5c315780ce0c938a0031fedaaa923c67ffe1bca1b"
+  },
+  {
+    "path": "web/src/main.tsx",
+    "bytes": 800,
+    "sha256": "00a20db7cac5780fa3b8039b5a27df10117bfe8f37370c8be0d6b3a033745e87"
+  },
+  {
+    "path": "web/src/nativeTimelineLoader.d.ts",
+    "bytes": 1417,
+    "sha256": "86f5d16aa8f0e31ffc87199e01b077e2ca6525557d03d22d51604b73b143528d"
+  },
+  {
+    "path": "web/src/nativeTimelineLoader.js",
+    "bytes": 6782,
+    "sha256": "66d835588c3d731298694b4fbc553804c5c2ae3ff0b710a407ccdb0207b6b218"
+  },
+  {
+    "path": "web/src/nativeVoiceBridge.d.ts",
+    "bytes": 2052,
+    "sha256": "57fe1443afa0ff716a38daf5e680518c76b8e9d1a389eeca738ef304ae3e5a65"
+  },
+  {
+    "path": "web/src/nativeVoiceBridge.js",
+    "bytes": 7827,
+    "sha256": "da0035088ba5d1c95f0d8d9916f41dfb8ce8ae700727177df09b6b268e5cd368"
+  },
+  {
+    "path": "web/src/offlineSources.ts",
+    "bytes": 9257,
+    "sha256": "76a0f904d56967b68f09636c88877deac30e98292946483c68d0b7df008110e2"
+  },
+  {
+    "path": "web/src/replayCompletion.js",
+    "bytes": 827,
+    "sha256": "84b942392848df494c0596d6611f1102742cd3654077f66a56a330d7dbda5a24"
+  },
+  {
+    "path": "web/src/serverRecovery.ts",
+    "bytes": 5372,
+    "sha256": "68f7fbd9993e1cda49bc3c77e08516e45fde8c8395e6117bf1cac8ec7c45b3af"
+  },
+  {
+    "path": "web/src/styles.css",
+    "bytes": 22142,
+    "sha256": "1f32f34c6f8e28f2253e0b7fd23bd4460c95c036bc043215050c5fb9a4d79b3f"
+  },
+  {
+    "path": "web/src/themePreferences.d.ts",
+    "bytes": 1102,
+    "sha256": "2b1a27b1fd2b7d46c52f866974e65d184d06ba6e39f3732e9af84ed0a67ce209"
+  },
+  {
+    "path": "web/src/themePreferences.js",
+    "bytes": 4435,
+    "sha256": "1821baeb41fc7b5f04b9df2d65efbf56c0bdecbdd8fd6b120f8835a78d9e7b4e"
+  },
+  {
+    "path": "web/src/voiceUiContract.js",
+    "bytes": 5409,
+    "sha256": "5a44266027325ec3db702fa8a6b86b4a1309557d2bf92018aabd378ca1f881bc"
+  },
+  {
+    "path": "web/tests/app-voice-lifecycle.test.mjs",
+    "bytes": 19160,
+    "sha256": "20bd9fff17252d89b8f048b7ba1b0f2e74e4a512683c3b63fd31ce31550655f0"
+  },
+  {
+    "path": "web/tests/authentication-restoration.test.mjs",
+    "bytes": 6176,
+    "sha256": "a04914824edea6898a9fdc3039a12895f9f444be1738a25060e73020098c62ca"
+  },
+  {
+    "path": "web/tests/buffered-replay.test.mjs",
+    "bytes": 1389,
+    "sha256": "1b5d139111e811f91d31528aad6dd31fe7a989a966796c9d085267108fe1cd36"
+  },
+  {
+    "path": "web/tests/collaboration-board-contract.test.mjs",
+    "bytes": 3131,
+    "sha256": "2cb341e9bb10187c14a71f2e46f855ec1d5c2d8f02f1ab92536b6cfac25a9a03"
+  },
+  {
+    "path": "web/tests/live-framework.test.mjs",
+    "bytes": 777,
+    "sha256": "e186dbd377c856140c90d3b221582a1ec3a32193930bc96074ad7bb5bf54c391"
+  },
+  {
+    "path": "web/tests/native-timeline-app.test.mjs",
+    "bytes": 2304,
+    "sha256": "b872aac57e3057d3383b622f8ee185f069070165342e8215a04cbfb0a3aeae29"
+  },
+  {
+    "path": "web/tests/native-timeline-loader.test.mjs",
+    "bytes": 13893,
+    "sha256": "ee21d9184507a1d40e3630289f2243d5d7d3d280380ca7a00ce96a929fde6d63"
+  },
+  {
+    "path": "web/tests/native-voice-bridge.test.mjs",
+    "bytes": 6239,
+    "sha256": "56965d1d8664d8e4907d2caf94587a913ad348e6eb334dde1bd2d4023e3121ad"
+  },
+  {
+    "path": "web/tests/pending-sources.test.mjs",
+    "bytes": 3262,
+    "sha256": "e8729133dd9bfb305e7eed8d91fdf2be9e121b48752d4c1f9af92168a18e0df4"
+  },
+  {
+    "path": "web/tests/server-recovery-durability.test.mjs",
+    "bytes": 806,
+    "sha256": "2898af3414e58c9f1c566f762437f26665ef7b0874713d1bdf299f2bb76a0133"
+  },
+  {
+    "path": "web/tests/theme-browser.mjs",
+    "bytes": 17565,
+    "sha256": "76d0c82a2fc5cfd56a305e29c372119656453fb45e3ca80edd67e4c550607427"
+  },
+  {
+    "path": "web/tests/theme-preferences.test.mjs",
+    "bytes": 6364,
+    "sha256": "6fc83345dd2d9fcb092e2f52537b9ecf0a9961b6bc5789837fbe09ed56c53db3"
+  },
+  {
+    "path": "web/tests/voice-first-opening.test.mjs",
+    "bytes": 2528,
+    "sha256": "e295b55a27a707e9d58ff65034c948986d74940c3014ee918c0caef7d69b1012"
+  },
+  {
+    "path": "web/tests/voice-release-r5.test.mjs",
+    "bytes": 5188,
+    "sha256": "377cd2e6f44df3a3ca9deda6b2a76ecf5035a5c27e82955aaa14ac970134baa3"
+  },
+  {
+    "path": "web/tests/voice-resource-errors.test.mjs",
+    "bytes": 1519,
+    "sha256": "0f12d6346ffdf472177abbadf6bd2fed5ac6e561bdbb0967c627f82ed82bbb9b"
+  },
+  {
+    "path": "web/tests/voice-tool-progress.test.mjs",
+    "bytes": 1767,
+    "sha256": "f0d1e27558abc6cc015d5d1aadd18fd27a811bb3de397d2653f95472e780d9ba"
+  },
+  {
+    "path": "web/tests/voice-ui-contract.test.mjs",
+    "bytes": 3358,
+    "sha256": "bd95850f66b31b9fdbafbc736780ef9f1735330775b756eb9422f16ae1fe68d6"
+  }
+]

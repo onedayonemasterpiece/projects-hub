@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createNativeVoiceAdapter } from "../src/nativeVoiceBridge.js";
 import { nativeVoiceFailure } from "../src/voiceUiContract.js";
+import { createNativeCaptionState } from "../src/nativeCaptionTimeline.js";
 
 const source = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const initialization = source.match(/      const native = createNativeVoiceAdapter\(\{([\s\S]*?)\n      \}\);\n      nativeVoiceRef\.current = native;/)?.[0];
@@ -27,6 +28,8 @@ async function setup() {
   const conversationRef = { current: { id: "conversation_A", actor_id: "actor_A", workspace_id: "workspace_A" } };
   const env = {
     nativeVoiceFailure, activeIdentity, nativeVoiceRef, conversationRef,
+    createNativeCaptionState, nativeCaptionRef: { current: createNativeCaptionState() },
+    setNativeCaptionUnavailable: noop,
     nativeStateRef: { current: null }, currentSourceIdRef: { current: null },
     boot: { actor: { id: "actor_A" }, workspace: { id: "workspace_A" } },
     nativeSurface: true, isAndroidApp: true, userStoppedVoiceRef: { current: false },
@@ -35,7 +38,7 @@ async function setup() {
     setNotice: value => { ui.notices.push(value); ui.notice = value; },
     setMicrophoneSettingsAvailable: value => { ui.microphoneSettings = value; },
     setBusy: value => { ui.busy = value; },
-    setSpeechActive: noop, setSpeechPending: noop, setWait: noop, setToolProgress: noop,
+    setSpeechActive: noop, setSpeechPending: noop, setInterimInputTranscript: noop, setWait: noop, setToolProgress: noop,
     getConversation: () => { throw new Error("unrelated conversation read"); }, setConversation: noop,
     localStorage: { setItem: noop }, applyVoiceTiming: noop, applyPreferenceEvent: noop, applyLiveEvent: noop,
     ensureConversation: async () => conversationRef.current,
@@ -113,6 +116,8 @@ test("actual native state dispatch distinguishes protocol, storage and connectio
       ["NATIVE_VOICE_PROTOCOL_UNAVAILABLE", "native_unsupported", /несовместимые версии/],
       ["VOICE_STORE_QUOTA", "capture_error", /Место для голосовых записей заполнено/],
       ["VOICE_STORE_CORRUPT", "capture_error", /Не удалось сохранить голосовую запись/],
+      ["LIVE_NATIVE_STORAGE_BACKPRESSURE", "capture_error", /Устройство не успевает обрабатывать звук/],
+      ["LIVE_NATIVE_OUTPUT_STORAGE_BACKPRESSURE", "capture_error", /Устройство не успевает обрабатывать звук/],
       ["LIVE_NATIVE_SESSION_UNAVAILABLE", "connection_error", /соединиться с сервером/],
       ["NATIVE_VOICE_UNAVAILABLE", "connection_error", /Откройте приложение снова/],
     ]) {
@@ -121,6 +126,10 @@ test("actual native state dispatch distinguishes protocol, storage and connectio
       assert.match(t.ui.notice, notice, code);
       assert.equal(t.ui.notice.includes(code), false, "do not expose an untranslated internal code");
       assert.equal(t.ui.microphoneSettings, false);
+      if (code === "LIVE_NATIVE_STORAGE_BACKPRESSURE" || code === "LIVE_NATIVE_OUTPUT_STORAGE_BACKPRESSURE") {
+        assert.match(t.ui.notice, /сохранённая часть записи остаётся в приложении/);
+        assert.doesNotMatch(t.ui.notice, /свободное место|Место для голосовых записей заполнено/);
+      }
     }
     assert.equal(t.ui.browserStarts, 0);
   } finally { t.close(); }

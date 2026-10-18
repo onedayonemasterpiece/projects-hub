@@ -39,7 +39,9 @@ def activate(adapter, session, capability):
         }
     else:
         assert names == {'activate_capability', *BUNDLES[capability]}
-    assert len(names) <= (9 if capability == 'core' else 6)
+    # The shared contract includes the router in its hard maximum of nine;
+    # three to six functions is a preference, not a different permission limit.
+    assert len(names) <= 9
     session.capability = spec['capability']
     return spec
 

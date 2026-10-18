@@ -1,0 +1,280 @@
+{
+  "recorded_at_utc": "2026-10-17T11:05:01.719670+00:00",
+  "status": "integrated source candidate; not release/physical/provider acceptance",
+  "consumer": {
+    "branch": "claude/voice-continuity-consumer-20261016",
+    "original_claude_commit": "87824b7aa13d0add284e7b1174635dd0c2ffca69",
+    "parent_commit": "955576734e97288634bbe2afb55c19dda39e51b3",
+    "candidate_commit": "commit containing this receipt; immutable published SHA recorded by PR175 and work checkpoint",
+    "source_manifest": "consumer-source-manifest.json"
+  },
+  "shared": {
+    "branch": "claude/voice-continuity-v0.4-20261016",
+    "original_claude_commit": "599dc1caad8e0995ab65dc6b3fe2f684073af8f6",
+    "version": "0.4.0-rc.1",
+    "python_metadata_version": "0.4.0rc1",
+    "commit": "c564f0c44c6fe783fd4932bd4633fada34e05c73",
+    "tree": "e4f36b3e6773e19a74a33de5389c1e3475f4b1c7",
+    "source_archive_sha256": "3dade3ac1547c24ae820470af7b4327f66c12b3f75505b2d9fc28eedf57ea1de",
+    "locally_built_python_wheel_sha256": "78d334aab5209f6ecd1675fb8916331d698a425aac001dec0e50a7d47b7afe28",
+    "web_lock_integrity": "sha512-4d2chjfLRsAOxYQ4twupQ1LuElx7Q2RuxK02qrAZbtR0N06Rr9nAxFhvp5qj2bWmjyYVXZg+1EzSHRmO9azPAw==",
+    "git_dependency_integrity_note": "npm skips normal integrity checking for git dependencies; immutable source SHA and downloaded archive/file hashes were checked separately",
+    "ci": {
+      "status": "success",
+      "url": "https://github.com/onedayonemasterpiece/live-interaction/actions/runs/39026083247"
+    }
+  },
+  "requirements": {
+    "approved_commit": "493215046cd75d0f267d612f2277e81846204d1d",
+    "normalized_digest": "1483d58ad9e746354cee50c9c0aedd9dfea4cccde6665c9f570da330dfffea0e",
+    "changed_ids": [
+      "CORE-LIVE-WSS",
+      "CORE-VOICE-SESSION-CONTINUITY"
+    ],
+    "others_preserved": true
+  },
+  "checks": [
+    {
+      "name": "consumer backend",
+      "command": "PYTHONPATH=src /workspace/scratch/0702e2310172/checkpoint-review/venv/bin/python -m pytest -q",
+      "cwd": "consumer",
+      "passed": 471,
+      "failed": 0,
+      "warnings": 1,
+      "seconds": 49.65,
+      "shared_import": "installed from GitHub commit into site-packages; no framework PYTHONPATH",
+      "log": "consumer-backend-tests.log"
+    },
+    {
+      "name": "consumer web",
+      "command": "npm run test:live-framework",
+      "cwd": "consumer/web",
+      "passed": 97,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 0.888338651,
+      "log": "consumer-web-tests.log"
+    },
+    {
+      "name": "consumer web build",
+      "command": "npm run build",
+      "cwd": "consumer/web",
+      "status": "PASS",
+      "seconds": 3.98,
+      "log": "consumer-web-build.log"
+    },
+    {
+      "name": "shared Python",
+      "passed": 127,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 50.588,
+      "note": "real PyAV audio tests included",
+      "log": "shared-python-tests.log"
+    },
+    {
+      "name": "shared Node",
+      "command": "node --test tests/*.test.mjs",
+      "cwd": "framework",
+      "passed": 98,
+      "test_files": 12,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 1.090665965,
+      "note": "individual cases reported outside sandbox child-process IPC restriction",
+      "log": "shared-node-tests.log"
+    },
+    {
+      "name": "shared Java core",
+      "passed": 9,
+      "failed": 0,
+      "note": "core tests and exact shared CI native job; physical Android not involved"
+    },
+    {
+      "name": "shared Android platform",
+      "passed": 20,
+      "failed": 0,
+      "skipped": 0,
+      "receipt": "android-build-verification.json"
+    },
+    {
+      "name": "consumer Android",
+      "passed": 31,
+      "failed": 0,
+      "skipped": 0,
+      "build": "debug APK assembled",
+      "receipt": "android-build-verification.json"
+    },
+    {
+      "name": "actual Java native Start to Python HTTP model",
+      "passed": 2,
+      "failed": 0,
+      "receipt": "android-build-verification.json"
+    },
+    {
+      "name": "product v2 with real PyAV and caption boundary",
+      "passed": 1,
+      "failed": 0,
+      "included_in": "consumer backend"
+    },
+    {
+      "name": "large canonical timeline projection",
+      "passed": 4,
+      "failed": 0,
+      "included_in": "consumer backend"
+    },
+    {
+      "name": "browser smoke",
+      "status": "PASS desktop 1280x900 and mobile viewport 390x844",
+      "receipt": "browser-smoke-result.json",
+      "scope": "Vite source, fake mic, HTTP/WSS fixtures; not dist, Android, real provider or mobile network"
+    },
+    {
+      "name": "original provider spike offline suite",
+      "passed": 14,
+      "failed": 0,
+      "receipt": "../provider-spike/offline-tests-result.json"
+    },
+    {
+      "name": "one real provider spike",
+      "status": "NOT ACCEPTED: resume skipped; idle TimeoutError",
+      "receipt": "../provider-spike/spike-all-20261017.summary.json",
+      "must_not_repeat_as_unfinished": true
+    }
+  ],
+  "apk": {
+    "filename": "app-debug.apk",
+    "bytes": 3399365,
+    "sha256": "1cff757af14b04de9350ab88a12f20564aa3f3885b30ed87c37f663a75e1527f",
+    "version": "0.1.1-debug",
+    "package": "separate debug applicationId suffix",
+    "kind": "debug candidate, not signed production update",
+    "source_pairing": "android-rc-pairing-review.json"
+  },
+  "open_acceptance": [
+    "90-minute physical Android foreground/background/screen-off/routes/permissions/Stop/process-death run",
+    "unstable mobile internet outage/handover/latency/jitter/loss/bandwidth limits and bounded recovery",
+    "real selected model audible long-tool acknowledgement and fresh speech priority",
+    "provider renewal/resumption/capability transition and required caption latency gates",
+    "Russian/noisy/quiet/proper-name ASR and output audio quality at selected compression settings",
+    "handset battery/CPU/RAM and whole-host simultaneous Live/caption/real Regional Knowledge capacity",
+    "signed native update and coordinated stable shared/consumer release plus source-preserving migration/rollback",
+    "installed iOS PWA as next milestone; legacy browser v1 is not compressed-v2 acceptance"
+  ],
+  "go_rust": {
+    "implementation_port_performed": false,
+    "equivalent_go_benchmark_performed": false,
+    "capacity_claim": false,
+    "report": "../backend-go-scope.md",
+    "nonblocking_owner_question": "Target peak simultaneously active voice conversations and growth"
+  },
+  "production": {
+    "merge_main": false,
+    "deploy": false,
+    "release_or_tag": false,
+    "signing": false,
+    "last_observed_baseline_commit": "76bc5f2d84424f26bf3d0056687ae6a5dfcbde81"
+  },
+  "evidence": [
+    {
+      "path": "android-build-verification.json",
+      "bytes": 19143,
+      "sha256": "7acc4950a1cd8f0d2ac0702a4e1bab0d0b93bbc23b215e1d344c170b108df5f5"
+    },
+    {
+      "path": "android-consumer-build.log",
+      "bytes": 4617,
+      "sha256": "cf8f1d00bc9570ab29f170db51cd7dcc630641e47f58d952cb40ac39357dcd74"
+    },
+    {
+      "path": "android-consumer-source-manifest.json",
+      "bytes": 8048,
+      "sha256": "e5e6e816ddb5df6294a9f240d3addbd450a6c0d3ceb128875b179df67a6dd691"
+    },
+    {
+      "path": "android-platform-source-manifest.json",
+      "bytes": 6447,
+      "sha256": "a5c25e17567bfeccfd65489d7e65a54c4fefd88c9af69237561ef5242e1c3eee"
+    },
+    {
+      "path": "android-platform-tests.log",
+      "bytes": 1582,
+      "sha256": "14c3a43eab24e7baf61e82f54d5128995507d8add2e698ec98e18d5279083f49"
+    },
+    {
+      "path": "android-rc-pairing-review.json",
+      "bytes": 2285,
+      "sha256": "69b71c1555fb7f7bba925bea8fe3a07b90e027db87583f67f862dbebef3d6672"
+    },
+    {
+      "path": "browser-smoke-result.json",
+      "bytes": 1852,
+      "sha256": "2ff0db317e4d9ef7cb043836ccfb0db8158a37ef2e1aea58a45c2f63e8cd2414"
+    },
+    {
+      "path": "chromium-installation.json",
+      "bytes": 479,
+      "sha256": "e22c1d2ea39573f6bbacc1e1b08ded2ce3cc65520bd719738d6723b8e1815a08"
+    },
+    {
+      "path": "consumer-backend-tests.log",
+      "bytes": 1180,
+      "sha256": "80a31ddfd8911ed01c49f3b457a611b27751f189461fdbdd3e51f86f24b40203"
+    },
+    {
+      "path": "consumer-source-manifest.json",
+      "bytes": 32294,
+      "sha256": "70839ae3c2eddb47d57474bfce30397fd74f640b07db0f54fc58c0fd4ed26a33"
+    },
+    {
+      "path": "consumer-web-build.log",
+      "bytes": 1661,
+      "sha256": "3dc6047ef718fd2de8aa030ef34c31f742db4c3f6db7f5c30666ee495c86eb68"
+    },
+    {
+      "path": "consumer-web-tests.log",
+      "bytes": 9162,
+      "sha256": "91e8ffb351f7be0361e7e81cec6a0062b2eb23073ee05dc158f4218b2e99981f"
+    },
+    {
+      "path": "pinned-runtime.json",
+      "bytes": 520,
+      "sha256": "2a9e21e6b20db1a8b01400c04f83a69d89f58ed51ce36657584505ff2bd1ac09"
+    },
+    {
+      "path": "shared-node-tests.log",
+      "bytes": 9380,
+      "sha256": "f10dac0d5a5ce5b4251ec249161e286c222851ccd2ba9e26d50c3ee6c45fd37d"
+    },
+    {
+      "path": "shared-python-tests.log",
+      "bytes": 21050,
+      "sha256": "7b6401eb53a758199db5ad4290cde03adc0ffec2e2f3a1ae8276f271a91f30d2"
+    },
+    {
+      "path": "shared-remote-verification.json",
+      "bytes": 7569,
+      "sha256": "6f9cdfa9c1a808a2fc611456d00d6c54ff1e00f88514d3921527dce3ddeefb26"
+    },
+    {
+      "path": "shared-source-manifest.json",
+      "bytes": 6891,
+      "sha256": "6ad4cbc65baf061fea84266d54ffc29864350810e6de1a440a2ff2dca1dd8a85"
+    },
+    {
+      "path": "theme-browser-20261017.log",
+      "bytes": 420,
+      "sha256": "322736a1d129b0daa5486f6414a01e85ac6be2afc2ec445dc2aec4fab3a72252"
+    },
+    {
+      "path": "theme-browser-readiness.patch",
+      "bytes": 1930,
+      "sha256": "cdac32c81b89fcb7450d6d27f222bfd2405deb72c74911e5f69d31b1bbb0932c"
+    },
+    {
+      "path": "theme-browser-retry-20261017.log",
+      "bytes": 161,
+      "sha256": "0cd39f9a7a296ac7fc78053b8fbb497ae15f6c16004cf3b165a5dc178b68da9b"
+    }
+  ]
+}

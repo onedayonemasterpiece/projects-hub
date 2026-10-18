@@ -1,0 +1,14 @@
+........................................................................ [ 15%]
+........................................................................ [ 30%]
+........................................................................ [ 45%]
+........................................................................ [ 61%]
+........................................................................ [ 76%]
+........................................................................ [ 91%]
+.......................................                                  [100%]
+=============================== warnings summary ===============================
+../../checkpoint-review/venv/lib/python3.12/site-packages/pydantic/_internal/_generate_schema.py:1540
+  /workspace/scratch/0702e2310172/checkpoint-review/venv/lib/python3.12/site-packages/pydantic/_internal/_generate_schema.py:1540: TypedDictExtraConfigWarning: TypedDict class 'RequestParamsMeta' allows extra items, but 'extra' configuration is set to `'forbid'`. The 'extra' configuration value will be ignored.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+471 passed, 1 warning in 49.65s

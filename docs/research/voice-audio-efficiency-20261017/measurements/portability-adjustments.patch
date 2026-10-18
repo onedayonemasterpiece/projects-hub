@@ -1,0 +1,125 @@
+--- original/serialization_benchmark.py
++++ probes/serialization_benchmark.py
+@@ -2,7 +2,8 @@
+ """Local no-network microbenchmark of existing candidate audio helpers.
+ 
+ No key/SDK/provider connection; no product source mutations or store writes.
+-Re-run with the existing venv and PYTHONPATH shown in the report.
++Select the source checkouts with PYTHONPATH. AUDIO_PROBE_OUTPUT selects a new
++JSON result path; default output is serialization-results.local.json in the cwd.
+ """
+ from __future__ import annotations
+ import asyncio
+@@ -26,14 +27,18 @@
+ from live_interaction.transcribe import input_payload
+ from projects_hub.live_transcription import CaptionSidecar
+ 
+-ROOT = Path(__file__).resolve().parent.parent
+-SOURCE_FILES = [
+-    'continuation-final/framework/python/live_interaction/socket_transport.py',
+-    'continuation-final/framework/python/live_interaction/session_host.py',
+-    'continuation-final/framework/python/live_interaction/provider.py',
+-    'continuation-final/framework/python/live_interaction/transcribe.py',
+-    'continuation-final/consumer/src/projects_hub/live_transcription.py',
+-]
++# Select checkouts via PYTHONPATH; hash the modules actually imported, not a
++# particular scratch directory layout. No provider runner or resource SDK starts.
++SOURCE_FILES = {
++    name: Path(sys.modules[name].__file__).resolve()
++    for name in (
++        'live_interaction.socket_transport',
++        'live_interaction.session_host',
++        'live_interaction.provider',
++        'live_interaction.transcribe',
++        'projects_hub.live_transcription',
++    )
++}
+ 
+ class NoNetworkSink:
+     def __init__(self):
+@@ -154,9 +159,12 @@
+         'environment':{'python':sys.version,'platform':platform.platform(),'cpu_model':cpu_line,'visible_logical_cpus':os.cpu_count(),
+            'process_peak_rss_kib_including_imports':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss},
+         'declared_source_refs':{'framework':'3b852249','consumer_code':'4a4d658','consumer_head_docs':'ffa3b508'},
+-        'source_sha256':{name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in SOURCE_FILES},
++        'source_ref_note':'Declared refs identify the original research baseline; actual imported files/hashes are recorded below.',
++        'source_files':{name:str(path) for name,path in SOURCE_FILES.items()},
++        'source_sha256':{name:hashlib.sha256(path.read_bytes()).hexdigest() for name,path in SOURCE_FILES.items()},
+         'byte_examples':byte_examples,'results':results}
+-    target=Path(__file__).with_name('serialization-results.json')
++    target=Path(os.environ.get('AUDIO_PROBE_OUTPUT', 'serialization-results.local.json')).expanduser().resolve()
++    target.parent.mkdir(parents=True, exist_ok=True)
+     target.write_text(json.dumps(report,indent=2)+'\n')
+     print(json.dumps({'report':str(target),'cases':[{k:v for k,v in r.items() if k in ('case','input_pcm_bytes','cpu_us_per_iteration_median','cpu_ms_per_audio_second','python_tracemalloc_peak_bytes_256_serial_iterations')} for r in results],'byte_examples':byte_examples},indent=2))
+ 
+--- original/browser_helpers_benchmark.mjs
++++ probes/browser_helpers_benchmark.mjs
+@@ -2,8 +2,14 @@
+ import os from 'node:os';
+ import {createHash} from 'node:crypto';
+ import {performance} from 'node:perf_hooks';
+-import {createPcm16Resampler,frameRms} from '../continuation-final/framework/browser/capture.js';
+-import {encodeLiveAudioFrame,decodeLiveOutputFrame} from '../continuation-final/framework/browser/socket-transport.js';
++import path from 'node:path';
++import {pathToFileURL} from 'node:url';
++// Source root is explicit; this probe never fetches code or starts a browser.
++if(!process.env.FRAMEWORK_ROOT)throw new Error('Set FRAMEWORK_ROOT to the live-interaction checkout.');
++const frameworkRoot=path.resolve(process.env.FRAMEWORK_ROOT);
++const sourceUrl=relative=>pathToFileURL(path.join(frameworkRoot,relative));
++const {createPcm16Resampler,frameRms}=await import(sourceUrl('browser/capture.js').href);
++const {encodeLiveAudioFrame,decodeLiveOutputFrame}=await import(sourceUrl('browser/socket-transport.js').href);
+ const median=x=>[...x].sort((a,b)=>a-b)[Math.floor(x.length/2)];
+ function cpu(){const x=process.cpuUsage();return x.user+x.system;}
+ function measure(caseName,operation,audioSecondsPerIteration){
+@@ -37,7 +43,9 @@
+ const down=new Uint8Array(4812),v=new DataView(down.buffer);v.setUint32(0,0x574c4f31,false);v.setUint32(4,1,false);v.setUint32(8,24000,false);
+ results.push(measure('existing_wss_decode_4800_bytes',n=>{let x=0;for(let i=0;i<n;i++)x+=decodeLiveOutputFrame(down).pcm.byteLength;return x;},.1));
+ const sourceFiles=['browser/capture.js','browser/capture-worklet.js','browser/socket-transport.js'];
+-const source_sha256=Object.fromEntries(sourceFiles.map(path=>[path,createHash('sha256').update(fs.readFileSync(new URL('../continuation-final/framework/'+path,import.meta.url))).digest('hex')]));
+-const report={declared_source_ref:'3b85224962c396e1a52977d6b81eee659db0cacc',source_sha256,method:{scope:'Imported existing pure helpers; no AudioWorklet thread, browser, real microphone, playback, crypto, network, disk or provider. Node is not an Android device or a VPS capacity measurement.',gc_exposed:Boolean(global.gc)},
++const source_sha256=Object.fromEntries(sourceFiles.map(path=>[path,createHash('sha256').update(fs.readFileSync(sourceUrl(path))).digest('hex')]));
++const report={source_root:frameworkRoot,source_ref_note:'Declared ref identifies the original research baseline; actual file hashes are recorded separately.',declared_source_ref:'3b85224962c396e1a52977d6b81eee659db0cacc',source_sha256,method:{scope:'Imported existing pure helpers; no AudioWorklet thread, browser, real microphone, playback, crypto, network, disk or provider. Node is not an Android device or a VPS capacity measurement.',gc_exposed:Boolean(global.gc)},
+  environment:{node:process.version,platform:process.platform,arch:process.arch,cpu_model:os.cpus()[0].model,visible_logical_cpus:os.cpus().length,memory_after_cases:process.memoryUsage()},results};
+-const target=new URL('./browser-helpers-results.json',import.meta.url);fs.writeFileSync(target,JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report,null,2));
++const target=path.resolve(process.env.AUDIO_PROBE_OUTPUT||'browser-helpers-results.local.json');
++fs.mkdirSync(path.dirname(target),{recursive:true});
++fs.writeFileSync(target,JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report,null,2));
+--- original/opus_probe.py
++++ probes/opus_probe.py
+@@ -9,13 +9,17 @@
+ import collections
+ import json
+ import math
++import os
+ import pathlib
+ import platform
+ import random
+ import statistics
+ import time
+ 
+-lib = C.CDLL(ctypes.util.find_library("opus"))
++library_path = os.environ.get("OPUS_LIBRARY") or ctypes.util.find_library("opus")
++if not library_path:
++    raise RuntimeError("libopus was not found; install it or set OPUS_LIBRARY to its shared library path.")
++lib = C.CDLL(library_path)
+ I16P, U8P = C.POINTER(C.c_int16), C.POINTER(C.c_ubyte)
+ for name, args, result in [
+     ("opus_encoder_create", [C.c_int, C.c_int, C.c_int, C.POINTER(C.c_int)], C.c_void_p),
+@@ -134,7 +138,7 @@
+     "scope": "synthetic single-stream sequential native-codec cost probe; not a Go/Rust/Python comparison or capacity/quality test",
+     "python": platform.python_version(), "machine": platform.machine(),
+     "cpu": next((x.split(':', 1)[1].strip() for x in pathlib.Path('/proc/cpuinfo').read_text().splitlines() if x.startswith('model name')), "unknown"),
+-    "libopus": lib.opus_get_version_string().decode(),
++    "libopus": lib.opus_get_version_string().decode(), "libopus_library": library_path,
+     "seconds_per_trial": SECONDS, "trials": REPEATS, "warmup_audio_seconds_per_trial": 1,
+     "encoder_state_bytes_mono": lib.opus_encoder_get_size(1),
+     "decoder_state_bytes_mono": lib.opus_decoder_get_size(1),
+@@ -144,6 +148,7 @@
+               "State sizes are direct libopus state allocations, not process RSS/stack/queues or transport memory."],
+     "results": results,
+ }
+-target = pathlib.Path(__file__).with_name("opus_probe_results.json")
++target = pathlib.Path(os.environ.get("AUDIO_PROBE_OUTPUT", "opus_probe_results.local.json")).expanduser().resolve()
++target.parent.mkdir(parents=True, exist_ok=True)
+ target.write_text(json.dumps(report, indent=2) + "\n")
+ print(json.dumps(report, indent=2))

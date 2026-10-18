@@ -1,0 +1,156 @@
+{
+  "created_utc": "2026-10-17T10:14:58.662468+00:00",
+  "framework_root": "/workspace/scratch/0702e2310172/continuation-final/framework",
+  "owner": "/root/claude_handoff",
+  "files": [
+    {
+      "path": "android/settings.gradle.kts",
+      "change": "modified",
+      "bytes": 165,
+      "sha256": "9e8cb6872c673a8408fb4eac66b6ba4537538fb578f7d80d9e409687a1f55533"
+    },
+    {
+      "path": "android/platform/build.gradle.kts",
+      "change": "new",
+      "bytes": 725,
+      "sha256": "86cbffd7500062b7a165066ad7007f7ba7ac7b29413e2b749d9502820406d6ec"
+    },
+    {
+      "path": "android/platform/README.md",
+      "change": "new",
+      "bytes": 11057,
+      "sha256": "06c0282e7c0c813cf8d240801453b271115d808df93ae391b9f234fecf1eacf8"
+    },
+    {
+      "path": "android/platform/src/main/AndroidManifest.xml",
+      "change": "new",
+      "bytes": 300,
+      "sha256": "745185a9c5c54aac5d29007936b1371c91ce78482bc1904d4c59919ff1ce7a1e"
+    },
+    {
+      "path": "android/platform/src/main/java/org/onedayonemasterpiece/live/platform/CodecTimeline.java",
+      "change": "new",
+      "bytes": 1561,
+      "sha256": "8487726eba65d43b0d708b9d680a692766a9a7f5220a0caccf2bd02f9a045402"
+    },
+    {
+      "path": "android/platform/src/main/java/org/onedayonemasterpiece/live/platform/CompressedAudio.java",
+      "change": "new",
+      "bytes": 9975,
+      "sha256": "d952b9b24f36d7c1f706b498c4fe25a07ffbb2cd0c13336ba5022d934328cc8a"
+    },
+    {
+      "path": "android/platform/src/main/java/org/onedayonemasterpiece/live/platform/DurablePlaybackPump.java",
+      "change": "new",
+      "bytes": 3382,
+      "sha256": "4ac3b1fbdadcbea352babd79124a165433c7517b39c2f50672dd55dc1915e5b3"
+    },
+    {
+      "path": "android/platform/src/main/java/org/onedayonemasterpiece/live/platform/NativeEncoder.java",
+      "change": "new",
+      "bytes": 13370,
+      "sha256": "430ba864a6f8f19db83f30e7d8b73adeb2a72caea41b66ca9010f2fd88c69a5f"
+    },
+    {
+      "path": "android/platform/src/main/java/org/onedayonemasterpiece/live/platform/NativeLiveRuntime.java",
+      "change": "new",
+      "bytes": 53826,
+      "sha256": "7dbbbba140018f264404c2063470c4551a86c378959e7d16c11a407799db3804"
+    },
+    {
+      "path": "android/platform/src/main/java/org/onedayonemasterpiece/live/platform/NativePlayer.java",
+      "change": "new",
+      "bytes": 22792,
+      "sha256": "8eb660d9d3eff9444fa330bc21308a9e5f994939add239669859c44ad2f142b8"
+    },
+    {
+      "path": "android/platform/src/main/java/org/onedayonemasterpiece/live/platform/OutputResumeQueue.java",
+      "change": "new",
+      "bytes": 2327,
+      "sha256": "b8255b5272a2398b18f0bf9e36ada00fc4c97d92bc5105ed5e2d537153fbb500"
+    },
+    {
+      "path": "android/platform/src/main/java/org/onedayonemasterpiece/live/platform/SessionApi.java",
+      "change": "new",
+      "bytes": 2474,
+      "sha256": "62c77767fcc422700534b60931bfb845d55bbfb6ff83033613db6ecc1c4d468b"
+    },
+    {
+      "path": "android/platform/src/main/java/org/onedayonemasterpiece/live/platform/StartContext.java",
+      "change": "new",
+      "bytes": 418,
+      "sha256": "a3bfd4efbfed5d61dd491fc4c058b35a5759b55d05c3eb884f451b88fda32e64"
+    },
+    {
+      "path": "android/platform/src/test/java/org/onedayonemasterpiece/live/platform/CompressedAudioTest.java",
+      "change": "new",
+      "bytes": 8216,
+      "sha256": "c4af8f9d041a35643466f15977a7248fe8772a9176c66889793cc79164a09376"
+    },
+    {
+      "path": "android/platform/src/test/java/org/onedayonemasterpiece/live/platform/DurablePlaybackPumpTest.java",
+      "change": "new",
+      "bytes": 6447,
+      "sha256": "7d13127793ae8b7af8963a2b91d7029b885134a1467c7afcefaa54c1cf6b8fa5"
+    },
+    {
+      "path": "android/platform/src/test/java/org/onedayonemasterpiece/live/platform/OutputResumeQueueTest.java",
+      "change": "new",
+      "bytes": 2747,
+      "sha256": "c06b7af34d96c47d98e9fe2a9cc63899fea5d89423b7dbad0d2cfffde4f84d89"
+    }
+  ],
+  "validation": {
+    "command": "gradle --no-daemon :platform:testDebugUnitTest --console=plain",
+    "working_directory": "/workspace/scratch/0702e2310172/continuation-final/framework/android",
+    "result": "PASS",
+    "gradle_elapsed": "9s",
+    "total_tests": 20,
+    "suites": [
+      {
+        "suite": "org.onedayonemasterpiece.live.platform.CompressedAudioTest",
+        "tests": 11,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 0.012,
+        "xml": "/workspace/scratch/0702e2310172/continuation-final/framework/android/platform/build/test-results/testDebugUnitTest/TEST-org.onedayonemasterpiece.live.platform.CompressedAudioTest.xml",
+        "sha256": "3461d519389771915d41a31822cec4be253b26a7d4afbc0ffa316dfe65242dfe"
+      },
+      {
+        "suite": "org.onedayonemasterpiece.live.platform.DurablePlaybackPumpTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 0.006,
+        "xml": "/workspace/scratch/0702e2310172/continuation-final/framework/android/platform/build/test-results/testDebugUnitTest/TEST-org.onedayonemasterpiece.live.platform.DurablePlaybackPumpTest.xml",
+        "sha256": "4d4d15308efaf30606944bf286635d0e839dc7c7724d9d666c05b60694c36151"
+      },
+      {
+        "suite": "org.onedayonemasterpiece.live.platform.OutputResumeQueueTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 0.017,
+        "xml": "/workspace/scratch/0702e2310172/continuation-final/framework/android/platform/build/test-results/testDebugUnitTest/TEST-org.onedayonemasterpiece.live.platform.OutputResumeQueueTest.xml",
+        "sha256": "5209f30f1c72ca2ff35400ae8250820533acb0261662d34ecd09e1d9f355f963"
+      }
+    ],
+    "log": "/workspace/scratch/0702e2310172/android-validation-tools/platform-final-tests.log",
+    "log_sha256": "14c3a43eab24e7baf61e82f54d5128995507d8add2e698ec98e18d5279083f49",
+    "toolchain": {
+      "jdk": "17.0.20.1+1",
+      "gradle": "8.10.2",
+      "compile_sdk": 35,
+      "min_sdk": 26,
+      "agp": "8.7.3"
+    },
+    "execution": "Standard require_escalated to allow Gradle local loopback socket; no provider, handset or production calls.",
+    "limits": [
+      "JVM tests and Android compiler evidence do not validate microphone/codec/playback hardware behavior.",
+      "Physical handset, acoustic, network recovery, signed release and long-prefix performance gates remain separate."
+    ]
+  }
+}

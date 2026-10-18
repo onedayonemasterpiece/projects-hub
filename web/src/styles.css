@@ -825,6 +825,13 @@ button:focus-visible {
   font-size: 12px;
 }
 
+.voice-copy .native-voice-caption {
+  max-width: 32ch;
+  max-height: 4.5em;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+
 .state-dot {
   width: 8px;
   height: 8px;

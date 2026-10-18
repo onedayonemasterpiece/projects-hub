@@ -1,23 +1,80 @@
 name: Android release
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "android/**"
-      - "src/projects_hub/version.py"
-      - ".github/workflows/android-release.yml"
   workflow_dispatch:
+    inputs:
+      source_sha:
+        description: "Full reviewed source SHA with matching Android audio evidence"
+        required: true
+        type: string
+      android_run_id:
+        description: "Successful Android run with checkout and full audio receipts"
+        required: true
+        type: string
 
 permissions:
-  contents: write
+  contents: read
+
+# RC and future qualified releases keep the same package/version sequence.
+concurrency:
+  group: projects-hub-android-release
+  cancel-in-progress: false
 
 jobs:
   release:
+    if: github.repository == 'onedayonemasterpiece/projects-hub' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_HOST: github.com
+      GH_REPO: onedayonemasterpiece/projects-hub
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      ORG_GRADLE_PROJECT_liveInteractionAndroidDir: ${{ github.workspace }}/.dependencies/live-interaction/android
+      RC_KEYSTORE_PATH: ${{ runner.temp }}/projects-hub-rc-${{ github.run_id }}-${{ github.run_attempt }}.jks
     steps:
-      - uses: actions/checkout@v4
+      # Keep the reviewed publisher separate from the selected application tree.
+      - name: Checkout release validator
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate explicit dispatch inputs
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          ANDROID_RUN_ID: ${{ inputs.android_run_id }}
+        run: |
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$ANDROID_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+      - name: Checkout selected application source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: source
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Prepare selected checksum-verified published SDK RC
+        run: |
+          python scripts/prepare_live_framework.py \
+            --manifest source/android/live-interaction-candidate.json \
+            --destination .dependencies/live-interaction
+      - name: Verify source, complete Android audio and immutable release inputs
+        id: qualified
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          ANDROID_RUN_ID: ${{ inputs.android_run_id }}
+        run: |
+          python scripts/android_release_evidence.py prepare \
+            --source source --shared .dependencies/live-interaction \
+            --source-sha "$SOURCE_SHA" --run-id "$ANDROID_RUN_ID" \
+            --version-code "$GITHUB_RUN_NUMBER" --destination dist \
+            --github-output "$GITHUB_OUTPUT"
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -27,14 +84,17 @@ jobs:
           gradle-version: "8.10.2"
       - name: Install Android SDK 35
         run: |
-          export ANDROID_HOME=/usr/local/lib/android/sdk
-          export ANDROID_SDK_ROOT="$ANDROID_HOME"
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort | tail -1)"
           test -x "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0"
-
-      - name: Require stable signing material
+      - name: Verify pinned production APK and signing certificate before key access
+        run: |
+          python scripts/android_release_evidence.py verify-reference \
+            --receipt dist/release-evidence.json \
+            --aapt "$ANDROID_HOME/build-tools/35.0.0/aapt" \
+            --apksigner "$ANDROID_HOME/build-tools/35.0.0/apksigner"
+      - name: Require existing stable signing material
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -45,75 +105,61 @@ jobs:
           test -n "$ANDROID_KEYSTORE_PASSWORD"
           test -n "$ANDROID_KEY_ALIAS"
           test -n "$ANDROID_KEY_PASSWORD"
-
       - name: Decode signing key
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/projects-hub.jks"
-          chmod 600 "$RUNNER_TEMP/projects-hub.jks"
-
-      - name: Test and build signed APK
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RC_KEYSTORE_PATH"
+      - name: Test and build signed release candidate
+        working-directory: source
         env:
-          ANDROID_HOME: /usr/local/lib/android/sdk
-          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/projects-hub.jks
+          ANDROID_KEYSTORE_PATH: ${{ env.RC_KEYSTORE_PATH }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          VERSION_NAME: ${{ steps.qualified.outputs.version_name }}
         run: |
+          # The validator reads src/projects_hub/version.py; append -rc.N only.
           VERSION_CODE="${GITHUB_RUN_NUMBER}"
-          VERSION_NAME="$(PYTHONPATH=src python -c 'from projects_hub.version import __version__; print(__version__)')"
           gradle -p android testDebugUnitTest :app:assembleRelease \
-            -PversionCodeOverride="${VERSION_CODE}" \
-            -PversionNameOverride="${VERSION_NAME}" \
-            --stacktrace
-          mkdir -p dist
-          cp android/app/build/outputs/apk/release/app-release.apk dist/projects-hub.apk
-          /usr/local/lib/android/sdk/build-tools/35.0.0/apksigner verify --verbose dist/projects-hub.apk
-
-      - name: Build update manifest
+            -PversionCodeOverride="$VERSION_CODE" \
+            -PversionNameOverride="$VERSION_NAME" --stacktrace
+          cp android/app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/dist/projects-hub.apk"
+      - name: Verify signed package, version and unchanged production key
         run: |
-          export SHA256="$(sha256sum dist/projects-hub.apk | awk '{print $1}')"
-          python - <<'PY'
-          import json, os
-          version_code = int(os.environ["GITHUB_RUN_NUMBER"])
-          tag = f"android-v{version_code}"
-          version_source = open("src/projects_hub/version.py", encoding="utf-8").read()
-          import re
-          match = re.search(r'__version__\s*=\s*"([^"]+)"', version_source)
-          if not match:
-              raise SystemExit("Projects Hub product version is missing")
-          product_version = match.group(1)
-          payload = {
-              "versionCode": version_code,
-              "versionName": product_version,
-              "apkUrl": (
-                  "https://github.com/onedayonemasterpiece/projects-hub/releases/download/"
-                  f"{tag}/projects-hub.apk"
-              ),
-              "sha256": os.environ["SHA256"],
-              "notes": "Projects Hub Android release " + os.environ["GITHUB_SHA"][:12],
-          }
-          with open("dist/update.json", "w", encoding="utf-8") as handle:
-              json.dump(payload, handle, ensure_ascii=False, indent=2)
-              handle.write("\n")
-          PY
+          python scripts/android_release_evidence.py finish \
+            --source source --receipt dist/release-evidence.json \
+            --apk dist/projects-hub.apk \
+            --aapt "$ANDROID_HOME/build-tools/35.0.0/aapt" \
+            --apksigner "$ANDROID_HOME/build-tools/35.0.0/apksigner"
+      - name: Remove this run's decoded signing key
+        if: always()
+        run: rm -f -- "$RC_KEYSTORE_PATH"
 
-      - name: Publish GitHub Release
+      - name: Publish immutable signed RC outside the stable update feed
         env:
           GH_TOKEN: ${{ github.token }}
+          BUILD_SHA: ${{ steps.qualified.outputs.build_sha }}
+          PRODUCT_VERSION: ${{ steps.qualified.outputs.version_name }}
+          TAG: ${{ steps.qualified.outputs.tag }}
         run: |
-          TAG="android-v${GITHUB_RUN_NUMBER}"
-          PRODUCT_VERSION="$(PYTHONPATH=src python -c 'from projects_hub.version import __version__; print(__version__)')"
+          python scripts/android_release_evidence.py publication-guard --receipt dist/release-evidence.json
           TITLE="Projects Hub Android ${PRODUCT_VERSION}"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/projects-hub.apk dist/update.json --clobber
-          else
-            gh release create "$TAG" \
-              dist/projects-hub.apk \
-              dist/update.json \
-              --title "$TITLE" \
-              --target "$GITHUB_SHA" \
-              --notes "Signed Projects Hub Android build from ${GITHUB_SHA}."
-          fi
+          gh release create "$TAG" \
+            dist/projects-hub.apk dist/update.json dist/release-evidence.json \
+            --title "$TITLE" --target "$BUILD_SHA" \
+            --notes-file dist/release-notes.md --prerelease --latest=false
+          python scripts/android_release_evidence.py verify-published --receipt dist/release-evidence.json
+      - name: Upload RC build and publication evidence
+        if: always() && hashFiles('dist/release-evidence.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: projects-hub-rc-build-${{ github.run_number }}
+          if-no-files-found: error
+          path: |
+            dist/projects-hub.apk
+            dist/update.json
+            dist/release-evidence.json
+            dist/release-notes.md
+            dist/publication-readback.json

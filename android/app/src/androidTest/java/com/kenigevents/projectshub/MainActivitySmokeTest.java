@@ -28,8 +28,15 @@ import org.junit.runner.RunWith;
 @RunWith(AndroidJUnit4.class)
 public class MainActivitySmokeTest {
     @After public void restoreServiceWorkerClient() {
+        // The API 31 image's WebView wraps a null client, then dereferences it
+        // on the next worker request. Remove the fixture interception with a
+        // non-null client returning null: WebView keeps its normal network path.
         InstrumentationRegistry.getInstrumentation().runOnMainSync(() ->
-                ServiceWorkerController.getInstance().setServiceWorkerClient(null));
+                ServiceWorkerController.getInstance().setServiceWorkerClient(new ServiceWorkerClient() {
+                    @Override public WebResourceResponse shouldInterceptRequest(WebResourceRequest request) {
+                        return null;
+                    }
+                }));
     }
 
     private WebResourceResponse fixtureResponse(String url, WebResourceRequest request) {
@@ -42,6 +49,137 @@ public class MainActivitySmokeTest {
     @Test public void activityLaunches() {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
             scenario.onActivity(activity -> assertNotNull(activity));
+        }
+    }
+
+    @Test public void nativeVoicePublicationKeepsEveryPublicChangeAndCurrentSnapshot() throws Exception {
+        java.lang.reflect.Method publish = NativeVoiceService.class.getDeclaredMethod("publish");
+        publish.setAccessible(true);
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            // Exercise the actual publisher and Android JSONObject on the main
+            // looper, without onCreate, codecs, microphone or any network work.
+            NativeVoiceService service = new NativeVoiceService();
+            java.util.List<JSONObject> received = new java.util.ArrayList<>();
+            NativeVoiceService.Listener subscriber = new NativeVoiceService.Listener() {
+                @Override public void onState(JSONObject state) { received.add(state); }
+                @Override public void onEvent(String event) { fail("Publication cannot invent an event"); }
+            };
+            try {
+                service.addListener(subscriber);
+                assertEquals(0, service.stateJson().getLong("revision"));
+                publish.invoke(service);
+                for (int i = 0; i < 100; i++) publish.invoke(service);
+                assertEquals("Repeated ACK-only state has one publication", 1, received.size());
+                assertEquals(1, service.stateJson().getLong("revision"));
+
+                Object[][] changes = {
+                    {"status", "status", "starting"},
+                    {"conversationId", "conversation_id", "conv_A"},
+                    {"sessionId", "session_id", "live_A"},
+                    {"sourceId", "source_id", "source_A"},
+                    {"localSourceId", "local_source_id", "local_A"},
+                    {"capturing", "capturing", true},
+                    {"playing", "playing", true},
+                    {"queuedAudioMs", "queued_audio_ms", 20L},
+                    {"status", "status", "live"},
+                    {"code", "code", "NATIVE_VOICE_TEST_WARNING"},
+                    {"code", "code", "NATIVE_VOICE_TEST_ERROR"},
+                    {"status", "status", "error"},
+                    {"sourceId", "source_id", "source_B"},
+                    {"localSourceId", "local_source_id", "local_B"},
+                    {"queuedAudioMs", "queued_audio_ms", 21L},
+                    {"code", "code", null},
+                    {"status", "status", "stopping"},
+                    {"capturing", "capturing", false},
+                    {"playing", "playing", false},
+                    {"sessionId", "session_id", null},
+                    {"status", "status", "idle"},
+                    {"status", "status", "starting"},
+                    {"sessionId", "session_id", "live_B"},
+                    {"status", "status", "live"}
+                };
+                for (Object[] change : changes) {
+                    java.lang.reflect.Field field = NativeVoiceService.class.getDeclaredField((String) change[0]);
+                    field.setAccessible(true);
+                    field.set(service, change[2]);
+                    int expected = received.size() + 1;
+                    publish.invoke(service);
+                    assertEquals("Deliver changed " + change[1] + " immediately", expected, received.size());
+                    JSONObject state = received.get(expected - 1);
+                    assertEquals(expected, state.getLong("revision"));
+                    assertEquals(change[2] == null ? JSONObject.NULL : change[2], state.get((String) change[1]));
+                    assertEquals(service.stateJson().toString(), state.toString());
+                    publish.invoke(service);
+                    assertEquals("Suppress only an identical projection", expected, received.size());
+                }
+
+                service.removeListener(subscriber);
+                java.util.List<JSONObject> nextReceived = new java.util.ArrayList<>();
+                service.addListener(new NativeVoiceService.Listener() {
+                    @Override public void onState(JSONObject state) { nextReceived.add(state); }
+                    @Override public void onEvent(String event) { fail("Unexpected event"); }
+                });
+                publish.invoke(service);
+                assertTrue(nextReceived.isEmpty());
+                // NativeVoiceBridge's existing attach/state ACK reads this
+                // snapshot directly, independent of newly published events.
+                assertEquals(received.get(received.size() - 1).toString(), service.stateJson().toString());
+                service.rejectStart("NATIVE_VOICE_TEST_ERROR");
+                assertEquals(1, nextReceived.size());
+                assertEquals("error", nextReceived.get(0).getString("status"));
+                assertEquals("NATIVE_VOICE_TEST_ERROR", nextReceived.get(0).getString("code"));
+            } catch (Exception failure) {
+                throw new AssertionError(failure);
+            } finally {
+                service.removeListener(subscriber);
+            }
+        });
+    }
+
+    @Test public void debugUpdaterDiscardsStableOffersAtEveryEntryPoint() {
+        assertTrue("This regression exercises the debug update channel", BuildConfig.DEBUG);
+        android.content.Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        android.content.SharedPreferences preferences = context.getSharedPreferences(
+                "debug_updater_guard_test", android.content.Context.MODE_PRIVATE);
+        java.util.concurrent.ExecutorService noWork = java.util.concurrent.Executors.newSingleThreadExecutor();
+        noWork.shutdown(); // Any attempted scheduling fails before network work starts.
+        try {
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                android.app.Activity host = new android.app.Activity() {
+                    @Override public android.content.SharedPreferences getSharedPreferences(String name, int mode) {
+                        assertEquals("projects_hub_update", name);
+                        return preferences;
+                    }
+                    @Override public android.content.pm.PackageManager getPackageManager() {
+                        throw new AssertionError("Debug update must not request installation permission");
+                    }
+                };
+                Updater.Listener noOffer = new Updater.Listener() {
+                    @Override public void onAvailable(Updater.AvailableUpdate update) { fail("Stable offer in debug"); }
+                    @Override public void onMessage(String message) { fail("Debug installer message"); }
+                    @Override public void onFailure(String message) { fail("Debug update attempted"); }
+                };
+                Updater.AvailableUpdate stale = new Updater.AvailableUpdate(63, "0.1.62",
+                        "https://github.com/onedayonemasterpiece/projects-hub/releases/download/android-v63/projects-hub.apk",
+                        "ec5ba31cd8a32fb566b74415b6cb59d14b29d2a3863f5889a8f85332c1a5c89f");
+                String encoded = PendingUpdateState.encode(stale.versionCode, stale.versionName, stale.apkUrl, stale.sha256);
+                assertTrue(preferences.edit().putString("pending_install_v1", encoded)
+                        .putString("unrelated", "preserved").commit());
+                Updater updater = new Updater(host, noWork, noOffer);
+                assertFalse("Discard persisted offer at construction", preferences.contains("pending_install_v1"));
+                assertEquals("preserved", preferences.getString("unrelated", null));
+                Runnable[] entryPoints = {updater::checkForUpdate, updater::resumePendingInstall,
+                        () -> updater.downloadAndInstall(stale)};
+                for (Runnable entryPoint : entryPoints) {
+                    assertTrue(preferences.edit().putString("pending_install_v1", encoded).commit());
+                    entryPoint.run();
+                    assertFalse("Discard stale offer without network or installer work",
+                            preferences.contains("pending_install_v1"));
+                    assertEquals("preserved", preferences.getString("unrelated", null));
+                }
+            });
+        } finally {
+            preferences.edit().remove("pending_install_v1").remove("unrelated").commit();
         }
     }
 

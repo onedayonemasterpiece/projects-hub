@@ -31,6 +31,7 @@ from .regional_knowledge import (
     RegionalKnowledgeUnavailable,
 )
 from .live_resources import ConversationScope
+from .logging_config import live_diagnostic_scalars
 from .readiness import ReadinessService
 from .store import DurableStore, StoreError
 from .live_capabilities import BUNDLES, ROUTER, PREFERENCES, OVERLAYS
@@ -935,7 +936,7 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Ответ на заметку делай через project_note_reply; он остаётся связанным с note_id и виден участникам проекта.
 - На общий старт вроде «привет»/«что нового» сначала используй collaboration_personal_brief: лично адресованное важнее общего. Если пользователь сразу дал конкретную задачу, выполняй её и не вставляй приветственную сводку перед ней.
 - После личной сводки в общем разговоре проверь collaboration_questions_inbox. Если есть ожидающие вопросы, кратко предложи обсудить их и дождись согласия. Только после согласия задай голосом ОДИН наиболее существенный вопрос с необходимым контекстом и дождись ответа. Конкретная задача пользователя важнее предложения вопросов. Пауза сохраняет весь проход; «только важное» ограничивает предъявление, но не завершает пакет. Не вызывай визуальный collaboration_view без отдельной просьбы показать вопросы.
-- У каждого вопроса четыре законных исхода: обычный содержательный ответ — disposition=answer с точными словами человека; «не знаю» — unknown; «пропустить» — skip; «позже» — later. Не подставляй выдуманный ответ, не путай skip с answer и не снимай блокирующую зависимость без фактического ответа. Для вопросов из одного analysis используй collaboration_questions_answer; owner_development — collaboration_question_respond. Состояние и продолжение проверяй по receipt backend.
+- У каждого вопроса четыре законных исхода: обычный содержательный ответ — disposition=answer с точными словами человека; «не знаю» — unknown; «пропустить» — skip; «позже» — later. Не подставляй выдуманный ответ, не путай skip с answer и не снимай блокирующую зависимость без фактического ответа. Для вопросов из одного analysis используй collaboration_questions_answer; для owner_development сначала activate_capability(owner_development), затем collaboration_question_respond. Состояние и продолжение проверяй по receipt backend.
 - Завершённый анализ ChatGPT называй завершённой аналитической работой, а не заметкой, которую якобы отредактировал участник. Для новостей команды отличай действительно новые заметки/ответы других людей от собственных старых заметок. Голосовое сообщение важнее визуальной карточки.
 - После того как фактически озвучила/показала элементы brief, вызови collaboration_brief_seen с соответствующим through_id, чтобы reconnect/следующий hello не повторял то же самое.
 - Общие новости только предлагай как необязательное продолжение. Если пользователь отказывается от них в целом, collaboration_general_news_set enabled=false; это не скрывает лично адресованные вопросы/результаты.
@@ -947,7 +948,7 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Для пакетов dot сохраняй предложение, согласие, паузу, возобновление и «только важное» через collaboration_questions_answer с session_action=offer/accept/pause/resume/important_only и analysis_id, без responses. Только явное завершение человеком вызывает session_action=complete; allow_partial=true допускается лишь по прямому намерению закончить с текущими ответами. Нерешённые blockers остаются ограничениями. Ответ сам по себе не завершает пакет.
 - Лично адресованное question_result_ready означает проверенный новый содержательный результат. Оно НЕ подтверждает push на телефон или отправку в Slack; результат доступен независимо от Slack. Кратко сообщи готовность, но не читай весь текст без просьбы. По просьбе прочти результат через collaboration_questions_inbox с analysis_id из object_id. После фактического уведомления отметь brief_seen, не повторяй его при reconnect.
 - Простое чтение статуса/вопроса никогда не продвигает worker.
-- Если collaboration_questions_inbox возвращает source_kind=owner_development, отвечай через collaboration_question_respond. Только platform owner сможет реально resume; backend продолжит тот же execution/thread и не создаст новую разработку.
+- Если collaboration_questions_inbox возвращает source_kind=owner_development, сначала activate_capability(owner_development), затем отвечай через collaboration_question_respond. Только platform owner сможет реально resume; backend продолжит тот же execution/thread и не создаст новую разработку.
 
 # MEMORY
 - Для явного «запомни/сохрани» и явно долговечной информации используй memory_commit_voice_source.
@@ -2061,6 +2062,15 @@ class ProjectsHubLiveAdapter:
             "resource_budget",
             "resource_budget_wait",
             "resource_budget_ready",
+            "capability_transition_requested",
+            "capability_transition_acknowledged",
+            "capability_transition_started",
+            "capability_transition_recovered",
+            "capability_transition_error",
+            "capability_transition_failed",
+            "capability_ready",
+            "capability_budget_wait",
+            "capability_continuation_sent",
             "error",
             "reconnecting",
             "resumed",
@@ -2131,6 +2141,9 @@ class ProjectsHubLiveAdapter:
             "estimated_units",
             "requested_units",
             "granted_units",
+            "capability",
+            "reason",
+            "retry_after_ms",
             "connection_generation",
             "audio_chunks",
             "max_stdin_delay_ms",
@@ -2141,6 +2154,7 @@ class ProjectsHubLiveAdapter:
             value = event.get(key)
             if isinstance(value, (str, int, float, bool)):
                 extra[key] = value
+        extra.update(live_diagnostic_scalars(event))
         if kind == "input_timing":
             extra["latency_stage"] = "server_to_provider"
             stdin_delay = event.get("max_stdin_delay_ms")
