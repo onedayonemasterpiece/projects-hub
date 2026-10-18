@@ -5,15 +5,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "web"
 
-LIVE_VERSION = "0.4.0-rc.2"
-LIVE_REF = "b8b4ba15cdf1b4cfafc428eb3adec02cb44d92d2"
-LIVE_RELEASE_COMMIT = "b8b4ba15cdf1b4cfafc428eb3adec02cb44d92d2"
+LIVE_VERSION = "0.4.0-rc.4"
+LIVE_REF = "7c933a2eed23110a20e714c7fa9efa9cf0a75d80"
+LIVE_RELEASE_COMMIT = "7c933a2eed23110a20e714c7fa9efa9cf0a75d80"
 LIVE_ARCHIVE = (
     "https://github.com/onedayonemasterpiece/live-interaction/releases/download/"
-    "v0.4.0-rc.2/onedayonemasterpiece-live-interaction-0.4.0-rc.2.tgz"
+    "v0.4.0-rc.4/onedayonemasterpiece-live-interaction-0.4.0-rc.4.tgz"
 )
-LIVE_SHA256 = "8ff9df3888a0db10367878545b526c370118d262a50bb75c4b4ba63f63ee243a"
-LIVE_INTEGRITY = "sha512-ZzfjqBqImWj1A6CyamgApiPtoP9X+InCyuCc+rKkfVwm/8E2FyD7qTOid07gMKqUABwwoDPq8YzNRz/lquBBgA=="
+LIVE_SHA256 = "837d42a54f1e197483f2a21df900b7b8f42daeb4ecbeeab0b194dcce50781d51"
+LIVE_INTEGRITY = "sha512-MFyeYzXKj/QrnofWNoJ7ZNz44dsa/cK6oc6bM4IPCSWHFVC3BxLfwqKj6NxkbZY3mIo3wbLzh56WwhW8e6iyBg=="
 
 
 def test_browser_live_framework_uses_candidate_version_contract():
@@ -64,7 +64,7 @@ def test_release_commit_matches_packaged_native_candidate_and_runtime():
     assert (android["ref"], android["version"], android["channel"]) == (LIVE_REF, LIVE_VERSION, "candidate")
     assert android["release_commit"] == LIVE_RELEASE_COMMIT
     assert android["artifact_type"] == "npm_tgz" and android["archive_url"] == LIVE_ARCHIVE
-    assert android["archive_sha256"] == LIVE_SHA256 and android["archive_bytes"] == 177490
+    assert android["archive_sha256"] == LIVE_SHA256 and android["archive_bytes"] == 183497
     for name in ("android.yml", "android-release.yml"):
         workflow = (ROOT / ".github/workflows" / name).read_text()
         assert "python scripts/prepare_live_framework.py" in workflow
