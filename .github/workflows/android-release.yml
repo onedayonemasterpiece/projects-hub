@@ -34,8 +34,10 @@ jobs:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
       ORG_GRADLE_PROJECT_liveInteractionAndroidDir: ${{ github.workspace }}/.dependencies/live-interaction/android
-      RC_KEYSTORE_PATH: ${{ runner.temp }}/projects-hub-rc-${{ github.run_id }}-${{ github.run_attempt }}.jks
     steps:
+      - name: Define this run's temporary signing key path
+        run: |
+          echo "RC_KEYSTORE_PATH=$RUNNER_TEMP/projects-hub-rc-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.jks" >> "$GITHUB_ENV"
       # Keep the reviewed publisher separate from the selected application tree.
       - name: Checkout release validator
         uses: actions/checkout@v4
