@@ -91,7 +91,7 @@ test "$ready" -eq 1
 adb wait-for-device
 test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1
 "${ANDROID_HOME}/emulator/emulator" -version > "$EVIDENCE/emulator-version.txt" 2>&1
-adb shell cat /proc/asound/cards > "$EVIDENCE/android-audio-cards.txt"
+adb shell cat /proc/asound/cards > "$EVIDENCE/android-audio-cards.txt" 2>&1 || true
 adb emu avd hostmicon | tee "$EVIDENCE/host-mic.txt"
 if rg -q '^KO:' "$EVIDENCE/host-mic.txt"; then exit 1; fi
 gradle -p android -PvoiceE2e=true assembleDebug assembleDebugAndroidTest --stacktrace
