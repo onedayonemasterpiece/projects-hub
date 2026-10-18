@@ -16,8 +16,10 @@ No provider implementation, codec, transcript mapper or product tool is replaced
 This is a provider integration gate using native-captured input. Android device
 capture/playback remains a separate gate. Receiving a durable output here is not
 an AudioTrack playback claim. Caption offsets are observed, never enabled as a
-verified production clock by this script. It needs the shared timestamp-preserving
-sidecar and the consumer's explicit diagnostic_observer seam.
+verified production clock by this script. Normal runs preserve the production
+unverified caption mode without starting a second ASR provider. --qualify-captions
+explicitly enables the diagnostic observer and additionally requires the strict
+caption qualification; primary_passed remains an independent result.
 """
 from __future__ import annotations
 
@@ -47,6 +49,7 @@ from devcoveer_canary_support import (bounded, cleanup_step, record_error, run_r
 MAX_ENCODED_BYTES = 2 * 1024 * 1024
 MAX_CAPTURE_US = 90_000_000
 MAX_CHUNKS = 5000
+SAMPLE_NS = 62_500  # The caption provider's PCM clock is 16 kHz.
 DEFAULT_PHRASES = (
     "Мира, проверка голосового разговора, слышишь меня?",
     "Эта запись сделана без соединения и должна сохраниться",
@@ -70,14 +73,14 @@ def normalized(text: str) -> str:
     return " ".join(re.findall(r"[\w]+", text.casefold().replace("ё", "е")))
 
 
-def duration_us(value: Any) -> int | None:
-    """Preserve protobuf Duration semantics; never interpret a plain number."""
+def duration_ns(value: Any) -> int | None:
+    """Parse exact protobuf Duration nanoseconds; never interpret a plain number."""
     if not isinstance(value, str):
         return None
     match = re.fullmatch(r"(\d{1,8})(?:\.(\d{1,9}))?s", value)
     if not match:
         return None
-    return int(match[1]) * 1_000_000 + int(((match[2] or "") + "000000")[:6])
+    return int(match[1]) * 1_000_000_000 + int((match[2] or "").ljust(9, "0"))
 
 
 def read_json(path: Path) -> dict:
@@ -252,16 +255,18 @@ class CaptionEvidence:
             clean["known_phrase_matches"] = [i for i, phrase in enumerate(self.phrases) if phrase in text]
         target.append(clean)
 
-    def result(self) -> dict:
+    def result(self, *, expected_replays: int = 2) -> dict:
         mapped, observed = [], set()
         for probe in self.probes:
-            start, end = duration_us(probe.get("start_offset")), duration_us(probe.get("end_offset"))
+            start, end = duration_ns(probe.get("start_offset")), duration_ns(probe.get("end_offset"))
             match = probe.get("known_phrase_matches", [])
             if start is None or end is None or end <= start or len(match) != 1:
                 continue
             # This is a hypothesis check against every sent span, not assignment
             # by callback arrival time, latest source, text length or placeholder.
-            left, right = start * 16000 // 1_000_000, end * 16000 // 1_000_000
+            # Cover the exact interval: microsecond truncation loses the half-
+            # microsecond boundary of odd samples; flooring end can hide a crossing.
+            left, right = start // SAMPLE_NS, (end + SAMPLE_NS - 1) // SAMPLE_NS
             spans = sorted((s for s in self.sent
                 if s.get("provider_connection_generation") == probe.get("provider_connection_generation")
                 and s.get("stream_start_sample", right) < right and s.get("stream_end_sample", left) > left),
@@ -290,11 +295,36 @@ class CaptionEvidence:
                            "start_offset": probe["start_offset"], "end_offset": probe["end_offset"]})
         expected = {(source["replay_id"], i) for source in self.sources.values() for i in range(len(self.phrases))}
         return {"candidate_clock": "provider_connection_pcm_samples", "offset_clock": "unverified",
-                "all_replays_support_candidate_clock": not self.observer_error and len(self.sources) == 2 and len(self.phrases) >= 2 and observed == expected,
+                "all_replays_support_candidate_clock": not self.observer_error and len(self.sources) == expected_replays and len(self.phrases) >= 2 and observed == expected,
                 "matched_replays": sorted(observed), "mapped_probes": mapped,
                 "observer_error": self.observer_error,
                 "audio_sent": self.sent, "timing_probes": self.probes,
                 "production_clock_configuration_changed": False}
+
+
+def configure_caption_qualification(sidecar, evidence: CaptionEvidence, *, requested: bool) -> dict:
+    result = {"requested": requested, "observer_enabled": False,
+              "status": "unverified" if requested else "not_requested"}
+    if requested:
+        if sidecar is None or not hasattr(sidecar, "diagnostic_observer"):
+            result.update(status="failed", code="CANARY_TIMESTAMP_OBSERVER_UNAVAILABLE")
+        else:
+            sidecar.diagnostic_observer = evidence.observe
+            result["observer_enabled"] = True
+    return result
+
+
+def update_acceptance(report: dict, *, loop_shutdown_pending: bool = False) -> None:
+    """Keep caption qualification independent; every lifecycle failure is fatal."""
+    primary = (report.get("primary_checks_passed_before_cleanup") is True
+               and not report.get("errors")
+               and report.get("host_sessions_after_close") == 0
+               and report.get("caption_sidecars_after_close") == 0)
+    # run_reported still owns task/executor shutdown after run_provider returns.
+    report["primary_passed"] = primary and not loop_shutdown_pending
+    qualification = report.get("caption_qualification") or {}
+    report["passed"] = report["primary_passed"] and (qualification.get("requested") is False
+                                                     or qualification.get("status") == "passed")
 
 
 class ReplaySocket:
@@ -450,6 +480,9 @@ class ReplaySocket:
 
 async def run_provider(args, recording: Recording, report: dict) -> dict:
     caption = CaptionEvidence(tuple(args.phrases))
+    report["caption_qualification"] = {"requested": args.qualify_captions, "observer_enabled": False,
+                                       "status": "unverified" if args.qualify_captions else "not_requested"}
+    report["primary_passed"] = False
     store = host = listener = server = serving = http = started = wire = None
     conversation_id = ""
     checks_passed = False
@@ -503,10 +536,9 @@ async def run_provider(args, recording: Recording, report: dict) -> dict:
         _, conversation_id = await asyncio.to_thread(login_and_conversation, http, "Native voice provider canary")
         report["provider_calls_attempted"] = True
         started = await asyncio.to_thread(start_live, http, conversation_id, "native_canary_" + secrets.token_hex(8))
-        sidecar = host._caption_sidecars.get(started["session_id"])
-        if sidecar is None or not hasattr(sidecar, "diagnostic_observer"):
-            raise ValueError("CANARY_TIMESTAMP_OBSERVER_UNAVAILABLE")
-        sidecar.diagnostic_observer = caption.observe
+        sidecar = host._caption_sidecars.get(started["session_id"]) if args.qualify_captions else None
+        report["caption_qualification"] = configure_caption_qualification(
+            sidecar, caption, requested=args.qualify_captions)
         cursor = 0
         output_path = args.data_dir / "canary-received-v2.bin"
         with output_path.open("xb") as output:
@@ -529,11 +561,12 @@ async def run_provider(args, recording: Recording, report: dict) -> dict:
                 cursor = wire.cursor
                 await wire.close()
                 wire = None
-        # The observation window is never used to assign an utterance.
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline and not caption.result()["all_replays_support_candidate_clock"]:
-            await asyncio.sleep(.1)
-        return len(report["replays"]) == 2 and caption.result()["all_replays_support_candidate_clock"]
+        if report["caption_qualification"]["observer_enabled"]:
+            # The observation window is never used to assign an utterance.
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and not caption.result()["all_replays_support_candidate_clock"]:
+                await asyncio.sleep(.1)
+        return len(report["replays"]) == 2
 
     try:
         checks_passed = await bounded(work(), args.timeout)
@@ -541,7 +574,13 @@ async def run_provider(args, recording: Recording, report: dict) -> dict:
         record_error(report, exc)
     finally:
         report["caption_clock"] = caption.result()
-        report["checks_passed_before_cleanup"] = bool(checks_passed)
+        qualification = report["caption_qualification"]
+        if qualification["observer_enabled"]:
+            qualification["status"] = ("passed" if report["caption_clock"]["all_replays_support_candidate_clock"]
+                                       else "failed")
+        report["primary_checks_passed_before_cleanup"] = bool(checks_passed)
+        report["checks_passed_before_cleanup"] = (bool(checks_passed)
+            and (not qualification["requested"] or qualification["status"] == "passed"))
         report["passed"] = False
         save_report(args.report, report)
         deadline = time.monotonic() + 25
@@ -571,8 +610,7 @@ async def run_provider(args, recording: Recording, report: dict) -> dict:
                 listener.close()
             if store is not None:
                 await cleanup_step(asyncio.to_thread(store.close), report, "store_close", deadline)
-            report["passed"] = (bool(checks_passed) and not report.get("errors")
-                and report.get("host_sessions_after_close") == 0 and report.get("caption_sidecars_after_close") == 0)
+            update_acceptance(report, loop_shutdown_pending=True)
             save_report(args.report, report)
     return report
 
@@ -587,6 +625,8 @@ def main(argv=None) -> int:
     parser.add_argument("--data-dir", type=Path, help="NEW isolated server/client evidence directory")
     parser.add_argument("--report", type=Path)
     parser.add_argument("--run-provider", action="store_true")
+    parser.add_argument("--qualify-captions", action="store_true",
+                        help="Additionally run and require strict caption qualification using a second ASR provider")
     parser.add_argument("--use-installed-provider-environment", action="store_true",
                         help="Read only installed providers.env using this candidate installer's allowlist")
     parser.add_argument("--turn-timeout", type=float, default=60)
@@ -616,8 +656,10 @@ def main(argv=None) -> int:
         parser.error("Report already exists; preserve the prior attempt evidence")
     if args.report.resolve().is_relative_to(args.data_dir.resolve()):
         parser.error("Place --report outside the new --data-dir so the store can start empty")
-    report = {"passed": False, "provider_calls_attempted": False, "versions": {}, "replays": [],
-              "claim": "Native-captured compressed-input provider integration; separate from Android playback acceptance",
+    report = {"passed": False, "primary_passed": False, "provider_calls_attempted": False, "versions": {}, "replays": [],
+              "caption_qualification": {"requested": args.qualify_captions, "observer_enabled": False,
+                                        "status": "unverified" if args.qualify_captions else "not_requested"},
+              "claim": "Native-captured compressed-input primary provider integration; separate from Android playback acceptance",
               "provenance": "Whole synthetic CI source intentionally replayed as new input, including its known offline phrase; this gate does not test outage suppression"}
     try:
         recording = load_recording(original, args.source)
@@ -628,8 +670,14 @@ def main(argv=None) -> int:
         run_reported(args.report, report, lambda receipt: run_provider(args, recording, receipt))
     except BaseException as exc:
         record_error(report, exc, phase="preflight_or_setup")
+    finally:
+        # Both verdicts stay false through run_reported's loop/task shutdown.
+        # Its checks_passed_before_loop_shutdown is therefore provisional false;
+        # primary_checks_passed_before_cleanup retains the actual replay result.
+        update_acceptance(report)
         save_report(args.report, report)
-    print(json.dumps({key: report[key] for key in ("passed", "claim", "versions", "provider_calls_attempted")}, ensure_ascii=False))
+    print(json.dumps({key: report[key] for key in ("passed", "primary_passed", "caption_qualification", "claim",
+                                                  "versions", "provider_calls_attempted")}, ensure_ascii=False))
     return 0 if report["passed"] else 1
 
 

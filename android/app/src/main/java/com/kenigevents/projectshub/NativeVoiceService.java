@@ -60,6 +60,7 @@ public final class NativeVoiceService extends Service {
     private NativeLiveRuntime.Snapshot runtimeState;
     private CompletableFuture<Void> stopping = CompletableFuture.completedFuture(null);
     private String status = "idle", code, conversationId, sessionId, sourceId, localSourceId, notificationStatus;
+    private String lastPublishedState;
     private boolean capturing, playing, foreground, initializingStore, destroyed;
     private long revision, queuedAudioMs;
 
@@ -346,8 +347,13 @@ public final class NativeVoiceService extends Service {
     }
 
     private void publish() {
+        // revision changes only here, so it still equals the last emitted
+        // revision while comparing every public field. State reads/attach ACKs
+        // remain available without a new publication.
+        if (stateJson().toString().equals(lastPublishedState)) return;
         revision++;
         JSONObject state = stateJson();
+        lastPublishedState = state.toString();
         for (Listener listener : listeners) listener.onState(state);
         if (foreground && !status.equals(notificationStatus)) {
             notificationStatus = status;

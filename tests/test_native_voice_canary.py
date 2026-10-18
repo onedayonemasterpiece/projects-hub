@@ -127,6 +127,38 @@ def test_late_caption_wrong_known_portion_does_not_match_even_with_same_length(c
     assert observer.result()["mapped_probes"] == []
 
 
+@pytest.mark.parametrize("start,end,phrase_index,mapped", [
+    ("3.608812500s", "5.528812500s", 1, True),
+    ("3.608750s", "5.528812500s", 1, False),
+    ("3.608812499s", "5.528812500s", 1, False),
+    ("0s", "3.608812501s", 0, False),
+])
+def test_57741_sample_boundary_preserves_exact_offsets_and_rejects_crossing(
+        canary, start, end, phrase_index, mapped):
+    phrases = ("Мира первая проверка голоса", "Мира второй контрольный вопрос")
+    observer = canary.CaptionEvidence(phrases)
+    observer.sources["source"] = {"replay_id": "g1", "expected_portions": [0, 1],
+        "portions": [{"capture_start_us": 5_000_000, "capture_end_us": 8_608_812},
+                     {"capture_start_us": 20_000_000, "capture_end_us": 23_385_812}]}
+    # Real probe lengths: 57,741 samples end on a half microsecond. The next
+    # source portion starts on that exact PCM boundary, with a capture gap.
+    for left, right, cstart, cend in ((0, 57_741, 5_000_000, 8_608_812),
+                                    (57_741, 111_914, 20_000_000, 23_385_812)):
+        observer.observe({"type": "caption_audio_sent", "provider_connection_generation": 1,
+            "stream_start_sample": left, "stream_end_sample": right,
+            "capture_start_us": cstart, "capture_end_us": cend,
+            "caption_scope": {"source_id": "source", "utterance_id": f"u{cstart}"}})
+    observer.observe({"type": "caption_timing_probe", "provider_connection_generation": 1,
+        "start_offset": start, "end_offset": end}, phrases[phrase_index])
+    result = observer.result()
+    assert result["matched_replays"] == ([("g1", phrase_index)] if mapped else [])
+    if mapped:
+        assert result["mapped_probes"][0]["start_offset"] == start
+        assert result["mapped_probes"][0]["end_offset"] == end
+    assert result["all_replays_support_candidate_clock"] is False
+    assert result["offset_clock"] == "unverified"
+
+
 def test_probe_keeps_wire_offset_only_and_never_arbitrary_payload(canary):
     observer, _ = evidence(canary)
     observer.observe({"type": "caption_timing_probe", "provider_connection_generation": True,
@@ -141,10 +173,10 @@ def test_probe_keeps_wire_offset_only_and_never_arbitrary_payload(canary):
 
 
 def test_duration_units_are_explicit_and_do_not_guess_seconds_vs_ms(canary):
-    assert canary.duration_us("1.123456789s") == 1123456
-    assert canary.duration_us(1.5) is None
-    assert canary.duration_us("1500") is None
-    assert canary.duration_us("-1s") is None
+    assert canary.duration_ns("1.123456789s") == 1123456789
+    assert canary.duration_ns(1.5) is None
+    assert canary.duration_ns("1500") is None
+    assert canary.duration_ns("-1s") is None
 
 
 def test_cli_preflight_reads_explicit_utp_receipt_from_real_artifact_layout(tmp_path, canary, capsys):
@@ -273,3 +305,125 @@ def test_success_is_not_published_before_loop_cleanup_completes(tmp_path, canary
     assert result["checks_passed_before_loop_shutdown"] is True
     assert result["errors"][0]["error_code"] == "CANARY_LOOP_TASKS_UNJOINED"
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("requested", [False, True])
+async def test_caption_qualification_opt_in_controls_actual_sidecar_start(canary, requested):
+    from projects_hub.live_transcription import CaptionSidecar
+    starts, events = [], []
+
+    async def inspect_start(**kwargs):
+        # Observe the real sidecar's admission boundary without any provider call.
+        starts.append(json.loads(await kwargs["reader"].readline()))
+
+    sidecar = CaptionSidecar(environment={}, binding="canary", vocabulary=[], emit=events.append,
+                            provider_run=inspect_start, guarded_runner=inspect_start)
+    observer = canary.CaptionEvidence(("Мира первая проверка", "Мира второй вопрос"))
+    qualification = canary.configure_caption_qualification(sidecar, observer, requested=requested)
+    try:
+        sidecar.start(native=True)
+        assert sidecar.native_offset_clock == "unverified"
+        assert events[0] == {"type": "caption_unavailable", "code": "CAPTION_CLOCK_UNVERIFIED"}
+        if requested:
+            assert sidecar.diagnostic_observer.__self__ is observer
+            await asyncio.wait_for(sidecar.task, 1)
+            assert len(starts) == 1
+            config = starts[0]["configuration"]
+            assert config["input_audio_transcription"]["mode"] == "VERBATIM"
+            assert config["native_caption_provenance"] == {"offset_clock": "unverified", "diagnostics": True}
+            assert qualification["status"] == "unverified"
+        else:
+            assert sidecar.diagnostic_observer is None
+            assert sidecar.task is None
+            assert starts == []
+            assert qualification["status"] == "not_requested"
+        assert qualification["observer_enabled"] is requested
+    finally:
+        await sidecar.stop()
+
+
+@pytest.mark.parametrize("requested", [False, True])
+def test_missing_optional_observer_has_an_explicit_result_without_aborting_primary(canary, requested):
+    observer = canary.CaptionEvidence(("первая проверка", "второй вопрос"))
+    result = canary.configure_caption_qualification(None, observer, requested=requested)
+    assert result["observer_enabled"] is False
+    assert result["status"] == ("failed" if requested else "not_requested")
+    assert (result.get("code") == "CANARY_TIMESTAMP_OBSERVER_UNAVAILABLE") is requested
+
+
+@pytest.mark.parametrize("qualify,primary_checks,caption_status,failure,primary_passed,passed", [
+    (False, True, "not_requested", None, True, True),
+    (True, True, "failed", None, True, False),
+    (True, True, "unverified", None, True, False),
+    (True, True, "passed", None, True, True),
+    (True, False, "passed", None, False, False),
+    (False, True, "not_requested", "live_stop", False, False),
+    (True, True, "passed", "loop_shutdown", False, False),
+    (False, True, "not_requested", "remaining_sidecar", False, False),
+])
+def test_cli_reports_primary_and_requested_caption_gates_after_cleanup(
+        tmp_path, canary, monkeypatch, capsys, qualify, primary_checks, caption_status,
+        failure, primary_passed, passed):
+    import devcoveer_canary_support as support
+    from live_interaction.audio_v2 import PORTION_START, PORTION_END
+    evidence_dir = tmp_path / "smoke-evidence"
+    store_dir = evidence_dir / "fixture-data"
+    store_dir.mkdir(parents=True)
+    original, _ = original_db(store_dir, canary)
+    # Two explicit portions in one intact synthetic original; the real CLI still
+    # validates its hashes, capture clock and matching Android fixture receipts.
+    with sqlite3.connect(original) as db:
+        db.execute("UPDATE encoded_voice_chunks SET flags=flags|? WHERE chunk_seq=1", (PORTION_END,))
+        db.execute("UPDATE encoded_voice_chunks SET flags=flags|? WHERE chunk_seq=2", (PORTION_START,))
+    (evidence_dir / "audio-verification.json").write_text('{"passed":true}')
+    flow = tmp_path / "voice-flow.json"
+    flow.write_text('{"passed":true,"conversation_id":"conversation_original"}')
+    path = tmp_path / "report.json"
+    saved = []
+    save_report = canary.save_report
+
+    def capture_save(destination, report):
+        save_report(destination, report)
+        saved.append(json.loads(destination.read_text()))
+
+    monkeypatch.setattr(canary, "save_report", capture_save)
+    monkeypatch.setattr(support, "save_report", capture_save)
+
+    async def replay_receipt(args, recording, report):
+        # The operation is controlled; report/CLI and final loop cleanup are real.
+        assert args.qualify_captions is qualify
+        assert len(recording.portions()) == 2
+        report.update(primary_checks_passed_before_cleanup=primary_checks,
+                      host_sessions_after_close=0,
+                      caption_sidecars_after_close=1 if failure == "remaining_sidecar" else 0)
+        report["caption_qualification"]["status"] = caption_status
+        if failure == "live_stop":
+            support.record_error(report, TimeoutError("CANARY_ASYNC_DEADLINE"), phase="live_stop")
+        canary.update_acceptance(report, loop_shutdown_pending=True)
+        assert report["primary_passed"] is False
+        assert report["passed"] is False
+        canary.save_report(path, report)
+
+    if failure == "loop_shutdown":
+        async def failed_shutdown(report):
+            assert json.loads(path.read_text())["primary_passed"] is False
+            raise TimeoutError("CANARY_LOOP_TASKS_UNJOINED")
+        monkeypatch.setattr(support, "_finish_loop", failed_shutdown)
+    monkeypatch.setattr(canary, "run_provider", replay_receipt)
+    arguments = ["--fixture-evidence", str(evidence_dir), "--voice-flow", str(flow),
+                 "--source", "device_original", "--phrase", "первая проверка", "--phrase", "второй вопрос",
+                 "--data-dir", str(tmp_path / "fresh-data"), "--report", str(path), "--run-provider"]
+    if qualify:
+        arguments.append("--qualify-captions")
+    assert canary.main(arguments) == (0 if passed else 1)
+    report = json.loads(path.read_text())
+    summary = json.loads(capsys.readouterr().out)
+    assert len(saved) >= 4
+    assert all(item["passed"] is False and item["primary_passed"] is False for item in saved[:-1])
+    assert report["checks_passed_before_loop_shutdown"] is False
+    for result in (report, summary):
+        assert result["primary_passed"] is primary_passed
+        assert result["passed"] is passed
+        assert result["caption_qualification"]["requested"] is qualify
+        assert result["caption_qualification"]["status"] == caption_status
+        assert result["provider_calls_attempted"] is False

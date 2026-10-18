@@ -52,6 +52,90 @@ public class MainActivitySmokeTest {
         }
     }
 
+    @Test public void nativeVoicePublicationKeepsEveryPublicChangeAndCurrentSnapshot() throws Exception {
+        java.lang.reflect.Method publish = NativeVoiceService.class.getDeclaredMethod("publish");
+        publish.setAccessible(true);
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            // Exercise the actual publisher and Android JSONObject on the main
+            // looper, without onCreate, codecs, microphone or any network work.
+            NativeVoiceService service = new NativeVoiceService();
+            java.util.List<JSONObject> received = new java.util.ArrayList<>();
+            NativeVoiceService.Listener subscriber = new NativeVoiceService.Listener() {
+                @Override public void onState(JSONObject state) { received.add(state); }
+                @Override public void onEvent(String event) { fail("Publication cannot invent an event"); }
+            };
+            try {
+                service.addListener(subscriber);
+                assertEquals(0, service.stateJson().getLong("revision"));
+                publish.invoke(service);
+                for (int i = 0; i < 100; i++) publish.invoke(service);
+                assertEquals("Repeated ACK-only state has one publication", 1, received.size());
+                assertEquals(1, service.stateJson().getLong("revision"));
+
+                Object[][] changes = {
+                    {"status", "status", "starting"},
+                    {"conversationId", "conversation_id", "conv_A"},
+                    {"sessionId", "session_id", "live_A"},
+                    {"sourceId", "source_id", "source_A"},
+                    {"localSourceId", "local_source_id", "local_A"},
+                    {"capturing", "capturing", true},
+                    {"playing", "playing", true},
+                    {"queuedAudioMs", "queued_audio_ms", 20L},
+                    {"status", "status", "live"},
+                    {"code", "code", "NATIVE_VOICE_TEST_WARNING"},
+                    {"code", "code", "NATIVE_VOICE_TEST_ERROR"},
+                    {"status", "status", "error"},
+                    {"sourceId", "source_id", "source_B"},
+                    {"localSourceId", "local_source_id", "local_B"},
+                    {"queuedAudioMs", "queued_audio_ms", 21L},
+                    {"code", "code", null},
+                    {"status", "status", "stopping"},
+                    {"capturing", "capturing", false},
+                    {"playing", "playing", false},
+                    {"sessionId", "session_id", null},
+                    {"status", "status", "idle"},
+                    {"status", "status", "starting"},
+                    {"sessionId", "session_id", "live_B"},
+                    {"status", "status", "live"}
+                };
+                for (Object[] change : changes) {
+                    java.lang.reflect.Field field = NativeVoiceService.class.getDeclaredField((String) change[0]);
+                    field.setAccessible(true);
+                    field.set(service, change[2]);
+                    int expected = received.size() + 1;
+                    publish.invoke(service);
+                    assertEquals("Deliver changed " + change[1] + " immediately", expected, received.size());
+                    JSONObject state = received.get(expected - 1);
+                    assertEquals(expected, state.getLong("revision"));
+                    assertEquals(change[2] == null ? JSONObject.NULL : change[2], state.get((String) change[1]));
+                    assertEquals(service.stateJson().toString(), state.toString());
+                    publish.invoke(service);
+                    assertEquals("Suppress only an identical projection", expected, received.size());
+                }
+
+                service.removeListener(subscriber);
+                java.util.List<JSONObject> nextReceived = new java.util.ArrayList<>();
+                service.addListener(new NativeVoiceService.Listener() {
+                    @Override public void onState(JSONObject state) { nextReceived.add(state); }
+                    @Override public void onEvent(String event) { fail("Unexpected event"); }
+                });
+                publish.invoke(service);
+                assertTrue(nextReceived.isEmpty());
+                // NativeVoiceBridge's existing attach/state ACK reads this
+                // snapshot directly, independent of newly published events.
+                assertEquals(received.get(received.size() - 1).toString(), service.stateJson().toString());
+                service.rejectStart("NATIVE_VOICE_TEST_ERROR");
+                assertEquals(1, nextReceived.size());
+                assertEquals("error", nextReceived.get(0).getString("status"));
+                assertEquals("NATIVE_VOICE_TEST_ERROR", nextReceived.get(0).getString("code"));
+            } catch (Exception failure) {
+                throw new AssertionError(failure);
+            } finally {
+                service.removeListener(subscriber);
+            }
+        });
+    }
+
     @Test public void debugUpdaterDiscardsStableOffersAtEveryEntryPoint() {
         assertTrue("This regression exercises the debug update channel", BuildConfig.DEBUG);
         android.content.Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();

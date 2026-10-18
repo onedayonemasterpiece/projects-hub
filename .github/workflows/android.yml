@@ -82,9 +82,24 @@ jobs:
       QEMU_PA_SINK: ph_ci_speaker
       PULSE_SOURCE: ph_ci_mic.monitor
       PULSE_SINK: ph_ci_speaker
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      ANDROID_SERIAL: emulator-5554
+      PH_ANDROID_DISPOSABLE: "1"
+      PH_ANDROID_IMAGE_CACHE: ${{ github.workspace }}/.dependencies/android-system-image-cache
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - name: Check disposable emulator host before setup
+        run: |
+          if [ -c /dev/kvm ]; then sudo chmod 0666 /dev/kvm; fi
+          bash scripts/android_emulator_smoke.sh --preflight
+      - name: Restore verified Android system image archive
+        id: voice-image-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .dependencies/android-system-image-cache
+          key: ph-voice-api31-7e7081f5784e98dd391ddae52573a75bc1db17a2fd286cb20be46d3eec251f94
       - name: Checkout immutable native voice candidate
         uses: actions/checkout@v4
         with:
@@ -116,15 +131,34 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y pulseaudio pulseaudio-utils ffmpeg espeak-ng xvfb openssl libxcb-cursor0 ripgrep
           bash scripts/android_emulator_smoke.sh --prepare
-      - name: Enable KVM
+      - name: Record the exact checkouts used by audio acceptance
+        env:
+          CANDIDATE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          test -c /dev/kvm
-          sudo chmod 0666 /dev/kvm
+          python - <<'PY'
+          import json, os, pathlib, subprocess
+          def revision(path, ref):
+              return subprocess.check_output(["git", "-C", path, "rev-parse", ref], text=True).strip()
+          evidence = {
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "event_name": os.environ["GITHUB_EVENT_NAME"],
+              "candidate_head_sha": os.environ["CANDIDATE_HEAD_SHA"],
+              "checkout_sha": revision(".", "HEAD"),
+              "checkout_tree": revision(".", "HEAD^{tree}"),
+              "shared_checkout_sha": revision(".dependencies/live-interaction", "HEAD"),
+              "shared_checkout_tree": revision(".dependencies/live-interaction", "HEAD^{tree}"),
+          }
+          pathlib.Path("android/smoke-evidence/checkout.json").write_text(json.dumps(evidence, indent=2) + "\n")
+          PY
       - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         env:
           # The guest HDA capture deadline is about 18 ms. Request smaller
           # Pulse fragments for this emulator; delayed capture inserted silence.
           PULSE_LATENCY_MSEC: "5"
+          # QEMU's default 100 Hz audio tick can exceed the guest's 3 ms
+          # capture jitter allowance. Keep the timer quantum below it.
+          QEMU_AUDIO_TIMER_PERIOD: "1000"
         with:
           api-level: ${{ matrix.api-level }}
           target: google_apis
@@ -140,7 +174,16 @@ jobs:
           pre-emulator-launch-script: python scripts/android_emulator_image.py
           # Keep the established Xvfb audio path while checking Pulse latency.
           emulator-options: -gpu swiftshader_indirect -no-snapshot -wipe-data -no-boot-anim -camera-back none -camera-front none -timezone Etc/UTC -allow-host-audio -feature -VirtioSndCard
-          script: env -u PULSE_LATENCY_MSEC bash scripts/android_emulator_smoke.sh
+          script: env -u PULSE_LATENCY_MSEC -u QEMU_AUDIO_TIMER_PERIOD bash scripts/android_emulator_smoke.sh
+      - name: Clean up owned audio and display resources
+        if: always()
+        run: bash scripts/android_emulator_smoke.sh --cleanup
+      - name: Save verified Android image for subsequent runs
+        if: always() && steps.voice-image-cache.outputs.cache-hit != 'true' && hashFiles('android/smoke-evidence/system-image.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .dependencies/android-system-image-cache
+          key: ph-voice-api31-7e7081f5784e98dd391ddae52573a75bc1db17a2fd286cb20be46d3eec251f94
       - name: Upload emulator evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pin the disposable CI guest after emulator-runner installs the SDK image."""
+"""Install the checksum-pinned image into this test profile's dedicated SDK."""
 
 from __future__ import annotations
 
@@ -13,23 +13,58 @@ from urllib.request import urlopen
 from zipfile import ZipFile
 
 
+IMAGE_URL = "https://dl.google.com/android/repository/sys-img/google_apis/x86_64-31_r14.zip"
+# Measured in Android run 39112612715, artifact 12131276923/system-image.json.
+IMAGE_SHA256 = "7e7081f5784e98dd391ddae52573a75bc1db17a2fd286cb20be46d3eec251f94"
+IMAGE_BYTES = 1470822277
+
+
+def verified_archive(path: Path) -> bool:
+    if not path.is_file() or path.stat().st_size != IMAGE_BYTES:
+        return False
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        while block := source.read(1024 * 1024):
+            digest.update(block)
+    return digest.hexdigest() == IMAGE_SHA256
+
+
+def cached_archive(cache: Path) -> tuple[Path, bool]:
+    cache.mkdir(parents=True, exist_ok=True)
+    archive = cache / f"{IMAGE_SHA256}.zip"
+    if verified_archive(archive):
+        return archive, True
+    # A bad cache entry never becomes an input to the SDK. Keep it until a
+    # verified replacement is ready; interrupted downloads cannot poison a hit.
+    descriptor, name = tempfile.mkstemp(prefix=f"{IMAGE_SHA256}.", suffix=".part", dir=cache)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "wb") as output, urlopen(IMAGE_URL, timeout=60) as response:
+            while block := response.read(1024 * 1024):
+                output.write(block)
+        if not verified_archive(temporary):
+            raise ValueError("System image archive checksum or size does not match the pinned CI receipt")
+        os.replace(temporary, archive)
+        return archive, False
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def main() -> None:
+    if os.environ.get("PH_ANDROID_DISPOSABLE") != "1":
+        raise ValueError("Set PH_ANDROID_DISPOSABLE=1 only for the dedicated test SDK and disposable AVD")
     sdk = Path(os.environ["ANDROID_HOME"]).resolve()
     destination = sdk / "system-images/android-31/google_apis/x86_64"
-    evidence = Path("android/smoke-evidence")
+    evidence = Path(os.environ.get("PH_ANDROID_EVIDENCE_DIR", "android/smoke-evidence"))
     evidence.mkdir(parents=True, exist_ok=True)
-    url = "https://dl.google.com/android/repository/sys-img/google_apis/x86_64-31_r14.zip"
+    cache = Path(os.environ.get("PH_ANDROID_IMAGE_CACHE", str(
+        Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))) / "projects-hub/android-images")))
+    archive, cache_hit = cached_archive(cache)
     # The action has already created its AVD. Its emulator launch uses -wipe-data
     # so the guest userdata matches this exact system image. No SDK install runs
     # after this hook; normal APK compilation still uses Android SDK 35.
-    with tempfile.TemporaryDirectory(prefix="ph-ci-api31-", dir=os.environ["RUNNER_TEMP"]) as temporary:
+    with tempfile.TemporaryDirectory(prefix="ph-ci-api31-", dir=os.environ.get("RUNNER_TEMP") or None) as temporary:
         root = Path(temporary)
-        archive = root / "image.zip"
-        digest = hashlib.sha256()
-        with urlopen(url, timeout=60) as response, archive.open("wb") as output:
-            while block := response.read(1024 * 1024):
-                output.write(block)
-                digest.update(block)
         unpacked = root / "unpacked"
         unpacked.mkdir()
         with ZipFile(archive) as source:
@@ -55,12 +90,17 @@ def main() -> None:
             raise ValueError("Unexpected system image revision or API level")
         if not (package / "system.img").is_file() or not (package / "kernel-ranchu").is_file():
             raise ValueError("Incomplete system image package")
-        shutil.rmtree(destination)
+        if destination.is_symlink():
+            raise ValueError("Dedicated SDK image destination must not be a symlink")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.exists():
+            shutil.rmtree(destination)
         shutil.move(str(package), str(destination))
         (evidence / "system-image.json").write_text(json.dumps({
             "api_level": 31, "archive_revision": 14, "package_revision": 12,
             "abi": "x86_64", "tag": "google_apis",
-            "url": url, "archive_sha256": digest.hexdigest(), "archive_bytes": archive.stat().st_size,
+            "url": IMAGE_URL, "archive_sha256": IMAGE_SHA256, "archive_bytes": archive.stat().st_size,
+            "cache_hit": cache_hit, "checksum_verified": True,
         }, indent=2) + "\n")
 
 
