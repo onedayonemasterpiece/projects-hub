@@ -10,6 +10,7 @@ import android.content.ServiceConnection;
 import android.graphics.Bitmap;
 import android.os.IBinder;
 import android.os.SystemClock;
+import android.util.Log;
 import android.webkit.CookieManager;
 
 import androidx.test.core.app.ActivityScenario;
@@ -73,8 +74,15 @@ public final class NativeVoiceFlowTest {
     @Test public void actualUiVoiceCapturePlaybackOutageRecoveryAndStop() throws Exception {
         assumeTrue("Requires isolated -PvoiceE2e=true APK and fixture", BuildConfig.VOICE_E2E);
         assertEquals("https://10.0.2.2:8443/", BuildConfig.HUB_URL);
-        evidence = new File(context.getExternalFilesDir(null), "voice-e2e");
+        // UTP pulls this directory before uninstalling the target APK. App-owned
+        // Android/data disappears during connectedDebugAndroidTest cleanup.
+        String additionalOutput = InstrumentationRegistry.getArguments().getString("additionalTestOutputDir");
+        File outputRoot = additionalOutput == null || additionalOutput.isBlank()
+                ? context.getExternalFilesDir(null) : new File(additionalOutput);
+        evidence = new File(outputRoot, "voice-e2e");
         assertTrue(evidence.isDirectory() || evidence.mkdirs());
+        receipt.put("evidence_directory", evidence.getAbsolutePath());
+        Log.i("ProjectsHubVoiceE2E", "evidence_directory=" + evidence.getAbsolutePath());
         boolean attached = false;
         try {
             JSONObject login = fixture("GET", "login");
@@ -106,6 +114,7 @@ public final class NativeVoiceFlowTest {
             await("native live capture", 45, () -> nativeStatus("live") && capturing());
             String conversation = state.get().getString("conversation_id");
             receipt.put("conversation_id", conversation);
+            snapshot("connected");
             fixture("POST", "speak?name=hello");
             await("encoded microphone reached actual host and produced output", 45, () -> {
                 JSONObject remote = fixture("GET", "state");
@@ -179,7 +188,12 @@ public final class NativeVoiceFlowTest {
             receipt.put("stopped_revision", stoppedRevision);
             verifyDurablePlayback(login, conversation);
             receipt.put("passed", true);
+        } catch (Exception | AssertionError failure) {
+            receipt.put("passed", false).put("failure", Log.getStackTraceString(failure));
+            throw failure;
         } finally {
+            // Keep the actual failed state even if Activity teardown also fails.
+            checkpoint();
             if (scenario != null) {
                 try { snapshot("final"); } catch (Exception ignored) { }
                 try { if (capturing()) clickMic(); } catch (Exception ignored) { }
@@ -191,12 +205,16 @@ public final class NativeVoiceFlowTest {
                     context.unbindService(connection);
                 });
             }
-            receipt.put("final_native", state.get());
-            synchronized (transitions) { receipt.put("native_transitions", transitions); }
-            synchronized (events) { receipt.put("native_events", events); }
-            try { receipt.put("fixture", fixture("GET", "state")); } catch (Exception ignored) { }
-            write("voice-flow.json", receipt.toString(2));
+            checkpoint();
         }
+    }
+
+    private void checkpoint() throws Exception {
+        receipt.put("final_native", state.get());
+        synchronized (transitions) { receipt.put("native_transitions", new JSONArray(transitions.toString())); }
+        synchronized (events) { receipt.put("native_events", new JSONArray(events.toString())); }
+        try { receipt.put("fixture", fixture("GET", "state")); } catch (Exception ignored) { }
+        write("voice-flow.json", receipt.toString(2));
     }
 
     private void verifyDurablePlayback(JSONObject login, String conversation) throws Exception {

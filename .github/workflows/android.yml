@@ -116,10 +116,13 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_7
+          # Explicit pre-37.x baseline while diagnosing persistent virtio-snd
+          # I/O errors with 37.2.12; the full microphone/output gate still applies.
+          emulator-build: '15507667'
           emulator-boot-timeout: 900
           disable-animations: false
           # The headless emulator binary has a Pulse stub: use a real Xvfb display.
-          emulator-options: -gpu swiftshader_indirect -no-snapshot -no-boot-anim -camera-back none -camera-front none -timezone Etc/UTC
+          emulator-options: -gpu swiftshader_indirect -no-snapshot -no-boot-anim -camera-back none -camera-front none -timezone Etc/UTC -allow-host-audio
           script: bash scripts/android_emulator_smoke.sh
       - name: Upload emulator evidence
         if: always()
@@ -131,3 +134,4 @@ jobs:
             android/smoke-evidence/
             android/app/build/reports/androidTests/
             android/app/build/outputs/androidTest-results/
+            android/app/build/outputs/connected_android_test_additional_output/

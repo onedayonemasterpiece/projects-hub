@@ -7,14 +7,14 @@ const source=fs.readFileSync(new URL('../src/App.tsx',import.meta.url),'utf8');
 test('real App timing callback distinguishes admitted speech, queued end and output without inventing transcript',()=>{
   const calls=[];
   const setters=['setSpeechActive','setSpeechPending','setPlaybackProblem','setInterimInputTranscript','setInputTranscriptSeen'];
-  const names=[...setters,'setToolProgress','reduceVoiceToolProgress','speechStartsNewUserBubble','reserveUserVoiceBubble','settleCurrentVoiceBubble','userTurnBoundaryPendingRef','userTranscriptIndex','assistantTranscriptIndex','turnHasInput','userTurnAwaitingFinalRef','activeIdentity'];
+  const names=[...setters,'setToolProgress','reduceVoiceToolProgress','speechStartsNewUserBubble','reserveUserVoiceBubble','settleCurrentVoiceBubble','userTurnBoundaryPendingRef','userTranscriptIndex','assistantTranscriptIndex','turnHasInput','userTurnAwaitingFinalRef','activeIdentity','nativeSurface'];
   const refs=[{current:true},{current:2},{current:4},{current:true},{current:true}];
   const activeIdentity={current:true};
   const reserveUserVoiceBubble=()=>calls.push(['reserveUserVoiceBubble',true]);
   const settleCurrentVoiceBubble=()=>calls.push(['settleCurrentVoiceBubble',true]);
   let toolProgress={id:'slow-operation',elapsed_ms:2500};
-  const values=[...setters.map(name=>value=>calls.push([name,value])),update=>{toolProgress=update(toolProgress);},reduceVoiceToolProgress,speechStartsNewUserBubble,reserveUserVoiceBubble,settleCurrentVoiceBubble,...refs,activeIdentity];
-  const body=source.match(/const applyVoiceTiming = useCallback\(\(event: string\) => \{([\s\S]*?)\n  \}, \[reserveUserVoiceBubble, settleCurrentVoiceBubble\]\)/)?.[1];
+  const values=[...setters.map(name=>value=>calls.push([name,value])),update=>{toolProgress=update(toolProgress);},reduceVoiceToolProgress,speechStartsNewUserBubble,reserveUserVoiceBubble,settleCurrentVoiceBubble,...refs,activeIdentity,false];
+  const body=source.match(/const applyVoiceTiming = useCallback\(\(event: string\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\)/)?.[1];
   assert.ok(body,'must exercise the actual App callback');
   assert.match(source,/onTiming: applyVoiceTiming/,'browser uses the same timing callback');
   assert.match(source,/applyVoiceTiming\(event.stage\)/,'native hardware timing uses the same callback');

@@ -326,7 +326,8 @@ test("Transcribe Live captions update silently and main Mira final wins", async 
   assert.match(source, /role === "user" && current\.awaitingTranscript[\s\S]*transcriptRevision: current\.transcriptRevision \+ 1[\s\S]*deliveryNote: undefined/);
   assert.doesNotMatch(source, /"Распознаю"/);
   assert.doesNotMatch(source, /"Транскрипция"/);
-  assert.match(source, /event\.type === "caption_unavailable"[\s\S]*Captions are deliberately fail-open/);
+  // Optional-caption failure is exercised through the actual callback for both
+  // native and browser surfaces in native-timeline-app.test.mjs.
 });
 
 

@@ -142,6 +142,20 @@ test("native noise and unavailable captions cannot manufacture transcript errors
   assert.equal(t.ui.speechPending, true, "waiting for Mira remains visible without creating a user bubble");
 });
 
+test("optional caption outage preserves actual voice state and messages on both surfaces", () => {
+  for (const nativeSurface of [true, false]) {
+    const t = setup(nativeSurface);
+    t.ui.messages = [{ id: "already-saved", role: "user", text: "Принятая фраза", revision: 1 }];
+    t.ui.speechActive = true;
+    t.ui.speechPending = true;
+    t.ui.interim = "Временная подпись";
+    t.ui.progress = { id: "tool-operation", elapsed_ms: 1000 };
+    const before = structuredClone(t.ui);
+    t.event({ type: "caption_unavailable", code: "CAPTION_PROVIDER_ERROR" });
+    assert.deepEqual(t.ui, before, `caption outage is optional with nativeSurface=${nativeSurface}`);
+  }
+});
+
 test("a native reference captures identity but cannot bind a late load to a guessed placeholder", () => {
   const t = setup();
   t.timing("speech_start");

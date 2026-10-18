@@ -48,13 +48,14 @@ TLS
   exit 0
 fi
 
-fixture_pid= audio_pid= video_pid= pulse_watch_pid=
+fixture_pid= audio_pid= mic_monitor_pid= video_pid= pulse_watch_pid=
 collect_smoke_evidence() {
   local status=$?
   trap - EXIT
   if [ -n "$pulse_watch_pid" ]; then kill "$pulse_watch_pid" 2>/dev/null || true; wait "$pulse_watch_pid" 2>/dev/null || true; fi
   adb shell pkill -2 screenrecord >/dev/null 2>&1 || true
   if [ -n "$audio_pid" ]; then kill -INT "$audio_pid" 2>/dev/null || true; wait "$audio_pid" 2>/dev/null || true; fi
+  if [ -n "$mic_monitor_pid" ]; then kill -INT "$mic_monitor_pid" 2>/dev/null || true; wait "$mic_monitor_pid" 2>/dev/null || true; fi
   if [ -n "$video_pid" ]; then wait "$video_pid" 2>/dev/null || true; fi
   adb pull /sdcard/voice-e2e.mp4 "$EVIDENCE/voice-e2e.mp4" >/dev/null 2>&1 || true
   adb pull "/sdcard/Android/data/$PACKAGE/files/voice-e2e/." "$EVIDENCE/" >/dev/null 2>&1 || true
@@ -62,6 +63,7 @@ collect_smoke_evidence() {
   adb logcat -d -v threadtime > "$EVIDENCE/logcat.txt" 2>&1 || true
   adb shell dumpsys activity activities > "$EVIDENCE/activities.txt" 2>&1 || true
   adb shell dumpsys media.audio_flinger > "$EVIDENCE/audio-flinger.txt" 2>&1 || true
+  adb shell dumpsys media.audio_policy > "$EVIDENCE/audio-policy.txt" 2>&1 || true
   pactl list source-outputs > "$EVIDENCE/pulse-source-outputs.txt" 2>&1 || true
   pactl list sink-inputs > "$EVIDENCE/pulse-sink-inputs.txt" 2>&1 || true
   curl --silent --show-error --max-time 10 --cacert "$CERTS/ca.pem" \
@@ -88,6 +90,8 @@ test "$ready" -eq 1
 
 adb wait-for-device
 test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1
+"${ANDROID_HOME}/emulator/emulator" -version > "$EVIDENCE/emulator-version.txt" 2>&1
+adb shell cat /proc/asound/cards > "$EVIDENCE/android-audio-cards.txt"
 adb emu avd hostmicon | tee "$EVIDENCE/host-mic.txt"
 if rg -q '^KO:' "$EVIDENCE/host-mic.txt"; then exit 1; fi
 gradle -p android -PvoiceE2e=true assembleDebug assembleDebugAndroidTest --stacktrace
@@ -98,6 +102,11 @@ adb logcat -c
 ffmpeg -nostdin -hide_banner -loglevel warning -y -f pulse -i ph_ci_speaker.monitor \
   -ac 1 -ar 48000 -c:a pcm_s16le "$EVIDENCE/speaker.wav" > "$EVIDENCE/speaker-capture.log" 2>&1 &
 audio_pid=$!
+# Independent recording of the signal presented to QEMU distinguishes a silent
+# Android capture from a broken host fixture without injecting into the app.
+ffmpeg -nostdin -hide_banner -loglevel warning -y -f pulse -i ph_ci_mic.monitor \
+  -ac 1 -ar 48000 -c:a pcm_s16le "$EVIDENCE/host-microphone.wav" > "$EVIDENCE/host-microphone-capture.log" 2>&1 &
+mic_monitor_pid=$!
 adb shell screenrecord --bit-rate 2000000 --time-limit 180 /sdcard/voice-e2e.mp4 \
   > "$EVIDENCE/screenrecord.log" 2>&1 &
 video_pid=$!
