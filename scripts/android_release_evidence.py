@@ -368,7 +368,9 @@ def inspect_apk(path, aapt, apksigner):
     require(len(certs) == 1, "Expected the existing single signing certificate")
     badging = command([str(aapt), "dump", "badging", str(path)])
     package = next((line for line in badging.splitlines() if line.startswith("package: ")), "")
-    values = dict(re.findall(r"(name|versionCode|versionName)='([^']*)'", package))
+    attributes = re.findall(r"(?:^|\s)(name|versionCode|versionName)='([^']*)'(?=\s|$)", package)
+    require(len(attributes) == len({key for key, _ in attributes}), "Duplicate APK package identity attribute")
+    values = dict(attributes)
     require(values.get("name") == PACKAGE and values.get("versionCode", "").isdigit(), "APK package identity mismatch")
     require("application-debuggable" not in badging, "Debug APK cannot be a signed RC")
     return {"package_id": values["name"], "versionCode": int(values["versionCode"]),
