@@ -381,7 +381,7 @@ def test_sdk_discovery_catalog_subscription_tools_and_csrf(setup, tmp_path):
         result = discovery.json()['result']
         assert result['resultType'] == 'complete'
         assert result['supportedVersions'] == ['2026-07-28'] and result['capabilities']['events'] == {}
-        assert {t['name'] for t in rpc(client, token, 'tools/list').json()['result']['tools']} == {'get_test_request', 'record_test_response','get_project_request','record_request_result','start_question_session'}
+        assert {t['name'] for t in rpc(client, token, 'tools/list').json()['result']['tools']} == {'get_test_request', 'record_test_response','get_project_request','record_request_result','start_question_session','link_voice_analysis_sources'}
         assert rpc(client, token, 'events/list').json()['result']['events'] == [REQUEST_EVENT_DEFINITION,EVENT_DEFINITION]
         subscribed = rpc(client, token, 'events/subscribe', dict(name=EVENT, arguments={'project_id': grant['project_id']}, delivery=DELIVERY))
         assert subscribed.status_code == 200, subscribed.text
@@ -619,7 +619,7 @@ def test_private_tunnel_credential_survives_restart_and_remains_revocable_servic
                                 session_secret='s'*48, public_origin=ORIGIN), store=reopened)
         with TestClient(app, base_url=ORIGIN) as client:
             assert rpc(client, token, 'server/discover').status_code == 200
-            assert len(rpc(client, token, 'tools/list').json()['result']['tools']) == 5
+            assert len(rpc(client, token, 'tools/list').json()['result']['tools']) == 6
         restored.project_grant(principal['id'], owner['project_id'])
         restored.disable_service(owner['actor_id'], issued['client_id'])
         with pytest.raises(StoreError):

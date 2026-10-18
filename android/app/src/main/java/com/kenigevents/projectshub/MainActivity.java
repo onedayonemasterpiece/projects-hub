@@ -163,7 +163,7 @@ public final class MainActivity extends Activity {
 
         setContentView(root);
         webView.clearCache(true);
-        if (!handleGitHubReturn(getIntent())) {
+        if (!handleGitHubReturn(getIntent()) && !handleAnalysisNotification(getIntent())) {
             String separator = BuildConfig.HUB_URL.contains("?") ? "&" : "?";
             webView.loadUrl(
                     BuildConfig.HUB_URL
@@ -180,10 +180,27 @@ public final class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        handleGitHubReturn(intent);
+        if (!handleGitHubReturn(intent)) handleAnalysisNotification(intent);
         if (updater != null) {
             updater.resumePendingInstall();
         }
+    }
+
+    private boolean handleAnalysisNotification(Intent intent) {
+        String analysisId = intent == null ? null : intent.getStringExtra(AnalysisNotificationTarget.EXTRA);
+        if (!AnalysisNotificationTarget.isValid(analysisId)) return false;
+        intent.removeExtra(AnalysisNotificationTarget.EXTRA);
+        if (webView != null && webOriginPolicy.isTrustedPageUrl(webView.getUrl())) {
+            // Presentation only: keep the running Live session and its transport intact.
+            webView.evaluateJavascript("(() => { const id = " + JSONObject.quote(analysisId)
+                    + "; const url = new URL(window.location.href); url.searchParams.set('analysis_result', id);"
+                    + " window.history.replaceState({}, '', url.pathname + url.search + url.hash);"
+                    + " window.dispatchEvent(new CustomEvent('projects-hub-analysis-result', {detail: id})); })()", null);
+        } else {
+            webView.loadUrl(BuildConfig.HUB_URL + "?native_version=" + Uri.encode(BuildConfig.VERSION_NAME)
+                    + "&analysis_result=" + Uri.encode(analysisId));
+        }
+        return true;
     }
 
     @Override

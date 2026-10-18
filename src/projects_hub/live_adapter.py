@@ -945,7 +945,7 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Когда вопросы адресованы текущему человеку, collaboration_questions_inbox даёт их контекст и причину. На приветствие только предложи обсудить; после согласия либо прямой просьбы «задай вопросы» спроси голосом один существенный вопрос, не заставляй искать форму. Пользователь может одной репликой ответить на несколько; передай их одним collaboration_questions_answer.
 - answer, unknown, skip и later — разные состояния. Blocking continuation запускается только когда все blocking questions получили disposition=answer. later сохраняет отложенную зависимость; unknown/skip не выдумывают решение и не снимают blocker.
 - Для пакетов dot сохраняй предложение, согласие, паузу, возобновление и «только важное» через collaboration_questions_answer с session_action=offer/accept/pause/resume/important_only и analysis_id, без responses. Только явное завершение человеком вызывает session_action=complete; allow_partial=true допускается лишь по прямому намерению закончить с текущими ответами. Нерешённые blockers остаются ограничениями. Ответ сам по себе не завершает пакет.
-- Лично адресованное question_result_ready означает проверенный новый содержательный результат и подтверждённую доставку в исходный Slack. Кратко сообщи готовность, но не читай весь текст без просьбы. По просьбе прочти результат через collaboration_questions_inbox с analysis_id из object_id. После фактического уведомления отметь brief_seen, не повторяй его при reconnect.
+- Лично адресованное question_result_ready означает проверенный новый содержательный результат. Оно НЕ подтверждает push на телефон или отправку в Slack; результат доступен независимо от Slack. Кратко сообщи готовность, но не читай весь текст без просьбы. По просьбе прочти результат через collaboration_questions_inbox с analysis_id из object_id. После фактического уведомления отметь brief_seen, не повторяй его при reconnect.
 - Простое чтение статуса/вопроса никогда не продвигает worker.
 - Если collaboration_questions_inbox возвращает source_kind=owner_development, отвечай через collaboration_question_respond. Только platform owner сможет реально resume; backend продолжит тот же execution/thread и не создаст новую разработку.
 
@@ -1429,6 +1429,7 @@ class ProjectsHubLiveAdapter:
                         analysis_id=analysis["id"], note_id=analysis["note_id"],
                         completion_scope=result.get("provenance", {}).get("completion_scope", "full"),
                         artifact_url=result.get("artifact_url"),
+                        delivery_links=analysis.get("delivery_links", {}),
                         availability="available",
                     )
                 elif item["kind"] == "note_chatgpt_analyzed":
@@ -1574,6 +1575,11 @@ class ProjectsHubLiveAdapter:
                 "note_chatgpt_analyzed с реальным проектом и summary; это важнее подсказки о теме и обзора функций. "
                 "Не заменяй сообщение о готовом результате предложением настроить тему. "
                 "Подробности предложи отдельно, без обязательного чтения полного документа. "
+                "По просьбе кратко озвучь проверенный result_markdown через collaboration_questions_inbox. "
+                "Для исходной живой .md заметки показывай кликабельный delivery_links.source_note_url, "
+                "а не подменяй его artifact_url или snapshot_url. Для нескольких заметок есть source_notes. "
+                "Ссылку на Slack-разбор показывай только из delivery_links.slack_result_url; при null не придумывай тред. "
+                "Наличие брифинга не означает доставленный push или уже завершённое обновление исходной заметки. "
                 "Учитывай completion_scope=partial: открытые вопросы остаются, не называй всё решённым. "
                 "Другой конкретный запрос пользователя приоритетнее: оставь сводку непрочитанной. "
                 "После фактического краткого изложения ВСЕХ элементов последовательного prefix до выбранного id "

@@ -1,39 +1,126 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-adb_retry() {
-  local attempt=0
-  while [ "$attempt" -lt 30 ]; do
-    if adb "$@"; then
-      return 0
-    fi
-    adb start-server >/dev/null 2>&1 || true
-    attempt=$((attempt + 1))
+EVIDENCE="$(pwd)/android/smoke-evidence"
+CERTS="${RUNNER_TEMP:-/tmp}/projects-hub-voice-e2e-tls"
+PACKAGE=com.kenigevents.projectshub.debug
+mkdir -p "$EVIDENCE/audio" "$CERTS"
+
+if [ "${1:-}" = --prepare ]; then
+  # Separate devices prevent fixture replies from becoming microphone input.
+  pulseaudio --start --exit-idle-time=-1 --log-target="file:$EVIDENCE/pulseaudio.log"
+  pactl load-module module-null-sink sink_name=ph_ci_mic rate=48000 channels=1
+  pactl load-module module-null-sink sink_name=ph_ci_speaker rate=48000 channels=1
+  pactl set-default-source ph_ci_mic.monitor
+  pactl set-default-sink ph_ci_speaker
+  pactl list short sinks > "$EVIDENCE/pulse-sinks.txt"
+  pactl list short sources > "$EVIDENCE/pulse-sources.txt"
+  nohup Xvfb :99 -screen 0 1080x1920x24 -nolisten tcp > "$EVIDENCE/xvfb.log" 2>&1 &
+
+  # Private keys stay outside evidence; only this job's public CA is packaged.
+  openssl req -x509 -newkey rsa:2048 -nodes -days 2 -sha256 \
+    -subj /CN=ProjectsHub-Emulator-Only-CA \
+    -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign \
+    -keyout "$CERTS/ca.key" -out "$CERTS/ca.pem"
+  openssl req -new -newkey rsa:2048 -nodes -sha256 -subj /CN=10.0.2.2 \
+    -keyout "$CERTS/server.key" -out "$CERTS/server.csr"
+  cat > "$CERTS/server.ext" <<'TLS'
+subjectAltName=IP:10.0.2.2,IP:127.0.0.1,DNS:localhost
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+TLS
+  openssl x509 -req -in "$CERTS/server.csr" -CA "$CERTS/ca.pem" -CAkey "$CERTS/ca.key" \
+    -CAcreateserial -days 2 -sha256 -extfile "$CERTS/server.ext" -out "$CERTS/server.pem"
+  mkdir -p android/app/src/voiceE2e/res/raw
+  cp "$CERTS/ca.pem" android/app/src/voiceE2e/res/raw/native_test_ca.pem
+
+  make_phrase() {
+    espeak-ng -v ru -s 155 -w "$EVIDENCE/audio/$1-raw.wav" "$2"
+    ffmpeg -nostdin -hide_banner -loglevel error -y -i "$EVIDENCE/audio/$1-raw.wav" \
+      -af volume=0.65 -ac 1 -ar 24000 -c:a pcm_s16le "$EVIDENCE/audio/$1.wav"
+    rm "$EVIDENCE/audio/$1-raw.wav"
+  }
+  make_phrase hello 'Мира, проверка голосового разговора, слышишь меня?'
+  make_phrase overlap 'Мира, второй вопрос после восстановления связи'
+  make_phrase offline 'Эта запись сделана без соединения и должна сохраниться'
+  make_phrase reply 'Проверка голоса пройдена'
+  exit 0
+fi
+
+fixture_pid= audio_pid= video_pid= pulse_watch_pid=
+collect_smoke_evidence() {
+  local status=$?
+  trap - EXIT
+  if [ -n "$pulse_watch_pid" ]; then kill "$pulse_watch_pid" 2>/dev/null || true; wait "$pulse_watch_pid" 2>/dev/null || true; fi
+  adb shell pkill -2 screenrecord >/dev/null 2>&1 || true
+  if [ -n "$audio_pid" ]; then kill -INT "$audio_pid" 2>/dev/null || true; wait "$audio_pid" 2>/dev/null || true; fi
+  if [ -n "$video_pid" ]; then wait "$video_pid" 2>/dev/null || true; fi
+  adb pull /sdcard/voice-e2e.mp4 "$EVIDENCE/voice-e2e.mp4" >/dev/null 2>&1 || true
+  adb pull "/sdcard/Android/data/$PACKAGE/files/voice-e2e/." "$EVIDENCE/" >/dev/null 2>&1 || true
+  adb exec-out screencap -p > "$EVIDENCE/final-screen.png" 2>/dev/null || true
+  adb logcat -d -v threadtime > "$EVIDENCE/logcat.txt" 2>&1 || true
+  adb shell dumpsys activity activities > "$EVIDENCE/activities.txt" 2>&1 || true
+  adb shell dumpsys media.audio_flinger > "$EVIDENCE/audio-flinger.txt" 2>&1 || true
+  pactl list source-outputs > "$EVIDENCE/pulse-source-outputs.txt" 2>&1 || true
+  pactl list sink-inputs > "$EVIDENCE/pulse-sink-inputs.txt" 2>&1 || true
+  curl --silent --show-error --max-time 10 --cacert "$CERTS/ca.pem" \
+    https://127.0.0.1:8443/_e2e/state > "$EVIDENCE/fixture-final.json" 2>/dev/null || true
+  if [ -n "$fixture_pid" ]; then kill "$fixture_pid" 2>/dev/null || true; wait "$fixture_pid" 2>/dev/null || true; fi
+  exit "$status"
+}
+trap collect_smoke_evidence EXIT
+
+test -f "$CERTS/server.pem"
+test -f android/app/src/voiceE2e/res/raw/native_test_ca.pem
+python scripts/android_voice_fixture.py --data-dir "$EVIDENCE/fixture-data" \
+  --audio-dir "$EVIDENCE/audio" --cert "$CERTS/server.pem" --key "$CERTS/server.key" \
+  > "$EVIDENCE/fixture.log" 2>&1 &
+fixture_pid=$!
+ready=0
+for _ in $(seq 1 90); do
+  if curl --fail --silent --show-error --max-time 2 --cacert "$CERTS/ca.pem" \
+      https://127.0.0.1:8443/_e2e/state > "$EVIDENCE/fixture-initial.json" 2>/dev/null; then ready=1; break; fi
+  kill -0 "$fixture_pid"
+  sleep 1
+ done
+test "$ready" -eq 1
+
+adb wait-for-device
+test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1
+adb emu avd hostmicon | tee "$EVIDENCE/host-mic.txt"
+if rg -q '^KO:' "$EVIDENCE/host-mic.txt"; then exit 1; fi
+gradle -p android -PvoiceE2e=true assembleDebug assembleDebugAndroidTest --stacktrace
+adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+adb shell pm grant "$PACKAGE" android.permission.RECORD_AUDIO
+adb shell pm grant "$PACKAGE" android.permission.POST_NOTIFICATIONS
+adb logcat -c
+ffmpeg -nostdin -hide_banner -loglevel warning -y -f pulse -i ph_ci_speaker.monitor \
+  -ac 1 -ar 48000 -c:a pcm_s16le "$EVIDENCE/speaker.wav" > "$EVIDENCE/speaker-capture.log" 2>&1 &
+audio_pid=$!
+adb shell screenrecord --bit-rate 2000000 --time-limit 180 /sdcard/voice-e2e.mp4 \
+  > "$EVIDENCE/screenrecord.log" 2>&1 &
+video_pid=$!
+(
+  while true; do
+    date -u +%FT%TZ >> "$EVIDENCE/pulse-live-source-outputs.txt"
+    pactl list source-outputs >> "$EVIDENCE/pulse-live-source-outputs.txt"
+    date -u +%FT%TZ >> "$EVIDENCE/pulse-live-sink-inputs.txt"
+    pactl list sink-inputs >> "$EVIDENCE/pulse-live-sink-inputs.txt"
     sleep 2
   done
-  return 1
-}
+) &
+pulse_watch_pid=$!
 
-gradle -p android assembleDebug --stacktrace
-adb_retry wait-for-device
-
-booted=0
-for _ in $(seq 1 45); do
-  if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
-    booted=1
-    break
-  fi
-  adb start-server >/dev/null 2>&1 || true
-  sleep 2
-done
-test "$booted" -eq 1
-
-adb_retry install -r android/app/build/outputs/apk/debug/app-debug.apk
-adb_retry shell am start -W -n com.kenigevents.projectshub.debug/com.kenigevents.projectshub.MainActivity
-sleep 3
-PID="$(adb_retry shell pidof com.kenigevents.projectshub.debug | tr -d '\r')"
-test -n "$PID"
-echo "ANDROID_LAUNCH_PASS pid=$PID"
-
-# Installed presentation/origin checks; emulator has no audible/physical acceptance.
-gradle -p android connectedDebugAndroidTest --stacktrace
+# Actual Activity/WebView, AudioRecord, MediaCodec, TLS WSS and AudioTrack.
+# Only the server's external AI runner is a controlled fixture.
+gradle -p android -PvoiceE2e=true connectedDebugAndroidTest --stacktrace
+kill -INT "$audio_pid"
+wait "$audio_pid" || true
+audio_pid=
+curl --fail --silent --show-error --cacert "$CERTS/ca.pem" \
+  https://127.0.0.1:8443/_e2e/state > "$EVIDENCE/fixture-final.json"
+python scripts/android_voice_fixture.py --verify-output "$EVIDENCE/speaker.wav" \
+  --audio-dir "$EVIDENCE/audio" --state "$EVIDENCE/fixture-final.json" \
+  --report "$EVIDENCE/audio-verification.json"
+echo ANDROID_NATIVE_VOICE_FLOW_PASS

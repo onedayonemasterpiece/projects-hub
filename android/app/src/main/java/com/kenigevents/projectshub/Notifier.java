@@ -37,15 +37,31 @@ final class Notifier {
                 "Задача готова к проверке", title);
     }
 
+    boolean analysisCompleted(String eventId, String analysisId, String title) {
+        if (!AnalysisNotificationTarget.isValid(analysisId)) return false;
+        Intent open = new Intent(context, MainActivity.class)
+                .putExtra(AnalysisNotificationTarget.EXTRA, analysisId)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        return notify("analysis:" + eventId, 103, "Результат аналитики готов", title, open);
+    }
+
     private void notify(int id, String title, String text) {
+        notify(null, id, title, text, new Intent(context, MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+    }
+
+    private boolean notify(String tag, int id, String title, String text, Intent open) {
         if (Build.VERSION.SDK_INT >= 33
                 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {
-            return;
+            return false;
         }
-
-        Intent open = new Intent(context, MainActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        if (!manager.areNotificationsEnabled()
+                || manager.getNotificationChannel(CHANNEL).getImportance() == NotificationManager.IMPORTANCE_NONE) {
+            return false;
+        }
+        // Unique identity even when Android reuses a PendingIntent request code.
+        if (tag != null) open.setAction("com.kenigevents.projectshub.OPEN." + tag);
         PendingIntent pending = PendingIntent.getActivity(
                 context,
                 id,
@@ -55,11 +71,18 @@ final class Notifier {
 
         android.app.Notification notification = new android.app.Notification.Builder(context, CHANNEL)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setVisibility(android.app.Notification.VISIBILITY_PRIVATE)
+                .setPublicVersion(new android.app.Notification.Builder(context, CHANNEL)
+                        .setSmallIcon(android.R.drawable.ic_dialog_info)
+                        .setContentTitle("Projects Hub")
+                        .setContentText("Есть новое уведомление")
+                        .build())
                 .setContentTitle(title)
                 .setContentText(text)
                 .setContentIntent(pending)
                 .setAutoCancel(true)
                 .build();
-        manager.notify(id, notification);
+        manager.notify(tag, id, notification);
+        return true;
     }
 }

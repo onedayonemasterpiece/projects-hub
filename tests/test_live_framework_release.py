@@ -51,12 +51,20 @@ def test_browser_lock_resolves_version_ref_to_release_commit():
     assert installed["resolved"].endswith("#" + LIVE_RELEASE_COMMIT)
 
 
-def test_release_commit_is_immutable_dependency_and_provenance():
+def test_release_commit_matches_installed_native_apk_pairing_and_runtime():
     package = json.loads((WEB / "package.json").read_text(encoding="utf-8"))
     dependency = package["dependencies"]["@onedayonemasterpiece/live-interaction"]
     assert dependency.endswith("#" + LIVE_RELEASE_COMMIT)
     assert package["liveFramework"]["release_commit"] == LIVE_RELEASE_COMMIT
-    android = json.loads((ROOT / "android/live-interaction-candidate.json").read_text())
+    # This delivery promotes the backend/PWA while the user keeps the already
+    # built native candidate. Local main-branch Android is intentionally unchanged;
+    # producer/source checks still live in the original native PR #175.
+    pairing = json.loads((ROOT / "tests/fixtures/native-v2-installed-candidate.json").read_text())
+    android = pairing["framework"]
     assert (android["ref"], android["version"], android["channel"]) == (LIVE_REF, LIVE_VERSION, "candidate")
+    assert pairing["consumer_source_head"] == "20020927de8ba733922d763146d71fa75872727e"
+    assert pairing["apk"]["apk_sha256"] == "8cc466f881f44c68eec7276de94cacd158b2d557b8cd61330e70691042d04c76"
+    assert pairing["apk"]["artifact_id"] == 12099042605
+    assert pairing["start_fixture"]["source_ref"] == pairing["consumer_source_head"]
     from live_interaction import __version__
     assert __version__ == LIVE_VERSION, "Tests must exercise the pinned framework candidate, not a stale installation"

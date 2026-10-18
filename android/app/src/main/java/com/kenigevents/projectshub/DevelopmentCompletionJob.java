@@ -71,17 +71,24 @@ public final class DevelopmentCompletionJob extends JobService {
         return true;
     }
 
-    static void checkAndNotify(Context context) throws Exception {
+    static synchronized void checkAndNotify(Context context) throws Exception {
         android.os.UserManager userManager = context.getSystemService(android.os.UserManager.class);
         // AndroidKeyStore may be unavailable before the first unlock after
         // reboot; never accidentally clear a valid pairing credential.
         if (userManager != null && !userManager.isUserUnlocked()) return;
         String token = new SecureStore(context).getDeviceToken();
         if (token == null || token.isBlank()) return;
+        // Independent feeds: a non-platform owner cannot read development,
+        // but must still receive their own analytics results.
+        try {
+            checkAnalysisAndNotify(context, token);
+        } catch (Exception failure) {
+            Log.w("ProjectsHubDelivery", "Analysis completion check will retry", failure);
+        }
         JSONArray recent = new ApiClient(BuildConfig.HUB_URL)
                 .recentDevelopmentCompletions(token);
         SharedPreferences prefs = context.getSharedPreferences(PREFS, MODE_PRIVATE);
-        String boundDevice = token.substring(0, token.indexOf('.'));
+        String boundDevice = token.split("\\.", 2)[0];
         String oldDevice = prefs.getString("device_id", "");
         Set<String> seen = new HashSet<>(
                 prefs.getStringSet("seen_ids", new HashSet<>()));
@@ -116,5 +123,36 @@ public final class DevelopmentCompletionJob extends JobService {
         seen.retainAll(current);
         prefs.edit().putString("device_id", boundDevice)
                 .putBoolean("initialized", true).putStringSet("seen_ids", seen).apply();
+    }
+
+    private static void checkAnalysisAndNotify(Context context, String token) throws Exception {
+        JSONArray recent = new ApiClient(BuildConfig.HUB_URL).recentAnalysisCompletions(token);
+        // Pairing may change while the request is in flight. Do not deliver a
+        // previous account's result after logout/re-pairing.
+        if (!token.equals(new SecureStore(context).getDeviceToken())) return;
+        SharedPreferences prefs = context.getSharedPreferences("projects_hub_analysis_notices", MODE_PRIVATE);
+        String device = token.split("\\.", 2)[0];
+        Set<String> seen = device.equals(prefs.getString("device_id", ""))
+                ? new HashSet<>(prefs.getStringSet("seen_ids", new HashSet<>())) : new HashSet<>();
+        Set<String> current = new HashSet<>();
+        Notifier notifier = new Notifier(context);
+        int delivered = 0;
+        // Newest first, bounded burst. Never discard notices because permissions
+        // are disabled or a burst limit was reached; they remain retryable.
+        for (int i = 0; i < recent.length(); i++) {
+            JSONObject item = recent.optJSONObject(i);
+            if (item == null) continue;
+            String id = item.optString("id", "");
+            String analysisId = item.optString("analysis_id", "");
+            if (!id.matches("analysis_event_[0-9]+") || !AnalysisNotificationTarget.isValid(analysisId)) continue;
+            current.add(id);
+            if (seen.contains(id) || delivered >= 3) continue;
+            if (notifier.analysisCompleted(id, analysisId, item.optString("title", "Аналитика"))) {
+                seen.add(id);
+                delivered++;
+            }
+        }
+        seen.retainAll(current);
+        prefs.edit().putString("device_id", device).putStringSet("seen_ids", seen).apply();
     }
 }

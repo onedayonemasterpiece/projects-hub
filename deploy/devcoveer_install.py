@@ -501,10 +501,16 @@ def write_runtime_environment(sha: str, release: Path) -> bytes | None:
     private_write(PROVIDER_ENV, render_env(provider))
     ensure_session_secret()
     old_service = SERVICE_ENV.read_bytes() if SERVICE_ENV.is_file() else None
+    # Preserve only the explicitly activated private binding file, never import
+    # arbitrary host variables or implicitly enable a new integration.
+    prior_values = _parse_env(SERVICE_ENV) if old_service is not None else {}
+    voice_binding = {key: prior_values[key] for key in ("PROJECTS_HUB_VOICE_ANALYSIS_CONFIG_FILE",)
+                     if prior_values.get(key)}
     private_write(
         SERVICE_ENV,
         render_env(
             {
+                **voice_binding,
                 "PROJECTS_HUB_DATA_DIR": str(DATA_ROOT),
                 "PROJECTS_HUB_STATIC_DIR": str(release / "source/web/dist"),
                 "PROJECTS_HUB_SESSION_SECRET_FILE": str(SESSION_SECRET_FILE),

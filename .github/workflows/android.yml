@@ -6,10 +6,18 @@ on:
       - main
     paths:
       - "android/**"
+      - "scripts/android_emulator_smoke.sh"
+      - "scripts/android_voice_fixture.py"
+      - "web/**"
+      - "src/projects_hub/live*.py"
       - ".github/workflows/android.yml"
   pull_request:
     paths:
       - "android/**"
+      - "scripts/android_emulator_smoke.sh"
+      - "scripts/android_voice_fixture.py"
+      - "web/**"
+      - "src/projects_hub/live*.py"
       - ".github/workflows/android.yml"
   workflow_dispatch:
 
@@ -57,7 +65,14 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       ORG_GRADLE_PROJECT_liveInteractionAndroidDir: ${{ github.workspace }}/.dependencies/live-interaction/android
-    timeout-minutes: 25
+      DISPLAY: ":99"
+      QT_QPA_PLATFORM: xcb
+      QEMU_AUDIO_DRV: pa
+      QEMU_PA_SOURCE: ph_ci_mic.monitor
+      QEMU_PA_SINK: ph_ci_speaker
+      PULSE_SOURCE: ph_ci_mic.monitor
+      PULSE_SINK: ph_ci_speaker
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Checkout immutable native voice candidate
@@ -73,6 +88,24 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.10.2"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build actual web and controlled backend fixture
+        run: |
+          python -m pip install -e . 'numpy>=2,<3'
+          npm ci --prefix web
+          npm run build --prefix web
+      - name: Configure audible emulator and test certificates
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y pulseaudio pulseaudio-utils ffmpeg espeak-ng xvfb openssl libxcb-cursor0
+          bash scripts/android_emulator_smoke.sh --prepare
       - name: Enable KVM
         run: |
           test -c /dev/kvm
@@ -85,5 +118,16 @@ jobs:
           profile: pixel_7
           emulator-boot-timeout: 900
           disable-animations: false
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -timezone Etc/UTC
+          # The headless emulator binary has a Pulse stub: use a real Xvfb display.
+          emulator-options: -gpu swiftshader_indirect -no-snapshot -no-boot-anim -camera-back none -camera-front none -timezone Etc/UTC
           script: bash scripts/android_emulator_smoke.sh
+      - name: Upload emulator evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-emulator-evidence
+          if-no-files-found: warn
+          path: |
+            android/smoke-evidence/
+            android/app/build/reports/androidTests/
+            android/app/build/outputs/androidTest-results/

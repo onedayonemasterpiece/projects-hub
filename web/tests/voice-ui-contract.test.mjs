@@ -30,10 +30,10 @@ test("provider-corrected final replaces cumulative prefix instead of duplicating
   assert.equal(mergeTranscript(partial, corrected), corrected);
 });
 
-test("shorter sidecar final never rolls back a longer visible interim caption", () => {
+test("shorter sidecar final corrects a longer provisional hypothesis", () => {
   const interim = "а".repeat(184);
   const shorterFinal = "б".repeat(133);
-  assert.equal(selectProvisionalCaption(interim, shorterFinal, true), interim);
+  assert.equal(selectProvisionalCaption(interim, shorterFinal, true), shorterFinal);
   assert.equal(selectProvisionalCaption(interim, "в".repeat(188), true), "в".repeat(188));
 });
 

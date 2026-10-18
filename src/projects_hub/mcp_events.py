@@ -89,6 +89,10 @@ class MCPEvents:
             from .mcp_bindings import MCPBindings
             self.bindings = MCPBindings(store, auth, self)
 
+    def voice_context(self, request_id):
+        adapter = getattr(self, 'voice_analysis', None)
+        return adapter.context(request_id) if adapter else None
+
     def _encrypt(self, value: str) -> str:
         return self.cipher.encrypt(value.encode()).decode()
 
@@ -215,7 +219,7 @@ class MCPEvents:
                 self.store.project_access(context_actor_id, project['workspace_id'], project_id)
                 if (event_name not in (EVENT, REQUEST_EVENT) or (binding_id and event_name != REQUEST_EVENT)
                         or request_kind not in ('discussion','question_start')
-                        or origin not in ('mira','slack') or
+                        or origin not in ('mira','slack','voice') or
                         (request_kind == 'question_start' and (not binding_id or event_name != REQUEST_EVENT))):
                     raise StoreError('INVALID_ARGUMENT', 'Unknown request event')
                 binding = self.bindings.for_owner(actor_id, project_id, binding_id, context_actor_id) if binding_id else None
@@ -244,15 +248,17 @@ class MCPEvents:
                         eligible.append(sub)
                     except StoreError:
                         continue
-                if not eligible:
+                if not eligible and origin != 'voice':
                     raise StoreError('NO_SUBSCRIPTION', 'Connect and approve a verified project subscription first')
                 request_id, event_id = 'mcp_test_' + secrets.token_hex(16), 'evt_' + secrets.token_hex(16)
                 self.store.db.execute('''INSERT INTO mcp_test_requests
                     (id,project_id,actor_id,command_id,nonce,created_ms,expires_ms,state,event_id,context_actor_id,event_name,mode,binding_id,binding_revision,request_kind,source_revision,initiation_origin)
                     VALUES(?,?,?,?,?,?,?,'awaiting_response',?,?,?,?,?,?,?,?,?)''',
-                    (request_id, project_id, actor_id, command_id, secrets.token_urlsafe(32), now, now + ttl_seconds*1000, event_id, context_actor_id,
+                    (request_id, project_id, actor_id, command_id, secrets.token_urlsafe(32), now, now + (7*86400_000 if origin == 'voice' else ttl_seconds*1000), event_id, context_actor_id,
                      event_name, 'live' if binding else 'test', binding_id, binding['revision'] if binding else None,
                      request_kind,frozen_source_revision,origin))
+                if getattr(self,'voice_analysis',None) and origin == 'voice':
+                    self.voice_analysis.joins.freeze(request_id,binding_id)
                 for sub in eligible:
                     self.store.db.execute("INSERT INTO mcp_outbox(event_id,subscription_id,request_id,state,next_ms) VALUES(?,?,?,'pending',?)", (event_id, sub['id'], request_id, now))
                 self.store.db.execute('COMMIT')
@@ -352,6 +358,8 @@ class MCPEvents:
              binding_id,binding['revision'],'questions_ready',
              analysis['source_revision'],analysis['id'],analysis['origin']),
         )
+        if getattr(self,'voice_analysis',None) and analysis['origin'] == 'voice':
+            self.voice_analysis.joins.freeze(request_id,binding_id)
         for sub in self.store.db.execute(
             "SELECT * FROM mcp_subscriptions WHERE project_id=? AND event_name=? AND state='active' AND expires_ms>?",
             (project,REQUEST_EVENT,now),
@@ -437,6 +445,11 @@ class MCPEvents:
         with self.store._lock:
             row, _ = self._request(grant_id, request_id, project_id)
             if row['mode'] == 'live':
+                if getattr(self,'voice_analysis',None):
+                    redirected = self.voice_analysis.joins.superseded(row['id'])
+                    if redirected:
+                        self.bindings.access(grant_id,project_id,row['binding_id'],row['actor_id'],row['binding_revision'])
+                        return dict(project_id=project_id,request_id=row['id'],event_id=row['event_id'],**redirected)
                 return self.bindings.get_request(grant_id, row)
             data = self.get_request(grant_id, request_id, project_id=project_id)
             data.update(mode='test', event_id=row['event_id'], response_id=self.response_id(request_id) if row['state']=='completed' else None,
