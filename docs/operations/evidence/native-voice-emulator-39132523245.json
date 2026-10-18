@@ -1,0 +1,201 @@
+{
+  "release_evidence_from_zip": "PASS",
+  "checkout": {
+    "run_id": 39132523245,
+    "candidate_head_sha": "28a85be68aaec1215562866f36dddc22d1898214",
+    "checkout_sha": "bb9a33d3066d0fed43032c5d7ba093906b2e200e",
+    "checkout_tree": "1038978e8638d9a7d8394abb737feccd54e4cb40",
+    "shared_artifact": {
+      "schema": "projects-hub-sdk-archive/v1",
+      "artifact_type": "npm_tgz",
+      "repository": "https://github.com/onedayonemasterpiece/live-interaction",
+      "version": "0.4.0-rc.2",
+      "release_tag": "v0.4.0-rc.2",
+      "release_commit": "b8b4ba15cdf1b4cfafc428eb3adec02cb44d92d2",
+      "source_tree": "b2de6b175a55f6088e4003d2d5c076655ed4664e",
+      "archive_url": "https://github.com/onedayonemasterpiece/live-interaction/releases/download/v0.4.0-rc.2/onedayonemasterpiece-live-interaction-0.4.0-rc.2.tgz",
+      "archive_sha256": "8ff9df3888a0db10367878545b526c370118d262a50bb75c4b4ba63f63ee243a",
+      "archive_bytes": 177490,
+      "npm_integrity": "sha512-ZzfjqBqImWj1A6CyamgApiPtoP9X+InCyuCc+rKkfVwm/8E2FyD7qTOid07gMKqUABwwoDPq8YzNRz/lquBBgA==",
+      "file_count": 58,
+      "unpacked_bytes": 679222
+    }
+  },
+  "tests": [
+    [
+      "com.kenigevents.projectshub.MainActivitySmokeTest",
+      "activityLaunches"
+    ],
+    [
+      "com.kenigevents.projectshub.MainActivitySmokeTest",
+      "completionSchedulingCannotBreakStartupOrReopen"
+    ],
+    [
+      "com.kenigevents.projectshub.MainActivitySmokeTest",
+      "debugUpdaterDiscardsStableOffersAtEveryEntryPoint"
+    ],
+    [
+      "com.kenigevents.projectshub.MainActivitySmokeTest",
+      "nativeVoicePublicationKeepsEveryPublicChangeAndCurrentSnapshot"
+    ],
+    [
+      "com.kenigevents.projectshub.MainActivitySmokeTest",
+      "trustedPageAppliesBothPalettesWithoutReplacingWebView"
+    ],
+    [
+      "com.kenigevents.projectshub.NativeVoiceFlowTest",
+      "actualUiVoiceCapturePlaybackOutageRecoveryAndStop"
+    ]
+  ],
+  "prepare": {
+    "phase": "prepare",
+    "exit_code": 0
+  },
+  "run": {
+    "phase": "completed",
+    "exit_code": 0
+  },
+  "system_image": {
+    "api_level": 31,
+    "archive_revision": 14,
+    "package_revision": 12,
+    "abi": "x86_64",
+    "tag": "google_apis",
+    "url": "https://dl.google.com/android/repository/sys-img/google_apis/x86_64-31_r14.zip",
+    "archive_sha256": "7e7081f5784e98dd391ddae52573a75bc1db17a2fd286cb20be46d3eec251f94",
+    "archive_bytes": 1470822277,
+    "cache_hit": true,
+    "checksum_verified": true
+  },
+  "audio": {
+    "passed": true,
+    "checks": {
+      "speaker_waveform_matches_reply": true,
+      "live_input_waveform_matches_hello": true,
+      "fresh_input_after_reconnect_matches": true,
+      "offline_recording_not_executed": true,
+      "compressed_sources_persisted": true,
+      "binary_compressed_audio_both_directions": true,
+      "reconnected": true,
+      "controlled_provider_boundary_explicit": true
+    },
+    "speaker_match": {
+      "matched": true,
+      "correlation": 0.9945,
+      "pcm_correlation": 0.9415,
+      "minimum_correlation": 0.68,
+      "minimum_pcm_correlation": 0.45,
+      "rms": 486.81,
+      "offset_ms": 60490,
+      "reference_ms": 1270,
+      "reference_start_ms": 130,
+      "observed_ms": 75950
+    },
+    "input_matches": [
+      {
+        "matched": true,
+        "correlation": 0.91943,
+        "pcm_correlation": 0.92187,
+        "minimum_correlation": 0.68,
+        "minimum_pcm_correlation": 0.45,
+        "rms": 1547.5,
+        "offset_ms": 180,
+        "reference_ms": 2910,
+        "reference_start_ms": 160,
+        "observed_ms": 3700,
+        "name": "hello"
+      },
+      {
+        "matched": true,
+        "correlation": 0.98476,
+        "pcm_correlation": 0.97735,
+        "minimum_correlation": 0.68,
+        "minimum_pcm_correlation": 0.45,
+        "rms": 1696.12,
+        "offset_ms": 170,
+        "reference_ms": 2710,
+        "reference_start_ms": 150,
+        "observed_ms": 3480,
+        "name": "overlap"
+      }
+    ],
+    "input_match_failures": []
+  },
+  "native": {
+    "passed": true,
+    "offline_queued_audio_ms": 5880,
+    "stopped_revision": 123,
+    "durable_input_sources": 3,
+    "pending_after_stop_us": 112187,
+    "final": {
+      "revision": 123,
+      "status": "idle",
+      "capturing": false,
+      "playing": false,
+      "queued_audio_ms": 60,
+      "code": null
+    },
+    "outputs": [
+      {
+        "received_chunks": 19,
+        "played_us": 1854958,
+        "duration_us": 1854958
+      },
+      {
+        "received_chunks": 19,
+        "played_us": 1854958,
+        "duration_us": 1854958
+      }
+    ]
+  },
+  "receipt_sha256": {
+    "smoke-evidence/audio-verification.json": "866279bd95246ead55b3ad574344d0a98ff6b0d399efca68c640e69db6619231",
+    "smoke-evidence/checkout.json": "0a03aa0a93ed212ac466f0b064fbf8097003427bd848ab2b70b46fe23fe5fa6e",
+    "smoke-evidence/prepare-status.json": "d62543d248f1116bca39d58528f7eb14c7edb30662af8565b5a1205c832626c8",
+    "smoke-evidence/run-status.json": "3619aef6c6cf46ebbd445db81be48d6fa1c9f1e52f6d4dc91750393168254c14",
+    "smoke-evidence/system-image.json": "c10053d6a9779fcb6ef0bb8205a9f460760e26998186d1755b12bb5a5a342e6f",
+    "app/build/outputs/androidTest-results/connected/debug/TEST-emulator-5554 - 12-_app-.xml": "593d3d8c28275f8493dbf708728c02bc946bafc6b102608a4f753648d81f1425",
+    "app/build/outputs/connected_android_test_additional_output/debugAndroidTest/connected/emulator-5554 - 12/voice-e2e/voice-flow.json": "039aaa94d3a9c389e59def4cb094721abc07cdcfc8d1e23501f96d7ac78e2a39"
+  },
+  "observer": {
+    "screen-recording.json": {
+      "enabled": false,
+      "launch_requested": false,
+      "configured_size": null
+    },
+    "guest-background.json": {
+      "collected": true,
+      "profile": "stock-disposable-api31-google-apis",
+      "package_mutations": false,
+      "serial": "emulator-5554",
+      "user_id": 0,
+      "packages": [
+        {
+          "package": "com.google.android.gms",
+          "status": "collected",
+          "failure_reason": null,
+          "readback_file": "com.google.android.gms-dumpsys.txt"
+        },
+        {
+          "package": "com.google.android.googlequicksearchbox",
+          "status": "collected",
+          "failure_reason": null,
+          "readback_file": "com.google.android.googlequicksearchbox-dumpsys.txt"
+        }
+      ],
+      "failure_reason": null,
+      "scope": "Read-only package diagnostics; no package-state acceptance predicates."
+    }
+  },
+  "artifact": {
+    "id": 12138921330,
+    "bytes": 5596347,
+    "sha256": "fc7c047990d2ea527310e3bced1b23dcb0b38e1e5ccd32297414d78285bc740e",
+    "entries": 84
+  },
+  "limitations": [
+    "Controlled AI runner: native emulator audio acceptance, not real-provider ASR qualification.",
+    "Final pending112187us and queued60ms are retained; no claim of final server seal.",
+    "No isolated measurement of observer CPU saving or four-voice mixed RAG capacity."
+  ]
+}
