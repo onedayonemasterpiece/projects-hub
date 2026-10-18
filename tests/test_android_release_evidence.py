@@ -145,6 +145,12 @@ def candidate(gate, tmp_path, monkeypatch):
 
     def fake_transfer(argv, **kwargs):
         assert argv[:2] == ["gh", "api"]
+        media_types = {
+            f"/repos/{prefix}/actions/artifacts/456/zip": "application/vnd.github+json",
+            f"/repos/{prefix}/releases/assets/{gate.REFERENCE_ASSET_ID}": "application/octet-stream",
+        }
+        assert argv[2:4] == ["-H", "Accept: " + media_types[argv[-1]]]
+        assert kwargs["check"] is True and kwargs["timeout"] == 180
         calls.append(argv)
         kwargs["stdout"].write(transfers[argv[-1]])
         return SimpleNamespace(returncode=0)
@@ -215,6 +221,51 @@ def test_download_digest_is_checked_before_zip_and_reference(gate, candidate):
         gate.prepare(candidate.args)
     assert not (candidate.args.destination / "reference-v63.apk").exists()
     assert not candidate.args.github_output.exists()
+
+
+@pytest.mark.parametrize("suffix,status", [
+    (b" (HTTP 415)\n", "415"), (" (HTTP 403)\r\n", "403"), (b" network failure\n", "unknown"),
+])
+def test_download_error_reports_only_safe_http_diagnostic(gate, tmp_path, monkeypatch, suffix, status):
+    private_detail = "https://example.invalid/redirect?sig=private-signature token=private-token"
+
+    def reject(argv, **kwargs):
+        assert argv[2:4] == ["-H", "Accept: application/vnd.github+json"]
+        assert kwargs["check"] is True and kwargs["timeout"] == 180
+        stderr = private_detail.encode() + suffix if isinstance(suffix, bytes) else private_detail + suffix
+        raise subprocess.CalledProcessError(1, argv, stderr=stderr)
+
+    monkeypatch.setattr(gate.subprocess, "run", reject)
+    with pytest.raises(ValueError) as failure:
+        gate.download_api(gate.REPOSITORY + "/actions/artifacts/456/zip", tmp_path / "artifact.zip",
+                          hashlib.sha256(b"zip").hexdigest(), 3, 3)
+    assert str(failure.value) == f"GitHub artifact download failed (endpoint=actions_artifact, exit=1, HTTP={status})"
+    assert failure.value.__suppress_context__ is True and failure.value.__cause__ is None
+    assert private_detail not in str(failure.value)
+
+
+def test_download_timeout_does_not_expose_subprocess_details(gate, tmp_path, monkeypatch):
+    def timeout(argv, **kwargs):
+        assert argv[2:4] == ["-H", "Accept: application/octet-stream"]
+        assert kwargs["check"] is True and kwargs["timeout"] == 180
+        raise subprocess.TimeoutExpired(argv, 180, stderr=b"https://example.invalid/?sig=private-signature")
+
+    monkeypatch.setattr(gate.subprocess, "run", timeout)
+    with pytest.raises(ValueError) as failure:
+        gate.download_api(gate.REPOSITORY + "/releases/assets/123", tmp_path / "reference.apk",
+                          hashlib.sha256(b"apk").hexdigest(), 3, 3)
+    assert str(failure.value) == "GitHub artifact download failed (endpoint=release_asset, reason=timeout, timeout_seconds=180)"
+    assert failure.value.__suppress_context__ is True and failure.value.__cause__ is None
+
+
+def test_download_never_overwrites_existing_evidence(gate, tmp_path, monkeypatch):
+    destination = tmp_path / "artifact.zip"
+    destination.write_bytes(b"existing evidence")
+    monkeypatch.setattr(gate.subprocess, "run", lambda *args, **kwargs: pytest.fail("Must refuse before transfer"))
+    with pytest.raises(FileExistsError):
+        gate.download_api(gate.REPOSITORY + "/actions/artifacts/456/zip", destination,
+                          hashlib.sha256(b"zip").hexdigest(), 3, 3)
+    assert destination.read_bytes() == b"existing evidence"
 
 
 @pytest.mark.parametrize("corruption", ["audio_false", "missing_audio_check", "partial_run", "missing_checkout", "voice_failed", "unchecked_image", "skipped_case", "missing_dedup", "wrong_shared", "old_source_checkout", "unsafe_path"])

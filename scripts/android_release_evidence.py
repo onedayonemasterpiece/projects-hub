@@ -113,13 +113,27 @@ def pages(path, member=None):
 def download_api(path, destination, expected_sha, expected_bytes, limit):
     require(type(expected_bytes) is int and 0 < expected_bytes <= limit, "Artifact size is outside the download budget")
     require(re.fullmatch(r"[0-9a-f]{64}", expected_sha or ""), "Artifact SHA-256 is missing")
+    if re.fullmatch(re.escape(REPOSITORY) + r"/actions/artifacts/[1-9][0-9]*/zip", path):
+        endpoint, media_type = "actions_artifact", "application/vnd.github+json"
+    elif re.fullmatch(re.escape(REPOSITORY) + r"/releases/assets/[1-9][0-9]*", path):
+        endpoint, media_type = "release_asset", "application/octet-stream"
+    else:
+        raise ValueError("Unsupported GitHub binary download endpoint")
     destination = Path(destination)
     with destination.open("xb") as output:
         try:
-            subprocess.run(["gh", "api", "-H", "Accept: application/octet-stream", "/repos/" + path],
+            subprocess.run(["gh", "api", "-H", "Accept: " + media_type, "/repos/" + path],
                            stdout=output, stderr=subprocess.PIPE, check=True, timeout=180)
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-            raise ValueError("GitHub artifact download failed") from exc
+        except subprocess.TimeoutExpired:
+            raise ValueError(f"GitHub artifact download failed (endpoint={endpoint}, reason=timeout, timeout_seconds=180)") from None
+        except subprocess.CalledProcessError as exc:
+            # Retain only the numeric CLI status, never stderr or signed redirect URLs.
+            stderr = (exc.stderr or b"")[-8192:]
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("ascii", errors="ignore")
+            statuses = re.findall(r"\(HTTP ([1-5][0-9]{2})\)(?:\r?\n|$)", stderr)
+            http_status = statuses[-1] if statuses else "unknown"
+            raise ValueError(f"GitHub artifact download failed (endpoint={endpoint}, exit={exc.returncode}, HTTP={http_status})") from None
     require(destination.stat().st_size == expected_bytes, "Downloaded artifact size mismatch")
     require(digest(destination) == expected_sha, "Downloaded artifact SHA-256 mismatch")
 

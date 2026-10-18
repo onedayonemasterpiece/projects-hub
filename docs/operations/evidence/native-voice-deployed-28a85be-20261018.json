@@ -1,0 +1,87 @@
+{
+  "schema": 1,
+  "application_source": "28a85be68aaec1215562866f36dddc22d1898214",
+  "merged_main_at_deploy": "1c718e4527abc86ff4559c25fca875ba6599761c",
+  "deployment": {
+    "job_id": "job_4342ffb74edad58c2038492a",
+    "duration_ms": 53604,
+    "finished_at_utc": "2026-10-18T14:24:36.511Z",
+    "health": {
+      "auth_mode": "first_party_invite+loopback_dev",
+      "github_app_configured": true,
+      "live_interaction_available": true,
+      "ok": true,
+      "release_sha": "28a85be68aaec1215562866f36dddc22d1898214",
+      "resource_control_available": true,
+      "static_ready": true,
+      "storage": "sqlite-wal",
+      "version": "0.1.62"
+    },
+    "service": {
+      "active": "active",
+      "exec_status": "0",
+      "main_pid": "335422",
+      "restarts": "0",
+      "substate": "running"
+    },
+    "release_retention": {
+      "preserved": [
+        "28a85be68aaec1215562866f36dddc22d1898214",
+        "57cc43a45e13218d47ad9623e6f2617a13fe7d20",
+        "9cdc9c68592767e75d48c4510dc2865e898ffed7",
+        "adec24c3e2923f44a92eebc68542fab572afe5ab"
+      ],
+      "removed": [],
+      "skipped": []
+    }
+  },
+  "installed": {
+    "shared_commit": "b8b4ba15cdf1b4cfafc428eb3adec02cb44d92d2",
+    "resource_sdk_commit": "7c9b9ec1cca8a9c90760b4828922fe936bbd3166",
+    "pyav_version": "18.1.0"
+  },
+  "public_wss": {
+    "job_id": "job_b1492211666bc579b0b56907",
+    "duration_ms": 5040,
+    "scope": "Real-provider wl-live-v1 compatibility smoke; not native-v2 handset acceptance",
+    "ok": true,
+    "mode": "roundtrip",
+    "transport": "wss",
+    "transport_protocol": "wl-live-v1",
+    "hello_ack": true,
+    "binary_pcm_ack": true,
+    "binary_output_audio": true,
+    "http_fallback_rejected": true,
+    "turn_complete": true,
+    "output_transcript": true,
+    "server_closed_after_stop": true
+  },
+  "public_assets": [
+    {
+      "url": "https://projects-hub.kenigevents.ru/",
+      "sha256": "3d482bbe24bfe56073a110eca37dbca6fd66788816fbec1139b8612ae41e5d90",
+      "size": 747,
+      "status": 200,
+      "matches_installed": true
+    },
+    {
+      "url": "https://projects-hub.kenigevents.ru/assets/index-Con_aIZV.js",
+      "sha256": "5f9d4b1ac2f5632dd0bf6d529db8bd28681c53c186d6147b1a44a24228650e2f",
+      "size": 658239,
+      "status": 200,
+      "matches_installed": true
+    },
+    {
+      "url": "https://projects-hub.kenigevents.ru/assets/index-BAitcI0o.css",
+      "sha256": "805b4c764a5e1b06f30fbd485c95fecfb7d233d4ae3ef2a4477857806beb91d4",
+      "size": 21514,
+      "status": 200,
+      "matches_installed": true
+    }
+  ],
+  "open_qualification": [
+    "Primary ASR A1/A2 strict full-phrase FAILED despite complete client PCM writes.",
+    "Optional caption clock unverified/degraded.",
+    "Physical native handset,90min/mobile-network,and4voices+realRKB remain open."
+  ]
+}
