@@ -7,6 +7,7 @@ on:
     paths:
       - "android/**"
       - "scripts/android_emulator_smoke.sh"
+      - "scripts/android_emulator_image.py"
       - "scripts/android_voice_fixture.py"
       - "web/**"
       - "src/projects_hub/live*.py"
@@ -15,6 +16,7 @@ on:
     paths:
       - "android/**"
       - "scripts/android_emulator_smoke.sh"
+      - "scripts/android_emulator_image.py"
       - "scripts/android_voice_fixture.py"
       - "web/**"
       - "src/projects_hub/live*.py"
@@ -67,7 +69,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        api-level: [34, 35]
+        # New API 34/35 images omit Intel HDA modules; their virtio capture
+        # failed the real-audio gate. Use the Android 12 HDA image to qualify
+        # the complete app path; the normal APK still compiles/targets API 35.
+        api-level: [31]
     env:
       ORG_GRADLE_PROJECT_liveInteractionAndroidDir: ${{ github.workspace }}/.dependencies/live-interaction/android
       DISPLAY: ":99"
@@ -109,7 +114,7 @@ jobs:
       - name: Configure audible emulator and test certificates
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y pulseaudio pulseaudio-utils ffmpeg espeak-ng xvfb openssl libxcb-cursor0
+          sudo apt-get install -y pulseaudio pulseaudio-utils ffmpeg espeak-ng xvfb openssl libxcb-cursor0 ripgrep
           bash scripts/android_emulator_smoke.sh --prepare
       - name: Enable KVM
         run: |
@@ -128,8 +133,9 @@ jobs:
           emulator-build: '15507667'
           emulator-boot-timeout: 900
           disable-animations: false
+          pre-emulator-launch-script: python scripts/android_emulator_image.py
           # The headless emulator binary has a Pulse stub: use a real Xvfb display.
-          emulator-options: -gpu swiftshader_indirect -no-snapshot -no-boot-anim -camera-back none -camera-front none -timezone Etc/UTC -allow-host-audio -feature -VirtioSndCard
+          emulator-options: -gpu swiftshader_indirect -no-snapshot -wipe-data -no-boot-anim -camera-back none -camera-front none -timezone Etc/UTC -allow-host-audio -feature -VirtioSndCard
           script: bash scripts/android_emulator_smoke.sh
       - name: Upload emulator evidence
         if: always()

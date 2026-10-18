@@ -116,7 +116,9 @@ if rg -q '^KO:' "$EVIDENCE/host-mic.txt"; then exit 1; fi
 gradle -p android -PvoiceE2e=true assembleDebug assembleDebugAndroidTest --stacktrace
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 adb shell pm grant "$PACKAGE" android.permission.RECORD_AUDIO
-adb shell pm grant "$PACKAGE" android.permission.POST_NOTIFICATIONS
+if [ "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" -ge 33 ]; then
+  adb shell pm grant "$PACKAGE" android.permission.POST_NOTIFICATIONS
+fi
 adb logcat -c
 ffmpeg -nostdin -hide_banner -loglevel warning -y -f pulse -i ph_ci_speaker.monitor \
   -ac 1 -ar 48000 -c:a pcm_s16le "$EVIDENCE/speaker.wav" > "$EVIDENCE/speaker-capture.log" 2>&1 &
