@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "kind": "read_only_runtime_snapshot",
+  "title": "Projects Hub and shared DevCoveer host; 18 October 2026",
+  "timezone": "Europe/Kaliningrad",
+  "window_utc": {
+    "from": "2026-10-18T07:42:35Z",
+    "to": "2026-10-18T07:47:33Z"
+  },
+  "scope": {
+    "user_target": {
+      "ram_gb": 8,
+      "vcpu": 2,
+      "simultaneous_voice_assistants": 4,
+      "regional_knowledge_requests": "one and burst of four"
+    },
+    "new_load_generated": false,
+    "new_model_calls": 0,
+    "production_configuration_changed": false
+  },
+  "host": {
+    "observed_at": "2026-10-18T07:42:35.876599Z",
+    "source": "statvfs+/proc+du-metadata",
+    "memory_bytes": {
+      "MemTotalBytes": 7783927808,
+      "MemAvailableBytes": 3215982592,
+      "SwapTotalBytes": 4294963200,
+      "SwapFreeBytes": 2301349888
+    },
+    "swap_used_bytes": 1993613312,
+    "load_average": [
+      1.3955078125,
+      1.70849609375,
+      1.87841796875
+    ],
+    "filesystem_bytes": {
+      "total": 94461063168,
+      "free": 5384257536
+    },
+    "logical_cpu_count": null,
+    "effective_cpu_quota": null,
+    "process_rss_pss": null,
+    "psi": null,
+    "limitations": [
+      "CPU count/quota and per-service RSS/PSS/cgroup usage were not collected.",
+      "MemAvailable and SwapUsed are one point-in-time reading, not a four-session capacity benchmark.",
+      "SwapUsed alone does not establish active swap thrashing or its cause."
+    ]
+  },
+  "projects_hub": {
+    "service_observed_at": "2026-10-18T07:43:08.981190Z",
+    "unit": "projects-hub.service",
+    "active": "active",
+    "sub": "running",
+    "restarts": "0",
+    "start": "Sun 2026-10-18 07:15:15 UTC",
+    "release_working_directory": "/home/dev/.local/share/projects-hub/releases/57cc43a45e13218d47ad9623e6f2617a13fe7d20/source",
+    "health_observed_at": "2026-10-18T07:43:50.248210Z",
+    "health_http_status": 200,
+    "health_duration_ms": 54,
+    "health_body": {
+      "ok": true,
+      "storage": "sqlite-wal",
+      "auth_mode": "first_party_invite+loopback_dev",
+      "version": "0.1.62",
+      "release_sha": "57cc43a45e13218d47ad9623e6f2617a13fe7d20",
+      "static_ready": true,
+      "live_interaction_available": true,
+      "resource_control_available": true,
+      "github_app_configured": true
+    },
+    "process_tree_observed_at": "2026-10-18T07:43:50.947849Z",
+    "process_count": 1,
+    "main_pid": 1369,
+    "executable": "/usr/bin/python3.14",
+    "limitations": [
+      "Successful health is not microphone/provider, durable audio, or RKB functional acceptance.",
+      "A one-process tree at this moment does not exclude later MCP child processes."
+    ],
+    "service_config_observed_at": "2026-10-18T07:43:51.672224Z",
+    "entrypoint_relative_path": "scripts/run_server.py"
+  },
+  "regional_knowledge": {
+    "units_observed_at": "2026-10-18T07:47:32.854205Z",
+    "units": [
+      {
+        "unit": "regional-knowledge-base.service",
+        "scope": "user",
+        "load": "loaded",
+        "active": "active",
+        "sub": "running",
+        "description": "Regional Knowledge Base MCP"
+      },
+      {
+        "unit": "regional-knowledge-bge-controller.service",
+        "scope": "user",
+        "load": "loaded",
+        "active": "active",
+        "sub": "running",
+        "description": "Regional Knowledge Kaggle BGE lifecycle controller"
+      },
+      {
+        "unit": "regional-knowledge-e5.service",
+        "scope": "user",
+        "load": "loaded",
+        "active": "active",
+        "sub": "running",
+        "description": "Regional Knowledge pinned E5 CPU encoder"
+      },
+      {
+        "unit": "regional-knowledge-graph-discovery.service",
+        "scope": "user",
+        "load": "loaded",
+        "active": "active",
+        "sub": "running",
+        "description": "Regional Knowledge bounded graph discovery"
+      },
+      {
+        "unit": "regional-knowledge-indexing.service",
+        "scope": "user",
+        "load": "loaded",
+        "active": "active",
+        "sub": "running",
+        "description": "Regional Knowledge automatic vector indexing"
+      }
+    ],
+    "reviewed_source_sha": "63cd565096913932cb42a93dbac3d3650e973169",
+    "deployed_release_sha": null,
+    "e5_actual_memory_max": null,
+    "e5_actual_memory_current": null,
+    "limitations": [
+      "Unit names and running state do not prove actual inference location or end-to-end RKB correctness.",
+      "Kaggle-only BGE and E5 limits in the assessment refer to the pinned source and its saved reports; RKB runtime SHA and effective cgroup values were not read back."
+    ]
+  },
+  "methodology": "Existing typed Direct Ops host probes only: resources, system_info, service, health, process_tree, service_config and bounded service_list. No environment values, credentials, conversation payloads or audio copied."
+}
