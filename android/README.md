@@ -191,20 +191,25 @@ audio gate in source-based run 39118401444. Keep that profile for the archive
 candidate's fresh acceptance run. These two variables apply only to the
 emulator, not to `paplay`, recording tools or the verification script.
 
-The disposable fixture profile also disables and force-stops user 0 packages
-`com.google.android.gms` and `com.google.android.googlequicksearchbox` before
-starting the fixture or Gradle. Run 39127146951 recorded 847 log events during
-the first reply's two-second playback window, including 704 Google experiment
-and configuration events; the previous run recorded 11 events in its first
-reply window. Removing those unused first-boot jobs controls a measured source
-of variation; it does **not** establish the cause of every speaker glitch or
-qualify playback under a stock phone's background workload. The shared SDK,
-WebView, browser, network, System UI, launcher, microphone signals and audio
-thresholds are unchanged. The harness uses a fixed two-package allowlist,
-records an absent package explicitly, and verifies `enabled=3` and
-`stopped=true` for user 0 after each change. A failed command or readback fails
-the run before application testing. This profile is only for the dedicated
-disposable AVD and is never applied to a user's phone.
+Keep the stock Google APIs guest packages enabled. Run 39130565827, with
+GMS/Search disabled, showed dependent `SERVICE_DISABLED` errors and a foreground
+Contacts Sync error dialog. That profile is withdrawn. The harness
+only collects bounded read-only package inventory and targeted dumps for
+`com.google.android.gms` and `com.google.android.googlequicksearchbox` in
+`guest-background.json`; an absent package is explicit. It does not change or
+require particular `enabled`/`stopped` package states. The earlier GMS background
+activity remains an observed source of variation, not proof of a storage or
+speaker defect.
+
+Screen video is **off by default**. Run 39130565827 recorded through the guest's
+software AVC encoder at 1080×2400 while the native audio test was running. This
+is observer work, so routine acceptance keeps the existing step PNGs, final
+screenshot, microphone/speaker recordings and all audio assertions without
+starting `screenrecord`. Set `PH_ANDROID_RECORD_SCREEN=1` before the run only
+when a video is needed; the optional recording uses `--size 540x1200`, the
+existing 2 Mbit/s setting and a 180-second limit. `screen-recording.json` records
+the explicit option, launch request and configured dimensions. It does not
+claim measured CPU savings or establish the cause of the prior backpressure.
 
 On a Linux KVM host, prepare a **dedicated Android SDK and AVD directory** once.
 Install platform 35/build-tools 35.0.0, platform-tools, and the API31 Google APIs
@@ -284,7 +289,7 @@ or changes its defaults. Temporary CA keys stay outside the evidence directory.
 Actions uses the same prepare/run/cleanup commands and uploads evidence even
 on failure. It also retains Android test reports and UTP additional output.
 Preserve `prepare-status.json` / `run-status.json`, `system-image.json`,
-`guest-background.json` with its package state readbacks,
+`guest-background.json` with its read-only package dumps, `screen-recording.json`,
 `checkout.json` with the explicit `shared_artifact` identity, logcat,
 the two host recordings, fixture state and instrumentation receipts when
 reporting a run. A cached archive is a build input, not a cached test result;

@@ -104,111 +104,85 @@ validate_device() {
   test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = 31
 }
 
-configure_disposable_guest() {
+record_disposable_guest() {
   require_profile
   validate_device
-  local inventory name line user_state status reason readback present
-  local section selected sections packages users
-  local package_header='^  Package \[([a-zA-Z0-9_.]+)\] \([a-fA-F0-9]+\):$'
+  local inventory name line status reason readback present
   local -a installed=()
   local receipt="$EVIDENCE/guest-background.json" rows="$EVIDENCE/guest-background.tsv"
-  test ! -e "$receipt" && test ! -e "$rows" || { echo 'Guest profile evidence already exists; use a fresh run.' >&2; return 1; }
-  # Fail closed even if adb times out before the final machine-readable receipt.
-  printf '{"passed":false,"phase":"configuration"}\n' > "$receipt"
+  test ! -e "$receipt" && test ! -e "$rows" || { echo 'Guest diagnostics already exist; use a fresh run.' >&2; return 1; }
+  printf '{"collected":false,"package_mutations":false}\n' > "$receipt"
   : > "$rows"
   if ! inventory="$(adb shell pm list packages --user 0 | tr -d '\r')"; then
-    printf '{"passed":false,"phase":"configuration","failure_reason":"inventory_command_failed"}\n' > "$receipt"
+    printf '{"collected":false,"package_mutations":false,"failure_reason":"inventory_command_failed"}\n' > "$receipt"
     return 1
   fi
   if [[ -z "$inventory" ]]; then
-    printf '{"passed":false,"phase":"configuration","failure_reason":"inventory_empty"}\n' > "$receipt"
+    printf '{"collected":false,"package_mutations":false,"failure_reason":"inventory_empty"}\n' > "$receipt"
     return 1
   fi
   while IFS= read -r line; do
     if [[ ! "$line" =~ ^package:[a-zA-Z0-9_.]+$ ]]; then
-      printf '{"passed":false,"phase":"configuration","failure_reason":"inventory_invalid"}\n' > "$receipt"
+      printf '{"collected":false,"package_mutations":false,"failure_reason":"inventory_invalid"}\n' > "$receipt"
       return 1
     fi
     installed+=("$line")
   done <<< "$inventory"
-  # The fixture uses neither GMS nor Search. Their first-boot model/configuration
-  # downloads overlapped audio in run 39127146951. Leave WebView and networking
-  # intact; this controls the emulator profile, not production phone workload.
+  # Observe the stock image. Disabling GMS in run 39130565827 left dependent
+  # services reporting SERVICE_DISABLED and a Contacts Sync error dialog.
+  # These files are diagnostics, not enabled/stopped-state acceptance gates.
   for name in com.google.android.gms com.google.android.googlequicksearchbox; do
-    status=absent reason= readback= user_state= sections=0 packages=0 users=0 present=0
+    status=absent reason= readback= present=0
     for line in "${installed[@]}"; do
       if [[ "$line" = "package:$name" ]]; then present=1; break; fi
     done
     if [ "$present" -eq 1 ]; then
-      status=verification_failed
-      if ! adb shell pm disable-user --user 0 "$name" > "$EVIDENCE/$name-profile.txt" 2>&1; then
-        reason=disable_command_failed
-      elif ! adb shell am force-stop --user 0 "$name" >> "$EVIDENCE/$name-profile.txt" 2>&1; then
-        reason=force_stop_command_failed
-      fi
       readback="$name-dumpsys.txt"
-      # Keep the full targeted readback on failure too. adb retains its existing
-      # timeout; the subshell caps each output file at at most 2 MiB.
+      # Keep full targeted stdout/stderr, including failed commands. The
+      # existing adb timeout and per-file limit (at most 2 MiB) remain bounded.
       if (ulimit -f 2048 && adb shell dumpsys package "$name") > "$EVIDENCE/$readback" 2> "$EVIDENCE/$name-dumpsys-error.txt"; then
-        section= selected=
-        while IFS= read -r line || [ -n "$line" ]; do
-          line="${line%$'\r'}"
-          if [[ "$line" =~ ^[^[:space:]] ]]; then
-            section= selected=
-            if [[ "$line" = 'Packages:' ]]; then section=active; sections=$((sections + 1)); fi
-            continue
-          fi
-          [ "$section" = active ] || continue
-          if [[ "$line" =~ $package_header ]]; then
-            selected="${BASH_REMATCH[1]}"
-            if [[ "$selected" = "$name" ]]; then packages=$((packages + 1)); fi
-          elif [[ "$line" = '  Package '* ]]; then
-            selected=; reason="${reason:-active_header_invalid}"
-          elif [[ "$selected" = "$name" && "$line" = '    User 0: '* ]]; then
-            users=$((users + 1)); user_state="$line"
-          fi
-        done < "$EVIDENCE/$readback"
-        # Android Settings.dumpPackagesLPr also prints Hidden system packages:
-        # with another User 0 state. Only this unique active package is evidence.
-        if [ -z "$reason" ]; then
-          if [ "$sections" -ne 1 ]; then reason=active_section_count;
-          elif [ "$packages" -ne 1 ]; then reason=active_package_count;
-          elif [ "$users" -ne 1 ]; then reason=active_user0_count;
-          elif [[ ! "$user_state" =~ (^|[[:space:]])installed=true($|[[:space:]]) ]]; then reason=active_user0_not_installed;
-          elif [[ ! "$user_state" =~ (^|[[:space:]])enabled=3($|[[:space:]]) ]]; then reason=active_user0_not_disabled;
-          elif [[ ! "$user_state" =~ (^|[[:space:]])stopped=true($|[[:space:]]) ]]; then reason=active_user0_not_stopped;
-          fi
-        fi
+        status=collected
       else
-        reason="${reason:-readback_command_failed}"
+        status=collection_failed reason=readback_command_failed
       fi
-      if [ -z "$reason" ]; then status=disabled_and_stopped; fi
     fi
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$status" "$reason" "$readback" \
-      "$sections" "$packages" "$users" "${user_state//$'\t'/ }" >> "$rows"
+    printf '%s\t%s\t%s\t%s\n' "$name" "$status" "$reason" "$readback" >> "$rows"
     if [ -n "$reason" ]; then break; fi
   done
   python - "$rows" "$receipt" "$ANDROID_SERIAL" <<'PY'
 import json, pathlib, sys
-allowlist = ("com.google.android.gms", "com.google.android.googlequicksearchbox")
+names = ("com.google.android.gms", "com.google.android.googlequicksearchbox")
 states = {}
 for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
-    name, status, reason, readback, sections, matches, users, state = line.split("\t", 7)
+    name, status, reason, readback = line.split("\t")
     states[name] = {"package": name, "status": status, "failure_reason": reason or None,
-                   "readback_file": readback or None, "active_sections": int(sections),
-                   "active_package_matches": int(matches), "active_user0_matches": int(users),
-                   "active_user0_state": state or None}
-packages = [states.get(name, {"package": name, "status": "not_attempted"}) for name in allowlist]
-passed = all(item["status"] in ("absent", "disabled_and_stopped") for item in packages)
+                   "readback_file": readback or None}
+packages = [states.get(name, {"package": name, "status": "not_attempted"}) for name in names]
+collected = all(item["status"] in ("absent", "collected") for item in packages)
 pathlib.Path(sys.argv[2]).write_text(json.dumps({
-    "passed": passed, "phase": "verified" if passed else "verification_failed",
-    "profile": "disposable-api31-without-gms-search-background-jobs",
-    "serial": sys.argv[3], "user_id": 0, "packages": packages,
+    "collected": collected, "profile": "stock-disposable-api31-google-apis",
+    "package_mutations": False, "serial": sys.argv[3], "user_id": 0, "packages": packages,
     "failure_reason": next((item["failure_reason"] for item in packages if item.get("failure_reason")), None),
-    "scope": "Controlled fixture AVD; not stock-phone background-load acceptance.",
+    "scope": "Read-only package diagnostics; no package-state acceptance predicates.",
 }, indent=2) + "\n")
-sys.exit(0 if passed else 1)
+sys.exit(0 if collected else 1)
 PY
+}
+
+start_screen_recording() {
+  # Optional visual diagnostics must not add a software video encoder to the
+  # default audio acceptance workload. Step PNGs and sound capture are separate.
+  case "${PH_ANDROID_RECORD_SCREEN:-0}" in
+    0)
+      printf '{"enabled":false,"launch_requested":false,"configured_size":null}\n' > "$EVIDENCE/screen-recording.json"
+      return 0 ;;
+    1) ;;
+    *) echo 'PH_ANDROID_RECORD_SCREEN must be 0 or 1.' >&2; return 2 ;;
+  esac
+  printf '{"enabled":true,"launch_requested":true,"configured_size":{"width":540,"height":1200},"bit_rate":2000000,"time_limit_seconds":180}\n' > "$EVIDENCE/screen-recording.json"
+  PH_ADB_TIMEOUT=190 adb shell screenrecord --size 540x1200 --bit-rate 2000000 --time-limit 180 /sdcard/voice-e2e.mp4 \
+    > "$EVIDENCE/screenrecord.log" 2>&1 &
+  video_pid=$!
 }
 
 prepare() {
@@ -275,14 +249,14 @@ collect_smoke_evidence() {
     exit "$status"
   fi
   if [ -n "$pulse_watch_pid" ]; then kill "$pulse_watch_pid" 2>/dev/null || true; wait "$pulse_watch_pid" 2>/dev/null || true; fi
-  if [ "$device_ready" -eq 1 ]; then
+  if [ "$device_ready" -eq 1 ] && [ -n "$video_pid" ]; then
   adb shell pkill -2 screenrecord >/dev/null 2>&1 || true
   fi
   if [ -n "$audio_pid" ]; then kill -INT "$audio_pid" 2>/dev/null || true; wait "$audio_pid" 2>/dev/null || true; fi
   if [ -n "$mic_monitor_pid" ]; then kill -INT "$mic_monitor_pid" 2>/dev/null || true; wait "$mic_monitor_pid" 2>/dev/null || true; fi
   if [ -n "$video_pid" ]; then wait "$video_pid" 2>/dev/null || true; fi
   if [ "$device_ready" -eq 1 ]; then
-  adb pull /sdcard/voice-e2e.mp4 "$EVIDENCE/voice-e2e.mp4" >/dev/null 2>&1 || true
+  if [ -n "$video_pid" ]; then adb pull /sdcard/voice-e2e.mp4 "$EVIDENCE/voice-e2e.mp4" >/dev/null 2>&1 || true; fi
   adb pull "/sdcard/Android/data/$PACKAGE/files/voice-e2e/." "$EVIDENCE/" >/dev/null 2>&1 || true
   adb exec-out screencap -p > "$EVIDENCE/final-screen.png" 2>/dev/null || true
   adb logcat -d -v threadtime > "$EVIDENCE/logcat.txt" 2>&1 || true
@@ -321,8 +295,8 @@ test -f "$RESOURCES"
 test "$(cat "$EVIDENCE/prepare-status.json")" = '{"phase":"prepare","exit_code":0}'
 validate_device
 device_ready=1
-phase=guest_profile
-configure_disposable_guest
+phase=guest_diagnostics
+record_disposable_guest
 phase=fixture_start
 test -f "$CERTS/server.pem"
 test -f android/app/src/voiceE2e/res/raw/native_test_ca.pem
@@ -381,9 +355,7 @@ audio_pid=$!
 ffmpeg -nostdin -hide_banner -loglevel warning -y -f pulse -i ph_ci_mic.monitor \
   -ac 1 -ar 48000 -c:a pcm_s16le "$EVIDENCE/host-microphone.wav" > "$EVIDENCE/host-microphone-capture.log" 2>&1 &
 mic_monitor_pid=$!
-PH_ADB_TIMEOUT=190 adb shell screenrecord --bit-rate 2000000 --time-limit 180 /sdcard/voice-e2e.mp4 \
-  > "$EVIDENCE/screenrecord.log" 2>&1 &
-video_pid=$!
+start_screen_recording
 (
   while true; do
     date -u +%FT%TZ >> "$EVIDENCE/pulse-live-source-outputs.txt"

@@ -170,10 +170,12 @@ export function nativeVoiceFailure(error) {
     case "VOICE_STORE_IN_USE":
     case "NATIVE_VOICE_STORAGE_UNAVAILABLE":
     case "LIVE_NATIVE_SOURCE_STORE_FAILED":
+      return { ...failure, state: "capture_error",
+        notice: "Не удалось сохранить голосовую запись. Проверьте свободное место и снова откройте приложение. Сохранённые записи автоматически не удаляются." };
     case "LIVE_NATIVE_STORAGE_BACKPRESSURE":
     case "LIVE_NATIVE_OUTPUT_STORAGE_BACKPRESSURE":
       return { ...failure, state: "capture_error",
-        notice: "Не удалось сохранить голосовую запись. Проверьте свободное место и снова откройте приложение. Сохранённые записи автоматически не удаляются." };
+        notice: "Устройство не успевает обрабатывать звук. Голосовой разговор остановлен; сохранённая часть записи остаётся в приложении. Подождите немного и попробуйте снова." };
     case "LIVE_NATIVE_SESSION_UNAVAILABLE":
     case "LIVE_NATIVE_SOCKET_UNAVAILABLE":
     case "NATIVE_VOICE_SESSION_BACKPRESSURE":

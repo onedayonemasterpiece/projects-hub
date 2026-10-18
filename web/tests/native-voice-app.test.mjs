@@ -116,6 +116,8 @@ test("actual native state dispatch distinguishes protocol, storage and connectio
       ["NATIVE_VOICE_PROTOCOL_UNAVAILABLE", "native_unsupported", /несовместимые версии/],
       ["VOICE_STORE_QUOTA", "capture_error", /Место для голосовых записей заполнено/],
       ["VOICE_STORE_CORRUPT", "capture_error", /Не удалось сохранить голосовую запись/],
+      ["LIVE_NATIVE_STORAGE_BACKPRESSURE", "capture_error", /Устройство не успевает обрабатывать звук/],
+      ["LIVE_NATIVE_OUTPUT_STORAGE_BACKPRESSURE", "capture_error", /Устройство не успевает обрабатывать звук/],
       ["LIVE_NATIVE_SESSION_UNAVAILABLE", "connection_error", /соединиться с сервером/],
       ["NATIVE_VOICE_UNAVAILABLE", "connection_error", /Откройте приложение снова/],
     ]) {
@@ -124,6 +126,10 @@ test("actual native state dispatch distinguishes protocol, storage and connectio
       assert.match(t.ui.notice, notice, code);
       assert.equal(t.ui.notice.includes(code), false, "do not expose an untranslated internal code");
       assert.equal(t.ui.microphoneSettings, false);
+      if (code === "LIVE_NATIVE_STORAGE_BACKPRESSURE" || code === "LIVE_NATIVE_OUTPUT_STORAGE_BACKPRESSURE") {
+        assert.match(t.ui.notice, /сохранённая часть записи остаётся в приложении/);
+        assert.doesNotMatch(t.ui.notice, /свободное место|Место для голосовых записей заполнено/);
+      }
     }
     assert.equal(t.ui.browserStarts, 0);
   } finally { t.close(); }
