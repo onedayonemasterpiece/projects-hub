@@ -380,15 +380,29 @@ def test_release_listing_checks_every_page(gate, monkeypatch):
     assert len(calls) == 2
 
 
-def apk_commands(gate, monkeypatch, *, certificate=CERTIFICATE, package=None, version="0.1.62-rc.64", code=64, debug=False):
+def apk_commands(gate, monkeypatch, *, certificate=CERTIFICATE, package=None, version="0.1.62-rc.64", code=64, debug=False, extra_attributes=""):
     def answer(argv):
         if argv[0] == "apksigner":
             return "Verifies\nSigner #1 certificate SHA-256 digest: " + certificate + "\n"
         if argv[0] == "aapt":
-            return f"package: name='{package or gate.PACKAGE}' versionCode='{code}' versionName='{version}'\n" + ("application-debuggable\n" if debug else "")
+            return (f"package: name='{package or gate.PACKAGE}' versionCode='{code}' versionName='{version}' "
+                    "platformBuildVersionName='15' compileSdkVersion='35' compileSdkVersionCodename='15'"
+                    + extra_attributes + "\n" + ("application-debuggable\n" if debug else ""))
         assert argv[0] == "git"
         return SOURCE_SHA
     monkeypatch.setattr(gate, "command", answer)
+
+
+@pytest.mark.parametrize("attribute", ["name", "versionCode", "versionName"])
+@pytest.mark.parametrize("different", [False, True])
+def test_apk_identity_attributes_must_be_unique(gate, tmp_path, monkeypatch, attribute, different):
+    apk = tmp_path / "projects-hub.apk"
+    apk.write_bytes(b"synthetic APK")
+    values = {"name": gate.PACKAGE, "versionCode": "64", "versionName": "0.1.62-rc.64"}
+    value = "conflicting" if different else values[attribute]
+    apk_commands(gate, monkeypatch, extra_attributes=f" {attribute}='{value}'")
+    with pytest.raises(ValueError, match="Duplicate APK package identity attribute"):
+        gate.inspect_apk(apk, Path("aapt"), Path("apksigner"))
 
 
 @pytest.mark.parametrize("wrong", ["package", "debug", "certificate", "version"])
