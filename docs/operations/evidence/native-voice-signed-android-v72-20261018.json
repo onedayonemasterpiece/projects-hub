@@ -1,0 +1,168 @@
+{
+  "schema": 1,
+  "qualification": "release_candidate",
+  "full_product_qualification": false,
+  "application_source_sha": "28a85be68aaec1215562866f36dddc22d1898214",
+  "application_source_tree": "1038978e8638d9a7d8394abb737feccd54e4cb40",
+  "publisher_sha": "ed3cba28175ccc94c8c8c0e10c71d4620f29e16b",
+  "release": {
+    "id": 416513611,
+    "tag": "android-v72",
+    "url": "https://github.com/onedayonemasterpiece/projects-hub/releases/tag/android-v72",
+    "prerelease": true,
+    "draft": false,
+    "target_and_tag_sha_verified": "28a85be68aaec1215562866f36dddc22d1898214",
+    "stable_latest_tag": "android-v63",
+    "stable_latest_id": 415723841
+  },
+  "release_run": {
+    "id": 39138486269,
+    "number": 72,
+    "attempt": 1,
+    "conclusion": "success",
+    "job_id": 117707822548,
+    "url": "https://github.com/onedayonemasterpiece/projects-hub/actions/runs/39138486269",
+    "build_duration_seconds": 83,
+    "publication_observed_at": "2026-10-18T15:02:06Z"
+  },
+  "android_evidence": {
+    "run_id": 39132523245,
+    "run_attempt": 1,
+    "url": "https://github.com/onedayonemasterpiece/projects-hub/actions/runs/39132523245",
+    "tested_checkout": {
+      "repository": "onedayonemasterpiece/projects-hub",
+      "run_id": 39132523245,
+      "event_name": "pull_request",
+      "candidate_head_sha": "28a85be68aaec1215562866f36dddc22d1898214",
+      "checkout_sha": "bb9a33d3066d0fed43032c5d7ba093906b2e200e",
+      "checkout_tree": "1038978e8638d9a7d8394abb737feccd54e4cb40",
+      "shared_artifact": {
+        "schema": "projects-hub-sdk-archive/v1",
+        "artifact_type": "npm_tgz",
+        "repository": "https://github.com/onedayonemasterpiece/live-interaction",
+        "version": "0.4.0-rc.2",
+        "release_tag": "v0.4.0-rc.2",
+        "release_commit": "b8b4ba15cdf1b4cfafc428eb3adec02cb44d92d2",
+        "source_tree": "b2de6b175a55f6088e4003d2d5c076655ed4664e",
+        "archive_url": "https://github.com/onedayonemasterpiece/live-interaction/releases/download/v0.4.0-rc.2/onedayonemasterpiece-live-interaction-0.4.0-rc.2.tgz",
+        "archive_sha256": "8ff9df3888a0db10367878545b526c370118d262a50bb75c4b4ba63f63ee243a",
+        "archive_bytes": 177490,
+        "npm_integrity": "sha512-ZzfjqBqImWj1A6CyamgApiPtoP9X+InCyuCc+rKkfVwm/8E2FyD7qTOid07gMKqUABwwoDPq8YzNRz/lquBBgA==",
+        "file_count": 58,
+        "unpacked_bytes": 679222
+      }
+    },
+    "instrumentation_cases": [
+      [
+        "com.kenigevents.projectshub.MainActivitySmokeTest",
+        "activityLaunches"
+      ],
+      [
+        "com.kenigevents.projectshub.MainActivitySmokeTest",
+        "completionSchedulingCannotBreakStartupOrReopen"
+      ],
+      [
+        "com.kenigevents.projectshub.MainActivitySmokeTest",
+        "debugUpdaterDiscardsStableOffersAtEveryEntryPoint"
+      ],
+      [
+        "com.kenigevents.projectshub.MainActivitySmokeTest",
+        "nativeVoicePublicationKeepsEveryPublicChangeAndCurrentSnapshot"
+      ],
+      [
+        "com.kenigevents.projectshub.MainActivitySmokeTest",
+        "trustedPageAppliesBothPalettesWithoutReplacingWebView"
+      ],
+      [
+        "com.kenigevents.projectshub.NativeVoiceFlowTest",
+        "actualUiVoiceCapturePlaybackOutageRecoveryAndStop"
+      ]
+    ],
+    "audio_checks": {
+      "speaker_waveform_matches_reply": true,
+      "live_input_waveform_matches_hello": true,
+      "fresh_input_after_reconnect_matches": true,
+      "offline_recording_not_executed": true,
+      "compressed_sources_persisted": true,
+      "binary_compressed_audio_both_directions": true,
+      "reconnected": true,
+      "controlled_provider_boundary_explicit": true
+    },
+    "artifact_id": 12138921330,
+    "artifact_sha256": "fc7c047990d2ea527310e3bced1b23dcb0b38e1e5ccd32297414d78285bc740e",
+    "numeric_receipt": "native-voice-emulator-39132523245.json"
+  },
+  "apk": {
+    "package_id": "com.kenigevents.projectshub",
+    "versionCode": 72,
+    "versionName": "0.1.62-rc.72",
+    "certificate_sha256": "936a216fa547c6eebc9d2e9428c20b94cc6057285342f78418ff683b5e9cb691",
+    "sha256": "887956029daad60c50ad864f945080d0b2b1d2f589448abc5557ab178cc8b067",
+    "url": "https://github.com/onedayonemasterpiece/projects-hub/releases/download/android-v72/projects-hub.apk",
+    "asset_id": 653741385,
+    "bytes": 2333682,
+    "non_debuggable_verified": true,
+    "independent_local_signature_verification": true,
+    "same_production_reference_certificate": true
+  },
+  "published_downloads": [
+    {
+      "name": "projects-hub.apk",
+      "status": 200,
+      "bytes": 2333682,
+      "sha256": "887956029daad60c50ad864f945080d0b2b1d2f589448abc5557ab178cc8b067",
+      "downloaded_verified": true
+    },
+    {
+      "name": "release-evidence.json",
+      "status": 200,
+      "bytes": 7854,
+      "sha256": "385e6f28b7d535f780a494e1fcb1d28126fe9d487279e916a9e8f89157c90ccf",
+      "downloaded_verified": true
+    },
+    {
+      "name": "update.json",
+      "status": 200,
+      "bytes": 331,
+      "sha256": "b19c29085030970f4886ccf3826298773d36b018150047ba6dc1ef60fb85a54a",
+      "downloaded_verified": true
+    }
+  ],
+  "published_manifest_matches_apk": true,
+  "reference_verified": true,
+  "signed_apk_verified": true,
+  "local_inspection_tools": {
+    "source": "https://dl.google.com/android/repository/build-tools_r35_linux.zip",
+    "revision": "35.0.0",
+    "archive_bytes": 61958799,
+    "archive_sha256": "bd3a4966912eb8b30ed0d00b0cda6b6543b949d5ffe00bea54c04c81e1561d88",
+    "google_repository_sha1_verified": true,
+    "apk_tools": [
+      "aapt",
+      "apksigner"
+    ],
+    "reference_apk_sha256": "ec5ba31cd8a32fb566b74415b6cb59d14b29d2a3863f5889a8f85332c1a5c89f"
+  },
+  "latest_backend_health": {
+    "observed_at": "2026-10-18T15:02:50.797443Z",
+    "http_status": 200,
+    "release_sha": "28a85be68aaec1215562866f36dddc22d1898214",
+    "static_ready": true,
+    "live_interaction_available": true,
+    "resource_control_available": true,
+    "deployment_receipt": "native-voice-deployed-28a85be-20261018.json",
+    "public_real_provider_wss_scope": "wl-live-v1 compatibility; not native-v2 physical handset acceptance"
+  },
+  "open_acceptance": [
+    "physical Android handset/background/routes/permissions/signed-update confirmation",
+    "90-minute conversation with renewal/recovery",
+    "physical unstable-mobile-network acceptance",
+    "paired deployed backend/PWA and signed-APK post-release smoke",
+    "four concurrent voices with real Regional Knowledge workload",
+    "KNOWN FAILED primary transcript acceptance (A1/A2): the first Russian final is truncated to 'Слышишь меня?', and the second changes 'соединения' to 'соединений'. A2 verified complete PCM client WebSocket writes; both strict full-phrase checks remain FAILED. This is separate from optional captions.",
+    "stable shared SDK promotion and remaining provider qualification"
+  ],
+  "captions": "Optional captions remain degraded/unverified; their clock is not promoted by this release.",
+  "physical_handset_tested": false,
+  "four_voice_mixed_rag_capacity_measured": false
+}
