@@ -54,6 +54,7 @@ import InlineBoard, { type BoardUiCommand } from "./InlineBoard";
 import { recoverServerVoiceSource } from "./serverRecovery";
 import { createNativeVoiceAdapter, type NativeVoiceBridge, type NativeVoiceState } from "./nativeVoiceBridge.js";
 import { createNativeTimelineLoader, type NativeTimelineHint } from "./nativeTimelineLoader.js";
+import { createNativeCaptionState, reduceNativeCaption } from "./nativeCaptionTimeline.js";
 import { mergeTranscript, nativeVoiceFailure, reduceVoiceToolProgress, resolveTerminalVoiceState, selectProvisionalCaption, speechStartsNewUserBubble, voiceStartupFailureNotice, voiceStartupFailureState } from "./voiceUiContract.js";
 import {
   acknowledgeDeliveredSource,
@@ -289,6 +290,8 @@ function ActorApp({ resetIdentity, initialNotice }: { resetIdentity: (message?: 
   const [boardCommand, setBoardCommand] = useState<BoardUiCommand | null>(null);
   const [collaborationCard, setCollaborationCard] = useState<CollaborationCard | null>(null);
   const [interimInputTranscript, setInterimInputTranscript] = useState("");
+  const [nativeCaptionUnavailable, setNativeCaptionUnavailable] = useState(false);
+  const nativeCaptionRef = useRef(createNativeCaptionState());
   const [inputTranscriptSeen, setInputTranscriptSeen] = useState(false);
   const [speechActive, setSpeechActive] = useState(false);
   const [speechPending, setSpeechPending] = useState(false);
@@ -328,6 +331,9 @@ function ActorApp({ resetIdentity, initialNotice }: { resetIdentity: (message?: 
     identityAbort.current.abort();
     void nativeVoiceRef.current?.stop({ reason: reason === "actor_change" ? "account_changed" : "logout" }).catch(() => {});
     clientRef.current?.stop({ reason });
+    nativeCaptionRef.current = createNativeCaptionState();
+    setInterimInputTranscript("");
+    setNativeCaptionUnavailable(false);
     setToolProgress(null);
     setWait(null);
     setAndroidVoiceAudioFocus(false);
@@ -801,6 +807,20 @@ function ActorApp({ resetIdentity, initialNotice }: { resetIdentity: (message?: 
     });
   }, [reconcilePreferences]);
 
+  const applyNativeCaption = useCallback((event: LiveEvent) => {
+    if (!nativeSurface) return;
+    const state = nativeVoiceRef.current?.state;
+    const next = reduceNativeCaption(nativeCaptionRef.current,
+      userStoppedVoiceRef.current ? { type: "caption_reset" } : event, {
+        sessionId: state?.session_id ?? null, conversationId: conversationRef.current?.id ?? null,
+      });
+    if (next === nativeCaptionRef.current) return;
+    nativeCaptionRef.current = next;
+    setInterimInputTranscript(next.text);
+    setNativeCaptionUnavailable(next.unavailable);
+    if (next.text) setInputTranscriptSeen(true);
+  }, [nativeSurface]);
+
   const applyNativeTimeline = useCallback((event: LiveEvent): boolean => {
     const raw = event.timeline_message;
     if (!raw || typeof raw !== "object") return false;
@@ -809,6 +829,7 @@ function ActorApp({ resetIdentity, initialNotice }: { resetIdentity: (message?: 
         || typeof item.id !== "string" || typeof item.turn_id !== "string"
         || !["user", "assistant"].includes(item.role) || typeof item.text !== "string"
         || !Number.isSafeInteger(item.revision) || !Array.isArray(item.blocks)) return false;
+    applyNativeCaption({ type: "caption_canonical", timeline_message: item });
     const canonical = timelineMessageFromServer(item);
     setChatMessages(previous => {
       const messages = [...previous];
@@ -821,7 +842,7 @@ function ActorApp({ resetIdentity, initialNotice }: { resetIdentity: (message?: 
       return messages;
     });
     return true;
-  }, []);
+  }, [applyNativeCaption]);
 
   useEffect(() => {
     if (!nativeSurface || !boot || !nativeSessionId) return;
@@ -863,7 +884,6 @@ function ActorApp({ resetIdentity, initialNotice }: { resetIdentity: (message?: 
           && hint.conversation_id === currentConversation.id) {
         if (event.type === "input_transcript") {
           setInputTranscriptSeen(true);
-          setInterimInputTranscript("");
           userTurnAwaitingFinalRef.current = false;
           turnHasInput.current = true;
         }
@@ -874,30 +894,24 @@ function ActorApp({ resetIdentity, initialNotice }: { resetIdentity: (message?: 
       }
       return;
     }
+    if (nativeSurface && event.type.startsWith("caption_")) {
+      applyNativeCaption(event);
+      return;
+    }
     if (event.type === "caption_interim_transcript" && typeof event.text === "string") {
       setInputTranscriptSeen(true);
-      if (nativeSurface) {
-        const text = event.text;
-        setInterimInputTranscript(current => selectProvisionalCaption(current, text, false));
-      } else {
-        setInterimInputTranscript("");
-        applyCaptionToUserBubble(event.text, false);
-      }
+      setInterimInputTranscript("");
+      applyCaptionToUserBubble(event.text, false);
     } else if (event.type === "caption_final_transcript" && typeof event.text === "string") {
       setInputTranscriptSeen(true);
-      if (nativeSurface) {
-        const text = event.text;
-        setInterimInputTranscript(current => selectProvisionalCaption(current, text, true));
-      } else {
-        setInterimInputTranscript("");
-        applyCaptionToUserBubble(event.text, true);
-      }
+      setInterimInputTranscript("");
+      applyCaptionToUserBubble(event.text, true);
     } else if (event.type === "caption_unavailable") {
       // Optional captions do not change Mira's voice or canonical messages.
     } else if (event.type === "interim_input_transcript" && typeof event.text === "string") {
       if (nativeSurface) {
-        setInputTranscriptSeen(true);
-        setInterimInputTranscript(event.text.trim());
+        // Main provider provisional text has no accepted-audio correlation.
+        // Native uses only scoped sidecar captions and identified timeline rows.
         return;
       }
       if (userTurnBoundaryPendingRef.current) {
@@ -915,14 +929,12 @@ function ActorApp({ resetIdentity, initialNotice }: { resetIdentity: (message?: 
       }
     } else if (event.type === "input_transcript" && typeof event.text === "string") {
       setInputTranscriptSeen(true);
-      setInterimInputTranscript("");
       userTurnAwaitingFinalRef.current = false;
       if (!turnHasInput.current) turnHasInput.current = true;
       if (nativeSurface) {
-        // Native messages carry their durable server identity. Unidentified text
-        // can be a temporary caption, but cannot be assigned to a guessed turn.
-        if (!applyNativeTimeline(event)) setInterimInputTranscript(event.text.trim());
+        applyNativeTimeline(event);
       } else {
+        setInterimInputTranscript("");
         mergeChatMessage("user", event.text, userTranscriptIndex);
       }
     } else if (event.type === "output_transcript" && typeof event.text === "string") {
@@ -1012,7 +1024,7 @@ function ActorApp({ resetIdentity, initialNotice }: { resetIdentity: (message?: 
     } else if (event.type === "capability_unavailable" && event.code !== "NOT_CONFIGURED") {
       setNotice("Одна из дополнительных возможностей сейчас недоступна.");
     }
-  }, [applyCaptionToUserBubble, applyNativeTimeline, nativeSurface, loadBacklog, loadEventCards, loadMemories, mergeChatMessage, updateWidgetBlocks]);
+  }, [applyCaptionToUserBubble, applyNativeCaption, applyNativeTimeline, nativeSurface, loadBacklog, loadEventCards, loadMemories, mergeChatMessage, updateWidgetBlocks]);
 
   useEffect(() => {
     if (!boot || !conversation) {
@@ -1237,14 +1249,17 @@ function ActorApp({ resetIdentity, initialNotice }: { resetIdentity: (message?: 
     setInputTranscriptSeen(false);
     // Native VAD has no canonical turn identity. It controls voice status only;
     // the server timeline supplies the permanent message rows.
-    if (nativeSurface) return;
+    if (nativeSurface) {
+      applyNativeCaption({ type: "caption_local_speech_start" });
+      return;
+    }
     if (userTurnAwaitingFinalRef.current) settleCurrentVoiceBubble();
     userTurnBoundaryPendingRef.current = false;
     userTranscriptIndex.current = -1;
     assistantTranscriptIndex.current = -1;
     turnHasInput.current = false;
     reserveUserVoiceBubble();
-  }, [nativeSurface, reserveUserVoiceBubble, settleCurrentVoiceBubble]);
+  }, [nativeSurface, applyNativeCaption, reserveUserVoiceBubble, settleCurrentVoiceBubble]);
 
   useEffect(() => {
     if (!boot) {
@@ -1263,6 +1278,13 @@ function ActorApp({ resetIdentity, initialNotice }: { resetIdentity: (message?: 
         bridge: nativeBridge,
         onState: state => {
           if (!attached || !activeIdentity.current) return;
+          if (nativeStateRef.current?.session_id !== state.session_id
+              || nativeStateRef.current?.conversation_id !== state.conversation_id
+              || ["idle", "error", "unsupported"].includes(state.status)) {
+            nativeCaptionRef.current = createNativeCaptionState();
+            setInterimInputTranscript("");
+            setNativeCaptionUnavailable(false);
+          }
           nativeStateRef.current = state;
           setNativeSessionId(["idle", "error", "unsupported"].includes(state.status) ? null : state.session_id);
           currentSourceIdRef.current = state.source_id;
@@ -1709,6 +1731,9 @@ function ActorApp({ resetIdentity, initialNotice }: { resetIdentity: (message?: 
       const state = native.state;
       if (state?.capturing || state?.playing || (state && ["starting", "live", "delayed", "recording_only", "stopping"].includes(state.status))) {
         userStoppedVoiceRef.current = true;
+        nativeCaptionRef.current = createNativeCaptionState();
+        setInterimInputTranscript("");
+        setNativeCaptionUnavailable(false);
         setNativeSessionId(null);
         // Posting Stop precedes every network/flush await; the service releases
         // microphone and playback itself. A pending Start cannot re-enable it.
@@ -2536,6 +2561,11 @@ function ActorApp({ resetIdentity, initialNotice }: { resetIdentity: (message?: 
               <span className="native-voice-caption" role="status" aria-live="polite"
                 aria-label="Предварительная расшифровка">
                 Распознаю: {interimInputTranscript}
+              </span>
+            )}
+            {nativeSurface && voiceActive && nativeCaptionUnavailable && (
+              <span className="native-caption-unavailable" role="status">
+                Промежуточные подписи недоступны.
               </span>
             )}
             {speechActive && networkOnline && (

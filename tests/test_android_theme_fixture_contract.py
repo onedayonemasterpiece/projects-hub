@@ -26,6 +26,10 @@ def test_fixture_intercepts_service_worker_requests_and_restores_global_client()
     assert 'new ServiceWorkerClient()' in source
     assert source.count('return fixtureResponse(url, request);') == 2
     assert '@After public void restoreServiceWorkerClient()' in source
-    assert 'setServiceWorkerClient(null)' in source
+    cleanup=source[source.index('    @After public void restoreServiceWorkerClient()'):source.index('    private WebResourceResponse fixtureResponse(')]
+    assert 'setServiceWorkerClient(new ServiceWorkerClient()' in cleanup
+    assert 'return null;' in cleanup  # null response preserves the real network path
+    assert 'fixtureResponse(' not in cleanup
+    assert 'setServiceWorkerClient(null)' not in source
     assert 'bodyLength:document.body?.textContent?.length' in source
     assert 'worker:navigator.serviceWorker?.controller?.scriptURL' in source

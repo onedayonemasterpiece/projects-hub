@@ -1,8 +1,8 @@
 {
   "repository": "https://github.com/onedayonemasterpiece/live-interaction",
-  "version": "0.4.0-rc.1",
-  "ref": "c564f0c44c6fe783fd4932bd4633fada34e05c73",
-  "tree": "e4f36b3e6773e19a74a33de5389c1e3475f4b1c7",
+  "version": "0.4.0-rc.2",
+  "ref": "132d59b73a137051904bc75bb03dd7d7d13bc49c",
+  "tree": "1bd7a97c4e5c721d0fcbaa12248d414dcf683d64",
   "channel": "candidate",
   "artifact_type": "git_source",
   "status": "paired source candidate; signed release and physical acceptance pending"

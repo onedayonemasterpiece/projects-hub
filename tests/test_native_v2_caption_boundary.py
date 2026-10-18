@@ -114,6 +114,10 @@ async def test_production_v2_host_preserves_caption_boundaries_and_never_execute
                                    attempt_id="native_caption_boundary", client_instance_id="native_fixture")
         assert started["caption_enabled"] is True
         session = host.sessions[started["session_id"]]
+        # Native alignment is unverified in production. This test deliberately
+        # observes the real accepted-PCM fanout without authorizing caption text.
+        assert host._caption_sidecars[session.id].task is None
+        host._caption_sidecars[session.id].diagnostic_observer = lambda event, text=None: None
         binding = host.open_socket(session_id=session.id, resource_id=scope.resource_binding(), ticket=started["socket_ticket"])
         socket_task = asyncio.create_task(serve_socket(binding, receive=incoming.get, send=send, close=close,
                                                        protocol=vector["protocol"]))
@@ -144,6 +148,17 @@ async def test_production_v2_host_preserves_caption_boundaries_and_never_execute
         assert pcm_by_reader["main"] == pcm_by_reader["caption"]
         assert len(pcm_by_reader["main"]) == vector["decoded_pcm_samples"] * 2 == 3200
         assert any(pcm_by_reader["main"]), "Synthetic Opus vector must be decoded, not replaced with silence"
+        caption_start = observed["caption"][0]["configuration"]
+        assert caption_start["input_audio_transcription"]["mode"] == "VERBATIM"
+        assert caption_start["native_caption_provenance"]["offset_clock"] == "unverified"
+        projected = [item for item in media("caption") if item["type"] == "audio"]
+        utterance = session.state["_current_utterance"]
+        expected_turn = "turn_live_" + __import__("hashlib").sha256(
+            f"{session.id}:{utterance['id']}".encode()).hexdigest()[:40]
+        assert all(item["caption_scope"]["source_id"] == live["server_source_id"]
+                   and item["caption_scope"]["utterance_id"] == utterance["id"]
+                   and item["caption_scope"]["turn_id"] == expected_turn for item in projected)
+        assert sum(item["capture_end_us"] - item["capture_start_us"] for item in projected) == 100_000
 
         # Open a separate product store connection after socket ACK/seal. Both
         # originals must be recoverable byte-for-byte without a private PCM file.

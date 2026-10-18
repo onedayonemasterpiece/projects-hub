@@ -37,7 +37,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: onedayonemasterpiece/live-interaction
-          ref: c564f0c44c6fe783fd4932bd4633fada34e05c73
+          ref: 132d59b73a137051904bc75bb03dd7d7d13bc49c
           path: .dependencies/live-interaction
       - uses: actions/setup-java@v4
         with:
@@ -89,7 +89,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: onedayonemasterpiece/live-interaction
-          ref: c564f0c44c6fe783fd4932bd4633fada34e05c73
+          ref: 132d59b73a137051904bc75bb03dd7d7d13bc49c
           path: .dependencies/live-interaction
       - uses: actions/setup-java@v4
         with:

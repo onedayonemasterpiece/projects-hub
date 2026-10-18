@@ -30,7 +30,7 @@ REPOSITORY = "onedayonemasterpiece/projects-hub"
 MAIN_REF = "refs/remotes/origin/main"
 SERVICE = "projects-hub.service"
 PORT = 8196
-AI_RESOURCE_CONTROL_SHA = "6ec1929dc3183f4bafb112de96ee0571334c0b40"
+AI_RESOURCE_CONTROL_SHA = "7c9b9ec1cca8a9c90760b4828922fe936bbd3166"
 AI_RESOURCE_CONTROL_URL = (
     "git+https://github.com/onedayonemasterpiece/"
     f"ai-resource-control.git@{AI_RESOURCE_CONTROL_SHA}"

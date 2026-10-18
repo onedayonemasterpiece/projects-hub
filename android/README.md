@@ -17,8 +17,8 @@ capture. Explicit Stop, logout/account change, or a fatal owner error stop audio
 
 ## Candidate build
 
-This feature branch is paired with the shared `0.4.0-rc.1` source candidate at
-`c564f0c44c6fe783fd4932bd4633fada34e05c73`, recorded in
+This feature branch is paired with the shared `0.4.0-rc.2` source candidate at
+`132d59b73a137051904bc75bb03dd7d7d13bc49c`, recorded in
 `android/live-interaction-candidate.json`. Its Python and web pins target the
 same candidate. These feature-branch bindings do not change the production
 deployment or satisfy release qualification.

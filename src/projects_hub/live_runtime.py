@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 from typing import Any, Callable
@@ -76,6 +77,7 @@ def build_live_host(
         Callable[[str, str], RegionalKnowledgeAdapter | None] | None
     ) = None,
     audio_v2_codecs: Any | None = None,
+    native_caption_offset_clock: str = "unverified",
 ) -> Any:
     """Build the canonical shared host lazily so offline store/API tests need no provider SDK."""
 
@@ -174,9 +176,11 @@ def build_live_host(
                     vocabulary=list(session.state.get("caption_vocabulary") or []),
                     emit=lambda event, active=session: self._caption_emit(active, event),
                     provider_run=transcribe_run,
+                    native_offset_clock=native_caption_offset_clock,
                 )
                 self._caption_sidecars[session.id] = sidecar
-                sidecar.start()
+                # Negotiate v2 before choosing the native provenance contract.
+                # No caption connection is opened until accepted input arrives.
             return {
                 **result,
                 "caption_enabled": session.id in self._caption_sidecars,
@@ -206,10 +210,33 @@ def build_live_host(
                 projection = kwargs.get("_audio_projection")
                 current = self.sessions.get(session_id)
                 if current is not None and not current.closed and current.stop_reason != "explicit_stop":
-                    if projection is not None:
-                        sidecar.feed_pcm(projection.pcm16)
-                    else:
-                        sidecar.feed(message)
+                    try:
+                        native = bool(current.state.get("_native_timeline"))
+                        sidecar.start(native=native)
+                        if projection is not None and not result.get("already_projected"):
+                            utterance = current.state.get("_current_utterance") or {}
+                            scope = None
+                            # Use the utterance that actually admitted this PCM,
+                            # never the semantic heuristic for late main events.
+                            if (native and utterance.get("pcm_accepted")
+                                    and utterance.get("source_id") == projection.commit.server_source_id):
+                                identity = f"{current.id}:{utterance['id']}"
+                                scope = {
+                                    "session_id": current.id,
+                                    "conversation_id": current.state["conversation_id"],
+                                    "source_id": projection.commit.server_source_id,
+                                    "utterance_id": utterance["id"],
+                                    "turn_id": "turn_live_" + hashlib.sha256(identity.encode()).hexdigest()[:40],
+                                    "utterance_sequence": utterance["sequence"],
+                                }
+                            sidecar.feed_pcm(projection.pcm16, caption_scope=scope,
+                                             capture_start_us=projection.capture_start_us)
+                        elif projection is None:
+                            sidecar.feed(message)
+                    except Exception as exc:
+                        # Captions are optional; accepted primary voice must not
+                        # fail because of sidecar setup, metadata or presentation.
+                        sidecar._unavailable(type(exc).__name__[:80])
             return result
 
         async def _discard(self, session: Any, graceful: bool = False) -> None:

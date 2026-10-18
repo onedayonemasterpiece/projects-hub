@@ -47,14 +47,19 @@ def main() -> None:
             if "=" in line and not line.lstrip().startswith("#")
         )
         properties = {key.strip(): value.strip() for key, value in properties.items()}
-        if properties.get("Pkg.Revision") != "14" or properties.get("AndroidVersion.ApiLevel") != "31":
+        # Google's archive is named r14 but its source.properties declares 12.
+        # Verify the actual package metadata, not a revision inferred from its URL.
+        if (properties.get("Pkg.Revision") != "12" or properties.get("AndroidVersion.ApiLevel") != "31"
+                or properties.get("SystemImage.Abi") != "x86_64"
+                or properties.get("SystemImage.TagId") != "google_apis"):
             raise ValueError("Unexpected system image revision or API level")
         if not (package / "system.img").is_file() or not (package / "kernel-ranchu").is_file():
             raise ValueError("Incomplete system image package")
         shutil.rmtree(destination)
         shutil.move(str(package), str(destination))
         (evidence / "system-image.json").write_text(json.dumps({
-            "api_level": 31, "revision": 14, "abi": "x86_64", "tag": "google_apis",
+            "api_level": 31, "archive_revision": 14, "package_revision": 12,
+            "abi": "x86_64", "tag": "google_apis",
             "url": url, "archive_sha256": digest.hexdigest(), "archive_bytes": archive.stat().st_size,
         }, indent=2) + "\n")
 

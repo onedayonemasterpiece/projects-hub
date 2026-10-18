@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createNativeVoiceAdapter } from "../src/nativeVoiceBridge.js";
 import { nativeVoiceFailure } from "../src/voiceUiContract.js";
+import { createNativeCaptionState } from "../src/nativeCaptionTimeline.js";
 
 const source = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const initialization = source.match(/      const native = createNativeVoiceAdapter\(\{([\s\S]*?)\n      \}\);\n      nativeVoiceRef\.current = native;/)?.[0];
@@ -27,6 +28,8 @@ async function setup() {
   const conversationRef = { current: { id: "conversation_A", actor_id: "actor_A", workspace_id: "workspace_A" } };
   const env = {
     nativeVoiceFailure, activeIdentity, nativeVoiceRef, conversationRef,
+    createNativeCaptionState, nativeCaptionRef: { current: createNativeCaptionState() },
+    setNativeCaptionUnavailable: noop,
     nativeStateRef: { current: null }, currentSourceIdRef: { current: null },
     boot: { actor: { id: "actor_A" }, workspace: { id: "workspace_A" } },
     nativeSurface: true, isAndroidApp: true, userStoppedVoiceRef: { current: false },

@@ -157,6 +157,87 @@ async def test_sidecar_batches_main_pcm_to_google_recommended_100ms_chunks():
     assert [item["type"] for item in mirrored] == ["activity_start", "audio", "activity_end"]
 
 
+def _native_scope(turn="A", sequence=1):
+    return {"session_id": "session", "conversation_id": "conversation", "source_id": "source",
+            "utterance_id": "utterance_" + turn, "turn_id": "turn_" + turn,
+            "utterance_sequence": sequence}
+
+
+@pytest.mark.asyncio
+async def test_native_unverified_uses_no_caption_lease_but_reports_accepted_turns_and_unavailability():
+    seen = []
+
+    async def forbidden_runner(**kwargs):
+        raise AssertionError("unverified native captions must not reserve a second provider")
+
+    sidecar = CaptionSidecar(environment={}, binding="caption", vocabulary=["Мира"],
+                            emit=seen.append, provider_run=forbidden_runner, guarded_runner=forbidden_runner)
+    sidecar.start(native=True)
+    assert sidecar.task is None
+    sidecar.feed({"activity_start": True})
+    assert not [event for event in seen if event["type"] == "caption_turn_started"]
+    sidecar.feed_pcm(b"\x01\x00" * 800, caption_scope=_native_scope(), capture_start_us=500_000)
+    sidecar.feed({"activity_end": True})
+    sidecar._on_event({"type": "input_transcript", "text": "Мира, Projects Hub, Codex"})
+    assert [event["type"] for event in seen] == ["caption_unavailable", "caption_turn_started", "caption_turn_ended"]
+    assert seen[0]["code"] == "CAPTION_CLOCK_UNVERIFIED"
+    assert seen[-1]["caption_scope"] == _native_scope()
+    assert seen[-1]["capture_end_us"] == 550_000
+    assert sidecar.reader.pending_bytes == 0
+    await sidecar.stop()
+    count = len(seen)
+    sidecar.feed_pcm(b"\x01\x00" * 800, caption_scope=_native_scope("B", 2), capture_start_us=600_000)
+    sidecar._on_event({"type": "input_transcript", "text": "late"})
+    assert len(seen) == count
+
+
+@pytest.mark.asyncio
+async def test_native_probe_keeps_real_pcm_scope_and_ephemeral_text_out_of_public_events():
+    seen, messages, probes = [], [], []
+
+    async def fixture_runner(**kwargs):
+        while raw := await kwargs["reader"].readline():
+            item = json.loads(raw)
+            messages.append(item)
+            if item["type"] == "stop":
+                return
+
+    sidecar = CaptionSidecar(environment={}, binding="caption", vocabulary=["Мира"], emit=seen.append,
+                            provider_run=fixture_runner, guarded_runner=fixture_runner)
+    sidecar.diagnostic_observer = lambda event, text=None: probes.append((event, text))
+    sidecar.start(native=True)
+    sidecar.feed({"activity_start": True})
+    sidecar.feed_pcm(b"\x01\x00" * 400, caption_scope=_native_scope(), capture_start_us=500_000)
+    sidecar.feed_pcm(b"\x02\x00" * 400, caption_scope=_native_scope(), capture_start_us=525_000)
+    sidecar.feed({"activity_end": True})
+    sidecar.feed({"activity_start": True})
+    sidecar.feed_pcm(b"\x03\x00" * 800, caption_scope=_native_scope("B", 2), capture_start_us=900_000)
+    sidecar.feed({"activity_end": True})
+    from live_interaction.caption_provenance import CaptionAudioLedger
+    ledger = CaptionAudioLedger()
+    ledger.connected()
+    await asyncio.sleep(0)
+    for item in messages:
+        if item["type"] == "audio":
+            sidecar._on_event(ledger.sent(item))
+    event = ledger.transcript("input_transcript", {"text": "Мира, привет", "startOffset": "0s", "endOffset": "0.05s"})
+    sidecar._on_event(event)
+    await sidecar.stop()
+    start = messages[0]["configuration"]
+    assert start["input_audio_transcription"]["mode"] == "VERBATIM"
+    assert start["native_caption_provenance"] == {"offset_clock": "unverified", "diagnostics": True}
+    audio = [item for item in messages if item["type"] == "audio"]
+    assert len(audio) == 2
+    assert [item["caption_scope"] for item in audio] == [_native_scope(), _native_scope("B", 2)]
+    assert [(item["capture_start_us"], item["capture_end_us"]) for item in audio] == [(500_000, 550_000), (900_000, 950_000)]
+    assert probes[-1][1] == "Мира, привет"
+    assert probes[-1][0]["type"] == "caption_timing_probe"
+    assert probes[-1][0]["assigned"] is False
+    assert "text" not in probes[-1][0]
+    assert not [event for event in seen if event["type"] in {"caption_timing_probe", "caption_audio_sent",
+                                                          "caption_interim_transcript", "caption_final_transcript"}]
+
+
 def test_runtime_fanout_is_post_acceptance_fail_open_and_lifecycle_bound():
     runtime = (
         __import__("pathlib").Path(__file__).resolve().parents[1]

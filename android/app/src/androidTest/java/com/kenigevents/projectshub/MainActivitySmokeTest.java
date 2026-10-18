@@ -28,8 +28,15 @@ import org.junit.runner.RunWith;
 @RunWith(AndroidJUnit4.class)
 public class MainActivitySmokeTest {
     @After public void restoreServiceWorkerClient() {
+        // The API 31 image's WebView wraps a null client, then dereferences it
+        // on the next worker request. Remove the fixture interception with a
+        // non-null client returning null: WebView keeps its normal network path.
         InstrumentationRegistry.getInstrumentation().runOnMainSync(() ->
-                ServiceWorkerController.getInstance().setServiceWorkerClient(null));
+                ServiceWorkerController.getInstance().setServiceWorkerClient(new ServiceWorkerClient() {
+                    @Override public WebResourceResponse shouldInterceptRequest(WebResourceRequest request) {
+                        return null;
+                    }
+                }));
     }
 
     private WebResourceResponse fixtureResponse(String url, WebResourceRequest request) {
