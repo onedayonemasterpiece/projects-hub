@@ -1,0 +1,141 @@
+{
+  "passed": true,
+  "provider_calls_attempted": true,
+  "versions": {
+    "projects-hub": "0.1.62",
+    "live-interaction": "0.4.0rc2",
+    "ai-resource-control": "0.1.16"
+  },
+  "input": "one known synthetic spoken catalogue request through ordinary host PCM input",
+  "synthetic_request_phrase": "Mira, check which repositories are already connected to my workspace. Activate the repositories capability, then read the connected repository catalogue and tell me the result. Only read. Do not connect or change anything.",
+  "typed_prompt_sent": false,
+  "native_capture": false,
+  "android_acceptance": false,
+  "russian_asr_acceptance": false,
+  "artificial_completion_delay_seconds": 9,
+  "claim": "Actual shared-host NON_BLOCKING tool pending plus real provider audio; separate from Android acceptance",
+  "router_contract_changed": false,
+  "caption_model_requested": false,
+  "implementation_sha256": {
+    "projects_hub.live_adapter": "364dfe3b5ad62625fc50c904985b904bdab8cf0b758c2a1d9b82b41d78ccf09c",
+    "live_interaction.session_host": "5a9924065e95104e52fe5a31a978d79a29f396a20178d9427575ba463f4a16bc",
+    "live_interaction.provider": "9fd061458cc5470c2aa6a05f0c52da954fd85786faae510f0e5c93a0285928fc",
+    "ai_resource_control.client": "178973d5ffcdb516cfadb44c5bbf8b412280eb5f9c96aa830a96eecee3fbac6b",
+    "ai_resource_control.live": "a21d8e366a7670b95c6bb467cdad648f906aeb557d02d1c5ce76fcdefb68867d"
+  },
+  "provider_environment_source": "installed_allowlisted_provider_environment",
+  "request_audio": {
+    "wav_sha256": "3c9a5d7bfae63903ecb324086ad0b4126a65e83160f6865ace1dd647b659858e",
+    "pcm_sha256": "82d3c6ae75a4d054e8ff226be02df6bd22bd09303089b81e011fecf5eb935ef3",
+    "pcm_bytes": 457440,
+    "sample_rate": 16000,
+    "rms": 5129.126,
+    "duration_ms": 14295,
+    "native_capture": false,
+    "synthetic_spoken_request": true
+  },
+  "shared_progress_delay_ms": 2500,
+  "target_tool": "github_repositories_list",
+  "target_calls": 1,
+  "declared_non_blocking": true,
+  "spoken_request_input_complete": true,
+  "result_verified": true,
+  "pending_provider_audio": {
+    "duration_ms": 3200,
+    "rms": 4803.318,
+    "pcm_bytes": 153602,
+    "pcm_sha256": "3859a957aa321e7b7cab181c715291b60a3fdba71351f69817e5d4dc9abf133a",
+    "audible_signal": true
+  },
+  "completion_provider_audio": {
+    "duration_ms": 7560,
+    "rms": 4196.17,
+    "pcm_bytes": 362880,
+    "pcm_sha256": "6be0bbadf05e5836ede0135e0079f6f8b03f49575692c746513550c55f3a5daa",
+    "audible_signal": true
+  },
+  "turn_complete_after_result": true,
+  "tool_entered_ms": 29381,
+  "completion_released_ms": 38381,
+  "tool_returned_ms": 38382,
+  "event_counts": {
+    "capability_unavailable": 1,
+    "resource_budget": 20,
+    "ready": 1,
+    "resumption_checkpoint": 2,
+    "resumption_state": 2,
+    "input_timing": 1,
+    "input_transcript": 1,
+    "tool_call": 3,
+    "generation_complete": 5,
+    "usage": 5,
+    "turn_complete": 5,
+    "capability_transition_acknowledged": 1,
+    "capability_transition_recovered": 1,
+    "capability_transition_started": 1,
+    "history_restored": 1,
+    "resumed": 1,
+    "capability_ready": 1,
+    "capability_continuation_sent": 1,
+    "output_transcript": 11,
+    "audio": 40
+  },
+  "evidence_errors": [],
+  "tool_calls": [
+    {
+      "phase": "provider_call",
+      "name": "activate_capability",
+      "capability": "core"
+    },
+    {
+      "phase": "provider_call",
+      "name": "activate_capability",
+      "capability": "repositories"
+    },
+    {
+      "phase": "entered",
+      "name": "activate_capability",
+      "capability": "repositories"
+    },
+    {
+      "phase": "returned",
+      "name": "activate_capability",
+      "capability": "repositories"
+    },
+    {
+      "phase": "provider_call",
+      "name": "github_repositories_list",
+      "capability": "repositories"
+    },
+    {
+      "phase": "entered",
+      "name": "github_repositories_list",
+      "capability": "repositories"
+    },
+    {
+      "phase": "returned",
+      "name": "github_repositories_list",
+      "capability": "repositories"
+    }
+  ],
+  "host_sessions_after_close": 0,
+  "caption_sidecars_after_close": 0,
+  "checks_passed_before_loop_shutdown": true,
+  "runtime_commits": {
+    "projects-hub": "49c4240b5f31db1c5c699b461257a7985d4d39b1",
+    "live-interaction": "132d59b73a137051904bc75bb03dd7d7d13bc49c",
+    "ai-resource-control": "7c9b9ec1cca8a9c90760b4828922fe936bbd3166"
+  },
+  "harness_sha256": "98f275dd8c1475ae93368fb5ada298e2f1135a87af03377039182751ecae7790",
+  "provider_job_id": "job_6c3f958c975b011abec0f8d1",
+  "provider_job_duration_ms": 48144,
+  "complete_report_sha256": "b90d7bbc8572a9ce763be4787b00c8ff41b1af25f784342730c05944a7865d23",
+  "first_pending_nontrivial_audio_received_ms": 32676,
+  "tool_start_to_first_pending_nontrivial_audio_ms": 3295,
+  "scope_limits": [
+    "Synthetic English audio input, not Android AudioRecord or Russian ASR acceptance",
+    "Known empty connected-repository catalogue; ordinary read-only tool invoked once with a nine-second test completion delay",
+    "Audio measured at real provider output; Android AudioTrack and handset playback remain a separate gate",
+    "One session; no four-speaker or RAG capacity claim"
+  ]
+}

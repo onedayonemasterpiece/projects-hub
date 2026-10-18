@@ -190,6 +190,7 @@ class Fixture:
         self.processes: set[asyncio.subprocess.Process] = set()
         self.mic = wave.open(str(audio_dir / "decoded-microphone.wav"), "wb")
         self.mic.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+        self.closed = False
 
     def state(self) -> dict:
         # Production stores and receipts; no replica of the transport protocol.
@@ -331,6 +332,14 @@ class Fixture:
 
     def wrap(self, app):
         async def application(scope, receive, send):
+            if scope["type"] == "lifespan":
+                try:
+                    return await app(scope, receive, send)
+                finally:
+                    # Uvicorn re-raises SIGTERM after lifespan shutdown, before
+                    # the caller's finally can run. Close here after the actual
+                    # app stopped its writers, so WAV length/tail are flushed.
+                    self.close()
             if scope["type"] == "http" and scope["path"].startswith("/_e2e/"):
                 return await self.control(scope, receive, send)
             if scope["type"] != "websocket":
@@ -382,8 +391,13 @@ class Fixture:
         return application
 
     def close(self):
-        self.mic.close()
-        self.store.close()
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            self.mic.close()
+        finally:
+            self.store.close()
 
 
 def verify_output(args):
@@ -432,19 +446,19 @@ def main():
     import uvicorn
 
     fixture = Fixture(args.data_dir, args.audio_dir)
-    boundary = types.ModuleType("ai_resource_control")
-    boundary.__spec__ = importlib.machinery.ModuleSpec("ai_resource_control", loader=None)
-    boundary.run_guarded = fixture.runner
-    sys.modules["ai_resource_control"] = boundary
-    host = build_live_host(fixture.store, environment={})
-    settings = Settings(data_dir=args.data_dir, static_dir=Path("web/dist"),
-                        session_secret=fixture.secret, cookie_secure=True,
-                        dev_auth=False, release_sha="android-emulator-controlled-fixture")
-    app = create_app(settings, store=fixture.store, live_host=host)
     try:
+        boundary = types.ModuleType("ai_resource_control")
+        boundary.__spec__ = importlib.machinery.ModuleSpec("ai_resource_control", loader=None)
+        boundary.run_guarded = fixture.runner
+        sys.modules["ai_resource_control"] = boundary
+        host = build_live_host(fixture.store, environment={})
+        settings = Settings(data_dir=args.data_dir, static_dir=Path("web/dist"),
+                            session_secret=fixture.secret, cookie_secure=True,
+                            dev_auth=False, release_sha="android-emulator-controlled-fixture")
+        app = create_app(settings, store=fixture.store, live_host=host)
         uvicorn.run(fixture.wrap(app), host="0.0.0.0", port=8443,
                     ssl_certfile=str(args.cert), ssl_keyfile=str(args.key),
-                    log_level="info", access_log=False)
+                    log_level="info", access_log=False, timeout_graceful_shutdown=10)
     finally:
         fixture.close()
 

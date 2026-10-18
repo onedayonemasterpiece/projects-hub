@@ -121,6 +121,10 @@ jobs:
           test -c /dev/kvm
           sudo chmod 0666 /dev/kvm
       - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        env:
+          # The guest HDA capture deadline is about 18 ms. Request smaller
+          # Pulse fragments for this emulator; delayed capture inserted silence.
+          PULSE_LATENCY_MSEC: "5"
         with:
           api-level: ${{ matrix.api-level }}
           target: google_apis
@@ -134,9 +138,9 @@ jobs:
           emulator-boot-timeout: 900
           disable-animations: false
           pre-emulator-launch-script: python scripts/android_emulator_image.py
-          # The headless emulator binary has a Pulse stub: use a real Xvfb display.
+          # Keep the established Xvfb audio path while checking Pulse latency.
           emulator-options: -gpu swiftshader_indirect -no-snapshot -wipe-data -no-boot-anim -camera-back none -camera-front none -timezone Etc/UTC -allow-host-audio -feature -VirtioSndCard
-          script: bash scripts/android_emulator_smoke.sh
+          script: env -u PULSE_LATENCY_MSEC bash scripts/android_emulator_smoke.sh
       - name: Upload emulator evidence
         if: always()
         uses: actions/upload-artifact@v4

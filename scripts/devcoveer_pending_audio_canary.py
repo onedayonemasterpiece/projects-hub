@@ -12,7 +12,8 @@ transition keeps its SILENT/checkpoint contract. The empty isolated catalogue
 needs no GitHub request. There is one Live model and no caption model.
 
 This gate proves provider audio while a real tool is pending, not Android
-microphone/playback acceptance. The input is a synthetic text request. Output
+microphone/playback or Russian ASR acceptance. The input is one known synthetic
+spoken catalogue request, supplied as a checksum-verified PCM WAV. Output
 WAVs contain actual provider PCM; UI text or an emitted tool_progress event alone
 cannot pass. No provider call occurs without --run-provider.
 """
@@ -40,15 +41,51 @@ from devcoveer_canary_support import (bounded, cleanup_step, record_error, run_r
                                     save_report, use_installed_provider_environment)
 
 TOOL = "github_repositories_list"
-PROMPT = ("Проверь, какие репозитории уже подключены к моему рабочему пространству. "
-          "Сначала активируй capability repositories через activate_capability, затем вызови "
-          "github_repositories_list с пустыми аргументами и сообщи результат. "
-          "Только чтение: ничего не подключай и не изменяй.")
+REQUEST_PHRASE = ("Mira, check which repositories are already connected to my workspace. "
+                  "Activate the repositories capability, then read the connected repository catalogue "
+                  "and tell me the result. Only read. Do not connect or change anything.")
 # These ordinary prerequisite reads touch only the isolated store/session. A
 # same-capability activate_capability is a product-validated no-op; actual router
 # transitions remain handled by the unchanged shared resolver/SILENT contract.
 SAFE_PREREQUISITES = frozenset({"projects_list_accessible", "runtime_versions_get", "preferences_get", "activate_capability"})
 MAX_PCM_BYTES = 4 * 1024 * 1024
+
+
+def load_request_speech(path, expected_sha256):
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256 or ""):
+        raise ValueError("CANARY_REQUEST_SHA256_REQUIRED")
+    if path.stat().st_size > 1024 * 1024:
+        raise ValueError("CANARY_REQUEST_WAV_BOUND")
+    actual_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+    if actual_sha256 != expected_sha256:
+        raise ValueError("CANARY_REQUEST_WAV_SHA256_MISMATCH")
+    with wave.open(str(path), "rb") as source:
+        if (source.getnchannels() != 1 or source.getsampwidth() != 2 or source.getframerate() != 16000
+                or not 32000 <= source.getnframes() <= 16000 * 30):
+            raise ValueError("CANARY_REQUEST_WAV_FORMAT")
+        pcm = source.readframes(source.getnframes())
+        if len(pcm) != source.getnframes() * 2:
+            raise ValueError("CANARY_REQUEST_WAV_TRUNCATED")
+    samples = array("h", pcm)
+    if sys.byteorder != "little":
+        samples.byteswap()
+    rms = math.sqrt(sum(float(sample)*sample for sample in samples) / len(samples))
+    if rms < 100:
+        raise ValueError("CANARY_REQUEST_WAV_SILENT")
+    return pcm, {"wav_sha256": actual_sha256, "pcm_sha256": hashlib.sha256(pcm).hexdigest(),
+                 "pcm_bytes": len(pcm), "sample_rate": 16000, "rms": round(rms, 3),
+                 "duration_ms": len(samples) * 1000 // 16000, "native_capture": False,
+                 "synthetic_spoken_request": True}
+
+
+async def feed_request_audio(host, *, session_id, resource_id, actor, pcm, sleep=asyncio.sleep):
+    binding = {"session_id": session_id, "resource_id": resource_id, "actor": actor}
+    await host.input(**binding, message={"activity_start": True})
+    for start in range(0, len(pcm), 3200):
+        chunk = pcm[start:start+3200]
+        await host.input(**binding, message={"audio_base64": base64.b64encode(chunk).decode("ascii")})
+        await sleep(len(chunk) / 32000)
+    await host.input(**binding, message={"activity_end": True})
 
 
 class PendingEvidence:
@@ -69,6 +106,9 @@ class PendingEvidence:
         self.progress_seq = self.result_seq = None
         self.tool_calls = []
         self.prerequisite_calls = 0
+        self.input_completed_at = None
+        self.pre_target_complete_at = None
+        self.last_host_event_seq = 0
 
     def tool_diagnostic(self, session, call, phase, code=None):
         if len(self.tool_calls) >= 32:
@@ -83,6 +123,15 @@ class PendingEvidence:
 
     def host_events(self, events):
         for event in events:
+            seq = event.get("seq")
+            if isinstance(seq, int):
+                if seq <= self.last_host_event_seq:
+                    continue
+                self.last_host_event_seq = seq
+            if event.get("type") == "tool_result" and event.get("status") == "error":
+                self.tool_diagnostic(None, event, "host_error", event.get("code"))
+                if "tool_result_error" not in self.errors:
+                    self.errors.append("tool_result_error")
             if event.get("id") != self.call_id:
                 continue
             if event.get("type") == "tool_progress":
@@ -95,6 +144,8 @@ class PendingEvidence:
         kind = str(event.get("type") or "")
         self.events[kind] += 1
         now = self.clock()
+        if kind in {"ready", "capability_ready", "tool_call"}:
+            self.pre_target_complete_at = None
         if kind == "tool_call" and isinstance(event.get("calls"), list):
             for call in event["calls"][:16]:
                 if isinstance(call, dict):
@@ -103,6 +154,8 @@ class PendingEvidence:
             self.errors.append(kind)
         if kind == "turn_complete" and self.returned is not None and self.result_seq is not None:
             self.turn_complete_after_result = True
+        elif kind == "turn_complete" and self.entered is None and self.input_completed_at is not None:
+            self.pre_target_complete_at = now
         if kind != "audio":
             return
         # Audio before the tool call (including a router acknowledgement) is not
@@ -134,6 +187,19 @@ class PendingEvidence:
                                 "pcm_bytes": len(pcm), "rate": rate,
                                 "tool_progress_seq": self.progress_seq, "tool_result_seq": self.result_seq})
 
+    def check_pre_target_completion(self, session):
+        # Let an already scheduled ordinary tool/transition run. A completed
+        # reply with no work pending does not need the entire canary deadline.
+        if (self.entered is not None or self.pre_target_complete_at is None
+                or self.clock() - self.pre_target_complete_at < 2):
+            return
+        transition = getattr(session, "pending_transition", None)
+        lock = getattr(session, "tool_lock", None)
+        if (transition is not None and not transition.done()) or (lock is not None and lock.locked()):
+            return
+        if "provider_turn_completed_without_target" not in self.errors:
+            self.errors.append("provider_turn_completed_without_target")
+
     def audio_metrics(self, phase):
         raw = self.audio[phase]
         samples = array("h", raw)
@@ -147,10 +213,11 @@ class PendingEvidence:
 
     def result(self):
         pending, complete = self.audio_metrics("pending"), self.audio_metrics("after_result")
-        return {"passed": self.call_count == 1 and self.non_blocking and self.result_verified
+        return {"passed": self.input_completed_at is not None and self.call_count == 1 and self.non_blocking and self.result_verified
                     and pending["audible_signal"] and complete["audible_signal"]
                     and self.turn_complete_after_result and not self.errors,
                 "target_tool": TOOL, "target_calls": self.call_count, "declared_non_blocking": self.non_blocking,
+                "spoken_request_input_complete": self.input_completed_at is not None,
                 "result_verified": self.result_verified,
                 "pending_provider_audio": pending, "completion_provider_audio": complete,
                 "turn_complete_after_result": self.turn_complete_after_result,
@@ -202,6 +269,8 @@ async def execute_read_tool(evidence, original_execute, session, call, delay):
         return result
     except BaseException as exc:
         evidence.tool_diagnostic(session, call, "error", getattr(exc, "code", None) or type(exc).__name__)
+        if isinstance(exc, Exception) and "tool_execution_error" not in evidence.errors:
+            evidence.errors.append("tool_execution_error")
         raise
 
 
@@ -226,6 +295,8 @@ async def run(args, report):
         if args.use_installed_provider_environment:
             use_installed_provider_environment()
             report["provider_environment_source"] = "installed_allowlisted_provider_environment"
+        pcm, speech_metadata = load_request_speech(args.request_wav, args.request_sha256)
+        report["request_audio"] = speech_metadata
         args.data_dir.mkdir(parents=True, exist_ok=True)
         if list(args.data_dir.iterdir()):
             raise ValueError("CANARY_DATA_DIR_MUST_BE_EMPTY")
@@ -252,11 +323,13 @@ async def run(args, report):
         host.adapter.execute_tool = delayed_execute
         host.adapter.on_event = observe
         report["provider_calls_attempted"] = True
-        # Buffered disables the optional caption lease. The same Mira model and
-        # ordinary declarations handle this synthetic typed request.
+        # Buffered disables the optional caption lease. The actual spoken
+        # request must cross durable audio admission before the ordinary router
+        # can authorize a capability transition; text alone is not sufficient.
         started = await host.start(resource_id=resource, actor=actor, conversation_id=conversation["id"],
             audio_mode="buffered", attempt_id="pending_canary_"+secrets.token_hex(8))
-        await host.input(session_id=started["session_id"], resource_id=resource, actor=actor, message={"text": PROMPT})
+        await feed_request_audio(host, session_id=started["session_id"], resource_id=resource, actor=actor, pcm=pcm)
+        evidence.input_completed_at = evidence.clock()
         cursor = 0
         while True:
             page = host.events(session_id=started["session_id"], resource_id=resource, actor=actor, after=cursor)
@@ -264,6 +337,9 @@ async def run(args, report):
             cursor = page["cursor"]
             if page.get("gap"):
                 evidence.errors.append("event_gap")
+            current = host.sessions.get(started["session_id"])
+            if current is not None:
+                evidence.check_pre_target_completion(current)
             if page.get("closed") or evidence.errors:
                 break
             if evidence.returned is not None and evidence.turn_complete_after_result:
@@ -309,6 +385,8 @@ def main(argv=None):
                         help="Read only installed providers.env using this candidate installer's allowlist")
     parser.add_argument("--data-dir", type=Path)
     parser.add_argument("--report", type=Path)
+    parser.add_argument("--request-wav", type=Path, help="Known generated spoken catalogue request, mono PCM16 16kHz")
+    parser.add_argument("--request-sha256", help="SHA256 from the independently prepared synthetic WAV receipt")
     parser.add_argument("--delay", type=float, default=9)
     parser.add_argument("--timeout", type=float, default=180)
     args = parser.parse_args(argv)
@@ -316,14 +394,18 @@ def main(argv=None):
         print(json.dumps({"provider_calls_attempted": False, "target_tool": TOOL,
                           "completion_delay_seconds": args.delay, "required_boundary": "authorized on-host operator and ordinary authority"}))
         return 0
-    if not args.data_dir or not args.report or not 8 <= args.delay <= 10 or not 30 <= args.timeout <= 240:
-        parser.error("Need new --data-dir/--report, 8–10s delay and bounded timeout")
+    if (not args.data_dir or not args.report or not args.request_wav or not args.request_sha256
+            or not 8 <= args.delay <= 10 or not 30 <= args.timeout <= 240):
+        parser.error("Need new --data-dir/--report, --request-wav/--request-sha256, 8–10s delay and bounded timeout")
     if args.report.exists():
         parser.error("Preserve the prior attempt report; select a new path")
     if args.report.resolve().is_relative_to(args.data_dir.resolve()):
         parser.error("Place --report outside the new --data-dir so the store can start empty")
     report = {"passed": False, "provider_calls_attempted": False, "versions": {},
-              "input": "one synthetic text request", "artificial_completion_delay_seconds": args.delay,
+              "input": "one known synthetic spoken catalogue request through ordinary host PCM input",
+              "synthetic_request_phrase": REQUEST_PHRASE, "typed_prompt_sent": False,
+              "native_capture": False, "android_acceptance": False, "russian_asr_acceptance": False,
+              "artificial_completion_delay_seconds": args.delay,
               "claim": "Actual shared-host NON_BLOCKING tool pending plus real provider audio; separate from Android acceptance",
               "router_contract_changed": False, "caption_model_requested": False}
     run_reported(args.report, report, lambda receipt: run(args, receipt))
