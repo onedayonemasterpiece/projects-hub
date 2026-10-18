@@ -77,14 +77,25 @@ def test_corrupt_or_incomplete_original_is_not_a_provider_input(tmp_path, canary
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("whole_phrases,turns,outputs,passed", [
-    (False, 2, 2, False),
-    (True, 1, 2, False),
-    (True, 2, 1, False),
-    (True, 2, 2, True),
+@pytest.mark.parametrize("whole_phrases,turns,outputs,interrupt_mode,passed", [
+    (False, 2, 2, None, False),
+    (True, 1, 2, None, False),
+    (True, 2, 1, None, False),
+    (True, 2, 2, None, True),
+    (True, 2, 1, "valid", True),
+    (False, 2, 1, "valid", False),
+    (True, 2, 0, "duplicate", False),
+    (True, 2, 1, "same_ended", False),
+    (True, 2, 1, "unknown", False),
+    (True, 2, 1, "wrong_generation", False),
+    (True, 2, 1, "bool_generation", False),
+    (True, 2, 1, "wrong_response", False),
+    (True, 2, 0, "bool_response", False),
+    (True, 2, 1, "stale_audio", False),
+    (True, 2, 1, "epoch_only", False),
 ])
 async def test_replay_retains_independent_predicates_on_timeout(
-        tmp_path, canary, monkeypatch, whole_phrases, turns, outputs, passed):
+        tmp_path, canary, monkeypatch, whole_phrases, turns, outputs, interrupt_mode, passed):
     from live_interaction.audio_v2 import AudioFrame, DOWNLINK_MAGIC, EPOCH_END, PORTION_START, PORTION_END
     path, _ = original_db(tmp_path, canary)
     # Keep the encoded original intact and mark two explicit speech portions.
@@ -108,6 +119,7 @@ async def test_replay_retains_independent_predicates_on_timeout(
             self.incoming = asyncio.Queue()
             self.frames = []
             self.source_id = None
+            self.output_acks = []
 
         def __aiter__(self):
             return self
@@ -121,6 +133,12 @@ async def test_replay_retains_independent_predicates_on_timeout(
         def reply(self, value):
             self.incoming.put_nowait(json.dumps(value))
 
+        def output_epoch(self, i):
+            self.reply({"type": "output_epoch", "source_id": f"synthetic_output_{i}",
+                "server_source_id": f"server_output_{i}", "stream_ref": i + 1, "epoch_ref": i + 1,
+                "response_id": i + 1, "provider_response_id": i + 1,
+                "connection_generation": 1})
+
         async def send(self, value):
             if isinstance(value, bytes):
                 frame = AudioFrame.decode(value)
@@ -131,6 +149,7 @@ async def test_replay_retains_independent_predicates_on_timeout(
             kind = control["type"]
             if kind == "source_open":
                 self.source_id = control["source_id"]
+                self.reply({"type": "event", "event": {"type": "ready", "seq": 10}})
                 self.reply({"type": "source_bound", "source_id": self.source_id,
                             "source_ref": 1, "server_source_id": "synthetic_server_source"})
             elif kind == "codec_epoch":
@@ -139,7 +158,7 @@ async def test_replay_retains_independent_predicates_on_timeout(
             elif kind == "source_seal":
                 self.reply({"type": "source_sealed", "source_id": self.source_id,
                             "complete": True, "server_durable_seq": len(recording.chunks)})
-                seq = 1
+                seq = 11
                 for text in final_texts:
                     self.reply({"type": "event", "event": {"type": "input_transcript", "seq": seq, "text": text}})
                     seq += 1
@@ -147,12 +166,30 @@ async def test_replay_retains_independent_predicates_on_timeout(
                     self.reply({"type": "event", "event": {"type": "turn_complete", "seq": seq}})
                     seq += 1
                 for i in range(outputs):
-                    self.reply({"type": "output_epoch", "source_id": f"synthetic_output_{i}", "stream_ref": i + 1})
-                    self.incoming.put_nowait(AudioFrame(DOWNLINK_MAGIC, EPOCH_END, i + 1, 1, 1,
+                    self.output_epoch(i)
+                    self.incoming.put_nowait(AudioFrame(DOWNLINK_MAGIC, EPOCH_END, i + 1, i + 1, 1,
                         0, 20_000, 1, seq, recording.chunks[-1].payload).encode())
                     seq += 1
+                if interrupt_mode:
+                    i = 0 if interrupt_mode == "same_ended" else outputs
+                    if interrupt_mode not in {"unknown", "same_ended"}:
+                        self.output_epoch(i)
+                        if interrupt_mode != "epoch_only":
+                            self.incoming.put_nowait(AudioFrame(DOWNLINK_MAGIC, 0, i + 1, i + 1, 1,
+                                0, 20_000, 1, 10 if interrupt_mode == "stale_audio" else seq,
+                                recording.chunks[0].payload).encode())
+                    interrupt = {"type": "output_interrupt", "source_id": f"synthetic_output_{i}",
+                        "provider_response_id": (999 if interrupt_mode == "wrong_response" else
+                                                 True if interrupt_mode == "bool_response" else i + 1),
+                        "connection_generation": (2 if interrupt_mode == "wrong_generation" else
+                                                  True if interrupt_mode == "bool_generation" else 1)}
+                    self.reply(interrupt)
+                    if interrupt_mode == "duplicate":
+                        self.reply(interrupt)
             elif kind == "source_unbind":
                 self.reply({"type": "source_unbound", "source_id": self.source_id})
+            elif kind == "output_ack":
+                self.output_acks.append(control)
 
         async def close(self):
             self.incoming.put_nowait(None)
@@ -163,7 +200,7 @@ async def test_replay_retains_independent_predicates_on_timeout(
               "caption_qualification": {"requested": False, "status": "not_requested"},
               "host_sessions_after_close": 0, "caption_sidecars_after_close": 0}
     with (tmp_path / "received.bin").open("wb") as output:
-        wire = canary.ReplaySocket(transport, output, canary.CaptionEvidence(phrases))
+        wire = canary.ReplaySocket(transport, output, canary.CaptionEvidence(phrases), connection_generation=1)
         try:
             operation = wire.replay(recording, phrases, [0, 1], "g1", 1,
                 {"live_window_bytes": 65536, "live_window_duration_us": 1_000_000}, .1, receipt=retained)
@@ -194,6 +231,28 @@ async def test_replay_retains_independent_predicates_on_timeout(
     assert result["turn_complete_received"] is (turns >= 2)
     assert result["output_ended_source_count"] == outputs
     assert result["output_encoded_tail_received"] is (outputs >= 2)
+    credited_interrupt = interrupt_mode in {"valid", "duplicate", "same_ended"}
+    terminal_count = outputs + int(credited_interrupt and interrupt_mode != "same_ended")
+    assert result["output_interrupted_source_count"] == int(credited_interrupt)
+    assert result["output_interrupt_duplicate_count"] == int(interrupt_mode == "duplicate")
+    assert result["output_terminal_source_count"] == terminal_count
+    assert result["output_terminal_source_required"] == 2
+    assert result["output_terminal_received"] is (terminal_count >= 2)
+    assert result["output_playback_proven"] is False
+    assert result["output_interrupt_unattributed_source_count"] == int(interrupt_mode in {"stale_audio", "epoch_only"})
+    expected_rejection = {"unknown": "unknown_source", "wrong_response": "provider_response_id",
+                          "bool_response": "provider_response_id",
+                          "wrong_generation": "connection_generation", "bool_generation": "connection_generation"}.get(interrupt_mode)
+    assert result["output_interrupt_rejections"] == ({expected_rejection: 1} if expected_rejection else {})
+    if credited_interrupt:
+        i = 0 if interrupt_mode == "same_ended" else outputs
+        assert result["output_interrupt_receipts"] == [{"source_id": f"synthetic_output_{i}",
+            "server_source_id": f"server_output_{i}", "provider_response_id": i + 1,
+            "connection_generation": 1}]
+    else:
+        assert result["output_interrupt_receipts"] == []
+    extra_audio = int(interrupt_mode is not None and interrupt_mode not in {"unknown", "same_ended", "epoch_only"})
+    assert len(transport.output_acks) == outputs + extra_audio  # No ACK is fabricated for an interrupt.
     assert result["event_counts"] == {"input_transcript": 2, "turn_complete": turns}
     text = " ".join(final_texts)
     assert result["main_transcript_chars"] == len(text)

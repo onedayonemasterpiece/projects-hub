@@ -1,0 +1,439 @@
+{
+  "schema": "projects-hub-native-emulator-evidence",
+  "version": 1,
+  "passed": false,
+  "source_sha": "14a2e8d90b517578bbfd491185f2af2ad669810c",
+  "source_tree": "096fb2033cb954d646cbd363aeb5c6935033c10d",
+  "run_id": 39127146951,
+  "run_url": "https://github.com/onedayonemasterpiece/projects-hub/actions/runs/39127146951",
+  "run_attempt": 1,
+  "artifact": {
+    "id": 12137015488,
+    "bytes": 7120707,
+    "sha256": "9eb9c74ccc5933d47622ee5feb8976ba1c2f1ded788bd3d56df82ae67d94da75"
+  },
+  "checkout": {
+    "repository": "onedayonemasterpiece/projects-hub",
+    "run_id": 39127146951,
+    "event_name": "pull_request",
+    "candidate_head_sha": "14a2e8d90b517578bbfd491185f2af2ad669810c",
+    "checkout_sha": "66a03c8ac067ee1a1541267450ed73a1a86c3d98",
+    "checkout_tree": "096fb2033cb954d646cbd363aeb5c6935033c10d",
+    "shared_artifact": {
+      "schema": "projects-hub-sdk-archive/v1",
+      "artifact_type": "npm_tgz",
+      "repository": "https://github.com/onedayonemasterpiece/live-interaction",
+      "version": "0.4.0-rc.2",
+      "release_tag": "v0.4.0-rc.2",
+      "release_commit": "b8b4ba15cdf1b4cfafc428eb3adec02cb44d92d2",
+      "source_tree": "b2de6b175a55f6088e4003d2d5c076655ed4664e",
+      "archive_url": "https://github.com/onedayonemasterpiece/live-interaction/releases/download/v0.4.0-rc.2/onedayonemasterpiece-live-interaction-0.4.0-rc.2.tgz",
+      "archive_sha256": "8ff9df3888a0db10367878545b526c370118d262a50bb75c4b4ba63f63ee243a",
+      "archive_bytes": 177490,
+      "npm_integrity": "sha512-ZzfjqBqImWj1A6CyamgApiPtoP9X+InCyuCc+rKkfVwm/8E2FyD7qTOid07gMKqUABwwoDPq8YzNRz/lquBBgA==",
+      "file_count": 58,
+      "unpacked_bytes": 679222
+    }
+  },
+  "instrumentation": {
+    "tests": 6,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 70.795,
+    "cases": [
+      "completionSchedulingCannotBreakStartupOrReopen",
+      "nativeVoicePublicationKeepsEveryPublicChangeAndCurrentSnapshot",
+      "debugUpdaterDiscardsStableOffersAtEveryEntryPoint",
+      "activityLaunches",
+      "trustedPageAppliesBothPalettesWithoutReplacingWebView",
+      "actualUiVoiceCapturePlaybackOutageRecoveryAndStop"
+    ]
+  },
+  "audio": {
+    "passed": false,
+    "checks": {
+      "speaker_waveform_matches_reply": false,
+      "live_input_waveform_matches_hello": true,
+      "fresh_input_after_reconnect_matches": true,
+      "offline_recording_not_executed": true,
+      "compressed_sources_persisted": true,
+      "binary_compressed_audio_both_directions": true,
+      "reconnected": true,
+      "controlled_provider_boundary_explicit": true
+    },
+    "speaker_match": {
+      "matched": false,
+      "correlation": 0.92277,
+      "offset_ms": 72680,
+      "rms": 488.89,
+      "reference_ms": 1270,
+      "reference_start_ms": 130,
+      "observed_ms": 88670,
+      "minimum_correlation": 0.68,
+      "pcm_correlation": 0.39956,
+      "minimum_pcm_correlation": 0.45
+    },
+    "input_matches": [
+      {
+        "name": "hello",
+        "matched": true,
+        "correlation": 0.89031,
+        "offset_ms": 170,
+        "rms": 1543.15,
+        "reference_ms": 2910,
+        "reference_start_ms": 160,
+        "observed_ms": 3700,
+        "minimum_correlation": 0.68,
+        "pcm_correlation": 0.88314,
+        "minimum_pcm_correlation": 0.45
+      },
+      {
+        "name": "overlap",
+        "matched": true,
+        "correlation": 0.93639,
+        "offset_ms": 160,
+        "rms": 1700.33,
+        "reference_ms": 2710,
+        "reference_start_ms": 150,
+        "observed_ms": 3480,
+        "minimum_correlation": 0.68,
+        "pcm_correlation": 0.95108,
+        "minimum_pcm_correlation": 0.45
+      }
+    ],
+    "input_match_failures": [],
+    "claim": "Real emulator microphone/codec/socket/store/playback path with a controlled AI runner; not real-provider ASR acceptance."
+  },
+  "system_image": {
+    "api_level": 31,
+    "archive_revision": 14,
+    "package_revision": 12,
+    "abi": "x86_64",
+    "tag": "google_apis",
+    "url": "https://dl.google.com/android/repository/sys-img/google_apis/x86_64-31_r14.zip",
+    "archive_sha256": "7e7081f5784e98dd391ddae52573a75bc1db17a2fd286cb20be46d3eec251f94",
+    "archive_bytes": 1470822277,
+    "cache_hit": true,
+    "checksum_verified": true
+  },
+  "native_flow": {
+    "passed": true,
+    "offline_queued_audio_ms": 5900,
+    "durable_output_positions": [
+      {
+        "received_chunks": 19,
+        "played_us": 1854958,
+        "duration_us": 1854958
+      },
+      {
+        "received_chunks": 19,
+        "played_us": 1854958,
+        "duration_us": 1854958
+      }
+    ],
+    "durable_input_sources": 3,
+    "pending_after_stop_us": 95979,
+    "final_native": {
+      "owner_id": "voice_6b3eee1516114e4eb1475c6ad20ea1d9",
+      "revision": 113,
+      "status": "idle",
+      "capturing": false,
+      "playing": false,
+      "conversation_id": "conv_a1d854c344f04d3ab5321de8762b1dc6",
+      "session_id": null,
+      "source_id": "src_645809a27e6744c7a052cbdefb93b683",
+      "local_source_id": "2618fd47-3607-4af2-80a9-7dda455bf2a3",
+      "queued_audio_ms": 40,
+      "code": null
+    }
+  },
+  "native_snapshot_count": 114,
+  "receipt_sha256": {
+    "audio-verification.json": "014e2cfb62d5dbcfb025a1c6f1fe82ebc7e0a99c391b097ef16b03214b73e3b5",
+    "voice-flow.json": "9410dbb9f9fdae06a325e888cfd4b34007d1ec6f256a8f4baad0b55c20bb0d81",
+    "checkout.json": "fb2cae73fd36bd2fbac49c575802496bb4cbcd869b490a92aaffd1bdc01e0ca3"
+  },
+  "qualification": {
+    "controlled_ai_boundary": true,
+    "real_provider_asr": false,
+    "physical_handset": false,
+    "unchanged_audio_thresholds": true,
+    "failure": "Speaker envelope passes but whole-phrase PCM correlation 0.39956 is below unchanged 0.45. Both input waveform checks pass. This run does not qualify the candidate for signed RC.",
+    "stop_tail": "pending_after_stop_us and final queued_audio_ms are retained; they do not prove server seal of the final input source.",
+    "cause": "Under investigation; the act of calling AudioTrack.play before the first write is not by itself proof of an underrun cause."
+  },
+  "speaker_diagnosis": {
+    "diagnosis": "Confirmed speaker-boundary glitches/time discontinuities; producer archive intact. Specific product-vs-host cause remains unproven.",
+    "runs": {
+      "39118401444": {
+        "speaker_sha256": "fc7b8e2ba44d3da6ac79b8e75b910fdb33d540b96c852f44efea8d4642c583df",
+        "speaker_matches": [
+          {
+            "matched": true,
+            "correlation": 0.94145,
+            "offset_ms": 48020,
+            "rms": 485.21,
+            "reference_ms": 1270,
+            "reference_start_ms": 130,
+            "observed_ms": 61990,
+            "minimum_correlation": 0.68,
+            "pcm_correlation": 0.53079,
+            "minimum_pcm_correlation": 0.45
+          },
+          {
+            "matched": false,
+            "correlation": 0.57587,
+            "offset_ms": 30800,
+            "rms": 470.06,
+            "reference_ms": 1270,
+            "reference_start_ms": 130,
+            "observed_ms": 61990,
+            "minimum_correlation": 0.68,
+            "pcm_correlation": 0.0
+          }
+        ],
+        "hal_silence_events": 11,
+        "hal_inserted_us": 167618,
+        "background": {
+          "playback_windows": [
+            {
+              "audio_track_start": "10:19:27.236",
+              "window_seconds": 2,
+              "log_lines": 11,
+              "top_tags": [
+                [
+                  "EGL_emulation",
+                  2
+                ],
+                [
+                  "C2Store",
+                  2
+                ],
+                [
+                  "AudioFlinger",
+                  1
+                ],
+                [
+                  "android.hardware.audio@6.0-impl.ranchu",
+                  1
+                ],
+                [
+                  "ConnectivityService",
+                  1
+                ],
+                [
+                  "netd",
+                  1
+                ],
+                [
+                  "OpenGLRenderer",
+                  1
+                ],
+                [
+                  "hw-BpHwBinder",
+                  1
+                ]
+              ]
+            },
+            {
+              "audio_track_start": "10:19:44.317",
+              "window_seconds": 2,
+              "log_lines": 68,
+              "top_tags": [
+                [
+                  "cr_CronetUrlRequestContext",
+                  50
+                ],
+                [
+                  "Dialer",
+                  10
+                ],
+                [
+                  "BufferPoolAccessor2.0",
+                  2
+                ],
+                [
+                  "CCodecBufferChannel",
+                  2
+                ],
+                [
+                  "C2Store",
+                  2
+                ],
+                [
+                  "AudioFlinger",
+                  1
+                ],
+                [
+                  "hw-BpHwBinder",
+                  1
+                ]
+              ]
+            }
+          ],
+          "logcat_lines": 3429
+        }
+      },
+      "39127146951": {
+        "speaker_sha256": "53b017c9ebe8786e205727aab887f9ef467845203938700eb023cf8271bb34c3",
+        "speaker_matches": [
+          {
+            "matched": false,
+            "correlation": 0.92277,
+            "offset_ms": 72680,
+            "rms": 488.89,
+            "reference_ms": 1270,
+            "reference_start_ms": 130,
+            "observed_ms": 88670,
+            "minimum_correlation": 0.68,
+            "pcm_correlation": 0.39956,
+            "minimum_pcm_correlation": 0.45
+          },
+          {
+            "matched": false,
+            "correlation": 0.82098,
+            "offset_ms": 53640,
+            "rms": 480.41,
+            "reference_ms": 1270,
+            "reference_start_ms": 130,
+            "observed_ms": 88670,
+            "minimum_correlation": 0.68,
+            "pcm_correlation": 0.37555,
+            "minimum_pcm_correlation": 0.45
+          }
+        ],
+        "hal_silence_events": 70,
+        "hal_inserted_us": 1066660,
+        "background": {
+          "playback_windows": [
+            {
+              "audio_track_start": "12:31:11.467",
+              "window_seconds": 2,
+              "log_lines": 847,
+              "top_tags": [
+                [
+                  "ExperimentPackageManage",
+                  512
+                ],
+                [
+                  "PhenotypeConfigurationU",
+                  192
+                ],
+                [
+                  "ModuleInitIntentOp",
+                  32
+                ],
+                [
+                  "GmsSyncPolicyEngine",
+                  17
+                ],
+                [
+                  "PTCommittedOperation",
+                  8
+                ],
+                [
+                  "Backup",
+                  8
+                ],
+                [
+                  "SyncIntentOperation",
+                  8
+                ],
+                [
+                  "MdiSyncModule",
+                  8
+                ]
+              ]
+            },
+            {
+              "audio_track_start": "12:31:30.351",
+              "window_seconds": 2,
+              "log_lines": 18,
+              "top_tags": [
+                [
+                  "android.hardware.audio@6.0-impl.ranchu",
+                  7
+                ],
+                [
+                  "AudioFlinger",
+                  3
+                ],
+                [
+                  "CCodecBufferChannel",
+                  3
+                ],
+                [
+                  "C2Store",
+                  2
+                ],
+                [
+                  "BoundBrokerSvc",
+                  1
+                ],
+                [
+                  "hw-BpHwBinder",
+                  1
+                ],
+                [
+                  "goldfish-address-space",
+                  1
+                ]
+              ]
+            }
+          ],
+          "logcat_lines": 19113
+        }
+      }
+    },
+    "decoded_downlinks": {
+      "all_four_pcm_identical": true,
+      "format": "PCM16LE mono 16000Hz from saved Ogg/Opus using PyAV18.1",
+      "samples_per_source": 29679,
+      "pcm_sha256": "d004b8d5282f3d5921ccaff84b88b29ee67c0e6325f29ed9a25fa2d79b95ec96",
+      "whole_reference_correlation": 0.990942462622672
+    },
+    "clock_evidence": {
+      "new_best_reply_200ms_windows_starting_430ms_to_1130ms_corr_min": 0.94955,
+      "corr_max": 0.99613,
+      "relative_lag_samples": 0,
+      "best_whole_linear_resampling_scale": 0.9999,
+      "corrected_whole_corr": 0.40452,
+      "original_whole_corr": 0.39956,
+      "finding": "One global offset and small linear rate correction cannot repair the measured startup distortion. No production or acceptance threshold was changed."
+    },
+    "codec_contract": {
+      "opus_pre_skip_samples_48000": 312,
+      "csd1_delay_ns": 6500000,
+      "csd2_seek_preroll_ns": 80000000,
+      "manual_opus_trim": false,
+      "decoder_output_sample_rate_enforced": 48000,
+      "audio_track_frames_per_response": 89038,
+      "source_duration_us": 1854958,
+      "finding": "Constant 6.5ms pre-skip would be handled by existing +/-150ms FFT alignment; it cannot explain local lag changes then >.99 correlation throughout later speech."
+    },
+    "underrun_counts_not_causal": {
+      "previous": [
+        2149,
+        1172
+      ],
+      "new": [
+        2148,
+        1172
+      ],
+      "finding": "Nearly identical AudioFlinger track underrun totals cannot explain run-to-run waveform deterioration; these are not API getUnderrunCount occurrence values."
+    },
+    "official_audio_track_contract": {
+      "url": "https://developer.android.com/reference/android/media/AudioTrack",
+      "sections": [
+        "play()",
+        "getStartThresholdInFrames()",
+        "getUnderrunCount()"
+      ],
+      "finding": "play() on an empty streaming track enters underrun until device minimum is buffered; default API31 start threshold is buffer capacity. Thus existing play-before-write is not evidence of no initial buffer."
+    },
+    "next_controlled_change_proposed": "Remove measured nondeterministic Google Play Services/Search provisioning workload from the validated disposable fixture AVD only; retain network, WebView, real mic/codec/socket/store/AudioTrack, exact waveform and all thresholds. This is a justified environment control, not proof that it alone will resolve all speaker glitches.",
+    "changes_made": "Scratch diagnostics only; no production, shared SDK, test harness, accepted thresholds or released package edited."
+  },
+  "speaker_diagnosis_sha256": "03bfb1f7f44f77a3cf2c7d46ec213ecdb7088e93165f7ed69741a208951cb2e2"
+}

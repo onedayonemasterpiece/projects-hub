@@ -135,6 +135,22 @@ if name == "pactl":
 elif name == "adb":
     if args == ["devices"]:
         print("List of devices attached\n" + os.environ.get("PH_TEST_ADB_DEVICES", ""))
+    elif args[:2] == ["-s", "emulator-5554"]:
+        command = args[2:]
+        if command == ["shell", "getprop", "ro.kernel.qemu"]:
+            print("1")
+        elif command == ["shell", "getprop", "ro.build.version.sdk"]:
+            print("31")
+        elif command == ["shell", "pm", "list", "packages", "--user", "0"]:
+            print(os.environ.get("PH_TEST_PACKAGE_INVENTORY",
+                "package:android\npackage:com.google.android.gms\npackage:com.google.android.googlequicksearchbox\npackage:com.google.android.webview"))
+        elif command[:5] in (["shell", "pm", "disable-user", "--user", "0"], ["shell", "am", "force-stop", "--user", "0"]):
+            if command[5:] not in (["com.google.android.gms"], ["com.google.android.googlequicksearchbox"]):
+                sys.exit("Package mutation outside the fixed test-profile allowlist")
+        elif command[:3] == ["shell", "dumpsys", "package"]:
+            print("  User 0: installed=true stopped=" + os.environ.get("PH_TEST_PACKAGE_STOPPED", "true") + " enabled=3")
+        else:
+            sys.exit("Unexpected selected-device operation")
     else:
         sys.exit("Unexpected device operation")
 elif name == "Xvfb":
@@ -177,6 +193,75 @@ def harness(tmp_path):
 def command_log(root):
     path = root / "commands.jsonl"
     return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+def run_guest_profile(harness):
+    root, environment, _ = harness
+    (root / "evidence").mkdir(exist_ok=True)
+    # Execute the real Bash helper with the same bounded adb wrapper and guards;
+    # no fixture server, emulator, package manager or Gradle is started in this test.
+    source = (ROOT / "scripts/android_emulator_smoke.sh").read_text()
+    helpers = source.partition("\nprepare() {")[0]
+    script = root / "repo/scripts/guest-profile-test.sh"
+    script.write_text(helpers + "\nconfigure_disposable_guest\n")
+    return subprocess.run(["bash", str(script)], env=environment, capture_output=True, text=True, timeout=12)
+
+
+def test_guest_profile_changes_only_observed_background_packages_and_verifies_state(harness):
+    root, environment, _ = harness
+    environment["PH_TEST_ADB_DEVICES"] = "emulator-5554\tdevice"
+    result = run_guest_profile(harness)
+    assert result.returncode == 0, result.stderr
+    receipt = json.loads((root / "evidence/guest-background.json").read_text())
+    names = ["com.google.android.gms", "com.google.android.googlequicksearchbox"]
+    assert receipt["passed"] is True and receipt["phase"] == "verified"
+    assert receipt["serial"] == "emulator-5554" and receipt["user_id"] == 0
+    assert receipt["packages"] == [{"package": name, "status": "disabled_and_stopped"} for name in names]
+    calls = [args[2:] for name, args in command_log(root) if name == "adb" and args[:2] == ["-s", "emulator-5554"]]
+    mutations = [args for args in calls if args[1:3] in (["pm", "disable-user"], ["am", "force-stop"])]
+    assert mutations == [command + [name] for name in names for command in (
+        ["shell", "pm", "disable-user", "--user", "0"], ["shell", "am", "force-stop", "--user", "0"])]
+    assert all(call[-1] != "com.google.android.webview" for call in calls)
+    assert not any(name == "gradle" for name, _ in command_log(root))
+
+
+def test_guest_profile_records_absent_package_without_mutating_a_prefix_match(harness):
+    root, environment, _ = harness
+    environment["PH_TEST_ADB_DEVICES"] = "emulator-5554\tdevice"
+    environment["PH_TEST_PACKAGE_INVENTORY"] = "package:android\npackage:com.google.android.gms\npackage:com.google.android.googlequicksearchbox.other"
+    result = run_guest_profile(harness)
+    assert result.returncode == 0, result.stderr
+    receipt = json.loads((root / "evidence/guest-background.json").read_text())
+    assert receipt["passed"] is True
+    assert receipt["packages"][1] == {"package": "com.google.android.googlequicksearchbox", "status": "absent"}
+    assert not any(args[-1:] == ["com.google.android.googlequicksearchbox"] for _, args in command_log(root))
+
+
+@pytest.mark.parametrize("failure", ["still_running", "invalid_inventory"])
+def test_guest_profile_failure_never_creates_a_success_receipt(harness, failure):
+    root, environment, _ = harness
+    environment["PH_TEST_ADB_DEVICES"] = "emulator-5554\tdevice"
+    if failure == "still_running":
+        environment["PH_TEST_PACKAGE_STOPPED"] = "false"
+    else:
+        environment["PH_TEST_PACKAGE_INVENTORY"] = "Error: package manager unavailable"
+    result = run_guest_profile(harness)
+    assert result.returncode != 0
+    receipt = json.loads((root / "evidence/guest-background.json").read_text())
+    assert receipt["passed"] is False
+    if failure == "still_running":
+        assert receipt["packages"][0]["status"] == "verification_failed"
+        assert receipt["packages"][1]["status"] == "not_attempted"
+    assert not any(args[-1:] == ["com.google.android.googlequicksearchbox"] for _, args in command_log(root))
+
+
+def test_guest_profile_refuses_unselected_device_before_package_commands(harness):
+    root, environment, _ = harness
+    environment["PH_TEST_ADB_DEVICES"] = "emulator-5554\tdevice\nphone-serial\tdevice"
+    result = run_guest_profile(harness)
+    assert result.returncode != 0
+    assert command_log(root) == [["adb", ["devices"]]]
+    assert not (root / "evidence/guest-background.json").exists()
 
 
 def test_failed_prepare_cleans_only_its_created_audio_module(harness):

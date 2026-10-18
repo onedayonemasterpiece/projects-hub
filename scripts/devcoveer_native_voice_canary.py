@@ -328,12 +328,17 @@ def update_acceptance(report: dict, *, loop_shutdown_pending: bool = False) -> N
 
 
 class ReplaySocket:
-    def __init__(self, ws, output_file, caption: CaptionEvidence):
+    def __init__(self, ws, output_file, caption: CaptionEvidence, *, connection_generation: int):
+        if type(connection_generation) is not int or connection_generation < 1:
+            raise ValueError("CANARY_OUTPUT_GENERATION")
         self.ws, self.output_file, self.caption = ws, output_file, caption
+        self.connection_generation = connection_generation
         self.changed = asyncio.Event()
         self.controls = deque(maxlen=256)
         self.events = deque(maxlen=2048)
         self.acks, self.output_sources, self.output_ended = {}, {}, set()
+        self.output_interrupts, self.output_interrupt_rejections = {}, Counter()
+        self.output_interrupt_duplicates = 0
         self.cursor = 0
         self.error: BaseException | None = None
         self.reader = asyncio.create_task(self.receive())
@@ -366,10 +371,15 @@ class ReplaySocket:
                     frame = AudioFrame.decode(raw)
                     if frame.magic != DOWNLINK_MAGIC:
                         raise ValueError("CANARY_UNEXPECTED_BINARY")
-                    source_id = self.output_sources[frame.stream_ref]
+                    binding = self.output_sources[frame.stream_ref]
+                    if (frame.delivery_generation != self.connection_generation
+                            or frame.epoch_ref != binding["epoch_ref"]):
+                        raise ValueError("CANARY_OUTPUT_FRAME_IDENTITY")
+                    source_id = binding["source_id"]
                     await asyncio.to_thread(self.persist, b"B", raw)
                     await self.send({"type": "output_ack", "stage": "device_durable", "source_id": source_id,
                                      "chunk_seq": frame.chunk_seq})
+                    binding["last_event_seq"] = max(binding["last_event_seq"], frame.event_seq)
                     if frame.flags & EPOCH_END:
                         self.output_ended.add(source_id)
                     self.cursor = max(self.cursor, frame.event_seq)
@@ -377,8 +387,49 @@ class ReplaySocket:
                     value = json.loads(raw)
                     kind = value.get("type")
                     if kind == "output_epoch":
-                        self.output_sources[value["stream_ref"]] = value["source_id"]
+                        if (type(value.get("connection_generation")) is not int
+                                or value["connection_generation"] != self.connection_generation):
+                            raise ValueError("CANARY_OUTPUT_GENERATION")
+                        identity = {key: value.get(key) for key in
+                                    ("source_id", "server_source_id", "epoch_ref", "provider_response_id")}
+                        if (any(not isinstance(identity[key], str) or not 1 <= len(identity[key]) <= 256
+                                for key in ("source_id", "server_source_id"))
+                                or type(identity["provider_response_id"]) is not int
+                                or not 1 <= identity["provider_response_id"] <= 0xFFFFFFFF
+                                or type(value.get("response_id")) is not int
+                                or value.get("response_id") != identity["provider_response_id"]
+                                or any(type(value.get(key)) is not int or value[key] < 1
+                                       for key in ("stream_ref", "epoch_ref"))):
+                            raise ValueError("CANARY_OUTPUT_EPOCH_IDENTITY")
+                        previous = self.output_sources.get(value["stream_ref"])
+                        if (previous and any(previous[key] != item for key, item in identity.items())) or any(
+                                ref != value["stream_ref"] and item["source_id"] == identity["source_id"]
+                                for ref, item in self.output_sources.items()):
+                            raise ValueError("CANARY_OUTPUT_EPOCH_IDENTITY")
+                        self.output_sources[value["stream_ref"]] = previous or {**identity, "last_event_seq": 0}
                         await asyncio.to_thread(self.persist, b"J", raw.encode())
+                    elif kind == "output_interrupt":
+                        binding = next((item for item in self.output_sources.values()
+                                        if item["source_id"] == value.get("source_id")), None)
+                        if (type(value.get("connection_generation")) is not int
+                                or value["connection_generation"] != self.connection_generation):
+                            self.output_interrupt_rejections["connection_generation"] += 1
+                        elif binding is None:
+                            # The urgent control may precede its epoch; unknown
+                            # source ownership never becomes a terminal receipt.
+                            self.output_interrupt_rejections["unknown_source"] += 1
+                        elif (type(value.get("provider_response_id")) is not int
+                              or value["provider_response_id"] != binding["provider_response_id"]):
+                            self.output_interrupt_rejections["provider_response_id"] += 1
+                        elif binding["source_id"] in self.output_interrupts:
+                            self.output_interrupt_duplicates += 1
+                        else:
+                            await asyncio.to_thread(self.persist, b"J", raw.encode())
+                            self.output_interrupts[binding["source_id"]] = {
+                                "source_id": binding["source_id"], "server_source_id": binding["server_source_id"],
+                                "provider_response_id": binding["provider_response_id"],
+                                "connection_generation": self.connection_generation,
+                            }
                     elif kind == "audio_ack":
                         self.acks[value["source_id"]] = value["chunk_seq"]
                     elif kind == "event":
@@ -424,7 +475,8 @@ class ReplaySocket:
                       phase="source_open", client_source_id=source_id, client_frames_sent=0,
                       original_chunks=len(recording.chunks), source_sealed=False,
                       known_phrase_indices=list(range(len(phrases))))
-        before_seq, before_output = self.cursor, set(self.output_ended)
+        before_seq = self.cursor
+        before_output = {item["source_id"] for item in self.output_sources.values()}
         expected = tuple(normalized(phrase) for phrase in phrases)
 
         def snapshot():
@@ -432,7 +484,13 @@ class ReplaySocket:
             text = " ".join(str(e.get("text") or "") for e in events if e.get("type") == "input_transcript")
             matches = [phrase in normalized(text) for phrase in expected]
             turns = sum(e.get("type") == "turn_complete" for e in events)
-            outputs = len(self.output_ended - before_output)
+            # A control has no event sequence. Attribute terminal coverage only
+            # through an actual received audio frame newer than this replay.
+            eligible = {item["source_id"] for item in self.output_sources.values()
+                        if item["last_event_seq"] > before_seq} - before_output
+            ended = self.output_ended & eligible
+            interrupted = self.output_interrupts.keys() & eligible
+            outputs, terminals = len(ended), len(ended | interrupted)
             result.update(main_phrase_matches=matches,
                 missing_phrase_indices=[i for i, matched in enumerate(matches) if not matched],
                 main_transcript_matches=all(matches), main_transcript_chars=len(text),
@@ -441,11 +499,21 @@ class ReplaySocket:
                 turn_complete_received=turns >= len(expected),
                 output_ended_source_count=outputs, output_ended_source_required=len(expected),
                 output_encoded_tail_received=outputs >= len(expected),
+                output_ended_source_ids=sorted(ended),
+                output_interrupted_source_count=len(interrupted),
+                output_interrupt_receipts=[self.output_interrupts[key] for key in sorted(interrupted)],
+                output_interrupt_unattributed_source_count=len(self.output_interrupts.keys() - eligible),
+                output_interrupt_rejections=dict(self.output_interrupt_rejections),
+                output_interrupt_duplicate_count=self.output_interrupt_duplicates,
+                output_terminal_source_count=terminals, output_terminal_source_required=len(expected),
+                output_terminal_received=terminals >= len(expected),
+                output_terminal_policy="received_epoch_end_or_confirmed_source_interrupt",
+                output_playback_proven=False,
                 elapsed_ms=round((time.monotonic() - anchor) * 1000),
                 event_counts=dict(Counter(e.get("type") for e in events)))
             if not result["source_sealed"]:
                 result["server_durable_seq"] = self.acks.get(source_id, 0)
-            return all(matches) and turns >= len(expected) and outputs >= len(expected)
+            return all(matches) and turns >= len(expected) and terminals >= len(expected)
 
         try:
             await self.send({"type": "source_open", "source_id": source_id,
@@ -455,7 +523,8 @@ class ReplaySocket:
             result["server_source_id"] = bound["server_source_id"]
             self.caption.sources[bound["server_source_id"]] = {"replay_id": replay_id,
                 "portions": recording.portions(), "expected_portions": expected_portions}
-            before_seq, before_output = self.cursor, set(self.output_ended)
+            before_seq = self.cursor
+            before_output = {item["source_id"] for item in self.output_sources.values()}
             epoch_refs, outstanding = {}, deque()
             result["phase"] = "send_audio"
             for chunk in recording.chunks:
@@ -582,7 +651,7 @@ async def run_provider(args, recording: Recording, report: dict) -> dict:
                 ws = await websockets.connect(f"ws://127.0.0.1:{port}" + started["socket_url"],
                     origin=f"http://127.0.0.1:{port}", subprotocols=["wl-live-v2", "wl-ticket." + started["socket_ticket"]],
                     additional_headers={"Cookie": http.cookie_header()}, open_timeout=10, close_timeout=5, max_size=128 * 1024)
-                wire = ReplaySocket(ws, output, caption)
+                wire = ReplaySocket(ws, output, caption, connection_generation=generation)
                 await wire.send({"type": "hello", "protocol": "wl-live-v2", "attempt_id": started["attempt_id"],
                     "connection_generation": generation, "cursor": cursor,
                     "capabilities": {"uplink_codecs": [OPUS_PROFILE], "downlink_codecs": [OPUS_PROFILE]}})

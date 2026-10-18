@@ -104,6 +104,57 @@ validate_device() {
   test "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" = 31
 }
 
+configure_disposable_guest() {
+  require_profile
+  validate_device
+  local inventory name user_state status failed=0
+  local receipt="$EVIDENCE/guest-background.json" rows="$EVIDENCE/guest-background.tsv"
+  test ! -e "$receipt" && test ! -e "$rows" || { echo 'Guest profile evidence already exists; use a fresh run.' >&2; return 1; }
+  # Fail closed even if adb times out before the final machine-readable receipt.
+  printf '{"passed":false,"phase":"configuration"}\n' > "$receipt"
+  : > "$rows"
+  inventory="$(adb shell pm list packages --user 0 | tr -d '\r')"
+  test -n "$inventory" && ! rg -q -v '^package:[a-zA-Z0-9_.]+$' <<< "$inventory" || {
+    echo 'Cannot verify the disposable guest package inventory.' >&2; return 1;
+  }
+  # The fixture uses neither GMS nor Search. Their first-boot model/configuration
+  # downloads overlapped audio in run 39127146951. Leave WebView and networking
+  # intact; this controls the emulator profile, not production phone workload.
+  for name in com.google.android.gms com.google.android.googlequicksearchbox; do
+    status=absent
+    if rg -q -F -x "package:$name" <<< "$inventory"; then
+      status=verification_failed
+      if adb shell pm disable-user --user 0 "$name" > "$EVIDENCE/$name-profile.txt" 2>&1 &&
+          adb shell am force-stop --user 0 "$name" >> "$EVIDENCE/$name-profile.txt" 2>&1 &&
+          user_state="$(adb shell dumpsys package "$name" | sed -n '/^[[:space:]]*User 0:/p' | tr -d '\r')" &&
+          [ "$(printf '%s\n' "$user_state" | wc -l)" -eq 1 ] &&
+          rg -q '(^|[[:space:]])enabled=3($|[[:space:]])' <<< "$user_state" &&
+          rg -q '(^|[[:space:]])stopped=true($|[[:space:]])' <<< "$user_state"; then
+        status=disabled_and_stopped
+        printf '%s\n' "$user_state" >> "$EVIDENCE/$name-profile.txt"
+      else
+        failed=1
+      fi
+    fi
+    printf '%s\t%s\n' "$name" "$status" >> "$rows"
+    if [ "$failed" -ne 0 ]; then break; fi
+  done
+  python - "$rows" "$receipt" "$ANDROID_SERIAL" <<'PY'
+import json, pathlib, sys
+allowlist = ("com.google.android.gms", "com.google.android.googlequicksearchbox")
+states = dict(line.split("\t") for line in pathlib.Path(sys.argv[1]).read_text().splitlines())
+packages = [{"package": name, "status": states.get(name, "not_attempted")} for name in allowlist]
+passed = all(item["status"] in ("absent", "disabled_and_stopped") for item in packages)
+pathlib.Path(sys.argv[2]).write_text(json.dumps({
+    "passed": passed, "phase": "verified" if passed else "verification_failed",
+    "profile": "disposable-api31-without-gms-search-background-jobs",
+    "serial": sys.argv[3], "user_id": 0, "packages": packages,
+    "scope": "Controlled fixture AVD; not stock-phone background-load acceptance.",
+}, indent=2) + "\n")
+sys.exit(0 if passed else 1)
+PY
+}
+
 prepare() {
   local owner module_id xvfb_pid xvfb_stamp name
   owner="ph_e2e_$(python -c 'import secrets; print(secrets.token_hex(16))')"
@@ -214,6 +265,8 @@ test -f "$RESOURCES"
 test "$(cat "$EVIDENCE/prepare-status.json")" = '{"phase":"prepare","exit_code":0}'
 validate_device
 device_ready=1
+phase=guest_profile
+configure_disposable_guest
 phase=fixture_start
 test -f "$CERTS/server.pem"
 test -f android/app/src/voiceE2e/res/raw/native_test_ca.pem
