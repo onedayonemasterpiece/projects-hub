@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createNativeVoiceAdapter, nativeVoiceSupported } from '../src/nativeVoiceBridge.js';
 
 const capabilities = { protocol: 'wl-live-v2', native_capture: true, compressed_input: true, compressed_output: true };
@@ -15,6 +16,67 @@ function setup(options = {}) {
     state: state(), capabilities, ...fields });
   return { adapter, bridge, sent, states, events, send, ack };
 }
+
+test('older WebView creates the actual App client ID and native requests with secure UUIDs', async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+  const originalCrypto = globalThis.crypto;
+  let secureDraws = 0;
+  const legacyCrypto = { getRandomValues(bytes) {
+    secureDraws++;
+    assert.equal(bytes.byteLength, 16);
+    return originalCrypto.getRandomValues(bytes);
+  } };
+  Object.defineProperty(globalThis, 'crypto', { configurable: true, value: legacyCrypto });
+  let t;
+  try {
+    const entry = readFileSync(new URL('../src/main.tsx', import.meta.url), 'utf8');
+    assert.match(entry, /^import "\.\/browserCrypto\.js";/, 'compatibility loads before App/shared dependencies');
+    await import('../src/browserCrypto.js?legacy-webview');
+    const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+    const initializer = app.match(/  const clientInstanceId = useMemo\(\(\) => \{([\s\S]*?)\n  \}, \[\]\);/)?.[1];
+    assert.ok(initializer, 'exercise the actual failing first-render initializer');
+    const storage = new Map();
+    const sessionStorage = { getItem: key => storage.get(key) ?? null,
+      setItem: (key, value) => storage.set(key, value) };
+    const createClientId = new Function('sessionStorage', initializer);
+    const clientId = createClientId(sessionStorage);
+    assert.match(clientId, /^web_[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}$/);
+    assert.equal(createClientId(sessionStorage), clientId, 'existing instance identity survives reload');
+
+    t = setup();
+    const attached = t.adapter.attach(); t.ack(t.sent[0]); await attached;
+    const started = t.adapter.start({ conversationId: 'conversation_A' });
+    await new Promise(resolve => setImmediate(resolve));
+    t.ack(t.sent[1], { state: state({ revision: 2, status: 'starting', conversation_id: 'conversation_A' }) });
+    assert.equal(await started, true);
+    t.adapter.detach();
+    assert.deepEqual(t.sent.map(message => message.type), ['attach', 'start', 'detach']);
+    for (const message of t.sent) {
+      assert.match(message.request_id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    }
+    assert.equal(new Set(t.sent.map(message => message.request_id)).size, 3);
+    assert.equal(secureDraws, 4);
+  } finally {
+    t?.adapter.detach();
+    Object.defineProperty(globalThis, 'crypto', descriptor);
+  }
+});
+
+test('UUID compatibility preserves a native implementation and requires secure entropy', async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+  const nativeUUID = () => 'native-implementation';
+  try {
+    Object.defineProperty(globalThis, 'crypto', { configurable: true,
+      value: { randomUUID: nativeUUID, getRandomValues() { throw new Error('unexpected fallback'); } } });
+    await import('../src/browserCrypto.js?modern-webview');
+    assert.equal(globalThis.crypto.randomUUID, nativeUUID);
+    Object.defineProperty(globalThis, 'crypto', { configurable: true, value: {} });
+    await assert.rejects(import('../src/browserCrypto.js?missing-secure-entropy'),
+      /Secure random generator unavailable/);
+  } finally {
+    Object.defineProperty(globalThis, 'crypto', descriptor);
+  }
+});
 
 test('real handshake requires both compressed directions and native ownership', async () => {
   assert.equal(nativeVoiceSupported(null), false);

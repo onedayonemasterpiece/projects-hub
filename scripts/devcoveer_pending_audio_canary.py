@@ -40,7 +40,14 @@ from devcoveer_canary_support import (bounded, cleanup_step, record_error, run_r
                                     save_report, use_installed_provider_environment)
 
 TOOL = "github_repositories_list"
-PROMPT = "Проверь, какие репозитории уже подключены к моему рабочему пространству. Ничего не подключай и не изменяй."
+PROMPT = ("Проверь, какие репозитории уже подключены к моему рабочему пространству. "
+          "Сначала активируй capability repositories через activate_capability, затем вызови "
+          "github_repositories_list с пустыми аргументами и сообщи результат. "
+          "Только чтение: ничего не подключай и не изменяй.")
+# These ordinary prerequisite reads touch only the isolated store/session. A
+# same-capability activate_capability is a product-validated no-op; actual router
+# transitions remain handled by the unchanged shared resolver/SILENT contract.
+SAFE_PREREQUISITES = frozenset({"projects_list_accessible", "runtime_versions_get", "preferences_get", "activate_capability"})
 MAX_PCM_BYTES = 4 * 1024 * 1024
 
 
@@ -60,6 +67,19 @@ class PendingEvidence:
         self.chunks = []
         self.events = Counter()
         self.progress_seq = self.result_seq = None
+        self.tool_calls = []
+        self.prerequisite_calls = 0
+
+    def tool_diagnostic(self, session, call, phase, code=None):
+        if len(self.tool_calls) >= 32:
+            if "tool_diagnostic_bound" not in self.errors:
+                self.errors.append("tool_diagnostic_bound")
+            return
+        item = {"phase": phase}
+        for key, value in (("name", call.get("name")), ("capability", getattr(session, "capability", None)), ("code", code)):
+            if isinstance(value, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,79}", value):
+                item[key] = value
+        self.tool_calls.append(item)
 
     def host_events(self, events):
         for event in events:
@@ -75,6 +95,10 @@ class PendingEvidence:
         kind = str(event.get("type") or "")
         self.events[kind] += 1
         now = self.clock()
+        if kind == "tool_call" and isinstance(event.get("calls"), list):
+            for call in event["calls"][:16]:
+                if isinstance(call, dict):
+                    self.tool_diagnostic(session, call, "provider_call")
         if kind in {"error", "resource_fallback"}:
             self.errors.append(kind)
         if kind == "turn_complete" and self.returned is not None and self.result_seq is not None:
@@ -133,7 +157,8 @@ class PendingEvidence:
                 "tool_entered_ms": round((self.entered-self.origin)*1000) if self.entered is not None else None,
                 "completion_released_ms": round((self.released-self.origin)*1000) if self.released is not None else None,
                 "tool_returned_ms": round((self.returned-self.origin)*1000) if self.returned is not None else None,
-                "event_counts": dict(self.events), "audio_chunks": self.chunks, "evidence_errors": self.errors[:20]}
+                "event_counts": dict(self.events), "audio_chunks": self.chunks, "evidence_errors": self.errors[:20],
+                "prerequisite_calls": self.prerequisite_calls, "tool_calls": self.tool_calls}
 
     def save_audio(self, directory):
         for phase, pcm in self.audio.items():
@@ -148,6 +173,38 @@ class PendingEvidence:
             os.chmod(path, 0o600)
 
 
+async def execute_read_tool(evidence, original_execute, session, call, delay):
+    from projects_hub.store import StoreError
+
+    name = call.get("name")
+    evidence.tool_diagnostic(session, call, "entered")
+    try:
+        if name != TOOL:
+            if name not in SAFE_PREREQUISITES or evidence.prerequisite_calls >= 4:
+                evidence.errors.append("unexpected_or_excess_prerequisite")
+                raise StoreError("CANARY_UNEXPECTED_TOOL", "This isolated canary authorizes catalogue/prerequisite reads only")
+            evidence.prerequisite_calls += 1
+            result = await original_execute(session, call)
+        else:
+            if evidence.call_count:
+                evidence.errors.append("repeated_target_tool")
+                raise StoreError("CANARY_REPEATED_TARGET_TOOL", "Only one delayed catalogue read is authorized")
+            evidence.call_count += 1
+            evidence.call_id = call.get("id")
+            evidence.entered = evidence.clock()
+            evidence.non_blocking = TOOL in session.non_blocking_tools
+            await asyncio.sleep(delay)
+            evidence.released = evidence.clock()
+            result = await original_execute(session, call)
+            evidence.returned = evidence.clock()
+            evidence.result_verified = result == {"repositories": [], "requires_connection": True}
+        evidence.tool_diagnostic(session, call, "returned")
+        return result
+    except BaseException as exc:
+        evidence.tool_diagnostic(session, call, "error", getattr(exc, "code", None) or type(exc).__name__)
+        raise
+
+
 async def run(args, report):
     evidence = PendingEvidence()
     store = host = started = resource = actor = None
@@ -157,7 +214,7 @@ async def run(args, report):
         from projects_hub.live_adapter import _functions
         from projects_hub.live_resources import ConversationScope
         from projects_hub.live_runtime import build_live_host
-        from projects_hub.store import DurableStore, StoreError
+        from projects_hub.store import DurableStore
         declaration = next(item for item in _functions() if item["name"] == TOOL)
         if declaration.get("behavior") != "NON_BLOCKING":
             raise ValueError("CANARY_TOOL_NOT_NON_BLOCKING")
@@ -186,19 +243,7 @@ async def run(args, report):
         original_execute, original_event = host.adapter.execute_tool, host.adapter.on_event
 
         async def delayed_execute(session, call):
-            if call.get("name") != TOOL or evidence.call_count:
-                evidence.errors.append("unexpected_or_repeated_tool")
-                raise StoreError("CANARY_UNEXPECTED_TOOL", "This isolated canary authorizes one catalogue read")
-            evidence.call_count += 1
-            evidence.call_id = call.get("id")
-            evidence.entered = evidence.clock()
-            evidence.non_blocking = TOOL in session.non_blocking_tools
-            await asyncio.sleep(args.delay)
-            evidence.released = evidence.clock()
-            result = await original_execute(session, call)
-            evidence.returned = evidence.clock()
-            evidence.result_verified = result == {"repositories": [], "requires_connection": True}
-            return result
+            return await execute_read_tool(evidence, original_execute, session, call, args.delay)
 
         def observe(session, event):
             evidence.observe(session, event)

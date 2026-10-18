@@ -1,6 +1,8 @@
 """An observed UI event, silence or audio after release cannot fake pending audio."""
 import base64
+import asyncio
 import importlib.util
+import json
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -79,4 +81,52 @@ def test_pending_from_another_tool_cannot_be_used_as_this_calls_evidence():
     clock[0] = 11
     evidence.observe(session, audio())
     assert evidence.audio_metrics("pending")["pcm_bytes"] == 0
+
+
+def test_safe_prerequisite_read_is_preserved_before_the_single_delayed_target():
+    module = load()
+    evidence = module.PendingEvidence()
+    session = SimpleNamespace(capability="repositories", non_blocking_tools={module.TOOL})
+    executed = []
+
+    async def original(session, call):
+        executed.append(call["name"])
+        return {"repositories": [], "requires_connection": True} if call["name"] == module.TOOL else {"projects": []}
+
+    async def scenario():
+        await module.execute_read_tool(evidence, original, session,
+                                       {"name": "projects_list_accessible", "id": "before"}, 0)
+        assert evidence.call_count == 0
+        await module.execute_read_tool(evidence, original, session, {"name": module.TOOL, "id": "target"}, 0)
+
+    asyncio.run(scenario())
+    assert executed == ["projects_list_accessible", module.TOOL]
+    assert evidence.call_count == 1 and evidence.prerequisite_calls == 1
+    assert evidence.result_verified is True
+    assert [item["phase"] for item in evidence.tool_calls] == ["entered", "returned", "entered", "returned"]
+    assert callable(evidence.save_audio)
+
+
+def test_unexpected_tool_receipt_contains_only_bounded_name_capability_and_code():
+    import pytest
+    from projects_hub.store import StoreError
+    module = load()
+    evidence = module.PendingEvidence()
+    session = SimpleNamespace(capability="board", non_blocking_tools={module.TOOL}, events=[])
+    call = {"name": "board_edit", "id": "private-call-id", "args": {"token": "private-value", "text": "private-text"}}
+    evidence.observe(session, {"type": "tool_call", "calls": [call]})
+
+    async def original(session, call):
+        raise AssertionError("Unexpected mutating tool must never execute")
+
+    with pytest.raises(StoreError):
+        asyncio.run(module.execute_read_tool(evidence, original, session, call, 0))
+    result = evidence.result()
+    assert result["target_calls"] == 0
+    assert result["tool_calls"][-1] == {"phase": "error", "name": "board_edit", "capability": "board", "code": "CANARY_UNEXPECTED_TOOL"}
+    assert "private" not in json.dumps(result)
+    for _ in range(40):
+        evidence.tool_diagnostic(session, call, "provider_call")
+    assert len(evidence.tool_calls) == 32
+    assert "tool_diagnostic_bound" in evidence.errors
 

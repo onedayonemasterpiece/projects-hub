@@ -52,6 +52,53 @@ public class MainActivitySmokeTest {
         }
     }
 
+    @Test public void debugUpdaterDiscardsStableOffersAtEveryEntryPoint() {
+        assertTrue("This regression exercises the debug update channel", BuildConfig.DEBUG);
+        android.content.Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        android.content.SharedPreferences preferences = context.getSharedPreferences(
+                "debug_updater_guard_test", android.content.Context.MODE_PRIVATE);
+        java.util.concurrent.ExecutorService noWork = java.util.concurrent.Executors.newSingleThreadExecutor();
+        noWork.shutdown(); // Any attempted scheduling fails before network work starts.
+        try {
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                android.app.Activity host = new android.app.Activity() {
+                    @Override public android.content.SharedPreferences getSharedPreferences(String name, int mode) {
+                        assertEquals("projects_hub_update", name);
+                        return preferences;
+                    }
+                    @Override public android.content.pm.PackageManager getPackageManager() {
+                        throw new AssertionError("Debug update must not request installation permission");
+                    }
+                };
+                Updater.Listener noOffer = new Updater.Listener() {
+                    @Override public void onAvailable(Updater.AvailableUpdate update) { fail("Stable offer in debug"); }
+                    @Override public void onMessage(String message) { fail("Debug installer message"); }
+                    @Override public void onFailure(String message) { fail("Debug update attempted"); }
+                };
+                Updater.AvailableUpdate stale = new Updater.AvailableUpdate(63, "0.1.62",
+                        "https://github.com/onedayonemasterpiece/projects-hub/releases/download/android-v63/projects-hub.apk",
+                        "ec5ba31cd8a32fb566b74415b6cb59d14b29d2a3863f5889a8f85332c1a5c89f");
+                String encoded = PendingUpdateState.encode(stale.versionCode, stale.versionName, stale.apkUrl, stale.sha256);
+                assertTrue(preferences.edit().putString("pending_install_v1", encoded)
+                        .putString("unrelated", "preserved").commit());
+                Updater updater = new Updater(host, noWork, noOffer);
+                assertFalse("Discard persisted offer at construction", preferences.contains("pending_install_v1"));
+                assertEquals("preserved", preferences.getString("unrelated", null));
+                Runnable[] entryPoints = {updater::checkForUpdate, updater::resumePendingInstall,
+                        () -> updater.downloadAndInstall(stale)};
+                for (Runnable entryPoint : entryPoints) {
+                    assertTrue(preferences.edit().putString("pending_install_v1", encoded).commit());
+                    entryPoint.run();
+                    assertFalse("Discard stale offer without network or installer work",
+                            preferences.contains("pending_install_v1"));
+                    assertEquals("preserved", preferences.getString("unrelated", null));
+                }
+            });
+        } finally {
+            preferences.edit().remove("pending_install_v1").remove("unrelated").commit();
+        }
+    }
+
     @Test public void completionSchedulingCannotBreakStartupOrReopen() {
         // The prior launch smoke never exercised the new post-pairing Android
         // JobScheduler registration. Scheduling may fail on vendor ROMs but
