@@ -107,48 +107,104 @@ validate_device() {
 configure_disposable_guest() {
   require_profile
   validate_device
-  local inventory name user_state status failed=0
+  local inventory name line user_state status reason readback present
+  local section selected sections packages users
+  local package_header='^  Package \[([a-zA-Z0-9_.]+)\] \([a-fA-F0-9]+\):$'
+  local -a installed=()
   local receipt="$EVIDENCE/guest-background.json" rows="$EVIDENCE/guest-background.tsv"
   test ! -e "$receipt" && test ! -e "$rows" || { echo 'Guest profile evidence already exists; use a fresh run.' >&2; return 1; }
   # Fail closed even if adb times out before the final machine-readable receipt.
   printf '{"passed":false,"phase":"configuration"}\n' > "$receipt"
   : > "$rows"
-  inventory="$(adb shell pm list packages --user 0 | tr -d '\r')"
-  test -n "$inventory" && ! rg -q -v '^package:[a-zA-Z0-9_.]+$' <<< "$inventory" || {
-    echo 'Cannot verify the disposable guest package inventory.' >&2; return 1;
-  }
+  if ! inventory="$(adb shell pm list packages --user 0 | tr -d '\r')"; then
+    printf '{"passed":false,"phase":"configuration","failure_reason":"inventory_command_failed"}\n' > "$receipt"
+    return 1
+  fi
+  if [[ -z "$inventory" ]]; then
+    printf '{"passed":false,"phase":"configuration","failure_reason":"inventory_empty"}\n' > "$receipt"
+    return 1
+  fi
+  while IFS= read -r line; do
+    if [[ ! "$line" =~ ^package:[a-zA-Z0-9_.]+$ ]]; then
+      printf '{"passed":false,"phase":"configuration","failure_reason":"inventory_invalid"}\n' > "$receipt"
+      return 1
+    fi
+    installed+=("$line")
+  done <<< "$inventory"
   # The fixture uses neither GMS nor Search. Their first-boot model/configuration
   # downloads overlapped audio in run 39127146951. Leave WebView and networking
   # intact; this controls the emulator profile, not production phone workload.
   for name in com.google.android.gms com.google.android.googlequicksearchbox; do
-    status=absent
-    if rg -q -F -x "package:$name" <<< "$inventory"; then
+    status=absent reason= readback= user_state= sections=0 packages=0 users=0 present=0
+    for line in "${installed[@]}"; do
+      if [[ "$line" = "package:$name" ]]; then present=1; break; fi
+    done
+    if [ "$present" -eq 1 ]; then
       status=verification_failed
-      if adb shell pm disable-user --user 0 "$name" > "$EVIDENCE/$name-profile.txt" 2>&1 &&
-          adb shell am force-stop --user 0 "$name" >> "$EVIDENCE/$name-profile.txt" 2>&1 &&
-          user_state="$(adb shell dumpsys package "$name" | sed -n '/^[[:space:]]*User 0:/p' | tr -d '\r')" &&
-          [ "$(printf '%s\n' "$user_state" | wc -l)" -eq 1 ] &&
-          rg -q '(^|[[:space:]])enabled=3($|[[:space:]])' <<< "$user_state" &&
-          rg -q '(^|[[:space:]])stopped=true($|[[:space:]])' <<< "$user_state"; then
-        status=disabled_and_stopped
-        printf '%s\n' "$user_state" >> "$EVIDENCE/$name-profile.txt"
-      else
-        failed=1
+      if ! adb shell pm disable-user --user 0 "$name" > "$EVIDENCE/$name-profile.txt" 2>&1; then
+        reason=disable_command_failed
+      elif ! adb shell am force-stop --user 0 "$name" >> "$EVIDENCE/$name-profile.txt" 2>&1; then
+        reason=force_stop_command_failed
       fi
+      readback="$name-dumpsys.txt"
+      # Keep the full targeted readback on failure too. adb retains its existing
+      # timeout; the subshell caps each output file at at most 2 MiB.
+      if (ulimit -f 2048 && adb shell dumpsys package "$name") > "$EVIDENCE/$readback" 2> "$EVIDENCE/$name-dumpsys-error.txt"; then
+        section= selected=
+        while IFS= read -r line || [ -n "$line" ]; do
+          line="${line%$'\r'}"
+          if [[ "$line" =~ ^[^[:space:]] ]]; then
+            section= selected=
+            if [[ "$line" = 'Packages:' ]]; then section=active; sections=$((sections + 1)); fi
+            continue
+          fi
+          [ "$section" = active ] || continue
+          if [[ "$line" =~ $package_header ]]; then
+            selected="${BASH_REMATCH[1]}"
+            if [[ "$selected" = "$name" ]]; then packages=$((packages + 1)); fi
+          elif [[ "$line" = '  Package '* ]]; then
+            selected=; reason="${reason:-active_header_invalid}"
+          elif [[ "$selected" = "$name" && "$line" = '    User 0: '* ]]; then
+            users=$((users + 1)); user_state="$line"
+          fi
+        done < "$EVIDENCE/$readback"
+        # Android Settings.dumpPackagesLPr also prints Hidden system packages:
+        # with another User 0 state. Only this unique active package is evidence.
+        if [ -z "$reason" ]; then
+          if [ "$sections" -ne 1 ]; then reason=active_section_count;
+          elif [ "$packages" -ne 1 ]; then reason=active_package_count;
+          elif [ "$users" -ne 1 ]; then reason=active_user0_count;
+          elif [[ ! "$user_state" =~ (^|[[:space:]])installed=true($|[[:space:]]) ]]; then reason=active_user0_not_installed;
+          elif [[ ! "$user_state" =~ (^|[[:space:]])enabled=3($|[[:space:]]) ]]; then reason=active_user0_not_disabled;
+          elif [[ ! "$user_state" =~ (^|[[:space:]])stopped=true($|[[:space:]]) ]]; then reason=active_user0_not_stopped;
+          fi
+        fi
+      else
+        reason="${reason:-readback_command_failed}"
+      fi
+      if [ -z "$reason" ]; then status=disabled_and_stopped; fi
     fi
-    printf '%s\t%s\n' "$name" "$status" >> "$rows"
-    if [ "$failed" -ne 0 ]; then break; fi
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$status" "$reason" "$readback" \
+      "$sections" "$packages" "$users" "${user_state//$'\t'/ }" >> "$rows"
+    if [ -n "$reason" ]; then break; fi
   done
   python - "$rows" "$receipt" "$ANDROID_SERIAL" <<'PY'
 import json, pathlib, sys
 allowlist = ("com.google.android.gms", "com.google.android.googlequicksearchbox")
-states = dict(line.split("\t") for line in pathlib.Path(sys.argv[1]).read_text().splitlines())
-packages = [{"package": name, "status": states.get(name, "not_attempted")} for name in allowlist]
+states = {}
+for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
+    name, status, reason, readback, sections, matches, users, state = line.split("\t", 7)
+    states[name] = {"package": name, "status": status, "failure_reason": reason or None,
+                   "readback_file": readback or None, "active_sections": int(sections),
+                   "active_package_matches": int(matches), "active_user0_matches": int(users),
+                   "active_user0_state": state or None}
+packages = [states.get(name, {"package": name, "status": "not_attempted"}) for name in allowlist]
 passed = all(item["status"] in ("absent", "disabled_and_stopped") for item in packages)
 pathlib.Path(sys.argv[2]).write_text(json.dumps({
     "passed": passed, "phase": "verified" if passed else "verification_failed",
     "profile": "disposable-api31-without-gms-search-background-jobs",
     "serial": sys.argv[3], "user_id": 0, "packages": packages,
+    "failure_reason": next((item["failure_reason"] for item in packages if item.get("failure_reason")), None),
     "scope": "Controlled fixture AVD; not stock-phone background-load acceptance.",
 }, indent=2) + "\n")
 sys.exit(0 if passed else 1)
@@ -293,7 +349,7 @@ test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1
 adb root > "$EVIDENCE/adb-emulator-root.txt" 2>&1
 adb wait-for-device
 adb shell cat /proc/asound/cards > "$EVIDENCE/android-audio-cards.txt" 2>&1
-if ! rg -q 'HDA|Intel' "$EVIDENCE/android-audio-cards.txt"; then
+if [[ ! "$(< "$EVIDENCE/android-audio-cards.txt")" =~ HDA|Intel ]]; then
   adb shell 'for d in /vendor/lib/modules /vendor_dlkm/lib/modules /lib/modules; do
     if [ -f "$d/snd-hda-intel.ko" ]; then
       modprobe -a -d "$d" snd-hda-intel || exit 1
@@ -305,9 +361,11 @@ if ! rg -q 'HDA|Intel' "$EVIDENCE/android-audio-cards.txt"; then
   adb shell cat /proc/asound/cards > "$EVIDENCE/android-audio-cards.txt" 2>&1
 fi
 adb shell ls -l /dev/snd > "$EVIDENCE/android-audio-devices.txt" 2>&1
-rg -q 'HDA|Intel' "$EVIDENCE/android-audio-cards.txt"
+[[ "$(< "$EVIDENCE/android-audio-cards.txt")" =~ HDA|Intel ]]
 adb emu avd hostmicon | tee "$EVIDENCE/host-mic.txt"
-if rg -q '^KO:' "$EVIDENCE/host-mic.txt"; then exit 1; fi
+while IFS= read -r line; do
+  if [[ "$line" = KO:* ]]; then exit 1; fi
+done < "$EVIDENCE/host-mic.txt"
 gradle -p android -PvoiceE2e=true assembleDebug assembleDebugAndroidTest --stacktrace
 adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 adb shell pm grant "$PACKAGE" android.permission.RECORD_AUDIO

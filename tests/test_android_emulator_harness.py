@@ -144,11 +144,15 @@ elif name == "adb":
         elif command == ["shell", "pm", "list", "packages", "--user", "0"]:
             print(os.environ.get("PH_TEST_PACKAGE_INVENTORY",
                 "package:android\npackage:com.google.android.gms\npackage:com.google.android.googlequicksearchbox\npackage:com.google.android.webview"))
+            sys.exit(int(os.environ.get("PH_TEST_INVENTORY_EXIT", "0")))
         elif command[:5] in (["shell", "pm", "disable-user", "--user", "0"], ["shell", "am", "force-stop", "--user", "0"]):
             if command[5:] not in (["com.google.android.gms"], ["com.google.android.googlequicksearchbox"]):
                 sys.exit("Package mutation outside the fixed test-profile allowlist")
         elif command[:3] == ["shell", "dumpsys", "package"]:
-            print("  User 0: installed=true stopped=" + os.environ.get("PH_TEST_PACKAGE_STOPPED", "true") + " enabled=3")
+            active = "    User 0: installed=true stopped=" + os.environ.get("PH_TEST_PACKAGE_STOPPED", "true") + " enabled=3"
+            print(os.environ.get("PH_TEST_PACKAGE_DUMP", "Packages:\n  Package [" + command[3] + "] (abc123):\n" + active +
+                "\nHidden system packages:\n  Package [" + command[3] + "] (fed456):\n    User 0: installed=true stopped=false enabled=0\n"))
+            sys.exit(int(os.environ.get("PH_TEST_READBACK_EXIT", "0")))
         else:
             sys.exit("Unexpected selected-device operation")
     else:
@@ -204,7 +208,19 @@ def run_guest_profile(harness):
     helpers = source.partition("\nprepare() {")[0]
     script = root / "repo/scripts/guest-profile-test.sh"
     script.write_text(helpers + "\nconfigure_disposable_guest\n")
-    return subprocess.run(["bash", str(script)], env=environment, capture_output=True, text=True, timeout=12)
+    # Backend CI need not install ripgrep. Exercise actual command-not-found
+    # conditions, rather than relying on this workstation's incidental PATH.
+    essentials = root / "profile-tools"
+    essentials.mkdir(exist_ok=True)
+    for command in ("bash", "dirname", "timeout", "awk", "tr"):
+        destination = essentials / command
+        if not destination.exists():
+            executable = shutil.which(command)
+            assert executable is not None
+            destination.symlink_to(executable)
+    profile_environment = type(environment)(environment, PATH=f"{root / 'bin'}:{essentials}")
+    assert shutil.which("rg", path=profile_environment["PATH"]) is None
+    return subprocess.run(["bash", str(script)], env=profile_environment, capture_output=True, text=True, timeout=12)
 
 
 def test_guest_profile_changes_only_observed_background_packages_and_verifies_state(harness):
@@ -216,7 +232,13 @@ def test_guest_profile_changes_only_observed_background_packages_and_verifies_st
     names = ["com.google.android.gms", "com.google.android.googlequicksearchbox"]
     assert receipt["passed"] is True and receipt["phase"] == "verified"
     assert receipt["serial"] == "emulator-5554" and receipt["user_id"] == 0
-    assert receipt["packages"] == [{"package": name, "status": "disabled_and_stopped"} for name in names]
+    assert [(item["package"], item["status"]) for item in receipt["packages"]] == [(name, "disabled_and_stopped") for name in names]
+    assert receipt["failure_reason"] is None
+    for item in receipt["packages"]:
+        assert item["active_sections"] == item["active_package_matches"] == item["active_user0_matches"] == 1
+        assert item["failure_reason"] is None
+        assert "stopped=true enabled=3" in item["active_user0_state"]
+        assert "Hidden system packages:" in (root / "evidence" / item["readback_file"]).read_text()
     calls = [args[2:] for name, args in command_log(root) if name == "adb" and args[:2] == ["-s", "emulator-5554"]]
     mutations = [args for args in calls if args[1:3] in (["pm", "disable-user"], ["am", "force-stop"])]
     assert mutations == [command + [name] for name in names for command in (
@@ -233,26 +255,62 @@ def test_guest_profile_records_absent_package_without_mutating_a_prefix_match(ha
     assert result.returncode == 0, result.stderr
     receipt = json.loads((root / "evidence/guest-background.json").read_text())
     assert receipt["passed"] is True
-    assert receipt["packages"][1] == {"package": "com.google.android.googlequicksearchbox", "status": "absent"}
+    assert receipt["packages"][1]["package"] == "com.google.android.googlequicksearchbox"
+    assert receipt["packages"][1]["status"] == "absent"
+    assert receipt["packages"][1]["readback_file"] is None
     assert not any(args[-1:] == ["com.google.android.googlequicksearchbox"] for _, args in command_log(root))
 
 
-@pytest.mark.parametrize("failure", ["still_running", "invalid_inventory"])
-def test_guest_profile_failure_never_creates_a_success_receipt(harness, failure):
+@pytest.mark.parametrize("failure,reason", [
+    ("still_running", "active_user0_not_stopped"),
+    ("invalid_inventory", "inventory_invalid"),
+    ("empty_inventory", "inventory_empty"),
+    ("failed_inventory", "inventory_command_failed"),
+    ("failed_readback", "readback_command_failed"),
+])
+def test_guest_profile_failure_never_creates_a_success_receipt(harness, failure, reason):
     root, environment, _ = harness
     environment["PH_TEST_ADB_DEVICES"] = "emulator-5554\tdevice"
     if failure == "still_running":
         environment["PH_TEST_PACKAGE_STOPPED"] = "false"
-    else:
+    elif failure == "invalid_inventory":
         environment["PH_TEST_PACKAGE_INVENTORY"] = "Error: package manager unavailable"
+    elif failure == "empty_inventory":
+        environment["PH_TEST_PACKAGE_INVENTORY"] = ""
+    elif failure == "failed_inventory":
+        environment["PH_TEST_INVENTORY_EXIT"] = "23"  # Valid-looking stdout with a failed command.
+    elif failure == "failed_readback":
+        environment["PH_TEST_READBACK_EXIT"] = "24"
     result = run_guest_profile(harness)
     assert result.returncode != 0
     receipt = json.loads((root / "evidence/guest-background.json").read_text())
     assert receipt["passed"] is False
-    if failure == "still_running":
+    assert receipt["failure_reason"] == reason
+    if failure in ("still_running", "failed_readback"):
         assert receipt["packages"][0]["status"] == "verification_failed"
         assert receipt["packages"][1]["status"] == "not_attempted"
+        assert (root / "evidence" / receipt["packages"][0]["readback_file"]).read_text().startswith("Packages:")
     assert not any(args[-1:] == ["com.google.android.googlequicksearchbox"] for _, args in command_log(root))
+
+
+@pytest.mark.parametrize("readback,reason", [
+    ("Hidden system packages:\n  Package [com.google.android.gms] (abc):\n    User 0: installed=true stopped=true enabled=3\n", "active_section_count"),
+    ("Packages:\n  Package [com.google.android.gms.other] (abc):\n    User 0: installed=true stopped=true enabled=3\n", "active_package_count"),
+    ("Packages:\n  Package [com.google.android.gms] (abc):\n    User 0: installed=true stopped=true enabled=3\n    User 0: installed=true stopped=true enabled=3\n", "active_user0_count"),
+    ("Packages:\n  Package [com.google.android.gms] (abc):\n    User 0: installed=true stopped=true enabled=0\nHidden system packages:\n  Package [com.google.android.gms] (def):\n    User 0: installed=true stopped=true enabled=3\n", "active_user0_not_disabled"),
+])
+def test_guest_profile_requires_unique_active_state_and_keeps_failed_readback(harness, readback, reason):
+    root, environment, _ = harness
+    environment["PH_TEST_ADB_DEVICES"] = "emulator-5554\tdevice"
+    environment["PH_TEST_PACKAGE_DUMP"] = readback
+    result = run_guest_profile(harness)
+    assert result.returncode != 0
+    receipt = json.loads((root / "evidence/guest-background.json").read_text())
+    assert receipt["passed"] is False and receipt["failure_reason"] == reason
+    item = receipt["packages"][0]
+    assert item["status"] == "verification_failed" and item["failure_reason"] == reason
+    assert (root / "evidence" / item["readback_file"]).read_text() == readback + "\n"
+    assert receipt["packages"][1]["status"] == "not_attempted"
 
 
 def test_guest_profile_refuses_unselected_device_before_package_commands(harness):

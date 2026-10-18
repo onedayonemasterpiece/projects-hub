@@ -338,6 +338,7 @@ def prepare(args):
                        "90-minute conversation with renewal/recovery", "physical unstable-mobile-network acceptance",
                        "paired deployed backend/PWA and signed-APK post-release smoke",
                        "four concurrent voices with real Regional Knowledge workload",
+                       "KNOWN FAILED primary transcript acceptance (A1/A2): the first Russian final is truncated to 'Слышишь меня?', and the second changes 'соединения' to 'соединений'. A2 verified complete PCM client WebSocket writes; both strict full-phrase checks remain FAILED. This is separate from optional captions.",
                        "stable shared SDK promotion and remaining provider qualification"],
         "captions": "Optional captions remain degraded/unverified; their clock is not promoted by this release.",
     }
