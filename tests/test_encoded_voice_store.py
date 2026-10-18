@@ -42,7 +42,8 @@ async def opened(encoded):
     return bound
 
 
-def test_output_original_event_and_played_cursor_survive_restart(voice, tmp_path):
+def test_output_original_event_and_played_cursor_survive_restart(voice, tmp_path, caplog):
+    caplog.set_level("INFO", logger="projects_hub.live")
     store, _, actor, conversation, io = voice
 
     async def run():
@@ -84,6 +85,14 @@ def test_output_original_event_and_played_cursor_survive_restart(voice, tmp_path
             reopened_store.close()
 
     asyncio.run(run())
+    emitted = [record for record in caplog.records if record.name == "projects_hub.live"]
+    durable = [r for r in emitted if getattr(r, "event", None) == "live_output_durable"]
+    positions = [r for r in emitted if getattr(r, "event", None) == "live_output_playhead"]
+    assert {r.kind for r in durable} == {"first_chunk", "terminal"}
+    assert all(r.status == "server_durable" for r in durable)
+    assert {r.duration_ms for r in positions} == {100, 200}
+    assert all(r.status == "client_reported" for r in positions)
+    assert all("payload" not in r.__dict__ and "text" not in r.__dict__ for r in emitted)
 
 
 def test_cancelled_output_keeps_original_and_actual_played_position(voice):

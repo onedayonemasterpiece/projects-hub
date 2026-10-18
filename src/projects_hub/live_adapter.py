@@ -1061,9 +1061,12 @@ Live-сессии. НЕ вызывай activate_capability и не перекл�
 можешь кратко назвать один. Если context.pending_question_count > 0,
 предложи обсудить вопросы, но НЕ задавай их без согласия.
 После согласия используй collaboration_questions_inbox и collaboration_questions_answer напрямую, если они есть в configuration.functions; иначе активируй collaboration. Прочти пакет, сохрани реальное согласие session_action=accept и задай голосом один важный вопрос. Для pause/resume/important_only/complete используй тот же collaboration_questions_answer; complete требует явного завершения, одиночный ответ не завершает пакет.
-На «что нового», «какие задачи или вопросы аналитики» сначала
-активируй collaboration, если разрешено: collaboration_personal_brief, затем
-collaboration_questions_inbox; предложи голосом обсудить существенные вопросы.
+На «что нового», «какой бриф», «что свежего» сначала вызови
+collaboration_personal_brief НАПРЯМУЮ, если инструмент есть в текущем наборе,
+без activate_capability и повторного setup. Для подробностей о вопросах
+используй collaboration_questions_inbox напрямую, если доступен, иначе
+активируй collaboration, если разрешено. Кратко озвучь реальные результаты
+и предложи обсудить существенные вопросы.
 Доступны answer, unknown, skip, later; не снимай blocker без содержательного
 answer и backend receipt. Не открывай карточку/форму без явного «покажи».
 Если пользователь сразу поставил конкретную задачу, она приоритетнее сводки.
@@ -1099,7 +1102,8 @@ _CORE_DIRECT_QUESTIONS = frozenset({
 })
 
 
-def _startup_functions(*, owner_development: bool, pending_questions: bool = False, personal_brief: bool = False) -> list[dict[str, Any]]:
+def _startup_functions(*, owner_development: bool, pending_questions: bool = False,
+                       personal_brief: bool = False, collaboration_available: bool = False) -> list[dict[str, Any]]:
     names = set(BUNDLES["core"]) | _CORE_DIRECT_PREFERENCES
     if pending_questions:
         # A server-verified greeting offer must have an executable consent path.
@@ -1107,8 +1111,20 @@ def _startup_functions(*, owner_development: bool, pending_questions: bool = Fal
         names.update(_CORE_DIRECT_QUESTIONS)
     elif owner_development and not personal_brief:
         names.update(_OWNER_CORE_DIRECT)
+        if collaboration_available:
+            # The frequent read-only briefing should not require a 30k-unit
+            # provider reconfiguration. Explicit development execution remains
+            # available through the authorised owner_development capability.
+            names.discard("development_execute_backlog")
     if personal_brief:
         names.add("collaboration_brief_seen")
+    if collaboration_available:
+        names.add("collaboration_personal_brief")
+        if pending_questions and personal_brief:
+            # Both the accepted-question actions and seen receipt are needed.
+            # Keep that path executable; runtime version inspection is less
+            # frequent and remains available from the application UI/API.
+            names.discard("runtime_versions_get")
     declarations = _functions(owner_development=owner_development) + PREFERENCES
     exposed = [ROUTER, *(item for item in declarations if item["name"] in names)]
     if len(exposed) > 9:
@@ -1677,6 +1693,7 @@ class ProjectsHubLiveAdapter:
                 "functions": [] if recovery_only else _startup_functions(
                     owner_development=owner_development, pending_questions=question_sessions_available,
                     personal_brief=bool(personal_brief["personal"]),
+                    collaboration_available=self.collaboration is not None,
                 ),
                 "voice": "Aoede",
                 "input_audio_transcription": {
@@ -2310,10 +2327,19 @@ class ProjectsHubLiveAdapter:
             self._accepted_theme_turn(session)
             return {"capability": capability, "status": "ready", "already_active": True}
         core_preference = capability == "core" and name in _CORE_DIRECT_PREFERENCES
+        core_names = {
+            item.get("name") for item in session.state.get("_base_configuration", {}).get("functions", [])
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        }
         core_owner = (
             capability == "core"
-            and name in _OWNER_CORE_DIRECT
+            and name in _OWNER_CORE_DIRECT and name in core_names
             and "owner_development" in allowed_capabilities
+        )
+        core_personal_brief = (
+            capability == "core" and name == "collaboration_personal_brief"
+            and name in core_names and "collaboration" in allowed_capabilities
+            and self.collaboration is not None
         )
         core_questions = (
             capability == "core" and name in _CORE_DIRECT_QUESTIONS
@@ -2325,7 +2351,8 @@ class ProjectsHubLiveAdapter:
                       and "collaboration" in allowed_capabilities)
         if (capability not in allowed_capabilities
                 or not (name in BUNDLES.get(capability, [])
-                        or core_preference or core_owner or core_questions or core_brief)):
+                        or core_preference or core_owner or core_questions or core_brief
+                        or core_personal_brief)):
             raise StoreError("TOOL_NOT_AVAILABLE", "Function not in active capability")
         if name == "preferences_get":
             if args:

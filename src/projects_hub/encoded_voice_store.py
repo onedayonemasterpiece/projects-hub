@@ -10,9 +10,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
+
+
+log = logging.getLogger("projects_hub.live")
 
 
 def initialize_encoded_voice_schema(db) -> None:
@@ -327,6 +331,16 @@ class ProductEncodedAudioStore:
             except BaseException:
                 self.store.db.execute("ROLLBACK")
                 raise
+            if self.direction == "downlink" and (chunk.chunk_seq == 1 or chunk.flags & EPOCH_END):
+                # A real device can be silent despite a successful provider audio
+                # event. Log the durable output boundary separately from handset
+                # playback; never log the payload, spoken text or codec bytes.
+                log.info("live output durable", extra={
+                    "event": "live_output_durable", "conversation_id": self.conversation_id,
+                    "source_id": source["id"], "status": "server_durable",
+                    "kind": "terminal" if chunk.flags & EPOCH_END else "first_chunk",
+                    "frame_seq": chunk.chunk_seq, "duration_ms": end_us // 1000,
+                })
             return DurableCommit(chunk.source_id, source["id"], chunk.epoch_id, chunk.chunk_seq, chunk.payload_sha256, prefix, True)
 
     async def seal_source(self, source, last_chunk_seq: int, capture_end_us: int):
@@ -478,6 +492,16 @@ class ProductEncodedAudioStore:
                 raise StoreError("SOURCE_PLAYBACK", "Playback receipt exceeds the durably stored response")
             position = max(state["played_us"], played_us)
             self.store.db.execute("UPDATE encoded_voice_sources SET played_us=? WHERE source_id=?", (position, source.server_source_id))
+            if position > state["played_us"] and (state["played_us"] == 0
+                    or position // 1_000_000 > state["played_us"] // 1_000_000
+                    or bool(last and position >= last["end_us"])):
+                # This proves a client-reported playhead reached the durable store;
+                # it does NOT prove the phone's speaker was audible to the owner.
+                log.info("live output playhead reported", extra={
+                    "event": "live_output_playhead", "conversation_id": self.conversation_id,
+                    "source_id": source.server_source_id, "status": "client_reported",
+                    "kind": "playback_position", "duration_ms": position // 1000,
+                })
             return {"played_us": position}
 
     async def read_output(self, source, *, after_seq: int = 0, max_encoded_bytes: int = 65_536,
