@@ -76,6 +76,133 @@ def test_corrupt_or_incomplete_original_is_not_a_provider_input(tmp_path, canary
         canary.load_recording(path, "original")
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("whole_phrases,turns,outputs,passed", [
+    (False, 2, 2, False),
+    (True, 1, 2, False),
+    (True, 2, 1, False),
+    (True, 2, 2, True),
+])
+async def test_replay_retains_independent_predicates_on_timeout(
+        tmp_path, canary, monkeypatch, whole_phrases, turns, outputs, passed):
+    from live_interaction.audio_v2 import AudioFrame, DOWNLINK_MAGIC, EPOCH_END, PORTION_START, PORTION_END
+    path, _ = original_db(tmp_path, canary)
+    # Keep the encoded original intact and mark two explicit speech portions.
+    with sqlite3.connect(path) as db:
+        db.execute("UPDATE encoded_voice_chunks SET flags=flags|? WHERE chunk_seq=1", (PORTION_END,))
+        db.execute("UPDATE encoded_voice_chunks SET flags=flags|? WHERE chunk_seq=2", (PORTION_START,))
+    recording = canary.load_recording(path, "original")
+    phrases = canary.DEFAULT_PHRASES[:2]
+    final_texts = phrases if whole_phrases else ("Слышишь меня?", "Эта запись сделана без соединений и должна сохраниться.")
+
+    async def inline_record_io(function, *args, **kwargs):
+        # This is a protocol/receipt regression, not an executor scheduling gate.
+        # Run the real write/flush/fsync and ACK ordering on the test thread.
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr(canary.asyncio, "to_thread", inline_record_io)
+
+    class Transport:
+        """Transport is controlled; replay, receive, wait and record writes run."""
+        def __init__(self):
+            self.incoming = asyncio.Queue()
+            self.frames = []
+            self.source_id = None
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            value = await self.incoming.get()
+            if value is None:
+                raise StopAsyncIteration
+            return value
+
+        def reply(self, value):
+            self.incoming.put_nowait(json.dumps(value))
+
+        async def send(self, value):
+            if isinstance(value, bytes):
+                frame = AudioFrame.decode(value)
+                self.frames.append(frame)
+                self.reply({"type": "audio_ack", "source_id": self.source_id, "chunk_seq": frame.chunk_seq})
+                return
+            control = json.loads(value)
+            kind = control["type"]
+            if kind == "source_open":
+                self.source_id = control["source_id"]
+                self.reply({"type": "source_bound", "source_id": self.source_id,
+                            "source_ref": 1, "server_source_id": "synthetic_server_source"})
+            elif kind == "codec_epoch":
+                self.reply({"type": "epoch_bound", "source_id": self.source_id,
+                            "epoch_id": control["descriptor"]["epoch_id"], "epoch_ref": 1})
+            elif kind == "source_seal":
+                self.reply({"type": "source_sealed", "source_id": self.source_id,
+                            "complete": True, "server_durable_seq": len(recording.chunks)})
+                seq = 1
+                for text in final_texts:
+                    self.reply({"type": "event", "event": {"type": "input_transcript", "seq": seq, "text": text}})
+                    seq += 1
+                for _ in range(turns):
+                    self.reply({"type": "event", "event": {"type": "turn_complete", "seq": seq}})
+                    seq += 1
+                for i in range(outputs):
+                    self.reply({"type": "output_epoch", "source_id": f"synthetic_output_{i}", "stream_ref": i + 1})
+                    self.incoming.put_nowait(AudioFrame(DOWNLINK_MAGIC, EPOCH_END, i + 1, 1, 1,
+                        0, 20_000, 1, seq, recording.chunks[-1].payload).encode())
+                    seq += 1
+            elif kind == "source_unbind":
+                self.reply({"type": "source_unbound", "source_id": self.source_id})
+
+        async def close(self):
+            self.incoming.put_nowait(None)
+
+    transport = Transport()
+    retained = {"passed": False}
+    report = {"passed": False, "primary_passed": False, "replays": [retained],
+              "caption_qualification": {"requested": False, "status": "not_requested"},
+              "host_sessions_after_close": 0, "caption_sidecars_after_close": 0}
+    with (tmp_path / "received.bin").open("wb") as output:
+        wire = canary.ReplaySocket(transport, output, canary.CaptionEvidence(phrases))
+        try:
+            operation = wire.replay(recording, phrases, [0, 1], "g1", 1,
+                {"live_window_bytes": 65536, "live_window_duration_us": 1_000_000}, .1, receipt=retained)
+            if passed:
+                assert await operation is retained
+            else:
+                with pytest.raises(TimeoutError):
+                    await operation
+        finally:
+            await wire.close()
+    canary.update_acceptance(report)
+    report_path = tmp_path / "partial.json"
+    canary.save_report(report_path, report)
+    durable = json.loads(report_path.read_text())
+    result = durable["replays"][0]
+    assert durable["primary_passed"] is False  # One replay is never the two-replay acceptance.
+    assert durable["passed"] is False
+    assert result["passed"] is passed
+    assert result["phase"] == ("complete" if passed else "await_turn_result")
+    assert result.get("error_type") == (None if passed else "TimeoutError")
+    assert result["client_frames_sent"] == result["server_durable_seq"] == len(recording.chunks)
+    assert result["source_sealed"] is True
+    assert result["main_phrase_matches"] == [whole_phrases, whole_phrases]
+    assert result["missing_phrase_indices"] == ([] if whole_phrases else [0, 1])
+    assert result["main_transcript_matches"] is whole_phrases
+    assert result["turn_complete_count"] == turns
+    assert result["turn_complete_required"] == result["output_ended_source_required"] == 2
+    assert result["turn_complete_received"] is (turns >= 2)
+    assert result["output_ended_source_count"] == outputs
+    assert result["output_encoded_tail_received"] is (outputs >= 2)
+    assert result["event_counts"] == {"input_transcript": 2, "turn_complete": turns}
+    text = " ".join(final_texts)
+    assert result["main_transcript_chars"] == len(text)
+    assert result["normalized_transcript_sha256"] == canary.digest(canary.normalized(text).encode())
+    assert all(phrase not in report_path.read_text() for phrase in phrases)
+    assert [(f.flags, f.start_us, f.duration_us, f.payload) for f in transport.frames] == [
+        (c.flags, c.capture_start_us, c.duration_us, c.payload) for c in recording.chunks]
+
+
 def evidence(canary):
     phrases = ("Мира первая проверка голоса", "Мира другой более длинный контрольный вопрос")
     observer = canary.CaptionEvidence(phrases)

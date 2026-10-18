@@ -17,8 +17,8 @@ dependencyResolutionManagement {
 rootProject.name = "ProjectsHubAndroid"
 include(":app")
 
-// Explicit candidate pairing only. Replace with a released immutable SDK
-// artifact before release qualification; this does not alter Python/web pins.
+// Composite build from the checksum-verified published SDK archive prepared by
+// scripts/prepare_live_framework.py. Qualification is separate from packaging.
 def sharedAndroid = providers.gradleProperty("liveInteractionAndroidDir").orNull
 if (sharedAndroid) {
     includeBuild(file(sharedAndroid)) {

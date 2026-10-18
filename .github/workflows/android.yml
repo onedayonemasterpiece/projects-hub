@@ -8,7 +8,9 @@ on:
       - "android/**"
       - "scripts/android_emulator_smoke.sh"
       - "scripts/android_emulator_image.py"
+      - "scripts/prepare_live_framework.py"
       - "scripts/android_voice_fixture.py"
+      - "pyproject.toml"
       - "web/**"
       - "src/projects_hub/live*.py"
       - ".github/workflows/android.yml"
@@ -17,7 +19,9 @@ on:
       - "android/**"
       - "scripts/android_emulator_smoke.sh"
       - "scripts/android_emulator_image.py"
+      - "scripts/prepare_live_framework.py"
       - "scripts/android_voice_fixture.py"
+      - "pyproject.toml"
       - "web/**"
       - "src/projects_hub/live*.py"
       - ".github/workflows/android.yml"
@@ -33,12 +37,11 @@ jobs:
       ORG_GRADLE_PROJECT_liveInteractionAndroidDir: ${{ github.workspace }}/.dependencies/live-interaction/android
     steps:
       - uses: actions/checkout@v4
-      - name: Checkout immutable native voice candidate
-        uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          repository: onedayonemasterpiece/live-interaction
-          ref: 132d59b73a137051904bc75bb03dd7d7d13bc49c
-          path: .dependencies/live-interaction
+          python-version: "3.12"
+      - name: Prepare checksum-verified published SDK RC
+        run: python scripts/prepare_live_framework.py
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -100,12 +103,11 @@ jobs:
         with:
           path: .dependencies/android-system-image-cache
           key: ph-voice-api31-7e7081f5784e98dd391ddae52573a75bc1db17a2fd286cb20be46d3eec251f94
-      - name: Checkout immutable native voice candidate
-        uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          repository: onedayonemasterpiece/live-interaction
-          ref: 132d59b73a137051904bc75bb03dd7d7d13bc49c
-          path: .dependencies/live-interaction
+          python-version: "3.12"
+      - name: Prepare checksum-verified published SDK RC
+        run: python scripts/prepare_live_framework.py
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -113,9 +115,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.10.2"
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -131,12 +130,14 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y pulseaudio pulseaudio-utils ffmpeg espeak-ng xvfb openssl libxcb-cursor0 ripgrep
           bash scripts/android_emulator_smoke.sh --prepare
-      - name: Record the exact checkouts used by audio acceptance
+      - name: Record exact application checkout and verified SDK archive
         env:
           CANDIDATE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           python - <<'PY'
-          import json, os, pathlib, subprocess
+          import json, os, pathlib, subprocess, sys
+          sys.path.insert(0, "scripts")
+          from prepare_live_framework import read_manifest, verify_prepared
           def revision(path, ref):
               return subprocess.check_output(["git", "-C", path, "rev-parse", ref], text=True).strip()
           evidence = {
@@ -146,8 +147,9 @@ jobs:
               "candidate_head_sha": os.environ["CANDIDATE_HEAD_SHA"],
               "checkout_sha": revision(".", "HEAD"),
               "checkout_tree": revision(".", "HEAD^{tree}"),
-              "shared_checkout_sha": revision(".dependencies/live-interaction", "HEAD"),
-              "shared_checkout_tree": revision(".dependencies/live-interaction", "HEAD^{tree}"),
+              "shared_artifact": verify_prepared(
+                  pathlib.Path(".dependencies/live-interaction"),
+                  read_manifest("android/live-interaction-candidate.json")),
           }
           pathlib.Path("android/smoke-evidence/checkout.json").write_text(json.dumps(evidence, indent=2) + "\n")
           PY

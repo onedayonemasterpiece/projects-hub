@@ -56,18 +56,27 @@ test('finish button seals through shared API and is never a second Stop control'
   assert.match(types,/finishTurn\(\): boolean/);
 });
 
-test('product version changes always trigger the signed APK workflow with an exact source target',()=>{
+test('signed APK publication requires explicit source and audio evidence outside stable latest',()=>{
   const workflow=fs.readFileSync(new URL('../../.github/workflows/android-release.yml',import.meta.url),'utf8');
-  assert.match(workflow,/paths:[\s\S]*?"src\/projects_hub\/version.py"[\s\S]*?workflow_dispatch:/);
-  assert.match(workflow,/--target "\$GITHUB_SHA"/);
+  assert.doesNotMatch(workflow,/^\s{2}push:/m);
+  assert.match(workflow,/workflow_dispatch:[\s\S]*?source_sha:[\s\S]*?android_run_id:/);
+  assert.match(workflow,/--target "\$BUILD_SHA"/);
+  assert.match(workflow,/--prerelease --latest=false/);
 });
 
-test('declared browser and Python shared dependency match the merged release pin',()=>{
+test('browser archive and Python source dependency identify the same published SDK RC',()=>{
   const pkg=JSON.parse(fs.readFileSync(new URL('../package.json',import.meta.url),'utf8'));
   const lock=JSON.parse(fs.readFileSync(new URL('../package-lock.json',import.meta.url),'utf8'));
   const dep=lock.packages['node_modules/@onedayonemasterpiece/live-interaction'];
   const python=fs.readFileSync(new URL('../../pyproject.toml',import.meta.url),'utf8');
+  const android=JSON.parse(fs.readFileSync(new URL('../../android/live-interaction-candidate.json',import.meta.url),'utf8'));
   assert.equal(dep.version,pkg.liveFramework.version);
-  assert.ok(dep.resolved.endsWith('#'+pkg.liveFramework.ref));
+  assert.equal(android.artifact_type,'npm_tgz');
+  assert.equal(dep.resolved,android.archive_url);
+  assert.equal(pkg.dependencies['@onedayonemasterpiece/live-interaction'],android.archive_url);
+  assert.equal(lock.packages[''].dependencies['@onedayonemasterpiece/live-interaction'],android.archive_url);
+  assert.equal(pkg.liveFramework.release_commit,android.release_commit);
+  assert.equal(pkg.liveFramework.ref,android.ref);
+  assert.match(dep.integrity,/^sha512-/);
   assert.ok(python.includes('live-interaction.git@'+pkg.liveFramework.ref));
 });

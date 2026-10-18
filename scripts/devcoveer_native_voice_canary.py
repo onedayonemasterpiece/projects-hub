@@ -413,61 +413,92 @@ class ReplaySocket:
         return await self.wait(lambda: next((c for c in reversed(self.controls)
             if c.get("type") == kind and all(c.get(k) == v for k, v in fields.items())), None))
 
-    async def replay(self, recording, phrases, expected_portions, replay_id, generation, limits, timeout):
+    async def replay(self, recording, phrases, expected_portions, replay_id, generation, limits, timeout,
+                     *, receipt=None):
         from live_interaction.audio_v2 import AudioFrame, UPLINK_MAGIC
         source_id = "canary_" + replay_id + "_" + secrets.token_hex(6)
         clock_start = recording.chunks[0].capture_start_us
         anchor = time.monotonic()
-        await self.send({"type": "source_open", "source_id": source_id,
-                         "started_at_unix_ms": recording.started_at_unix_ms,
-                         "source_time_now_us": clock_start, "lane": "live"})
-        bound = await self.control("source_bound", source_id=source_id)
-        self.caption.sources[bound["server_source_id"]] = {"replay_id": replay_id,
-            "portions": recording.portions(), "expected_portions": expected_portions}
-        epoch_refs = {}
+        result = receipt if receipt is not None else {}
+        result.update(replay_id=replay_id, connection_generation=generation, passed=False,
+                      phase="source_open", client_source_id=source_id, client_frames_sent=0,
+                      original_chunks=len(recording.chunks), source_sealed=False,
+                      known_phrase_indices=list(range(len(phrases))))
         before_seq, before_output = self.cursor, set(self.output_ended)
-        outstanding = deque()
-        for chunk in recording.chunks:
-            if chunk.epoch_id not in epoch_refs:
-                await self.send({"type": "codec_epoch", "source_ref": bound["source_ref"],
-                                 "descriptor": recording.epochs[chunk.epoch_id]})
-                epoch_refs[chunk.epoch_id] = (await self.control("epoch_bound", source_id=source_id,
-                    epoch_id=chunk.epoch_id))["epoch_ref"]
-            due = anchor + (chunk.capture_start_us + chunk.duration_us - clock_start) / 1_000_000
-            if due > time.monotonic():
-                await asyncio.sleep(due - time.monotonic())
-            def has_room():
-                while outstanding and outstanding[0].chunk_seq <= self.acks.get(source_id, 0):
-                    outstanding.popleft()
-                return (sum(len(c.payload) for c in outstanding) + len(chunk.payload) <= limits["live_window_bytes"]
-                        and sum(c.duration_us for c in outstanding) + chunk.duration_us <= limits["live_window_duration_us"]
-                        and len(outstanding) < 31)
-            await self.wait(has_room, timeout=3)
-            await self.ws.send(AudioFrame(UPLINK_MAGIC, chunk.flags, bound["source_ref"], epoch_refs[chunk.epoch_id],
-                chunk.chunk_seq, chunk.capture_start_us, chunk.duration_us, generation, 0, chunk.payload).encode())
-            outstanding.append(chunk)
-        await self.send({"type": "source_seal", "source_ref": bound["source_ref"],
-                         "last_chunk_seq": len(recording.chunks), "capture_end_us": recording.capture_end_us})
-        sealed = await self.control("source_sealed", source_id=source_id)
-        if sealed.get("complete") is not True:
-            raise ValueError("CANARY_ORIGINAL_NOT_DURABLE")
         expected = tuple(normalized(phrase) for phrase in phrases)
-        def turn_finished():
+
+        def snapshot():
             events = [e for e in self.events if int(e.get("seq") or 0) > before_seq]
             text = " ".join(str(e.get("text") or "") for e in events if e.get("type") == "input_transcript")
-            return (all(phrase in normalized(text) for phrase in expected)
-                    and sum(e.get("type") == "turn_complete" for e in events) >= len(expected)
-                    and len(self.output_ended - before_output) >= len(expected))
-        await self.wait(turn_finished, timeout)
-        events = [e for e in self.events if int(e.get("seq") or 0) > before_seq]
-        text = " ".join(str(e.get("text") or "") for e in events if e.get("type") == "input_transcript")
-        await self.send({"type": "source_unbind", "source_ref": bound["source_ref"]})
-        await self.control("source_unbound", source_id=source_id)
-        return {"replay_id": replay_id, "known_phrase_indices": list(range(len(phrases))), "connection_generation": generation,
-                "server_durable_seq": sealed["server_durable_seq"], "main_transcript_matches": True,
-                "main_transcript_chars": len(text), "normalized_transcript_sha256": digest(normalized(text).encode()),
-                "output_encoded_tail_received": True, "elapsed_ms": round((time.monotonic() - anchor) * 1000),
-                "event_counts": dict(Counter(e.get("type") for e in events))}
+            matches = [phrase in normalized(text) for phrase in expected]
+            turns = sum(e.get("type") == "turn_complete" for e in events)
+            outputs = len(self.output_ended - before_output)
+            result.update(main_phrase_matches=matches,
+                missing_phrase_indices=[i for i, matched in enumerate(matches) if not matched],
+                main_transcript_matches=all(matches), main_transcript_chars=len(text),
+                normalized_transcript_sha256=digest(normalized(text).encode()),
+                turn_complete_count=turns, turn_complete_required=len(expected),
+                turn_complete_received=turns >= len(expected),
+                output_ended_source_count=outputs, output_ended_source_required=len(expected),
+                output_encoded_tail_received=outputs >= len(expected),
+                elapsed_ms=round((time.monotonic() - anchor) * 1000),
+                event_counts=dict(Counter(e.get("type") for e in events)))
+            if not result["source_sealed"]:
+                result["server_durable_seq"] = self.acks.get(source_id, 0)
+            return all(matches) and turns >= len(expected) and outputs >= len(expected)
+
+        try:
+            await self.send({"type": "source_open", "source_id": source_id,
+                             "started_at_unix_ms": recording.started_at_unix_ms,
+                             "source_time_now_us": clock_start, "lane": "live"})
+            bound = await self.control("source_bound", source_id=source_id)
+            result["server_source_id"] = bound["server_source_id"]
+            self.caption.sources[bound["server_source_id"]] = {"replay_id": replay_id,
+                "portions": recording.portions(), "expected_portions": expected_portions}
+            before_seq, before_output = self.cursor, set(self.output_ended)
+            epoch_refs, outstanding = {}, deque()
+            result["phase"] = "send_audio"
+            for chunk in recording.chunks:
+                if chunk.epoch_id not in epoch_refs:
+                    await self.send({"type": "codec_epoch", "source_ref": bound["source_ref"],
+                                     "descriptor": recording.epochs[chunk.epoch_id]})
+                    epoch_refs[chunk.epoch_id] = (await self.control("epoch_bound", source_id=source_id,
+                        epoch_id=chunk.epoch_id))["epoch_ref"]
+                due = anchor + (chunk.capture_start_us + chunk.duration_us - clock_start) / 1_000_000
+                if due > time.monotonic():
+                    await asyncio.sleep(due - time.monotonic())
+                def has_room():
+                    while outstanding and outstanding[0].chunk_seq <= self.acks.get(source_id, 0):
+                        outstanding.popleft()
+                    return (sum(len(c.payload) for c in outstanding) + len(chunk.payload) <= limits["live_window_bytes"]
+                            and sum(c.duration_us for c in outstanding) + chunk.duration_us <= limits["live_window_duration_us"]
+                            and len(outstanding) < 31)
+                await self.wait(has_room, timeout=3)
+                await self.ws.send(AudioFrame(UPLINK_MAGIC, chunk.flags, bound["source_ref"], epoch_refs[chunk.epoch_id],
+                    chunk.chunk_seq, chunk.capture_start_us, chunk.duration_us, generation, 0, chunk.payload).encode())
+                result["client_frames_sent"] += 1
+                outstanding.append(chunk)
+            result["phase"] = "source_seal"
+            await self.send({"type": "source_seal", "source_ref": bound["source_ref"],
+                             "last_chunk_seq": len(recording.chunks), "capture_end_us": recording.capture_end_us})
+            sealed = await self.control("source_sealed", source_id=source_id)
+            if sealed.get("complete") is not True:
+                raise ValueError("CANARY_ORIGINAL_NOT_DURABLE")
+            result.update(source_sealed=True, server_durable_seq=sealed["server_durable_seq"], phase="await_turn_result")
+            await self.wait(snapshot, timeout)
+            result["phase"] = "source_unbind"
+            await self.send({"type": "source_unbind", "source_ref": bound["source_ref"]})
+            await self.control("source_unbound", source_id=source_id)
+            result.update(passed=True, phase="complete")
+            return result
+        except BaseException as exc:
+            result["error_type"] = type(exc).__name__
+            raise
+        finally:
+            # The caller owns this dictionary before the first await, so an
+            # unsuccessful replay survives cancellation and the final receipt.
+            # Original text stays in the isolated durable store, not this report.
+            snapshot()
 
     async def close(self):
         self.heartbeat.cancel()
@@ -556,8 +587,10 @@ async def run_provider(args, recording: Recording, report: dict) -> dict:
                     "connection_generation": generation, "cursor": cursor,
                     "capabilities": {"uplink_codecs": [OPUS_PROFILE], "downlink_codecs": [OPUS_PROFILE]}})
                 hello = await wire.control("hello_ack")
-                report["replays"].append(await wire.replay(recording, args.phrases, args.portion, f"g{generation}",
-                    generation, hello["audio_limits"], args.turn_timeout))
+                replay = {"replay_id": f"g{generation}", "connection_generation": generation, "passed": False}
+                report["replays"].append(replay)
+                await wire.replay(recording, args.phrases, args.portion, f"g{generation}",
+                    generation, hello["audio_limits"], args.turn_timeout, receipt=replay)
                 cursor = wire.cursor
                 await wire.close()
                 wire = None
@@ -566,7 +599,7 @@ async def run_provider(args, recording: Recording, report: dict) -> dict:
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline and not caption.result()["all_replays_support_candidate_clock"]:
                 await asyncio.sleep(.1)
-        return len(report["replays"]) == 2
+        return len(report["replays"]) == 2 and all(replay.get("passed") is True for replay in report["replays"])
 
     try:
         checks_passed = await bounded(work(), args.timeout)
