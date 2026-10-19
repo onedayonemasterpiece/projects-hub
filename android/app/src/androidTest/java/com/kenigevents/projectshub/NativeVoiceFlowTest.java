@@ -183,10 +183,16 @@ public final class NativeVoiceFlowTest {
             fixture("POST", "speak?name=short");
             await("real microphone short request receives a sub-200ms answer", 45, () -> {
                 JSONObject remote = fixture("GET", "state");
-                return remote.optLong("output_turns") > shortOutputsBefore && played;
+                // A 120-ms answer can start and finish before an async UI
+                // listener samples transient playing=true. The actual native
+                // hardware playhead's durable receipt is authoritative; do
+                // not invent playback or accept a transcript-only response.
+                return remote.optLong("output_turns") > shortOutputsBefore
+                        && completedOutputOfDuration(remote, 120_000L);
             });
             await("120ms answer advances physical playhead and durably completes", 12,
                     () -> !state.get().optBoolean("playing")
+                            && completedOutputOfDuration(fixture("GET", "state"), 120_000L)
                             && completedPlaybackSources(fixture("GET", "state")) > completedBeforeShort);
             snapshot("short-answer");
             JSONObject beforeTail = fixture("GET", "state");
@@ -200,6 +206,7 @@ public final class NativeVoiceFlowTest {
             });
             await("final 120ms tail drains after earlier frames have played", 12,
                     () -> !state.get().optBoolean("playing")
+                            && completedOutputOfDuration(fixture("GET", "state"), 920_000L)
                             && completedPlaybackSources(fixture("GET", "state")) > completedBeforeTail);
             snapshot("terminal-tail");
             clickMic();
@@ -267,6 +274,19 @@ public final class NativeVoiceFlowTest {
 
     private boolean nativeStatus(String expected) { return expected.equals(state.get().optString("status")); }
     private boolean capturing() { return state.get().optBoolean("capturing"); }
+    private boolean completedOutputOfDuration(JSONObject remote, long expectedEndUs) {
+        JSONArray sources = remote.optJSONArray("encoded_sources");
+        if (sources == null) return false;
+        for (int i = 0; i < sources.length(); i++) {
+            JSONObject source = sources.optJSONObject(i);
+            if (source == null || !"downlink".equals(source.optString("audio_direction"))) continue;
+            long duration = source.optLong("capture_end_us");
+            long playedUs = source.optLong("played_us");
+            if (source.optInt("complete") == 1 && Math.abs(duration - expectedEndUs) <= 1000
+                    && playedUs > 0 && playedUs + 1000 >= duration) return true;
+        }
+        return false;
+    }
     private int completedPlaybackSources(JSONObject remote) {
         JSONArray sources = remote.optJSONArray("encoded_sources");
         if (sources == null) return 0;
@@ -277,7 +297,8 @@ public final class NativeVoiceFlowTest {
             long duration = source.optLong("capture_end_us");
             // Wire playback receipts have millisecond precision. Input-only
             // sources never have a positive AudioTrack playback position.
-            if (source.optInt("complete") == 1 && duration > 0
+            if ("downlink".equals(source.optString("audio_direction"))
+                    && source.optInt("complete") == 1 && duration > 0
                     && source.optLong("played_us") > 0
                     && source.optLong("played_us") + 1000 >= duration) complete++;
         }
