@@ -110,6 +110,8 @@ public final class NativeVoiceFlowTest {
             await("React microphone enabled", 45, () -> "true".equals(js(
                     "Boolean(document.querySelector('button.voice-orb:not(:disabled)'))")));
             receipt.put("real_page", js("location.href"));
+            receipt.put("ready_before_click", js("JSON.stringify({ready:document.readyState,enabled:!!document.querySelector('button.voice-orb:not(:disabled)'),native:!!window.ProjectsHubNative})"));
+            snapshot("ready-before-activation");
             clickMic();
             await("native live capture", 45, () -> nativeStatus("live") && capturing());
             String conversation = state.get().getString("conversation_id");
@@ -307,8 +309,15 @@ public final class NativeVoiceFlowTest {
         return value.get();
     }
     private void clickMic() throws Exception {
-        assertEquals("Real React microphone button clicked", "true", js("(() => {const b="
-                + "document.querySelector('button.voice-orb');if(!b||b.disabled)return false;b.click();return true})()"));
+        // Readiness can briefly transition while React/native permissions and
+        // initial conversation state settle. Do not race a separate ready check
+        // against the click. This still clicks the *actual* React control once;
+        // if it remains disabled, the bounded wait fails with native + UI
+        // evidence instead of pretending that capture was started.
+        await("Real React microphone enabled and clicked", 20, () -> "true".equals(js("(() => {"
+                + "if(document.readyState!=='complete')return false;"
+                + "const b=document.querySelector('button.voice-orb');"
+                + "if(!b||b.disabled)return false;b.click();return true})()")));
     }
     private String visiblePage() throws Exception {
         Object text = new JSONTokener(js("document.body.innerText")).nextValue();
