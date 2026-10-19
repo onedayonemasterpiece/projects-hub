@@ -128,6 +128,7 @@ final class NativeSessionApi implements SessionApi, AutoCloseable {
     @Override public CompletableFuture<Connection> connect(StartContext context, String previousSessionId,
             long eventCursor, int connectionGeneration, boolean recoveryOnly) {
         return async(() -> {
+            try {
             if (!active) throw new IOException("NATIVE_VOICE_START_CANCELLED");
             if (scope == null || !conversationId.equals(context.conversationId()))
                 throw new IOException("NATIVE_VOICE_SCOPE_REQUIRED");
@@ -143,8 +144,10 @@ final class NativeSessionApi implements SessionApi, AutoCloseable {
                     if (!"LIVE_SESSION_CLOSED".equals(failure.code) && !"LIVE_SESSION_NOT_FOUND".equals(failure.code))
                         throw failure;
                     startAttempt.afterTerminal(observedAttempt, failure.code);
-                    requestedSession = null;
-                    reply = startSession(recoveryOnly);
+                    // Closed server identity is terminal to this user-owned
+                    // Start. Never silently start a new paid provider session
+                    // after archive/transport failure. Preserve local outbox.
+                    throw classifiedConnectFailure(failure);
                 }
             } else reply = startSession(recoveryOnly);
             if (requestedSession == null) requestedSession = reply.getString("session_id");
@@ -163,7 +166,25 @@ final class NativeSessionApi implements SessionApi, AutoCloseable {
             return new Connection(BuildConfig.HUB_URL, socketPath, requestedSession,
                     reply.getString("attempt_id"), reply.getString("socket_ticket"),
                     connectionGeneration, recoveryOnly, Map.of("Cookie", cookie));
+            } catch (ApiClient.ApiException failure) {
+                throw classifiedConnectFailure(failure);
+            }
         });
+    }
+
+    static SessionApi.ConnectFailure classifiedConnectFailure(ApiClient.ApiException failure) {
+        String code = failure.code;
+        // Never turn a definite quota/auth/closed-session refusal into an
+        // unlimited new provider Start. Ordinary 5xx transport faults remain
+        // reconnectable with the shared SDK's existing bounded backoff.
+        boolean terminal = (code.startsWith("RESOURCE_")
+                && !"RESOURCE_CONTROL_UNAVAILABLE".equals(code))
+                || "LIVE_SESSION_CLOSED".equals(code)
+                || "LIVE_SESSION_NOT_FOUND".equals(code)
+                || "LIVE_ATTEMPT_CLOSED".equals(code)
+                || failure.statusCode == 401 || failure.statusCode == 403
+                || failure.statusCode == 404 || failure.statusCode == 429;
+        return new SessionApi.ConnectFailure(code, !terminal);
     }
 
     private JSONObject startSession(boolean recoveryOnly) throws Exception {
