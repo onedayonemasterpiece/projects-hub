@@ -13,6 +13,23 @@ from types import TracebackType
 from typing import Any
 
 
+# Shared by SDK diagnostic admission and JSON output; explicit numeric-only
+# metrics must not disappear at the second formatter allowlist. Never log PCM,
+# transcripts, user content, cookies, stack locals, or arbitrary extra fields.
+VOICE_PERFORMANCE_FIELDS = frozenset((
+    "event_seq", "queue_items", "queue_bytes", "queue_duration_us",
+    "admit_wait_ms", "archive_wait_ms", "process_ms", "encode_ms", "commit_ms",
+))
+
+
+def voice_performance_scalars(values: dict[str, Any]) -> dict[str, int | float]:
+    return {
+        key: value for key, value in values.items()
+        if key in VOICE_PERFORMANCE_FIELDS and type(value) in (int, float)
+        and 0 <= value < 2**53 and math.isfinite(value)
+    }
+
+
 def live_diagnostic_scalars(values: dict[str, Any]) -> dict[str, Any]:
     """Only bounded protocol identifiers and numeric transition/budget evidence."""
     result: dict[str, Any] = {}
@@ -104,6 +121,7 @@ class JsonFormatter(logging.Formatter):
             if value is not None:
                 payload[key] = value
         payload.update(live_diagnostic_scalars(vars(record)))
+        payload.update(voice_performance_scalars(vars(record)))
         if record.exc_info and record.exc_info[0] is not None:
             exception_type, _exception, traceback = record.exc_info
             payload.setdefault("exception_type", exception_type.__name__[:80])
