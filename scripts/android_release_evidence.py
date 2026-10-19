@@ -36,7 +36,9 @@ REFERENCE_SOURCE = "f90840468237c06d6fc48b43c2ed52176f736e2d"
 ARTIFACT_NAME = "android-emulator-evidence-api-31"
 AUDIO_CHECKS = {
     "speaker_waveform_matches_reply", "live_input_waveform_matches_hello",
-    "fresh_input_after_reconnect_matches", "offline_recording_not_executed",
+    "fresh_input_after_reconnect_matches", "short_reply_input_waveform_matches",
+    "short_reply_playback_reaches_terminal", "terminal_tail_input_waveform_matches",
+    "terminal_tail_playback_reaches_end", "offline_recording_not_executed",
     "compressed_sources_persisted", "binary_compressed_audio_both_directions",
     "reconnected", "controlled_provider_boundary_explicit",
 }

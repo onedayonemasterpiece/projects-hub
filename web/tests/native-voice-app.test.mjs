@@ -9,7 +9,9 @@ const source = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 const initialization = source.match(/      const native = createNativeVoiceAdapter\(\{([\s\S]*?)\n      \}\);\n      nativeVoiceRef\.current = native;/)?.[0];
 const toggleBody = source.match(/  async function toggleVoice\(\) \{([\s\S]*?)\n  \}\n\n  function openAndroidMicrophoneSettings/)?.[1];
 const resetBody = source.match(/  const clearPrivateIdentity = useCallback\(\(reason: string, message: string \| null = null\) => \{([\s\S]*?)\n  \}, \[resetIdentity, setAndroidVoiceAudioFocus\]\);/)?.[1];
-assert.ok(initialization && toggleBody && resetBody, "exercise the actual App native callbacks, Start/Stop and identity reset");
+const inactiveLiteral = source.match(/const inactiveVoiceStates = new Set\(\[([\s\S]*?)\]\);/)?.[1];
+assert.ok(initialization && toggleBody && resetBody && inactiveLiteral,
+  "exercise the actual App native callbacks, Start/Stop state contract and identity reset");
 
 const capabilities = { protocol: "wl-live-v2", native_capture: true, compressed_input: true, compressed_output: true };
 const baseState = { owner_id: "native_owner", revision: 0, status: "idle", capturing: false,
@@ -20,8 +22,9 @@ function compile(body, env) {
   return new Function(...Object.keys(env), body)(...Object.values(env));
 }
 
-async function setup() {
+async function setup({ voiceState = "off" } = {}) {
   const sent = [], ui = { states: [], notices: [], resets: [], browserStarts: 0, busy: false, microphoneSettings: false };
+  const inactiveVoiceStates = compile(`return new Set([${inactiveLiteral}]);`, {});
   let revision = 0;
   const noop = () => {};
   const activeIdentity = { current: true }, nativeVoiceRef = { current: null };
@@ -33,6 +36,7 @@ async function setup() {
     nativeStateRef: { current: null }, currentSourceIdRef: { current: null },
     boot: { actor: { id: "actor_A" }, workspace: { id: "workspace_A" } },
     nativeSurface: true, isAndroidApp: true, userStoppedVoiceRef: { current: false },
+    voiceState, inactiveVoiceStates,
     setNativeSessionId: value => { ui.sessionId = value; },
     setVoiceState: value => { ui.states.push(value); ui.state = value; },
     setNotice: value => { ui.notices.push(value); ui.notice = value; },

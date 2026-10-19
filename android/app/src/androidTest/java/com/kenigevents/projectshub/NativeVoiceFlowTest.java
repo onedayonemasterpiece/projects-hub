@@ -110,6 +110,8 @@ public final class NativeVoiceFlowTest {
             await("React microphone enabled", 45, () -> "true".equals(js(
                     "Boolean(document.querySelector('button.voice-orb:not(:disabled)'))")));
             receipt.put("real_page", js("location.href"));
+            receipt.put("ready_before_click", js("JSON.stringify({ready:document.readyState,enabled:!!document.querySelector('button.voice-orb:not(:disabled)'),native:!!window.ProjectsHubNative})"));
+            snapshot("ready-before-activation");
             clickMic();
             await("native live capture", 45, () -> nativeStatus("live") && capturing());
             String conversation = state.get().getString("conversation_id");
@@ -174,6 +176,39 @@ public final class NativeVoiceFlowTest {
                                 && page.contains("Проверка голоса пройдена");
                     });
             snapshot("recovered-answer");
+            JSONObject beforeShort = fixture("GET", "state");
+            long shortOutputsBefore = beforeShort.getLong("output_turns");
+            int completedBeforeShort = completedPlaybackSources(beforeShort);
+            played = false;
+            fixture("POST", "speak?name=short");
+            await("real microphone short request receives a sub-200ms answer", 45, () -> {
+                JSONObject remote = fixture("GET", "state");
+                // A 120-ms answer can start and finish before an async UI
+                // listener samples transient playing=true. The actual native
+                // hardware playhead's durable receipt is authoritative; do
+                // not invent playback or accept a transcript-only response.
+                return remote.optLong("output_turns") > shortOutputsBefore
+                        && completedOutputOfDuration(remote, 120_000L);
+            });
+            await("120ms answer advances physical playhead and durably completes", 12,
+                    () -> !state.get().optBoolean("playing")
+                            && completedOutputOfDuration(fixture("GET", "state"), 120_000L)
+                            && completedPlaybackSources(fixture("GET", "state")) > completedBeforeShort);
+            snapshot("short-answer");
+            JSONObject beforeTail = fixture("GET", "state");
+            long tailOutputsBefore = beforeTail.getLong("output_turns");
+            int completedBeforeTail = completedPlaybackSources(beforeTail);
+            played = false;
+            fixture("POST", "speak?name=tail");
+            await("same-source output resumes after a one-second starvation gap", 45, () -> {
+                JSONObject remote = fixture("GET", "state");
+                return remote.optLong("output_turns") > tailOutputsBefore && played;
+            });
+            await("final 120ms tail drains after earlier frames have played", 12,
+                    () -> !state.get().optBoolean("playing")
+                            && completedOutputOfDuration(fixture("GET", "state"), 920_000L)
+                            && completedPlaybackSources(fixture("GET", "state")) > completedBeforeTail);
+            snapshot("terminal-tail");
             clickMic();
             await("explicit UI Stop releases microphone and speaker", 20,
                     () -> nativeStatus("idle") && !capturing() && !state.get().optBoolean("playing"));
@@ -239,6 +274,19 @@ public final class NativeVoiceFlowTest {
 
     private boolean nativeStatus(String expected) { return expected.equals(state.get().optString("status")); }
     private boolean capturing() { return state.get().optBoolean("capturing"); }
+    private boolean completedOutputOfDuration(JSONObject remote, long expectedEndUs) {
+        JSONArray sources = remote.optJSONArray("encoded_sources");
+        if (sources == null) return false;
+        for (int i = 0; i < sources.length(); i++) {
+            JSONObject source = sources.optJSONObject(i);
+            if (source == null || !"downlink".equals(source.optString("audio_direction"))) continue;
+            long duration = source.optLong("capture_end_us");
+            long playedUs = source.optLong("played_us");
+            if (source.optInt("complete") == 1 && Math.abs(duration - expectedEndUs) <= 1000
+                    && playedUs > 0 && playedUs + 1000 >= duration) return true;
+        }
+        return false;
+    }
     private int completedPlaybackSources(JSONObject remote) {
         JSONArray sources = remote.optJSONArray("encoded_sources");
         if (sources == null) return 0;
@@ -249,7 +297,8 @@ public final class NativeVoiceFlowTest {
             long duration = source.optLong("capture_end_us");
             // Wire playback receipts have millisecond precision. Input-only
             // sources never have a positive AudioTrack playback position.
-            if (source.optInt("complete") == 1 && duration > 0
+            if ("downlink".equals(source.optString("audio_direction"))
+                    && source.optInt("complete") == 1 && duration > 0
                     && source.optLong("played_us") > 0
                     && source.optLong("played_us") + 1000 >= duration) complete++;
         }
@@ -281,8 +330,15 @@ public final class NativeVoiceFlowTest {
         return value.get();
     }
     private void clickMic() throws Exception {
-        assertEquals("Real React microphone button clicked", "true", js("(() => {const b="
-                + "document.querySelector('button.voice-orb');if(!b||b.disabled)return false;b.click();return true})()"));
+        // Readiness can briefly transition while React/native permissions and
+        // initial conversation state settle. Do not race a separate ready check
+        // against the click. This still clicks the *actual* React control once;
+        // if it remains disabled, the bounded wait fails with native + UI
+        // evidence instead of pretending that capture was started.
+        await("Real React microphone enabled and clicked", 20, () -> "true".equals(js("(() => {"
+                + "if(document.readyState!=='complete')return false;"
+                + "const b=document.querySelector('button.voice-orb');"
+                + "if(!b||b.disabled)return false;b.click();return true})()")));
     }
     private String visiblePage() throws Exception {
         Object text = new JSONTokener(js("document.body.innerText")).nextValue();

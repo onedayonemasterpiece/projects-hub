@@ -1729,7 +1729,11 @@ function ActorApp({ resetIdentity, initialNotice }: { resetIdentity: (message?: 
     if (nativeSurface) {
       if (!native || !boot) return;
       const state = native.state;
-      if (state?.capturing || state?.playing || (state && ["starting", "live", "delayed", "recording_only", "stopping"].includes(state.status))) {
+      // A slow WebView may still display the previous Stop state after the
+      // native owner has already returned to idle. A tap intended as Stop
+      // must never silently become a new microphone Start in that interval.
+      if (!inactiveVoiceStates.has(voiceState) || state?.capturing || state?.playing
+          || (state && ["starting", "live", "delayed", "recording_only", "stopping"].includes(state.status))) {
         userStoppedVoiceRef.current = true;
         nativeCaptionRef.current = createNativeCaptionState();
         setInterimInputTranscript("");
