@@ -53,12 +53,21 @@ async def test_unverified_native_caption_clock_does_not_schedule_second_model_or
     )
     sidecar.start(native=True)
     assert sidecar.task is None
-    for _ in range(50):
-        assert sidecar.feed_pcm(b"\x01\x00" * 1600, caption_scope=None, capture_start_us=0) is False
-        assert sidecar.feed({"activity_start": True}) is False
-        assert sidecar.feed({"activity_end": True}) is False
-    assert [event["type"] for event in seen] == ["caption_unavailable"]
+    scope = {"session_id": "session", "conversation_id": "conversation",
+             "source_id": "source", "utterance_id": "utterance_A",
+             "turn_id": "turn_A", "utterance_sequence": 1}
+    sidecar.feed({"activity_start": True})
+    # Preserve the existing traceable turn boundary even when the optional
+    # caption provider is unstartable; no second billable model is opened.
+    for i in range(50):
+        assert sidecar.feed_pcm(b"\x01\x00" * 1600,
+                                caption_scope=scope, capture_start_us=i * 100000) is False
+    sidecar.feed({"activity_end": True})
+    assert [event["type"] for event in seen] == [
+        "caption_unavailable", "caption_turn_started", "caption_turn_ended"]
     assert seen[0]["code"] == "CAPTION_CLOCK_UNVERIFIED"
+    assert seen[1]["caption_scope"] == scope
+    assert seen[-1]["capture_end_us"] == 5_000_000
     assert calls == []
     await sidecar.stop()
     assert sidecar._stopped
