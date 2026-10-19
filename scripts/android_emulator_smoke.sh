@@ -195,12 +195,31 @@ prepare() {
     echo 'The ph_ci audio devices already exist; refusing to reuse or remove another run.' >&2
     return 1
   fi
+  # QEMU's default pa output is *fixed* stereo/44.1 kHz even though the
+  # Android AudioTrack mixer itself is 48 kHz mono. Its live Pulse stream was
+  # resampled a second time into our old 48 kHz mono null-sink; the independent
+  # speaker WAV had 10-15 ms timing steps although durable source Opus decoded
+  # sample-accurately. Match QEMU's actual source format at the monitor, then
+  # resample once offline via ffmpeg to the fixed 48 kHz acceptance WAV.
+  # Microphone injection remains unchanged; no app/runtime audio policy changes.
   for name in ph_ci_mic ph_ci_speaker; do
-    module_id="$(pactl load-module module-null-sink "sink_name=$name" rate=48000 channels=1 "sink_properties=device.description=$owner")"
+    if [ "$name" = ph_ci_speaker ]; then
+      module_id="$(pactl load-module module-null-sink "sink_name=$name" rate=44100 channels=2 "sink_properties=device.description=$owner")"
+    else
+      module_id="$(pactl load-module module-null-sink "sink_name=$name" rate=48000 channels=1 "sink_properties=device.description=$owner")"
+    fi
     printf 'pulse\t%s\n' "$module_id" >> "$RESOURCES"
   done
   pactl list short sinks > "$EVIDENCE/pulse-sinks.txt"
   pactl list short sources > "$EVIDENCE/pulse-sources.txt"
+  grep -Eq '[[:space:]]ph_ci_speaker[[:space:]].*44100Hz' "$EVIDENCE/pulse-sinks.txt" || {
+    echo 'QEMU speaker sink is not at its fixed 44.1-kHz rate; audio quality evidence would be invalid.' >&2
+    return 1
+  }
+  grep -Eq '[[:space:]]ph_ci_mic[[:space:]].*48000Hz' "$EVIDENCE/pulse-sinks.txt" || {
+    echo 'Microphone fixture sink has the wrong sample rate.' >&2
+    return 1
+  }
   test ! -e /tmp/.X99-lock && test ! -S /tmp/.X11-unix/X99 || { echo 'Display :99 already exists; nothing there will be stopped.' >&2; return 1; }
   nohup Xvfb :99 -screen 0 1080x1920x24 -nolisten tcp > "$EVIDENCE/xvfb.log" 2>&1 &
   xvfb_pid=$!
