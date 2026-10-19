@@ -3,7 +3,50 @@ import logging
 from pathlib import Path
 import sys
 
-from projects_hub.logging_config import JsonFormatter
+from projects_hub.logging_config import (
+    JsonFormatter, VOICE_PERFORMANCE_FIELDS, voice_performance_scalars,
+)
+
+
+def test_voice_archive_performance_metrics_survive_both_safe_logging_filters():
+    # Previously the SDK emitted actual archive/SQLite timings, but the
+    # second JSON formatter filter lost them while retaining duration_ms
+    # (which is PCM span, NOT time spent committing).
+    observed = {
+        "event_seq": 71, "queue_items": 12, "queue_bytes": 14000,
+        "queue_duration_us": 850000, "admit_wait_ms": 126,
+        "archive_wait_ms": 175, "process_ms": 244.5,
+        "encode_ms": 27, "commit_ms": 209,
+    }
+    assert set(observed) == VOICE_PERFORMANCE_FIELDS
+    record = logging.LogRecord(
+        "projects_hub.live", logging.INFO, __file__, 1,
+        "live socket diagnostic", (), None,
+    )
+    record.event = "archive_event_committed"
+    record.session_id = "live_fixture"
+    record.duration_ms = 320
+    record.private_transcript = "PRIVATE NEVER LOG"
+    record.private_pcm = "PRIVATE ORIGINAL"
+    for key, value in voice_performance_scalars(observed).items():
+        setattr(record, key, value)
+    payload = json.loads(JsonFormatter().format(record))
+    assert all(payload[name] == value for name, value in observed.items())
+    assert payload["duration_ms"] == 320
+    assert payload["session_id"] == "live_fixture"
+    assert "PRIVATE" not in json.dumps(payload)
+
+    rejected = {
+        "queue_bytes": True, "commit_ms": "secret-token",
+        "archive_wait_ms": float("nan"), "process_ms": -1,
+        "event_seq": 10**100, "encode_ms": float("inf"),
+        "user_text": "PRIVATE",
+    }
+    assert voice_performance_scalars(rejected) == {}
+    # Pin the common admission-to-output function instead of maintaining
+    # divergent manually duplicated safelists in two product layers.
+    runtime = (Path(__file__).resolve().parents[1] / "src/projects_hub/live_runtime.py").read_text()
+    assert "safe.update(voice_performance_scalars(record))" in runtime
 
 
 def test_json_formatter_bounds_new_transition_resource_fields_to_safe_scalars():

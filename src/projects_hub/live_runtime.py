@@ -18,6 +18,7 @@ from .regional_knowledge import RegionalKnowledgeAdapter
 from .live_adapter import ProjectsHubLiveAdapter
 from .live_admission import ProjectsHubAdmissionMixin
 from .live_resources import live_resource_environment
+from .logging_config import voice_performance_scalars
 from .live_transcription import CaptionSidecar
 from .readiness import ReadinessService
 from .store import DurableStore
@@ -265,14 +266,12 @@ def build_live_host(
                 "capture_age_ms",
                 "audio_turn_open",
                 "duration_ms",
-                # Numeric-only queue/commit latency diagnostics. Previously the
-                # host silently discarded the SDK's actual process_ms metrics,
-                # making PCM duration_ms easy to misread as SQLite latency.
-                "event_seq", "queue_items", "queue_bytes", "queue_duration_us",
-                "admit_wait_ms", "archive_wait_ms", "process_ms", "encode_ms", "commit_ms",
             }
             and isinstance(value, (str, int, float, bool))
         }
+        # The exact same numeric-only allowlist is applied again by the JSON
+        # formatter; do not lose measured store/codec/queue latencies.
+        safe.update(voice_performance_scalars(record))
         if str(safe.get("event") or "") == "socket_audio_accepted":
             safe["latency_stage"] = "capture_to_server"
             capture_age = safe.get("capture_age_ms")
