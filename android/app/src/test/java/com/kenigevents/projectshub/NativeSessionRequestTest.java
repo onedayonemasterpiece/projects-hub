@@ -37,6 +37,23 @@ public final class NativeSessionRequestTest {
         Files.write(output, generated.toString().getBytes(StandardCharsets.UTF_8));
     }
 
+    @Test public void definiteBudgetAndExpiredSocketTicketNeverStartAnotherProviderSession() {
+        assertFalse(NativeSessionApi.classifiedConnectFailure(
+            new ApiClient.ApiException(503, "denied", "RESOURCE_TOKEN_BUDGET")).recoverable());
+        assertFalse(NativeSessionApi.classifiedConnectFailure(
+            new ApiClient.ApiException(404, "closed", "LIVE_SESSION_CLOSED")).recoverable());
+        assertFalse(NativeSessionApi.classifiedConnectFailure(
+            new ApiClient.ApiException(429, "wait", "HTTP_429")).recoverable());
+        assertFalse(NativeSessionApi.classifiedConnectFailure(
+            new ApiClient.ApiException(403, "forbidden", "HTTP_403")).recoverable());
+        assertTrue(NativeSessionApi.classifiedConnectFailure(
+            new ApiClient.ApiException(503, "temporary", "RESOURCE_CONTROL_UNAVAILABLE")).recoverable());
+        assertTrue(NativeSessionApi.classifiedConnectFailure(
+            new ApiClient.ApiException(502, "temporary", "HTTP_502")).recoverable());
+        assertEquals("RESOURCE_TOKEN_BUDGET", NativeSessionApi.classifiedConnectFailure(
+            new ApiClient.ApiException(503, "private provider text", "RESOURCE_TOKEN_BUDGET")).getMessage());
+    }
+
     @Test public void retryPreservesInstanceAndAttemptAndDoesNotInventTimezone() throws Exception {
         JSONObject first = NativeSessionApi.startRequest(false, "test", "instance_a", "attempt_a", "bad zone");
         JSONObject retry = NativeSessionApi.startRequest(false, "test", "instance_a", "attempt_a", null);
