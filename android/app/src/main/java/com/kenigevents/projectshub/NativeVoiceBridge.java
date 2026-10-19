@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.content.ServiceConnection;
 import android.net.Uri;
 import android.os.IBinder;
+import android.util.Log;
 import android.webkit.WebView;
 
 import androidx.webkit.JavaScriptReplyProxy;
@@ -125,6 +126,9 @@ final class NativeVoiceBridge implements AutoCloseable {
                     }
                     pendingConversation = conversation;
                     long intent = ++intentGeneration, document = documentGeneration;
+                    Log.i("ProjectsHubNativeVoice", "stage=bridge_start_request origin=trusted_page"
+                            + " document_generation=" + document + " request_generation=" + intent
+                            + " foreground=" + host.isForeground());
                     service.notePermissionRequest(conversation);
                     host.requestMicrophone(() -> {
                         if (closed || intent != intentGeneration || document != documentGeneration) return;
@@ -134,6 +138,8 @@ final class NativeVoiceBridge implements AutoCloseable {
                             return;
                         }
                         try {
+                            Log.i("ProjectsHubNativeVoice", "stage=bridge_permission_granted origin=user_start"
+                                    + " document_generation=" + document + " request_generation=" + intent);
                             host.activateForegroundService();
                             service.startVoice(conversation, host.sessionCookie());
                         } catch (RuntimeException failure) { service.rejectStart(NativeVoiceService.errorCode(failure)); }
@@ -144,6 +150,10 @@ final class NativeVoiceBridge implements AutoCloseable {
                     });
                 }
                 case "stop" -> {
+                    Log.i("ProjectsHubNativeVoice", "stage=bridge_stop_request origin=trusted_page"
+                            + " document_generation=" + documentGeneration
+                            + " had_pending_start=" + (pendingConversation != null)
+                            + " state=" + (service == null ? "detached" : service.stateJson().optString("status")));
                     cancelPendingStart();
                     service.stopVoice(input.getString("reason"));
                 }

@@ -265,6 +265,11 @@ def build_live_host(
                 "capture_age_ms",
                 "audio_turn_open",
                 "duration_ms",
+                # Numeric-only queue/commit latency diagnostics. Previously the
+                # host silently discarded the SDK's actual process_ms metrics,
+                # making PCM duration_ms easy to misread as SQLite latency.
+                "event_seq", "queue_items", "queue_bytes", "queue_duration_us",
+                "admit_wait_ms", "archive_wait_ms", "process_ms", "encode_ms", "commit_ms",
             }
             and isinstance(value, (str, int, float, bool))
         }

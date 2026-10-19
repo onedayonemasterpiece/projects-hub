@@ -258,7 +258,7 @@ class CaptionSidecar:
         return True
 
     def feed(self, message: dict[str, Any]) -> bool:
-        if self._stopped:
+        if self._stopped or self._native_caption_clock_unavailable():
             return False
         if self.native:
             if message.get("activity_start"):
@@ -301,10 +301,18 @@ class CaptionSidecar:
                 return False
         return True
 
+    def _native_caption_clock_unavailable(self) -> bool:
+        # Production native caption offsets have not been proven across
+        # reconnect. The first start() already emitted CAPTION_CLOCK_UNVERIFIED
+        # and opened NO caption provider. Skip further zero-value scope checks
+        # and lifecycle events, retaining canary probes with an observer.
+        return (self.native and self._started and self.native_offset_clock == "unverified"
+                and self.diagnostic_observer is None)
+
     def feed_pcm(self, pcm: bytes, *, caption_scope: dict[str, Any] | None = None,
                  capture_start_us: int | None = None) -> bool:
         """Reuse the shared decoder's PCM view without another base64 roundtrip."""
-        if self._stopped:
+        if self._stopped or self._native_caption_clock_unavailable():
             return False
         if not isinstance(pcm, bytes) or len(pcm) % 2 or len(pcm) > 12_000:
             self._unavailable("CAPTION_INVALID_AUDIO")

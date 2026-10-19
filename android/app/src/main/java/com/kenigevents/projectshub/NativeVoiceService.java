@@ -14,6 +14,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.util.Log;
 
 import org.json.JSONObject;
 import org.onedayonemasterpiece.live.VoiceAudioV2;
@@ -35,6 +36,7 @@ public final class NativeVoiceService extends Service {
     static final String ACTION_ACTIVATE = "com.kenigevents.projectshub.voice.ACTIVATE";
     static final String ACTION_STOP = "com.kenigevents.projectshub.voice.STOP";
     private static final String CHANNEL = "projects_hub_voice";
+    private static final String LOG_TAG = "ProjectsHubNativeVoice";
     private static final int NOTIFICATION_ID = 1401;
     private static final NativeVoiceStore.Limits STORE_LIMITS = new NativeVoiceStore.Limits(
             128L * 1024 * 1024, 4096, 120L * 60 * 1_000_000);
@@ -88,13 +90,25 @@ public final class NativeVoiceService extends Service {
     @Override public IBinder onBind(Intent intent) { return binder; }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        final String action = intent == null ? "null" : ACTION_STOP.equals(intent.getAction())
+                ? "notification_stop" : ACTION_ACTIVATE.equals(intent.getAction()) ? "activity_activate" : "other";
+        Log.i(LOG_TAG, "stage=service_command origin=" + action + " active=" + (owner.current() != null)
+                + " start_id=" + startId + " flags=" + flags + " session_id=" + value(sessionId));
         if (intent != null && ACTION_STOP.equals(intent.getAction())) stopVoice("user");
         else if (intent != null && ACTION_ACTIVATE.equals(intent.getAction())) {
-            // The Activity starts this only from its visible, permission-granted Start path.
+            // ForegroundService may receive ACTIVATE one main-loop tick *before*
+            // bridge.startVoice() claims its owner. Never kill the service on
+            // that transient ordering. A bounded no-owner cleanup still prevents
+            // a failed permission/start from leaving a foreground service up.
             if (owner.current() != null) ensureForeground();
-            else stopSelf(startId);
+            else main.postDelayed(() -> {
+                if (owner.current() == null && !initializingStore && runtime == null) {
+                    Log.i(LOG_TAG, "stage=activation_unclaimed_cleanup start_id=" + startId);
+                    stopSelf(startId);
+                }
+            }, 2000);
         }
-        return START_NOT_STICKY; // reboot/process restart must never turn the microphone on
+        return START_NOT_STICKY; // OS restart must never turn the microphone on
     }
 
     void addListener(Listener listener) { listeners.addIfAbsent(listener); }
@@ -132,6 +146,8 @@ public final class NativeVoiceService extends Service {
         NativeVoiceOwner.Lease previous = owner.current();
         NativeVoiceOwner.Lease lease = owner.claim(conversation);
         if (lease.equals(previous)) return;
+        Log.i(LOG_TAG, "stage=start_claim origin=foreground_bridge generation=" + lease.generation()
+                + " foreground=" + foreground + " active_prior=" + (previous != null));
         conversationId = conversation;
         code = null; status = "starting"; queuedAudioMs = 0;
         try {
@@ -182,6 +198,8 @@ public final class NativeVoiceService extends Service {
                         main.post(() -> {
                             if (!owner.owns(lease)) return;
                             code = safeCode(errorCode);
+                            Log.w(LOG_TAG, "stage=runtime_failure code=" + code
+                                    + " recoverable=" + recoverable + " session_id=" + value(sessionId));
                             if (!recoverable) stopVoiceWithError(code);
                             else publish();
                         });
@@ -219,6 +237,9 @@ public final class NativeVoiceService extends Service {
     }
 
     CompletableFuture<Void> stopVoice(String reason) {
+        Log.i(LOG_TAG, "stage=stop_requested reason=" + (reason.matches("[a-z_]{1,40}") ? reason : "unknown")
+                + " active=" + (owner.current() != null) + " capturing=" + capturing
+                + " session_id=" + value(sessionId) + " code=" + value(code));
         owner.stop(); // fence permission/auth/network completions before releasing hardware
         if ("user".equals(reason) || "logout".equals(reason) || "account_changed".equals(reason)) code = null;
         if ("logout".equals(reason) || "account_changed".equals(reason)) {
@@ -257,11 +278,14 @@ public final class NativeVoiceService extends Service {
     }
 
     private void stopVoiceWithError(String failure) {
+        Log.w(LOG_TAG, "stage=terminal_error code=" + safeCode(failure)
+                + " session_id=" + value(sessionId) + " capturing=" + capturing);
         code = failure;
         stopVoice("error");
     }
 
     private void failStart(String failure) {
+        Log.w(LOG_TAG, "stage=start_failed code=" + safeCode(failure));
         owner.stop();
         code = failure; status = "error"; capturing = false; playing = false;
         if (sessionApi != null) { sessionApi.close(); sessionApi = null; }
