@@ -174,6 +174,32 @@ public final class NativeVoiceFlowTest {
                                 && page.contains("Проверка голоса пройдена");
                     });
             snapshot("recovered-answer");
+            JSONObject beforeShort = fixture("GET", "state");
+            long shortOutputsBefore = beforeShort.getLong("output_turns");
+            int completedBeforeShort = completedPlaybackSources(beforeShort);
+            played = false;
+            fixture("POST", "speak?name=short");
+            await("real microphone short request receives a sub-200ms answer", 45, () -> {
+                JSONObject remote = fixture("GET", "state");
+                return remote.optLong("output_turns") > shortOutputsBefore && played;
+            });
+            await("120ms answer advances physical playhead and durably completes", 12,
+                    () -> !state.get().optBoolean("playing")
+                            && completedPlaybackSources(fixture("GET", "state")) > completedBeforeShort);
+            snapshot("short-answer");
+            JSONObject beforeTail = fixture("GET", "state");
+            long tailOutputsBefore = beforeTail.getLong("output_turns");
+            int completedBeforeTail = completedPlaybackSources(beforeTail);
+            played = false;
+            fixture("POST", "speak?name=tail");
+            await("same-source output resumes after a one-second starvation gap", 45, () -> {
+                JSONObject remote = fixture("GET", "state");
+                return remote.optLong("output_turns") > tailOutputsBefore && played;
+            });
+            await("final 120ms tail drains after earlier frames have played", 12,
+                    () -> !state.get().optBoolean("playing")
+                            && completedPlaybackSources(fixture("GET", "state")) > completedBeforeTail);
+            snapshot("terminal-tail");
             clickMic();
             await("explicit UI Stop releases microphone and speaker", 20,
                     () -> nativeStatus("idle") && !capturing() && !state.get().optBoolean("playing"));

@@ -30,6 +30,8 @@ PHRASES = {
     "hello": "Мира, проверка голосового разговора, слышишь меня?",
     "overlap": "Мира, второй вопрос после восстановления связи",
     "offline": "Эта запись сделана без соединения и должна сохраниться",
+    "short": "Мира, подтверди одним словом, что слышишь меня.",
+    "tail": "Мира, воспроизведи тестовый сигнал с паузой.",
     "reply": "Проверка голоса пройдена.",
 }
 MAX_PCM_BYTES = 16000 * 2 * 90
@@ -155,6 +157,22 @@ def waveform_match(pcm: bytes, rate: int, reference: tuple[bytes, int], match: d
             "minimum_pcm_correlation": .45}
 
 
+def probe_pcm(duration_ms: int, low_hz: int, high_hz: int) -> bytes:
+    """Non-silent deterministic CI signal; not claimed to be human speech."""
+    rate = 24000
+    count = rate * duration_ms // 1000
+    if not 1 <= duration_ms <= 1000 or not 100 <= low_hz <= high_hz < 6000:
+        raise ValueError("Invalid bounded audio probe")
+    duration = count / rate
+    pcm = array("h", (int(6000 * min(1, i / 120, (count - 1 - i) / 120)
+                          * math.sin(2 * math.pi * (low_hz * i / rate
+                              + (high_hz - low_hz) * (i / rate) ** 2 / (2 * duration))))
+                      for i in range(count)))
+    if sys.byteorder != "little":
+        pcm.byteswap()
+    return pcm.tobytes()
+
+
 class Fixture:
     def __init__(self, data_dir: Path, audio_dir: Path):
         from projects_hub.auth import COOKIE_NAME, issue_session
@@ -179,6 +197,12 @@ class Fixture:
         if rate != 24000:
             raise ValueError("Provider reply fixture must be PCM16 mono 24 kHz")
         self.reply = reply
+        self.short_reply = probe_pcm(120, 620, 1460)
+        self.tail_reply = probe_pcm(800, 320, 500) + probe_pcm(120, 1720, 2600)
+        for name, data in (("short-output", self.short_reply), ("tail-output", self.tail_reply)):
+            with wave.open(str(audio_dir / f"{name}.wav"), "wb") as output:
+                output.setparams((1, 2, 24000, 0, "NONE", "not compressed"))
+                output.writeframes(data)
         self.stats = {"external_provider": "controlled_fixture", "turns": 0,
                       "output_turns": 0, "connection_count": 0, "main_audio_bytes": 0,
                       "main_rms": 0.0, "input_matches": [], "input_match_failures": [],
@@ -222,12 +246,18 @@ class Fixture:
             on_event({"type": "input_transcript", "text": text})
             if caption:
                 return
-            on_event({"type": "output_transcript", "text": PHRASES["reply"]})
-            # Same raw provider output contract as the managed real provider;
-            # the actual shared host encodes it into negotiated downlink v2.
+            is_short, is_tail = text == PHRASES["short"], text == PHRASES["tail"]
+            on_event({"type": "output_transcript", "text": "Тестовый сигнал." if is_short or is_tail else PHRASES["reply"]})
+            # Exercise the same provider PCM->Opus->AudioTrack path with a
+            # non-silent 120-ms signal, not the possibly silent start of a WAV.
+            original = self.short_reply if is_short else self.tail_reply if is_tail else self.reply
             size = 24000 * 2 * 160 // 1000
-            for offset in range(0, len(self.reply), size):
-                on_event({"type": "audio", "data": base64.b64encode(self.reply[offset:offset + size]).decode(),
+            for offset in range(0, len(original), size):
+                if is_tail and offset == 24000 * 2 * 800 // 1000:
+                    # Drain the >=400-ms track buffer, then supply a final
+                    # 120-ms tail in the SAME source/epoch. No socket reset.
+                    await asyncio.sleep(1.0)
+                on_event({"type": "audio", "data": base64.b64encode(original[offset:offset + size]).decode(),
                           "mime_type": "audio/pcm;rate=24000"})
                 await asyncio.sleep(.16)
             on_event({"type": "turn_complete"})
@@ -263,7 +293,7 @@ class Fixture:
                         self.stats["turns"] += 1
                     observed = envelope(bytes(turn), 16000)
                     matches = [(name, signal_match(observed, self.references[name]))
-                               for name in ("hello", "overlap", "offline")]
+                               for name in ("hello", "overlap", "offline", "short", "tail")]
                     name, result = max(matches, key=lambda entry: entry[1]["correlation"])
                     result = await asyncio.to_thread(waveform_match, bytes(turn), 16000,
                                                      self.signals[name], result)
@@ -304,7 +334,7 @@ class Fixture:
             result = {"outage": self.outage}
         elif action == "speak" and method == "POST":
             name = parse_qs(scope["query_string"].decode()).get("name", [""])[0]
-            if name not in {"hello", "overlap", "offline"} or self.stats["speaking"]:
+            if name not in {"hello", "overlap", "offline", "short", "tail"} or self.stats["speaking"]:
                 await JSONResponse({"error": "invalid or overlapping fixture input"}, status_code=409)(scope, receive, send)
                 return
             self.stats["speaking"] = True
@@ -410,6 +440,20 @@ def verify_output(args):
     checks = {"speaker_waveform_matches_reply": match["matched"],
               "live_input_waveform_matches_hello": "hello" in matched_names,
               "fresh_input_after_reconnect_matches": "overlap" in matched_names,
+              "short_reply_input_waveform_matches": "short" in matched_names,
+              "short_reply_playback_reaches_terminal": any(
+                  item.get("audio_direction") == "downlink"
+                  and 0 < (item.get("capture_end_us") or 0) <= 220_000
+                  and item.get("complete") == 1
+                  and (item.get("played_us") or 0) + 1000 >= item["capture_end_us"]
+                  for item in state["encoded_sources"]),
+              "terminal_tail_input_waveform_matches": "tail" in matched_names,
+              "terminal_tail_playback_reaches_end": any(
+                  item.get("audio_direction") == "downlink"
+                  and abs((item.get("capture_end_us") or 0) - 920_000) <= 1000
+                  and item.get("complete") == 1
+                  and (item.get("played_us") or 0) + 1000 >= item["capture_end_us"]
+                  for item in state["encoded_sources"]),
               "offline_recording_not_executed": "offline" not in matched_names,
               "compressed_sources_persisted": bool(state["encoded_sources"]),
               "binary_compressed_audio_both_directions": state["binary_uplink_bytes"] > 0 and state["binary_downlink_bytes"] > 0,
