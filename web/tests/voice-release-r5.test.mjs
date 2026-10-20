@@ -61,7 +61,8 @@ test('signed APK publication requires explicit source and audio evidence outside
   assert.doesNotMatch(workflow,/^\s{2}push:/m);
   assert.match(workflow,/workflow_dispatch:[\s\S]*?source_sha:[\s\S]*?android_run_id:/);
   assert.match(workflow,/--target "\$BUILD_SHA"/);
-  assert.match(workflow,/--prerelease --latest=false/);
+  assert.match(workflow,/--notes-file dist\/release-notes\.md --latest/);
+  assert.doesNotMatch(workflow,/--prerelease|--clobber/);
 });
 
 test('browser archive and Python source dependency identify the same published SDK RC',()=>{

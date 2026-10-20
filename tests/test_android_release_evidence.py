@@ -168,7 +168,7 @@ def test_complete_candidate_provenance_and_honest_scope(gate, candidate):
     gate.prepare(candidate.args)
     receipt = json.loads((candidate.args.destination / "release-evidence.json").read_text())
     assert receipt["source_sha"] == SOURCE_SHA and receipt["source_tree"] == SOURCE_TREE
-    assert receipt["versionName"] == "0.1.62-rc.64" and receipt["versionCode"] == 64
+    assert receipt["versionName"] == "0.1.62+64" and receipt["versionCode"] == 64
     assert receipt["qualification"] == "release_candidate" and len(receipt["instrumentation_cases"]) == 6
     assert receipt["shared_artifact"] == candidate.shared_artifact
     assert receipt["shared_artifact"]["artifact_type"] == "npm_tgz"
@@ -380,7 +380,7 @@ def test_release_listing_checks_every_page(gate, monkeypatch):
     assert len(calls) == 2
 
 
-def apk_commands(gate, monkeypatch, *, certificate=CERTIFICATE, package=None, version="0.1.62-rc.64", code=64, debug=False, extra_attributes=""):
+def apk_commands(gate, monkeypatch, *, certificate=CERTIFICATE, package=None, version="0.1.62+64", code=64, debug=False, extra_attributes=""):
     def answer(argv):
         if argv[0] == "apksigner":
             return "Verifies\nSigner #1 certificate SHA-256 digest: " + certificate + "\n"
@@ -398,7 +398,7 @@ def apk_commands(gate, monkeypatch, *, certificate=CERTIFICATE, package=None, ve
 def test_apk_identity_attributes_must_be_unique(gate, tmp_path, monkeypatch, attribute, different):
     apk = tmp_path / "projects-hub.apk"
     apk.write_bytes(b"synthetic APK")
-    values = {"name": gate.PACKAGE, "versionCode": "64", "versionName": "0.1.62-rc.64"}
+    values = {"name": gate.PACKAGE, "versionCode": "64", "versionName": "0.1.62+64"}
     value = "conflicting" if different else values[attribute]
     apk_commands(gate, monkeypatch, extra_attributes=f" {attribute}='{value}'")
     with pytest.raises(ValueError, match="Duplicate APK package identity attribute"):
@@ -410,7 +410,7 @@ def test_signed_readback_rejects_wrong_install_identity(gate, tmp_path, monkeypa
     apk = tmp_path / "projects-hub.apk"
     apk.write_bytes(b"synthetic new APK")
     receipt = {"reference_verified": True, "qualification": "release_candidate", "source_sha": SOURCE_SHA,
-               "versionCode": 64, "versionName": "0.1.62-rc.64", "signing_reference": {"certificate_sha256": CERTIFICATE}}
+               "versionCode": 64, "versionName": "0.1.62+64", "signing_reference": {"certificate_sha256": CERTIFICATE}}
     path = tmp_path / "release-evidence.json"
     path.write_text(json.dumps(receipt))
     changes = {"package": gate.PACKAGE + ".debug"} if wrong == "package" else (
@@ -434,20 +434,25 @@ def test_signed_receipt_manifest_and_published_bytes_match(gate, candidate, monk
     gate.finish(SimpleNamespace(**vars(sdk), apk=apk, source=candidate.args.source))
     receipt = gate.verified_release_files(receipt_path)
     assert receipt["apk"]["certificate_sha256"] == CERTIFICATE
-    assert receipt["versionName"] == "0.1.62-rc.64"
-    release = {"id": 789, "tag_name": "android-v64", "target_commitish": SOURCE_SHA, "prerelease": True, "draft": False,
+    assert receipt["versionName"] == "0.1.62+64"
+    release = {"id": 789, "tag_name": "android-v64", "target_commitish": SOURCE_SHA, "prerelease": False, "draft": False,
                "assets": [{"name": name, "id": n, "state": "uploaded", "digest": "sha256:" + gate.digest(apk.parent / name)}
                           for n, name in enumerate(("projects-hub.apk", "update.json", "release-evidence.json"), 1)]}
     candidate.responses.update({
         gate.REPOSITORY + "/releases/tags/android-v64": release,
         gate.REPOSITORY + "/git/ref/tags/android-v64": {"object": {"type": "commit", "sha": SOURCE_SHA}},
-        gate.REPOSITORY + "/releases/latest": candidate.reference,
+        gate.REPOSITORY + "/releases/latest": release,
     })
     gate.verify_published(receipt_path)
-    assert json.loads((apk.parent / "publication-readback.json").read_text())["stable_latest_tag"] == "android-v63"
+    assert json.loads((apk.parent / "publication-readback.json").read_text())["stable_latest_tag"] == "android-v64"
     (apk.parent / "publication-readback.json").unlink()
-    release["prerelease"] = False
-    with pytest.raises(ValueError, match="not the selected RC"):
+    candidate.responses[gate.REPOSITORY + "/releases/latest"] = candidate.reference
+    with pytest.raises(ValueError, match="latest feed does not point"):
+        gate.verify_published(receipt_path)
+    assert not (apk.parent / "publication-readback.json").exists()
+    candidate.responses[gate.REPOSITORY + "/releases/latest"] = release
+    release["prerelease"] = True
+    with pytest.raises(ValueError, match="not the selected primary app update"):
         gate.verify_published(receipt_path)
     assert not (apk.parent / "publication-readback.json").exists()
     manifest_path = apk.parent / "update.json"
@@ -458,7 +463,7 @@ def test_signed_receipt_manifest_and_published_bytes_match(gate, candidate, monk
         gate.verified_release_files(receipt_path)
 
 
-def test_workflow_has_no_auto_or_stable_path_and_checks_before_secrets():
+def test_single_update_channel_checks_source_audio_and_identity_before_secrets():
     path = ROOT / ".github/workflows/android-release.yml"
     raw = path.read_text()
     workflow = yaml.load(raw, Loader=yaml.BaseLoader)
@@ -469,7 +474,8 @@ def test_workflow_has_no_auto_or_stable_path_and_checks_before_secrets():
     reference = next(n for n, step in enumerate(steps) if " verify-reference " in step.get("run", ""))
     first_secret = next(n for n, step in enumerate(steps) if "secrets.ANDROID_" in json.dumps(step))
     assert prepared < reference < first_secret
-    assert "--clobber" not in raw and "--prerelease --latest=false" in raw
+    assert "--clobber" not in raw and "--prerelease" not in raw
+    assert "--notes-file dist/release-notes.md --latest" in raw
     assert '--target "$BUILD_SHA"' in raw and "publication-guard" in raw and "verify-published" in raw
     assert workflow["concurrency"]["cancel-in-progress"] == "false"
     for step in steps:

@@ -410,5 +410,7 @@ def test_assembled_core_prompt_preserves_runtime_provenance_guidance(context):
     *_, initialized = context
     prompt = initialized['configuration']['system_instruction']
     assert 'backend_version' in prompt
-    assert 'backend_release_sha упоминай только' in prompt
-    assert 'пользователь явно спрашивает' in prompt
+    assert 'раздельно называй приложение Android' in prompt
+    assert 'Не подменяй версию приложения версией сервера' in prompt
+    assert 'неизвестные поля называй неизвестными' in prompt
+    assert 'По запросу технических подробностей сообщай их source SHA' in prompt

@@ -205,7 +205,7 @@ final class NativeSessionApi implements SessionApi, AutoCloseable {
         if (!active) throw new IOException("NATIVE_VOICE_START_CANCELLED");
         return api.sessionRequest("POST", "api/live/" + conversationId + "/sessions",
                 startRequest(recoveryOnly, BuildConfig.VERSION_NAME, clientInstanceId, attemptId,
-                        TimeZone.getDefault().getID()), cookies, 45000);
+                        TimeZone.getDefault().getID()).put("client_build", NativeBuildInfo.json()), cookies, 45000);
     }
 
     /** The actual HTTP payload producer; tested against the server LiveStart schema. */

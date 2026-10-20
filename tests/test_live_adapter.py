@@ -482,6 +482,8 @@ async def test_runtime_versions_tool_reports_exact_session_versions(tmp_path: Pa
             client_timezone="Europe/Kaliningrad",
             backend_version="0.1.19",
             backend_release_sha="a" * 40,
+            client_build={"package_id": "com.kenigevents.projectshub", "version_code": 77,
+                          "source_sha": "b" * 40, "sdk_version": "0.4.0-rc.11", "sdk_sha": "c" * 40},
         )
         names = {item["name"] for item in initialized["configuration"]["functions"]}
         assert "runtime_versions_get" in names
@@ -492,8 +494,11 @@ async def test_runtime_versions_tool_reports_exact_session_versions(tmp_path: Pa
         assert result == {
             "client_kind": "android",
             "android_version": "0.1.18",
+            "android_build": {"package_id": "com.kenigevents.projectshub", "version_code": 77,
+                              "source_sha": "b" * 40, "sdk_version": "0.4.0-rc.11", "sdk_sha": "c" * 40},
             "backend_version": "0.1.19",
             "backend_release_sha": "a" * 40,
+            "backend_live_sdk": initialized["state"]["backend_live_sdk"],
         }
     finally:
         store.close()

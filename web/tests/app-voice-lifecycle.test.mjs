@@ -207,7 +207,9 @@ test("runtime UX distinguishes semantic backend version from build provenance", 
   assert.match(match[1], /^\d+\.\d+\.\d+$/);
   assert.match(pyproject, new RegExp('version = "' + match[1].replace(/\./g, "\\.") + '"'));
   assert.match(source, /backend_version/);
-  assert.match(source, /backend_release_sha упоминай только/);
+  assert.match(source, /раздельно называй приложение Android/);
+  assert.match(source, /Не подменяй версию приложения версией сервера/);
+  assert.match(source, /неизвестные поля называй неизвестными/);
 });
 
 test("Projects Hub disables provider-transcript voice stop control", async () => {

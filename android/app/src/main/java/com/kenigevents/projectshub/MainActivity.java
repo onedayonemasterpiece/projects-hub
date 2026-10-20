@@ -169,7 +169,7 @@ public final class MainActivity extends Activity {
                     BuildConfig.HUB_URL
                             + separator
                             + "native_version="
-                            + Uri.encode(BuildConfig.VERSION_NAME)
+                            + Uri.encode(BuildConfig.VERSION_NAME) + NativeBuildInfo.querySuffix()
             );
         }
         applyThemeChrome("dark");
@@ -197,7 +197,7 @@ public final class MainActivity extends Activity {
                     + " window.history.replaceState({}, '', url.pathname + url.search + url.hash);"
                     + " window.dispatchEvent(new CustomEvent('projects-hub-analysis-result', {detail: id})); })()", null);
         } else {
-            webView.loadUrl(BuildConfig.HUB_URL + "?native_version=" + Uri.encode(BuildConfig.VERSION_NAME)
+            webView.loadUrl(BuildConfig.HUB_URL + "?native_version=" + Uri.encode(BuildConfig.VERSION_NAME) + NativeBuildInfo.querySuffix()
                     + "&analysis_result=" + Uri.encode(analysisId));
         }
         return true;
