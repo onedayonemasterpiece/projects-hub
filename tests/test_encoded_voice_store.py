@@ -95,6 +95,48 @@ def test_output_original_event_and_played_cursor_survive_restart(voice, tmp_path
     assert all("payload" not in r.__dict__ and "text" not in r.__dict__ for r in emitted)
 
 
+def test_new_live_session_manifest_excludes_yesterdays_unplayed_output_but_preserves_explicit_replay(voice):
+    store, _, actor, conversation, io = voice
+    conversation_id = conversation["id"]
+
+    async def run():
+        def output_for(session=None):
+            return ProductEncodedAudioStore(
+                store, actor_id=actor, conversation_id=conversation_id,
+                io=io, direction="downlink", output_session_id=session,
+            )
+
+        old, today = "out_live_yesterday_1", "out_live_today_1"
+        base = output_for()
+        originals = {}
+        for source_id in (old, today):
+            bound = await base.open_source(SourceDescriptor(source_id, 0))
+            await base.register_epoch(bound, epoch())
+            payload = EncodedChunk(source_id, "epoch-1", 1, 0, 100_000, EPOCH_END, b"original-voice-" + source_id.encode())
+            original = OutputChunk(payload, 42)
+            await base.commit_output(bound, epoch(), original)
+            await base.seal_source(bound, 1, 100_000)
+            await base.mark_played(bound, 20_000)
+            originals[source_id] = original
+
+        # New Start never receives yesterday's audio in its automatic manifest.
+        current = output_for("live_today")
+        assert [item.source.source.source_id for item in await current.pending_outputs()] == [today]
+        # A new socket in the SAME logical Live session preserves recovery.
+        reattached = output_for("live_today")
+        assert [item.source.source.source_id for item in await reattached.pending_outputs()] == [today]
+        assert [item.source.source.source_id for item in await output_for("live_yesterday").pending_outputs()] == [old]
+
+        # Original history, exact encoded bytes and real played cursor survive.
+        archived = await current.resume_source(old)
+        status = await current.output_status(archived)
+        assert status.played_us == 20_000 and not status.cancelled
+        assert await current.read_output(archived) == [originals[old]]
+        assert len(await base.pending_outputs()) == 2  # archive is still present
+
+    asyncio.run(run())
+
+
 def test_cancelled_output_keeps_original_and_actual_played_position(voice):
     store, uplink, actor, conversation, io = voice
 
