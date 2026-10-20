@@ -35,7 +35,7 @@ public final class NativeVoiceStore implements DurableSourceStore, DurableOutput
     private static final int MAX_RECORD_BYTES = VoiceAudioV2.MAX_ENCODED_BYTES
             + VoiceAudioV2.MAX_INIT_BYTES + 2048;
     private static final int SOURCE = 1, EPOCH = 2, CHUNK = 3, COMMIT = 4, SEAL = 5, DISPOSITION = 6,
-            OUTPUT_SOURCE = 7, OUTPUT_CHUNK = 8, PLAYED = 9, SERVER_SEALED = 10;
+            OUTPUT_SOURCE = 7, OUTPUT_CHUNK = 8, PLAYED = 9, SERVER_SEALED = 10, PLAYBACK_CANCEL = 11;
 
     public record Scope(String actorId, String workspaceId, String conversationId) {
         public Scope {
@@ -68,7 +68,7 @@ public final class NativeVoiceStore implements DurableSourceStore, DurableOutput
         final List<ChunkIndex> chunks = new ArrayList<>();
         long committed, validEndUs, capturedDurationUs, committedDurationUs, playedUs, originalEventSeq;
         int endTrimSamples;
-        boolean sealed, serverSealed, output;
+        boolean sealed, serverSealed, output, playbackCancelled;
         String disposition;
 
         Source(File path) throws IOException {
@@ -314,12 +314,18 @@ public final class NativeVoiceStore implements DurableSourceStore, DurableOutput
         if (playedUs > source.playedUs) appendRecord(source, body(PLAYED, out -> out.writeLong(playedUs)));
     }
 
+    /** Cancellation is a durable playback decision, not a fabricated played receipt. */
+    @Override public synchronized void cancelPlayback(String sourceId) throws IOException {
+        Source source = requireSource(sourceId, true);
+        if (!source.playbackCancelled) appendRecord(source, body(PLAYBACK_CANCEL, out -> {}));
+    }
+
     @Override public synchronized List<PlaybackPosition> playbackPositions() throws IOException {
         checkOpen();
         List<PlaybackPosition> result = new ArrayList<>();
         for (Source source : sources.values()) if (source.output)
             result.add(new PlaybackPosition(source.descriptor, source.chunks.size(), source.originalEventSeq,
-                    source.playedUs, source.validEndUs, source.sealed));
+                    source.playedUs, source.validEndUs, source.sealed, source.playbackCancelled));
         return result;
     }
 
@@ -522,6 +528,10 @@ public final class NativeVoiceStore implements DurableSourceStore, DurableOutput
                 if (!source.output || played < source.playedUs || played > source.validEndUs)
                     throw error("VOICE_STORE_CORRUPT");
                 source.playedUs = played;
+            }
+            case PLAYBACK_CANCEL -> {
+                if (!source.output) throw error("VOICE_STORE_CORRUPT");
+                source.playbackCancelled = true;
             }
             case SERVER_SEALED -> {
                 if (source.output || !source.sealed || source.serverSealed || source.committed != source.chunks.size())

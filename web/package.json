@@ -10,7 +10,7 @@
     "check:release": "npm ci && npm run test:live-framework && npm run build"
   },
   "dependencies": {
-    "@onedayonemasterpiece/live-interaction": "https://github.com/onedayonemasterpiece/live-interaction/releases/download/v0.4.0-rc.11/onedayonemasterpiece-live-interaction-0.4.0-rc.11.tgz",
+    "@onedayonemasterpiece/live-interaction": "https://github.com/onedayonemasterpiece/live-interaction/releases/download/v0.4.0-rc.12/onedayonemasterpiece-live-interaction-0.4.0-rc.12.tgz",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "pixi.js": "8.22.0"
@@ -25,9 +25,9 @@
   "liveFramework": {
     "repository": "https://github.com/onedayonemasterpiece/live-interaction",
     "binding": "browser",
-    "version": "0.4.0-rc.11",
-    "ref": "b4fefe276ecbfb47a8d5a0f18b4397a2cf23c9f5",
-    "release_commit": "b4fefe276ecbfb47a8d5a0f18b4397a2cf23c9f5",
+    "version": "0.4.0-rc.12",
+    "ref": "8823d89c100cd76af89d503749f420c65944ab49",
+    "release_commit": "8823d89c100cd76af89d503749f420c65944ab49",
     "channel": "candidate"
   }
 }
