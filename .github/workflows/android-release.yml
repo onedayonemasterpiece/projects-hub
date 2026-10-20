@@ -139,7 +139,7 @@ jobs:
         if: always()
         run: rm -f -- "$RC_KEYSTORE_PATH"
 
-      - name: Publish immutable signed RC outside the stable update feed
+      - name: Publish the single signed app through its in-app update feed
         env:
           GH_TOKEN: ${{ github.token }}
           BUILD_SHA: ${{ steps.qualified.outputs.build_sha }}
@@ -151,7 +151,7 @@ jobs:
           gh release create "$TAG" \
             dist/projects-hub.apk dist/update.json dist/release-evidence.json \
             --title "$TITLE" --target "$BUILD_SHA" \
-            --notes-file dist/release-notes.md --prerelease --latest=false
+            --notes-file dist/release-notes.md --latest
           python scripts/android_release_evidence.py verify-published --receipt dist/release-evidence.json
       - name: Upload RC build and publication evidence
         if: always() && hashFiles('dist/release-evidence.json') != ''

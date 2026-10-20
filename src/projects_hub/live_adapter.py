@@ -32,6 +32,7 @@ from .regional_knowledge import (
 )
 from .live_resources import ConversationScope
 from .logging_config import live_diagnostic_scalars
+from .runtime_versions import loaded_live_sdk
 from .readiness import ReadinessService
 from .store import DurableStore, StoreError
 from .live_capabilities import BUNDLES, ROUTER, PREFERENCES, OVERLAYS
@@ -908,7 +909,7 @@ SYSTEM_INSTRUCTION = """# ROLE
 # TRUTH AND SECURITY
 Доступ определяет backend, не tool arguments. Не утверждай успех без authoritative receipt/readback. При отказе объясни результат. Напрямую доступны только функции текущего bundle; остальные разрешённые в context.allowed_capabilities загружаются через activate_capability. Отсутствие функции сейчас НЕ означает отсутствие этой возможности.
 # RUNTIME VERSION
-Пользовательскую версию называй по backend_version; backend_release_sha упоминай только как технический SHA сборки/исходного commit и только когда пользователь явно спрашивает build/source provenance.
+На вопрос о версии раздельно называй приложение Android (client_version и client_build.version_code) и работающий backend (backend_version). Не подменяй версию приложения версией сервера или доступного обновления. Данные бери из runtime_versions_get либо текущего runtime context; неизвестные поля называй неизвестными. SDK приложения указан в client_build.sdk_version, SDK сервера — в backend_live_sdk.version. По запросу технических подробностей сообщай их source SHA; различающиеся компоненты не выдавай за одинаковые.
 # CAPABILITY TOUR
 - Если пользователь спрашивает «что ты умеешь», «что можно сделать здесь» или явно просит рассказать о возможностях, дай короткий продуктовый обзор возможностей именно этой текущей Live-сессии.
 - Различай действующие configuration.functions и разрешённые context.allowed_capabilities: разрешённую, но неактивную функцию можно получить через activate_capability. Скрытые или не подключённые capabilities не представляй как доступные сейчас; для доступных сначала переключи capability, а не объявляй отказ.
@@ -1482,6 +1483,7 @@ class ProjectsHubLiveAdapter:
         recovery_only: bool = False,
         client_source_id: str | None = None,
         client_version: str | None = None,
+        client_build: dict[str, Any] | None = None,
         client_timezone: str | None = None,
         backend_version: str | None = None,
         backend_release_sha: str | None = None,
@@ -1644,6 +1646,8 @@ class ProjectsHubLiveAdapter:
                 "recovery_only": recovery_only,
                 "client_source_id": client_source_id,
                 "client_version": client_version,
+                "client_build": dict(client_build) if client_build else None,
+                "backend_live_sdk": loaded_live_sdk(),
                 "client_timezone": client_timezone,
                 "backend_version": backend_version,
                 "backend_release_sha": backend_release_sha,
@@ -1682,6 +1686,8 @@ class ProjectsHubLiveAdapter:
                 "allowed_capabilities": [] if recovery_only else allowed,
                 "recovery_only": recovery_only,
                 "client_version": client_version,
+                "client_build": dict(client_build) if client_build else None,
+                "backend_live_sdk": loaded_live_sdk(),
                 "client_timezone": client_timezone,
                 "backend_version": backend_version,
                 "backend_release_sha": backend_release_sha,
@@ -2399,8 +2405,10 @@ class ProjectsHubLiveAdapter:
             return {
                 "client_kind": "android" if client_version else "web",
                 "android_version": client_version,
+                "android_build": state.get("client_build"),
                 "backend_version": state.get("backend_version"),
                 "backend_release_sha": state.get("backend_release_sha"),
+                "backend_live_sdk": state.get("backend_live_sdk"),
             }
 
         if name.startswith("board_"):

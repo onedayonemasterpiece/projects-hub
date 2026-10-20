@@ -1,4 +1,6 @@
-# Android native voice candidate
+# Android native voice
+
+> **Актуальный пользовательский путь (20.10.2026):** один пакет `com.kenigevents.projectshub`, обновление из приложения. Исторические указания ниже о ручной установке RC вне latest feed отменены решением владельца. Debug используется только в изолированном CI. См. [единый путь поставки и точных версий](../docs/operations/single-app-voice-20261020.md).
 
 This continues the existing Android shell. `MainActivity` and the typed
 `projectsHubVoice` bridge own visible user permission requests and UI attachment.

@@ -50,6 +50,7 @@ import { replayLocalVoiceSource } from "./bufferedReplay";
 import CollaborationTimeline from "./CollaborationTimeline";
 import CollaborationQuestions from "./CollaborationQuestions";
 import AnalysisResult from "./AnalysisResult";
+import RuntimeVersions from "./RuntimeVersions";
 import InlineBoard, { type BoardUiCommand } from "./InlineBoard";
 import { recoverServerVoiceSource } from "./serverRecovery";
 import { createNativeVoiceAdapter, type NativeVoiceBridge, type NativeVoiceState } from "./nativeVoiceBridge.js";
@@ -2037,6 +2038,7 @@ function ActorApp({ resetIdentity, initialNotice }: { resetIdentity: (message?: 
 
         {contextOpen && (
           <section className="island context-sheet" aria-label="Контекст проектов">
+            <RuntimeVersions nativeVersion={nativeVersion} />
             <div className="sheet-heading">
               <div>
                 <p className="eyebrow">Контекст</p>

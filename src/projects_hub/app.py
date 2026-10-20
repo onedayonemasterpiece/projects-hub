@@ -78,6 +78,16 @@ class TimelineMessageUpsert(BaseModel):
     blocks: list[dict[str, Any]] = Field(default_factory=list, max_length=8)
 
 
+class ClientBuild(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    package_id: str = Field(pattern=r"^com\.kenigevents\.projectshub(?:\.debug)?$")
+    version_code: int = Field(ge=1, le=2_100_000_000)
+    source_sha: str = Field(pattern=r"^(?:[0-9a-f]{40}|unknown)$")
+    sdk_version: str = Field(pattern=r"^[0-9A-Za-z._+-]{1,64}$", max_length=64)
+    sdk_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+
+
 class LiveStart(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -94,6 +104,7 @@ class LiveStart(BaseModel):
         pattern=r"^[0-9A-Za-z._+-]{1,32}$",
         max_length=32,
     )
+    client_build: ClientBuild | None = None
     client_timezone: str | None = Field(
         default=None,
         pattern=r"^[A-Za-z0-9._+/-]{1,100}$",
@@ -488,7 +499,9 @@ def create_app(
 
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
+        from .runtime_versions import loaded_live_sdk
         return {
+            "live_sdk": loaded_live_sdk(),
             "ok": store.ping(),
             "storage": "sqlite-wal",
             "auth_mode": (
@@ -1218,6 +1231,7 @@ def create_app(
                 recovery_only=payload.recovery_only,
                 client_source_id=payload.client_source_id,
                 client_version=payload.client_version,
+                client_build=payload.client_build.model_dump() if payload.client_build else None,
                 client_timezone=payload.client_timezone,
                 client_instance_id=payload.client_instance_id,
                 backend_version=__version__,

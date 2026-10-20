@@ -312,7 +312,7 @@ def prepare(args):
     version_file = (args.source / "src/projects_hub/version.py").read_text()
     match = re.search(r'__version__\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"', version_file)
     require(match and match[1] == project["project"]["version"], "Product version is inconsistent")
-    version_name = f"{match[1]}-rc.{args.version_code}"
+    version_name = f"{match[1]}+{args.version_code}"
     run = api(REPOSITORY + f"/actions/runs/{run_id}")
     validate_run(run, source_sha, run_id)
     jobs = pages(REPOSITORY + f"/actions/runs/{run_id}/attempts/{run['run_attempt']}/jobs", "jobs")
@@ -402,14 +402,14 @@ def finish(args):
     write_json(args.receipt, receipt)
     manifest = {"versionCode": apk["versionCode"], "versionName": apk["versionName"],
                 "apkUrl": f"https://github.com/{REPOSITORY}/releases/download/{receipt['tag']}/projects-hub.apk",
-                "sha256": apk["sha256"], "notes": "Projects Hub Android RC " + receipt["source_sha"]}
+                "sha256": apk["sha256"], "notes": "Projects Hub Android — обновление основной версии " + receipt["source_sha"]}
     write_json(args.receipt.parent / "update.json", manifest)
-    notes = [f"# Projects Hub Android {apk['versionName']}", "", "Signed release candidate; full product qualification remains open.", "",
+    notes = [f"# Projects Hub Android {apk['versionName']}", "", "Single primary Android application; available through the in-app updater. Voice qualification remains open.", "",
              f"Source: {receipt['source_sha']}", f"Shared SDK: {receipt['shared']['version']} ({receipt['shared']['release_commit']})",
              f"Shared archive: {receipt['shared']['archive_url']}", f"Shared archive SHA-256: {receipt['shared']['archive_sha256']}",
              f"Android audio evidence: {receipt['android_run_url']}", f"APK SHA-256: {apk['sha256']}", "", receipt["scope"], "",
              "## Open acceptance", ""] + ["- " + gate for gate in receipt["open_gates"]]
-    notes += ["", receipt["captions"], "", "Install this RC only from its explicit APK link. It is not offered by the stable latest feed.",
+    notes += ["", receipt["captions"], "", "Update the existing Projects Hub application using its in-app update action. No separate handset debug build is required.",
               "The production package/key are preserved. This APK does not upgrade the separate .debug package or transfer its local data.",
               "Backend/PWA pairing must be checked before handset use; publishing an APK does not deploy the server.", ""]
     (args.receipt.parent / "release-notes.md").write_text("\n".join(notes), encoding="utf-8")
@@ -432,7 +432,7 @@ def verify_published(receipt_path):
     receipt = verified_release_files(receipt_path)
     published = api(REPOSITORY + "/releases/tags/" + receipt["tag"])
     require(published.get("tag_name") == receipt["tag"] and published.get("target_commitish") == receipt["source_sha"]
-            and published.get("prerelease") is True and published.get("draft") is False, "Published release is not the selected RC")
+            and published.get("prerelease") is False and published.get("draft") is False, "Published release is not the selected primary app update")
     ref = api(REPOSITORY + "/git/ref/tags/" + receipt["tag"])
     require(ref.get("object", {}).get("type") == "commit" and ref["object"].get("sha") == receipt["source_sha"], "Published tag points to another source")
     assets = {}
@@ -443,10 +443,11 @@ def verify_published(receipt_path):
                 and matches[0].get("digest") == "sha256:" + expected, "Published asset digest mismatch")
         assets[name] = {"id": matches[0]["id"], "sha256": expected}
     latest = api(REPOSITORY + "/releases/latest")
-    require(latest.get("id") != published.get("id") and latest.get("prerelease") is False, "RC appeared in the stable latest feed")
+    require(latest.get("id") == published.get("id") and latest.get("prerelease") is False,
+            "In-app latest feed does not point to the verified primary app update")
     write_json(receipt_path.parent / "publication-readback.json", {
         "passed": True, "release_id": published["id"], "tag": receipt["tag"], "source_sha": receipt["source_sha"],
-        "prerelease": True, "stable_latest_tag": latest["tag_name"], "assets": assets,
+        "prerelease": False, "delivery_channel": "in_app", "stable_latest_tag": latest["tag_name"], "assets": assets,
         "qualification": "release_candidate", "backend_deployed_by_this_workflow": False,
     })
 
