@@ -1,14 +1,14 @@
 {
   "repository": "https://github.com/onedayonemasterpiece/live-interaction",
-  "version": "0.4.0-rc.16",
-  "ref": "f3c6831ebd2d1fba1381e16a06a8911eedf2a4fd",
-  "release_commit": "f3c6831ebd2d1fba1381e16a06a8911eedf2a4fd",
-  "tree": "e86d28b12b3f320c4615562d06b2ff13b06413eb",
+  "version": "0.4.0-rc.17",
+  "ref": "404b013a66546a1020f3a547fd978c89571be53e",
+  "release_commit": "404b013a66546a1020f3a547fd978c89571be53e",
+  "tree": "1986408c3f94f54aed4561c77d625ce94d66b8d3",
   "channel": "candidate",
   "artifact_type": "npm_tgz",
-  "release_tag": "v0.4.0-rc.16",
-  "archive_url": "https://github.com/onedayonemasterpiece/live-interaction/releases/download/v0.4.0-rc.16/onedayonemasterpiece-live-interaction-0.4.0-rc.16.tgz",
-  "archive_sha256": "e6d0b0f8fe59a8151a99207799fd0c0c2683d50e3cc84322f92e2671c41850b4",
-  "archive_bytes": 194922,
+  "release_tag": "v0.4.0-rc.17",
+  "archive_url": "https://github.com/onedayonemasterpiece/live-interaction/releases/download/v0.4.0-rc.17/onedayonemasterpiece-live-interaction-0.4.0-rc.17.tgz",
+  "archive_sha256": "3e5b89d23331cf0dcbe4b96991f50c1241ce73b4ba620d28e7e2caf18311f88e",
+  "archive_bytes": 195463,
   "status": "published immutable SDK RC; consumer audio acceptance and physical qualification remain separate"
 }
