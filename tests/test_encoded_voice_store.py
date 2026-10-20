@@ -95,6 +95,71 @@ def test_output_original_event_and_played_cursor_survive_restart(voice, tmp_path
     assert all("payload" not in r.__dict__ and "text" not in r.__dict__ for r in emitted)
 
 
+def test_grouped_output_commit_is_one_atomic_durable_receipt(voice, tmp_path, caplog):
+    caplog.set_level("INFO", logger="projects_hub.live")
+    store, _, actor, conversation, io = voice
+
+    async def run():
+        output = ProductEncodedAudioStore(store, actor_id=actor, conversation_id=conversation["id"],
+                                          io=io, direction="downlink")
+        bound = await opened(output)
+        events = []
+        store.db.set_trace_callback(events.append)
+        originals = (OutputChunk(chunk(1), 91), OutputChunk(chunk(2), 91),
+                     OutputChunk(chunk(3, flags=EPOCH_END), 91))
+        try:
+            receipts = await output.commit_outputs(bound, epoch(), originals)
+        finally:
+            store.db.set_trace_callback(None)
+        assert [r.server_durable_seq for r in receipts] == [1, 2, 3]
+        assert all(r.newly_committed for r in receipts)
+        assert sum(s.strip().upper() == "BEGIN IMMEDIATE" for s in events) == 1
+        assert sum(s.strip().upper() == "COMMIT" for s in events) == 1
+        assert sum(s.strip().upper() == "ROLLBACK" for s in events) == 0
+        assert (await output.seal_source(bound, 3, 300_000))["complete"]
+        assert await output.read_output(bound) == list(originals)
+        retry = await output.commit_outputs(bound, epoch(), originals)
+        assert [r.newly_committed for r in retry] == [False, False, False]
+        assert [r.server_durable_seq for r in retry] == [3, 3, 3]
+        reopened_store = DurableStore(tmp_path)
+        try:
+            reopened = ProductEncodedAudioStore(reopened_store, actor_id=actor,
+                                                conversation_id=conversation["id"],
+                                                io=io, direction="downlink")
+            source = await reopened.resume_source("capture-1")
+            assert await reopened.read_output(source) == list(originals)
+        finally:
+            reopened_store.close()
+
+    asyncio.run(run())
+    durable = [r for r in caplog.records if getattr(r, "event", None) == "live_output_durable"]
+    assert [(r.kind, r.frame_seq) for r in durable] == [("first_chunk", 1), ("terminal", 3)]
+
+
+def test_failed_grouped_output_never_commits_or_acks_partial_originals(voice):
+    store, _, actor, conversation, io = voice
+
+    async def run():
+        output = ProductEncodedAudioStore(store, actor_id=actor, conversation_id=conversation["id"],
+                                          io=io, direction="downlink")
+        bound = await opened(output)
+        first = OutputChunk(chunk(1), 101)
+        invalid_second = OutputChunk(chunk(2, start=150_000), 101)
+        with pytest.raises(StoreError, match="continuous"):
+            await output.commit_outputs(bound, epoch(), [first, invalid_second])
+        assert (await output.output_status(bound)).source.server_durable_seq == 0
+        assert await output.read_output(bound) == []
+        assert store.get_source(actor, bound.server_source_id)["audio_chunks"] == 0
+        assert store.db.execute("SELECT chunks FROM encoded_voice_storage WHERE slot=1").fetchone()[0] == 0
+        # An ordinary valid retry remains safe after a rolled-back batch.
+        receipts = await output.commit_outputs(bound, epoch(),
+                                               [first, OutputChunk(chunk(2, flags=EPOCH_END), 101)])
+        assert [r.server_durable_seq for r in receipts] == [1, 2]
+        assert (await output.seal_source(bound, 2, 200_000))["complete"]
+
+    asyncio.run(run())
+
+
 def test_native_90_minute_contiguous_capture_fits_bounded_source_limits():
     limits = EncodedStorageLimits()
     # The Android recorder has a 120-minute source duration bound and its
