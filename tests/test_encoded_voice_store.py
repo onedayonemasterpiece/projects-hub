@@ -95,6 +95,20 @@ def test_output_original_event_and_played_cursor_survive_restart(voice, tmp_path
     assert all("payload" not in r.__dict__ and "text" not in r.__dict__ for r in emitted)
 
 
+def test_native_90_minute_contiguous_capture_fits_bounded_source_limits():
+    limits = EncodedStorageLimits()
+    # The Android recorder has a 120-minute source duration bound and its
+    # Opus encoder can yield 20-ms pages, not guaranteed 100-ms batches.
+    ninety_minutes_in_20ms_chunks = (90 * 60 * 1_000_000 + 19_999) // 20_000
+    assert ninety_minutes_in_20ms_chunks == 270_000
+    assert limits.source_chunks >= ninety_minutes_in_20ms_chunks
+    assert limits.source_chunks < limits.total_chunks
+    assert limits.source_duration_us >= 90 * 60 * 1_000_000
+    # Even if every 20-ms chunk carries a full 24000-bit/s Opus payload,
+    # byte and total-source limits remain separate immutable failure gates.
+    assert limits.source_bytes <= limits.total_bytes
+
+
 def test_new_live_session_manifest_excludes_yesterdays_unplayed_output_but_preserves_explicit_replay(voice):
     store, _, actor, conversation, io = voice
     conversation_id = conversation["id"]

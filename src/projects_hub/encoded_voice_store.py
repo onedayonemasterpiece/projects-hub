@@ -97,7 +97,11 @@ class EncodedStorageLimits:
     source_bytes: int = 64 * 1024 * 1024
     total_bytes: int = 2 * 1024 * 1024 * 1024
     source_duration_us: int = 8 * 60 * 60 * 1_000_000
-    source_chunks: int = 250_000
+    # Native Opus emits as little as one original chunk per 20 ms. A single
+    # 90-minute uninterrupted source may therefore contain 270,000 chunks;
+    # the former 250,000 ceiling guaranteed failure around minute 83.
+    # This remains bounded by the 4M total, 64 MiB per-source, and duration.
+    source_chunks: int = 400_000
     total_chunks: int = 4_000_000
     epochs_per_source: int = 32
 
