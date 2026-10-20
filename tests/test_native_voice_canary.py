@@ -77,6 +77,7 @@ def test_corrupt_or_incomplete_original_is_not_a_provider_input(tmp_path, canary
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("diagnostic_mode", [False, True])
 @pytest.mark.parametrize("whole_phrases,turns,outputs,interrupt_mode,passed", [
     (False, 2, 2, None, False),
     (True, 1, 2, None, False),
@@ -95,7 +96,7 @@ def test_corrupt_or_incomplete_original_is_not_a_provider_input(tmp_path, canary
     (True, 2, 1, "epoch_only", False),
 ])
 async def test_replay_retains_independent_predicates_on_timeout(
-        tmp_path, canary, monkeypatch, whole_phrases, turns, outputs, interrupt_mode, passed):
+        tmp_path, canary, monkeypatch, whole_phrases, turns, outputs, interrupt_mode, passed, diagnostic_mode):
     from live_interaction.audio_v2 import AudioFrame, DOWNLINK_MAGIC, EPOCH_END, PORTION_START, PORTION_END
     path, _ = original_db(tmp_path, canary)
     # Keep the encoded original intact and mark two explicit speech portions.
@@ -203,8 +204,13 @@ async def test_replay_retains_independent_predicates_on_timeout(
         wire = canary.ReplaySocket(transport, output, canary.CaptionEvidence(phrases), connection_generation=1)
         try:
             operation = wire.replay(recording, phrases, [0, 1], "g1", 1,
-                {"live_window_bytes": 65536, "live_window_duration_us": 1_000_000}, .1, receipt=retained)
-            if passed:
+                {"live_window_bytes": 65536, "live_window_duration_us": 1_000_000}, .1,
+                receipt=retained, diagnostic_continue_on_transcript_mismatch=diagnostic_mode)
+            # Diagnostic continuation needs both real turn finals and terminal
+            # output receipts. Missing verbatim words are NEVER accepted.
+            diagnostic_complete = (diagnostic_mode and turns >= 2
+                and outputs + int(interrupt_mode in {"valid", "duplicate"}) >= 2)
+            if passed or diagnostic_complete:
                 assert await operation is retained
             else:
                 with pytest.raises(TimeoutError):
@@ -219,8 +225,11 @@ async def test_replay_retains_independent_predicates_on_timeout(
     assert durable["primary_passed"] is False  # One replay is never the two-replay acceptance.
     assert durable["passed"] is False
     assert result["passed"] is passed
-    assert result["phase"] == ("complete" if passed else "await_turn_result")
-    assert result.get("error_type") == (None if passed else "TimeoutError")
+    assert result["phase"] == ("complete" if passed else "diagnostic_transcript_mismatch"
+                               if diagnostic_complete else "await_turn_result")
+    assert result.get("diagnostic_only") is ((diagnostic_mode and not passed)
+                                             if passed or diagnostic_complete else None)
+    assert result.get("error_type") == (None if passed or diagnostic_complete else "TimeoutError")
     assert result["client_frames_sent"] == result["server_durable_seq"] == len(recording.chunks)
     assert result["source_sealed"] is True
     assert result["main_phrase_matches"] == [whole_phrases, whole_phrases]
