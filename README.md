@@ -113,3 +113,7 @@ RAM handoff is not yet claimed crash-durable until the shared framework extends
 durability into that startup window.
 The existing Record Idea Hub is not disabled until its replacement path is actually
 accepted.
+
+## Project information design track
+
+[Project information, shared access and Slack ↔ Hub](docs/product/21-project-information-unified-access.md) is the canonical analytical track for information types, shared Mira/dot lookup and source synchronization. It builds on existing collaboration and question sessions; no implementation or new integration permission is implied.
