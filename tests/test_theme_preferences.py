@@ -413,4 +413,4 @@ def test_assembled_core_prompt_preserves_runtime_provenance_guidance(context):
     assert 'раздельно называй приложение Android' in prompt
     assert 'Не подменяй версию приложения версией сервера' in prompt
     assert 'неизвестные поля называй неизвестными' in prompt
-    assert 'пользователь явно спрашивает' in prompt
+    assert 'По запросу технических подробностей сообщай их source SHA' in prompt
