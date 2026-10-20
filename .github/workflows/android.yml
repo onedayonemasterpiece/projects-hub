@@ -155,9 +155,10 @@ jobs:
           PY
       - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         env:
-          # The guest HDA capture deadline is about 18 ms. Request smaller
-          # Pulse fragments for this emulator; delayed capture inserted silence.
-          PULSE_LATENCY_MSEC: "5"
+          # Keep the Pulse request below the guest HDA capture deadline,
+          # but do not halve QEMU's own 10 ms output buffering to 5 ms.
+          # Both original microphone and speaker waveform gates stay strict.
+          PULSE_LATENCY_MSEC: "10"
           # QEMU's default 100 Hz audio tick can exceed the guest's 3 ms
           # capture jitter allowance. Keep the timer quantum below it.
           QEMU_AUDIO_TIMER_PERIOD: "1000"
