@@ -7,12 +7,21 @@ import pytest
 from projects_hub.live_adapter import ProjectsHubLiveAdapter
 from projects_hub.live_resources import ConversationScope
 from projects_hub.regional_knowledge import (
+    KNOWLEDGE_CODEC,
     RegionalKnowledgeAdapter,
     RegionalKnowledgeContractError,
     RegionalKnowledgeUnavailable,
     normalize_knowledge_search,
 )
 from projects_hub.store import DurableStore, StoreError
+
+
+def v2(value, context=None):
+    return dict(codec=KNOWLEDGE_CODEC,request_id=context.request_id if context else 'fixture-read',
+        turn_generation=context.turn_generation if context else 0,status='ok' if value.get('mode')=='hybrid' else 'degraded',
+        reason=None if value.get('mode')=='hybrid' else 'lexical_only',min_data_seq=context.min_data_seq if context else 0,
+        observed_data_seq=5,observed_projection_seq=5,prior_write_pending=False,context_gap=False,
+        continuation=None,**value)
 
 
 class KnowledgeProvider:
@@ -44,6 +53,7 @@ class KnowledgeProvider:
         actor_sub,
         workspace_id,
         max_evidence,
+        context,
     ):
         self.calls.append(
             {
@@ -55,7 +65,7 @@ class KnowledgeProvider:
         )
         if self.error is not None:
             raise self.error
-        return self.result
+        return v2(self.result,context)
 
 
 def _live_context(tmp_path: Path, factory=None):
@@ -86,7 +96,7 @@ def _live_context(tmp_path: Path, factory=None):
 
 def test_knowledge_result_preserves_evidence_provenance():
     value = normalize_knowledge_search(
-        {
+        v2({
             "mode": "lexical_degraded",
             "evidence": [
                 {
@@ -101,7 +111,7 @@ def test_knowledge_result_preserves_evidence_provenance():
                     },
                 }
             ],
-        },
+        }),
         max_evidence=3,
     )
     assert value["mode"] == "lexical_degraded"
@@ -142,7 +152,7 @@ def test_knowledge_result_preserves_evidence_provenance():
 )
 def test_knowledge_result_rejects_untrusted_or_unbounded_shapes(payload):
     with pytest.raises(RegionalKnowledgeContractError):
-        normalize_knowledge_search(payload, max_evidence=3)
+        normalize_knowledge_search(v2(payload), max_evidence=3)
 
 
 @pytest.mark.asyncio
@@ -215,7 +225,7 @@ async def test_live_knowledge_tool_uses_current_actor_workspace_and_evidence(
         }
         assert provider.calls == [
             {
-                "query": "история Кафедрального собора",
+                "query": "  история Кафедрального собора  ",
                 "actor_sub": actor_id,
                 "workspace_id": workspace_id,
                 "max_evidence": 5,
