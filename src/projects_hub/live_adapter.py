@@ -2126,7 +2126,11 @@ class ProjectsHubLiveAdapter:
                     state["actor_id"], native_turn["source_id"] if native_turn else state["source_id"],
                     kind, text=text, provider_at_ms=provider_at,
                 )
-        if kind in {"turn_complete", "interrupted"} and native_turn:
+        if kind == "turn_complete" and native_turn:
+            # The provider emits interrupted -> turn_complete for the SAME
+            # response. Keep its ownership across interrupted: fresh capture
+            # may already be open and must not be committed by the old tail.
+            # Playback cancellation still happens immediately in the SDK.
             state.pop("_native_response_turn", None)
             state["_native_greeting_turn"] = int(state.get("_native_greeting_turn", 0)) + 1
         counts[kind] = int(counts.get(kind, 0)) + 1

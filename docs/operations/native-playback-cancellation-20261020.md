@@ -10,6 +10,10 @@ Cancellation is NOT playback: original bytes and actual played cursor remain unc
 
 Tests cover reopening, late tail/empty-source writes, repeat cancellation without extra records, retained original bytes and exact played positions, unknown/input/foreign sources, and the shared detached-bindings fence.
 
+## Corrected interrupted-response attribution
+
+The retained trace also showed a separate deterministic product bug: after capture B started, the provider sent interrupted A followed by turn_complete A. The adapter cleared A's response ownership on interrupted and wrongly committed B from A's terminal event, before B had ended. Two regression cases reproduce this on the previous code (B still open or already ended). Retain response ownership until turn_complete; immediate playback cancellation is unchanged. The focused adapter/durable/native suite passes 52 tests after this change. The event ordering is documented by [Google's server-content reference](https://ai.google.dev/api/live#BidiGenerateContentServerContent). This is a fix to semantic receipt attribution, not ASR accuracy.
+
 ## Native provider evidence remains a separate gate
 
 The retained rc11 native-v2 check in `/home/dev/artifacts/projects-hub/20261020T101444Z-native-v2-57723de86d3c` exercised the installed environment using the original synthetic Android CI source. All 763 chunks reached the server durable prefix and the source was complete. Both response turns reached a terminal result (one completed output, one explicitly interrupted output). The first of two full-phrase transcript assertions failed; the wait therefore timed out. Report SHA-256 `c2a82315c8cdffff401fe536e7cc24f91da84923ac5f70416b7ee59b2cb095f7`. Cleanup left zero host sessions and caption sidecars. No secondary ASR qualification was requested.
