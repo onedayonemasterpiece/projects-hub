@@ -261,7 +261,53 @@ class ProductEncodedAudioStore:
             raise StoreError("SOURCE_OUTPUT", "A typed output original is required")
         return await self.io.run(self._commit_chunk, source, epoch, output.chunk, output.original_event_seq)
 
-    def _commit_chunk(self, bound, epoch, chunk, original_event_seq=None):
+    async def commit_outputs(self, source, epoch, outputs):
+        """One bounded durable SQLite commit for a burst of original output pages.
+
+        Atomic batch receipts are created only after the whole batch commits.
+        The SDK may still use the single-output contract for providers without
+        this product-specific optimization. Failed batches preserve earlier
+        durable prefixes and never manufacture an ACK.
+        """
+        from live_interaction.audio_v2 import OutputChunk
+        from .store import StoreError
+        if (self.direction != "downlink" or not isinstance(outputs, (list, tuple))
+                or not 1 <= len(outputs) <= 6
+                or any(not isinstance(value, OutputChunk) for value in outputs)):
+            raise StoreError("SOURCE_OUTPUT", "Expected one to six typed output originals")
+        return await self.io.run(self._commit_outputs, source, epoch, tuple(outputs))
+
+    def _commit_outputs(self, source, epoch, outputs):
+        from live_interaction.audio_v2 import EPOCH_END
+        # The product's SQLite connection and lock are shared across all voice
+        # sessions. A burst uses one fsync, rather than competing with fresh
+        # microphone commits for the global lock once per encoded page.
+        with self.store._lock:
+            self.store.db.execute("BEGIN IMMEDIATE")
+            try:
+                receipts = tuple(
+                    self._commit_chunk(source, epoch, output.chunk,
+                                       output.original_event_seq, in_transaction=True)
+                    for output in outputs
+                )
+                self.store.db.execute("COMMIT")
+            except BaseException:
+                self.store.db.execute("ROLLBACK")
+                raise
+        # Only a *committed* batch may be reported as durable.
+        for output, receipt in zip(outputs, receipts):
+            chunk = output.chunk
+            if receipt.newly_committed and (chunk.chunk_seq == 1 or chunk.flags & EPOCH_END):
+                log.info("live output durable", extra={
+                    "event": "live_output_durable", "conversation_id": self.conversation_id,
+                    "source_id": receipt.server_source_id, "status": "server_durable",
+                    "kind": "terminal" if chunk.flags & EPOCH_END else "first_chunk",
+                    "frame_seq": chunk.chunk_seq,
+                    "duration_ms": (chunk.capture_start_us + chunk.duration_us) // 1000,
+                })
+        return receipts
+
+    def _commit_chunk(self, bound, epoch, chunk, original_event_seq=None, *, in_transaction=False):
         from live_interaction.audio_v2 import DurableCommit, EncodedChunk, EPOCH_END
         from .store import StoreError, _now_ms
         if not isinstance(chunk, EncodedChunk) or chunk.source_id != bound.source.source_id or chunk.epoch_id != epoch.epoch_id:
@@ -322,7 +368,8 @@ class ProductEncodedAudioStore:
                     or budget["encoded_bytes"] + len(chunk.payload) > self.limits.total_bytes
                     or budget["chunks"] >= self.limits.total_chunks):
                 raise StoreError("SOURCE_STORAGE_FULL", "Compressed source storage is full; saved originals remain available")
-            self.store.db.execute("BEGIN IMMEDIATE")
+            if not in_transaction:
+                self.store.db.execute("BEGIN IMMEDIATE")
             try:
                 self.store.db.execute("INSERT INTO encoded_voice_chunks(source_id,chunk_seq,epoch_id,capture_start_us,duration_us,flags,payload_sha256,payload,original_event_seq) VALUES(?,?,?,?,?,?,?,?,?)", (source["id"], chunk.chunk_seq, *metadata[:-1], metadata[-1], chunk.payload, original_event_seq))
                 if chunk.flags & EPOCH_END:
@@ -336,11 +383,14 @@ class ProductEncodedAudioStore:
                 self.store.db.execute("UPDATE encoded_voice_sources SET contiguous_seq=?,complete=? WHERE source_id=?", (prefix, int(complete), source["id"]))
                 self.store.db.execute("UPDATE sources SET audio_bytes=audio_bytes+?,audio_chunks=audio_chunks+1,audio_duration_us=audio_duration_us+?,updated_at_ms=? WHERE id=?", (len(chunk.payload), chunk.duration_us, _now_ms(), source["id"]))
                 self.store.db.execute("UPDATE encoded_voice_storage SET encoded_bytes=encoded_bytes+?,chunks=chunks+1 WHERE slot=1", (len(chunk.payload),))
-                self.store.db.execute("COMMIT")
+                if not in_transaction:
+                    self.store.db.execute("COMMIT")
             except BaseException:
-                self.store.db.execute("ROLLBACK")
+                if not in_transaction:
+                    self.store.db.execute("ROLLBACK")
                 raise
-            if self.direction == "downlink" and (chunk.chunk_seq == 1 or chunk.flags & EPOCH_END):
+            if (not in_transaction and self.direction == "downlink"
+                    and (chunk.chunk_seq == 1 or chunk.flags & EPOCH_END)):
                 # A real device can be silent despite a successful provider audio
                 # event. Log the durable output boundary separately from handset
                 # playback; never log the payload, spoken text or codec bytes.
