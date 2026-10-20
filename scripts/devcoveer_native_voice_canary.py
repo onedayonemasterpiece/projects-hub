@@ -465,7 +465,7 @@ class ReplaySocket:
             if c.get("type") == kind and all(c.get(k) == v for k, v in fields.items())), None))
 
     async def replay(self, recording, phrases, expected_portions, replay_id, generation, limits, timeout,
-                     *, receipt=None):
+                     *, receipt=None, diagnostic_continue_on_transcript_mismatch=False):
         from live_interaction.audio_v2 import AudioFrame, UPLINK_MAGIC
         source_id = "canary_" + replay_id + "_" + secrets.token_hex(6)
         clock_start = recording.chunks[0].capture_start_us
@@ -554,11 +554,22 @@ class ReplaySocket:
             if sealed.get("complete") is not True:
                 raise ValueError("CANARY_ORIGINAL_NOT_DURABLE")
             result.update(source_sealed=True, server_durable_seq=sealed["server_durable_seq"], phase="await_turn_result")
-            await self.wait(snapshot, timeout)
+            # A diagnostic MAY continue to the next socket generation after
+            # proven durable input, observed final transcripts, complete turns
+            # and terminal output. It NEVER promotes a missing verbatim phrase
+            # to primary acceptance; the default path remains strict.
+            await self.wait(lambda: snapshot() or (
+                diagnostic_continue_on_transcript_mismatch
+                and result["turn_complete_received"]
+                and result["output_terminal_received"]
+                and result["event_counts"].get("input_transcript", 0) >= len(expected)), timeout)
+            strict_pass = bool(snapshot())
             result["phase"] = "source_unbind"
             await self.send({"type": "source_unbind", "source_ref": bound["source_ref"]})
             await self.control("source_unbound", source_id=source_id)
-            result.update(passed=True, phase="complete")
+            result.update(passed=strict_pass,
+                diagnostic_only=bool(diagnostic_continue_on_transcript_mismatch and not strict_pass),
+                phase="complete" if strict_pass else "diagnostic_transcript_mismatch")
             return result
         except BaseException as exc:
             result["error_type"] = type(exc).__name__
@@ -659,7 +670,8 @@ async def run_provider(args, recording: Recording, report: dict) -> dict:
                 replay = {"replay_id": f"g{generation}", "connection_generation": generation, "passed": False}
                 report["replays"].append(replay)
                 await wire.replay(recording, args.phrases, args.portion, f"g{generation}",
-                    generation, hello["audio_limits"], args.turn_timeout, receipt=replay)
+                    generation, hello["audio_limits"], args.turn_timeout, receipt=replay,
+                    diagnostic_continue_on_transcript_mismatch=args.diagnostic_continue_on_transcript_mismatch)
                 cursor = wire.cursor
                 await wire.close()
                 wire = None
@@ -727,6 +739,8 @@ def main(argv=None) -> int:
     parser.add_argument("--data-dir", type=Path, help="NEW isolated server/client evidence directory")
     parser.add_argument("--report", type=Path)
     parser.add_argument("--run-provider", action="store_true")
+    parser.add_argument("--diagnostic-continue-on-transcript-mismatch", action="store_true",
+                        help="Continue to WSS generation 2 only if real input receipts, finals and output tails exist; strict acceptance stays failed")
     parser.add_argument("--qualify-captions", action="store_true",
                         help="Additionally run and require strict caption qualification using a second ASR provider")
     parser.add_argument("--use-installed-provider-environment", action="store_true",
@@ -758,7 +772,9 @@ def main(argv=None) -> int:
         parser.error("Report already exists; preserve the prior attempt evidence")
     if args.report.resolve().is_relative_to(args.data_dir.resolve()):
         parser.error("Place --report outside the new --data-dir so the store can start empty")
-    report = {"passed": False, "primary_passed": False, "provider_calls_attempted": False, "versions": {}, "replays": [],
+    report = {"passed": False, "primary_passed": False, "provider_calls_attempted": False,
+              "diagnostic_continue_on_transcript_mismatch": args.diagnostic_continue_on_transcript_mismatch,
+              "versions": {}, "replays": [],
               "caption_qualification": {"requested": args.qualify_captions, "observer_enabled": False,
                                         "status": "unverified" if args.qualify_captions else "not_requested"},
               "claim": "Native-captured compressed-input primary provider integration; separate from Android playback acceptance",
