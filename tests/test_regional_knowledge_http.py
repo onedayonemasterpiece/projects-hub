@@ -19,7 +19,8 @@ from test_regional_knowledge import v2,KnowledgeProvider,_live_context
 from live_tools import execute
 
 URL='http://127.0.0.1:8199/internal/projects-hub/knowledge-search'
-TOKEN='synthetic-ph-service-'+('x'*40)
+CREDENTIAL='00000000-0000-0000-0000-000000000099'
+TOKEN='rkbs_'+CREDENTIAL.replace('-','')+'.'+('x'*43)
 
 
 def request_context():return KnowledgeReadContext(uuid4().hex,7,time.monotonic()+2,3)
@@ -27,7 +28,7 @@ def request_context():return KnowledgeReadContext(uuid4().hex,7,time.monotonic()
 
 def provider(client,*,current=lambda:True):
     return RegionalKnowledgeHttpProvider(endpoint=URL,service_id='projects-hub-reader',provider_tenant='ph.fixture',
-        token=TOKEN,binding=Delegation('usr_test','ws_test',str(uuid4()),1),current=current,client=client)
+        token=TOKEN,credential_id=CREDENTIAL,credential_epoch=1,binding=Delegation('usr_test','ws_test',str(uuid4()),1),current=current,client=client)
 
 
 def ready(context):return v2({'mode':'hybrid','evidence':[dict(id='rkb-source:'+('a'*500),title='Source',
@@ -47,6 +48,7 @@ async def test_http_provider_uses_only_dedicated_service_and_exact_bound_actor_c
         assert result['status']=='ok' and result['evidence'][0]['text']==' Exact source text.\n'
         request,body=calls[0]
         assert request.headers['authorization']=='Bearer '+TOKEN and 'cookie' not in request.headers
+        assert request.headers['x-rkb-service-credential']==CREDENTIAL and request.headers['x-rkb-service-epoch']=='1'
         assert request.url.host=='127.0.0.1' and body['provider_tenant']=='ph.fixture'
         assert body['request_id']==context.request_id and body['turn_generation']==7
         assert body['deadline_monotonic']==context.deadline_monotonic and body['min_data_seq']==3
@@ -96,13 +98,19 @@ def test_v2_cannot_collapse_failures_or_freshness_into_empty_success(case):
 def private(path,data):path.write_text(data);path.chmod(0o600);return path
 
 
+def issued(workspace):
+    return json.dumps(dict(codec='rkb.service-credential.v1',credential_id=CREDENTIAL,epoch=1,service_id='projects-hub-reader',
+        service_token=TOKEN,scope=dict(operation='knowledge_search',provider='projects_hub',provider_tenant='ph.fixture',workspace_ids=[workspace]),
+        expires_at=time.time()+86400,reason='synthetic service scope'))
+
+
 @pytest.mark.asyncio
 async def test_real_optional_factory_is_scoped_revocable_and_constructs_without_network(tmp_path,monkeypatch):
     store=DurableStore(tmp_path/'state');boot=store.ensure_dev_workspace('Synthetic')
     actor,workspace=boot['actor']['id'],boot['workspace']['id']
-    secret=private(tmp_path/'service-token',TOKEN)
+    secret=private(tmp_path/'service-token',issued(workspace))
     value=dict(codec='ph.rkb-provider.v2',endpoint=URL,service_id='projects-hub-reader',provider_tenant='ph.fixture',
-        service_token_file=str(secret),bindings=[dict(actor_sub=actor,workspace_id=workspace,link_id=str(uuid4()),link_revision=1)])
+        service_token_file=str(secret),service_credential_id=CREDENTIAL,service_credential_epoch=1,bindings=[dict(actor_sub=actor,workspace_id=workspace,link_id=str(uuid4()),link_revision=1)])
     config=private(tmp_path/'rkb.json',json.dumps(value))
     factory=configured_knowledge_factory(store,{'PROJECTS_HUB_RKB_CONFIG':str(config)})
     try:
@@ -198,9 +206,9 @@ async def test_computed_evidence_checkpoint_has_exact_committed_utterance_and_is
 def test_actual_create_app_uses_optional_private_configuration(tmp_path,monkeypatch):
     from projects_hub.app import create_app
     store=DurableStore(tmp_path/'state');boot=store.ensure_dev_workspace('Synthetic')
-    secret=private(tmp_path/'token',TOKEN)
+    secret=private(tmp_path/'token',issued(boot['workspace']['id']))
     config=private(tmp_path/'config',json.dumps(dict(codec='ph.rkb-provider.v2',endpoint=URL,
-        service_id='projects-hub-reader',provider_tenant='ph.fixture',service_token_file=str(secret),
+        service_id='projects-hub-reader',provider_tenant='ph.fixture',service_token_file=str(secret),service_credential_id=CREDENTIAL,service_credential_epoch=1,
         bindings=[dict(actor_sub=boot['actor']['id'],workspace_id=boot['workspace']['id'],link_id=str(uuid4()),link_revision=1)])))
     monkeypatch.setenv('PROJECTS_HUB_RKB_CONFIG',str(config))
     from projects_hub.settings import Settings

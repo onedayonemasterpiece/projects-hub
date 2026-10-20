@@ -16,7 +16,11 @@ verified `projects_hub` account link for this PH actor and configured tenant.
 
 A reviewer must substitute the actual existing RKB loopback port and stable private
 state paths. Both descriptor and credential file must be absolute regular files,
-mode 0600, outside source control. No disposable artifact/runtime env is allowed.
+mode 0600, outside source control. The credential JSON must be issued by the
+existing RKB local owner auth CLI (`personal_auth_cli service issue`), codec
+`rkb.service-credential.v1`; a hand-written token file is insufficient. RKB
+independently verifies the provisioned ID/epoch, token digest, current scope,
+enabled state and expiry at final issuance. No disposable artifact/runtime env is allowed.
 The descriptor is bounded to 32 actor/workspace scopes; changing its bytes,
 permissions or credential invalidates existing adapters until a deliberate restart.
 
@@ -25,7 +29,9 @@ permissions or credential invalidates existing adapters until a deliberate resta
   "codec": "ph.rkb-provider.v2",
   "endpoint": "http://127.0.0.1:PORT/internal/projects-hub/knowledge-search",
   "service_id": "projects-hub-reader",
-  "service_token_file": "/ABSOLUTE/PRIVATE/ph-rkb-reader.token",
+  "service_token_file": "/ABSOLUTE/PRIVATE/ph-rkb-credential.json",
+  "service_credential_id": "PROVISIONED_TECHNICAL_CREDENTIAL_UUID",
+  "service_credential_epoch": 1,
   "provider_tenant": "REVIEWED_STABLE_PH_TENANT",
   "bindings": [{
     "actor_sub": "usr_VERIFIED_PH_ACTOR",
