@@ -118,7 +118,7 @@ def build_live_host(
             output_stores[session.id] = ProductEncodedAudioStore(
                 store, actor_id=session.state["actor_id"],
                 conversation_id=session.state["conversation_id"], io=encoded_io,
-                direction="downlink",
+                direction="downlink", output_session_id=session.id,
             )
         return output_stores[session.id]
 

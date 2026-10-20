@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
@@ -96,7 +97,11 @@ class EncodedStorageLimits:
     source_bytes: int = 64 * 1024 * 1024
     total_bytes: int = 2 * 1024 * 1024 * 1024
     source_duration_us: int = 8 * 60 * 60 * 1_000_000
-    source_chunks: int = 250_000
+    # Native Opus emits as little as one original chunk per 20 ms. A single
+    # 90-minute uninterrupted source may therefore contain 270,000 chunks;
+    # the former 250,000 ceiling guaranteed failure around minute 83.
+    # This remains bounded by the 4M total, 64 MiB per-source, and duration.
+    source_chunks: int = 400_000
     total_chunks: int = 4_000_000
     epochs_per_source: int = 32
 
@@ -145,15 +150,19 @@ class ProductEncodedAudioStore:
 
     def __init__(self, store, *, actor_id: str, conversation_id: str,
                  io: EncodedVoiceIO, limits: EncodedStorageLimits | None = None,
-                 direction: str = "uplink"):
+                 direction: str = "uplink", output_session_id: str | None = None):
         if direction not in {"uplink", "downlink"}:
             raise ValueError("Unknown compressed source direction")
+        if output_session_id is not None and (type(output_session_id) is not str
+                or re.fullmatch(r"[A-Za-z0-9_-]{8,128}", output_session_id) is None):
+            raise ValueError("Invalid Live output session identity")
         self.store = store
         self.actor_id = actor_id
         self.conversation_id = conversation_id
         self.io = io
         self.limits = limits or EncodedStorageLimits()
         self.direction = direction
+        self.output_session_id = output_session_id
 
     def _source(self, source_id):
         from .store import StoreError
@@ -550,15 +559,23 @@ class ProductEncodedAudioStore:
             with self.store._lock:
                 # Authenticate the conversation even if the bounded manifest is empty.
                 self.store.get_conversation(self.actor_id, self.conversation_id)
+                # The manifest is an AUTOPLAY offer, never the conversation's
+                # historical audio archive. SDK output source IDs contain the
+                # immutable Live session ID. Reattaching a socket uses that same
+                # session; a new Start must not resurrect yesterday's response.
+                # Explicit resume_source/read_output still allow authorized
+                # archival replay without destroying originals or played cursors.
+                prefix = f"out_{self.output_session_id}_" if self.output_session_id else ""
                 rows = self.store.db.execute("""
                     SELECT e.*,s.client_source_id FROM encoded_voice_sources e
                     JOIN sources s ON s.id=e.source_id
                     LEFT JOIN encoded_voice_chunks c ON c.source_id=e.source_id AND c.chunk_seq=e.contiguous_seq
                     WHERE s.actor_id=? AND s.conversation_id=? AND s.audio_direction='downlink'
                     AND e.output_cancelled=0
+                    AND (?='' OR substr(s.client_source_id,1,length(?))=?)
                     AND (e.complete=0 OR e.played_us<COALESCE(c.capture_start_us+c.duration_us,0))
                     ORDER BY s.captured_at_ms DESC,s.id DESC LIMIT ?
-                """, (self.actor_id, self.conversation_id, limit)).fetchall()
+                """, (self.actor_id, self.conversation_id, prefix, prefix, prefix, limit)).fetchall()
                 return [self._output_status(BoundSource(SourceDescriptor(row["client_source_id"], row["started_at_unix_ms"]),
                                                        row["source_id"], row["contiguous_seq"])) for row in rows]
         return await self.io.run(read)
