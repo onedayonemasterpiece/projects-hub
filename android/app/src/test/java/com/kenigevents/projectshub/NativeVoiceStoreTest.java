@@ -51,6 +51,48 @@ public final class NativeVoiceStoreTest {
     }
     @FunctionalInterface private interface Throwing { void run() throws Exception; }
 
+    @Test public void alternatingMicAndSpeakerJournalsKeepBoundedHandlesAndDurableOriginals() throws Exception {
+        File directory = temporary.newFolder();
+        try (NativeVoiceStore store = open(directory)) {
+            initialize(store);
+            store.openOutput(OUTPUT);
+            store.registerOutputEpoch(OUTPUT.sourceId(), AAC);
+            // Capture, output decoding, playback position and server ACK all
+            // use this store concurrently. Repeated source switching must not
+            // close/reopen the same two journals on every sample/receipt.
+            for (int n = 1; n <= 24; n++) {
+                assertEquals(n, store.append(chunk(n, 32)).chunkSeq());
+                assertEquals(n, store.appendOutput(output(n, n, n == 24 ? VoiceAudioV2.EPOCH_END : 0)).chunkSeq());
+                store.markPlayed(OUTPUT.sourceId(), n * 20000L - 10000L);
+                store.markServerCommitted(new VoiceAudioV2.DurablePrefix(SOURCE.sourceId(), n));
+                assertEquals("duplex journals stay open", 2, store.openJournalCountForTesting());
+            }
+            // Many historical sources may be retained for crash recovery; open
+            // descriptors must remain bounded independently of source count.
+            for (int n = 0; n < 5; n++) {
+                var extra = new VoiceAudioV2.SourceDescriptor("local_extra_" + n, 1700000001000L + n);
+                store.open(extra);
+                store.registerEpoch(extra.sourceId(), AAC);
+                store.append(new VoiceAudioV2.EncodedChunk(extra.sourceId(), AAC.epochId(),
+                        1, 0, 20000, 0, new byte[]{(byte)n, 9}));
+                assertTrue("journal descriptor cap", store.openJournalCountForTesting() <= 4);
+            }
+            // Reopening an evicted source does not alter its original bytes.
+            assertEquals(List.of(output(24, 24, VoiceAudioV2.EPOCH_END)),
+                    store.readOutput(OUTPUT.sourceId(), 23, 8192, 20000));
+            assertTrue(store.openJournalCountForTesting() <= 4);
+        }
+        try (NativeVoiceStore reopened = open(directory)) {
+            assertEquals(7, reopened.sources().size() + reopened.playbackPositions().size());
+            assertEquals(24, reopened.playbackPositions().get(0).receivedThrough());
+            assertEquals(470000, reopened.playbackPositions().get(0).playedUs());
+            assertEquals(24, reopened.sources().stream()
+                    .filter(s -> s.source().equals(SOURCE)).findFirst().orElseThrow().serverCommittedThrough());
+            assertEquals(List.of(output(24, 24, VoiceAudioV2.EPOCH_END)),
+                    reopened.readOutput(OUTPUT.sourceId(), 23, 8192, 20000));
+        }
+    }
+
     @Test public void cancelledOutputSurvivesReopenAndLateTailWithoutInventingPlayback() throws Exception {
         File directory = temporary.newFolder();
         try (NativeVoiceStore store = open(directory)) {

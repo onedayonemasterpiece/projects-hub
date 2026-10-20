@@ -87,7 +87,12 @@ public final class NativeVoiceStore implements DurableSourceStore, DurableOutput
     private final Scope scope;
     private final Limits limits;
     private final Map<String, Source> sources = new LinkedHashMap<>();
-    private Source activeJournal;
+    // The microphone writer and speaker/ACK reader repeatedly alternate
+    // source journals. Keep a small bounded LRU of open descriptors instead of
+    // closing/reopening the file on every 20 ms audio or playback operation.
+    // The store monitor and durable fsync-before-receipt rules are unchanged.
+    private static final int MAX_OPEN_JOURNALS = 4;
+    private final LinkedHashMap<Source, Boolean> openJournals = new LinkedHashMap<>(8, .75f, true);
     private RandomAccessFile lockFile;
     private FileLock lock;
     private long journalBytes;
@@ -381,7 +386,7 @@ public final class NativeVoiceStore implements DurableSourceStore, DurableOutput
         long size = source.journal.length();
         source.journal.close();
         source.journal = null;
-        activeJournal = null;
+        openJournals.remove(source);
         try {
             Files.delete(source.path.toPath());
             syncDirectory(scopeDirectory);
@@ -404,14 +409,20 @@ public final class NativeVoiceStore implements DurableSourceStore, DurableOutput
     }
 
     private void activateJournal(Source source) throws IOException {
-        if (activeJournal != null && activeJournal != source) {
-            activeJournal.journal.close();
-            activeJournal.journal = null;
-            activeJournal = null;
-        }
         if (source.journal == null) source.journal = new RandomAccessFile(source.path, "rw");
-        activeJournal = source;
+        openJournals.put(source, Boolean.TRUE);
+        while (openJournals.size() > MAX_OPEN_JOURNALS) {
+            Source oldest = openJournals.keySet().iterator().next();
+            // The current journal was just marked most recently used.
+            if (oldest == source) throw error("VOICE_STORE_UNAVAILABLE");
+            try { oldest.journal.close(); }
+            catch (IOException failure) { failed = true; throw failure; }
+            oldest.journal = null;
+            openJournals.remove(oldest);
+        }
     }
+
+    synchronized int openJournalCountForTesting() { return openJournals.size(); }
 
     private void checkOpen() throws IOException {
         if (closed) throw error("VOICE_STORE_CLOSED");
@@ -646,6 +657,7 @@ public final class NativeVoiceStore implements DurableSourceStore, DurableOutput
         }
         try { if (lock != null) lock.release(); } catch (IOException failure) { if (first == null) first = failure; }
         try { if (lockFile != null) lockFile.close(); } catch (IOException failure) { if (first == null) first = failure; }
+        openJournals.clear();
         if (first != null) throw first;
     }
 }
