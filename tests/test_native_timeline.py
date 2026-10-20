@@ -117,6 +117,47 @@ async def test_interrupted_response_completion_cannot_commit_the_next_capture(vo
     assert response["timeline_message"]["turn_id"] != answer["timeline_message"]["turn_id"]
 
 
+@pytest.mark.parametrize("boundary", ["reconnecting", "resumed"])
+@pytest.mark.asyncio
+async def test_interrupted_owner_is_retired_at_a_provider_boundary(voice, boundary):
+    store, encoded, actor, conversation, _ = voice
+    adapter, session = adapter_context(store, encoded, actor, conversation)
+    first = await opened(encoded)
+    await speech(adapter, session, encoded, first, chunk(1))
+    adapter.on_event(session, {"type": "input_transcript", "text": "Первый запрос"})
+    old = {"type": "output_transcript", "text": "Первый ответ"}
+    adapter.on_event(session, old)
+    adapter.on_event(session, {"type": "interrupted"})
+    # Provider socket is lost before its turn_complete. An ordinary handset
+    # transport gap, in contrast, does not retire the ongoing provider response.
+    adapter.on_event(session, {"type": "transport_gap"})
+    assert session.state.get("_native_response_turn")
+    adapter.on_event(session, {"type": boundary})
+    second = await encoded.open_source(SourceDescriptor("capture-reset-B", first.source.started_at_unix_ms + 1000))
+    await encoded.register_epoch(second, epoch())
+    await speech(adapter, session, encoded, second, replace(chunk(1), source_id="capture-reset-B"))
+    final = {"type": "input_transcript", "text": "Второй запрос"}
+    adapter.on_event(session, final)
+    answer = {"type": "output_transcript", "text": "Второй ответ"}
+    adapter.on_event(session, answer)
+    assert answer["timeline_message"]["turn_id"] == final["timeline_message"]["turn_id"]
+    assert answer["timeline_message"]["turn_id"] != old["timeline_message"]["turn_id"]
+    assert answer["timeline_message"]["source_id"] == second.server_source_id
+
+
+@pytest.mark.parametrize("terminal", ["interrupted", "turn_complete"])
+@pytest.mark.asyncio
+async def test_unanchored_terminal_does_not_attest_fresh_native_speech(voice, terminal):
+    store, encoded, actor, conversation, _ = voice
+    adapter, session = adapter_context(store, encoded, actor, conversation)
+    bound = await opened(encoded)
+    await speech(adapter, session, encoded, bound, chunk(1))
+    fresh = session.state["_current_utterance"]
+    adapter.on_event(session, {"type": terminal})
+    assert not fresh["committed"]
+    assert not fresh["semantic_observed"]
+
+
 @pytest.mark.asyncio
 async def test_native_timeline_and_original_transcript_have_one_commit(voice, monkeypatch):
     store, encoded, actor, conversation, _ = voice
