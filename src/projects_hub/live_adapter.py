@@ -1317,11 +1317,15 @@ class ProjectsHubLiveAdapter:
         self._utterance_event(session, "utterance_started", utterance)
         return utterance
 
-    def _native_event_turn(self, session: Any, kind: str) -> dict[str, str]:
+    def _native_event_turn(self, session: Any, kind: str) -> dict[str, str] | None:
         state = session.state
         response = state.get("_native_response_turn")
         if kind in {"audio", "output_transcript", "turn_complete", "interrupted"} and response:
             return response
+        if kind in {"turn_complete", "interrupted"}:
+            # A terminal without an observed response cannot attest whichever
+            # fresh microphone utterance happens to be current now.
+            return None
         current = self._current_utterance(session)
         utterance = self._semantic_utterance(session) or state.get("_native_ended_utterance") or current
         if utterance:
@@ -2020,6 +2024,10 @@ class ProjectsHubLiveAdapter:
     def on_event(self, session: Any, event: dict[str, Any]) -> None:
         kind = str(event.get("type") or "")
         state = session.state
+        if kind in {"reconnecting", "resumed"} and state.pop("_native_response_interrupted", False):
+            # Only a provider boundary retires an interrupted response whose
+            # completion was lost. A handset transport_gap is not this boundary.
+            state.pop("_native_response_turn", None)
         native_turn = self._native_event_turn(session, kind) if state.get("_native_timeline") and kind in {
             "audio", "input_transcript", "output_transcript", "turn_complete", "interrupted", "interim_input_transcript",
         } else None
@@ -2052,7 +2060,9 @@ class ProjectsHubLiveAdapter:
                 evidence="canonical_input_transcript",
                 utterance_id=native_turn.get("utterance_id") if native_turn else None,
             )
-        elif kind in {"audio", "output_transcript", "turn_complete", "interrupted"}:
+        elif kind in {"audio", "output_transcript", "turn_complete", "interrupted"} and (
+            not state.get("_native_timeline") or native_turn is not None
+        ):
             # Any model-derived output proves that the semantic turn was
             # consumed. Treat it as committed even if input transcription is
             # missing, otherwise recovery could duplicate an accepted action.
@@ -2126,7 +2136,14 @@ class ProjectsHubLiveAdapter:
                     state["actor_id"], native_turn["source_id"] if native_turn else state["source_id"],
                     kind, text=text, provider_at_ms=provider_at,
                 )
-        if kind in {"turn_complete", "interrupted"} and native_turn:
+        if kind == "interrupted" and native_turn:
+            state["_native_response_interrupted"] = True
+        if kind == "turn_complete" and native_turn:
+            state.pop("_native_response_interrupted", None)
+            # The provider emits interrupted -> turn_complete for the SAME
+            # response. Keep its ownership across interrupted: fresh capture
+            # may already be open and must not be committed by the old tail.
+            # Playback cancellation still happens immediately in the SDK.
             state.pop("_native_response_turn", None)
             state["_native_greeting_turn"] = int(state.get("_native_greeting_turn", 0)) + 1
         counts[kind] = int(counts.get(kind, 0)) + 1

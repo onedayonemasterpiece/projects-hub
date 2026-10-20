@@ -79,6 +79,85 @@ async def test_output_tail_keeps_original_source_while_fresh_capture_rotates(voi
     assert second["timeline_message"]["turn_id"] != first["timeline_message"]["turn_id"]
 
 
+@pytest.mark.parametrize("fresh_ended", [False, True])
+@pytest.mark.asyncio
+async def test_interrupted_response_completion_cannot_commit_the_next_capture(voice, fresh_ended):
+    # Exact provider order from the retained native-v2 trace: response A,
+    # new capture B, interrupted A, turn_complete A, final transcript B.
+    store, encoded, actor, conversation, _ = voice
+    adapter, session = adapter_context(store, encoded, actor, conversation)
+    old = await opened(encoded)
+    await speech(adapter, session, encoded, old, chunk(1))
+    adapter.on_event(session, {"type": "input_transcript", "text": "Первый запрос"})
+    answer = {"type": "output_transcript", "text": "Ответ на первый запрос"}
+    adapter.on_event(session, answer)
+    new = await encoded.open_source(SourceDescriptor("capture-interrupt-B", old.source.started_at_unix_ms + 1000))
+    await encoded.register_epoch(new, epoch())
+    await adapter.activate_audio_source(session, new)
+    adapter.input(session, {"activity_start": True})
+    packet = replace(chunk(1), source_id="capture-interrupt-B")
+    receipt = await encoded.commit_chunk(new, epoch(), packet)
+    await adapter.input_audio(session, DurablePCMProjection(receipt, b"\0\0" * 1600, 16000, packet.capture_start_us))
+    fresh = session.state["_current_utterance"]
+    if fresh_ended:
+        adapter.input(session, {"activity_end": True})
+    adapter.on_event(session, {"type": "interrupted"})
+    adapter.on_event(session, {"type": "turn_complete"})
+    assert not fresh["committed"], "A's terminal messages cannot attest B's semantic consumption"
+    assert not fresh["semantic_observed"]
+    if not fresh_ended:
+        adapter.input(session, {"activity_end": True})
+    final = {"type": "input_transcript", "text": "Второй самостоятельный запрос"}
+    adapter.on_event(session, final)
+    response = {"type": "output_transcript", "text": "Ответ на второй запрос"}
+    adapter.on_event(session, response)
+    assert fresh["committed"]
+    assert final["timeline_message"]["source_id"] == new.server_source_id
+    assert response["timeline_message"]["turn_id"] == final["timeline_message"]["turn_id"]
+    assert response["timeline_message"]["turn_id"] != answer["timeline_message"]["turn_id"]
+
+
+@pytest.mark.parametrize("boundary", ["reconnecting", "resumed"])
+@pytest.mark.asyncio
+async def test_interrupted_owner_is_retired_at_a_provider_boundary(voice, boundary):
+    store, encoded, actor, conversation, _ = voice
+    adapter, session = adapter_context(store, encoded, actor, conversation)
+    first = await opened(encoded)
+    await speech(adapter, session, encoded, first, chunk(1))
+    adapter.on_event(session, {"type": "input_transcript", "text": "Первый запрос"})
+    old = {"type": "output_transcript", "text": "Первый ответ"}
+    adapter.on_event(session, old)
+    adapter.on_event(session, {"type": "interrupted"})
+    # Provider socket is lost before its turn_complete. An ordinary handset
+    # transport gap, in contrast, does not retire the ongoing provider response.
+    adapter.on_event(session, {"type": "transport_gap"})
+    assert session.state.get("_native_response_turn")
+    adapter.on_event(session, {"type": boundary})
+    second = await encoded.open_source(SourceDescriptor("capture-reset-B", first.source.started_at_unix_ms + 1000))
+    await encoded.register_epoch(second, epoch())
+    await speech(adapter, session, encoded, second, replace(chunk(1), source_id="capture-reset-B"))
+    final = {"type": "input_transcript", "text": "Второй запрос"}
+    adapter.on_event(session, final)
+    answer = {"type": "output_transcript", "text": "Второй ответ"}
+    adapter.on_event(session, answer)
+    assert answer["timeline_message"]["turn_id"] == final["timeline_message"]["turn_id"]
+    assert answer["timeline_message"]["turn_id"] != old["timeline_message"]["turn_id"]
+    assert answer["timeline_message"]["source_id"] == second.server_source_id
+
+
+@pytest.mark.parametrize("terminal", ["interrupted", "turn_complete"])
+@pytest.mark.asyncio
+async def test_unanchored_terminal_does_not_attest_fresh_native_speech(voice, terminal):
+    store, encoded, actor, conversation, _ = voice
+    adapter, session = adapter_context(store, encoded, actor, conversation)
+    bound = await opened(encoded)
+    await speech(adapter, session, encoded, bound, chunk(1))
+    fresh = session.state["_current_utterance"]
+    adapter.on_event(session, {"type": terminal})
+    assert not fresh["committed"]
+    assert not fresh["semantic_observed"]
+
+
 @pytest.mark.asyncio
 async def test_native_timeline_and_original_transcript_have_one_commit(voice, monkeypatch):
     store, encoded, actor, conversation, _ = voice

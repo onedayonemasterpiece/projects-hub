@@ -51,6 +51,69 @@ public final class NativeVoiceStoreTest {
     }
     @FunctionalInterface private interface Throwing { void run() throws Exception; }
 
+    @Test public void cancelledOutputSurvivesReopenAndLateTailWithoutInventingPlayback() throws Exception {
+        File directory = temporary.newFolder();
+        try (NativeVoiceStore store = open(directory)) {
+            store.openOutput(OUTPUT); store.registerOutputEpoch(OUTPUT.sourceId(), AAC);
+            store.appendOutput(output(1, 18, 0));
+            store.markPlayed(OUTPUT.sourceId(), 7000);
+            store.cancelPlayback(OUTPUT.sourceId());
+            long once = journal(directory).length();
+            store.cancelPlayback(OUTPUT.sourceId());
+            assertEquals(once, journal(directory).length());
+            // Cancellation does not discard a subsequently received exact original tail.
+            store.appendOutput(output(2, 21, VoiceAudioV2.EPOCH_END));
+        }
+        try (NativeVoiceStore store = open(directory)) {
+            var position = store.playbackPositions().get(0);
+            assertTrue(position.playbackCancelled());
+            assertEquals(7000, position.playedUs());
+            assertEquals(40000, position.durationUs());
+            assertEquals(2, position.receivedThrough());
+            assertTrue(position.sealed());
+            assertEquals(List.of(output(1, 18, 0), output(2, 21, VoiceAudioV2.EPOCH_END)),
+                    store.readOutput(OUTPUT.sourceId(), 0, 8192, 240000));
+            assertEquals(2, store.appendOutput(output(1, 18, 0)).chunkSeq());
+            assertTrue(store.playbackPositions().get(0).playbackCancelled());
+        }
+    }
+
+    @Test public void cancellingAnOpenedEmptyOutputSurvivesItsLateFirstChunk() throws Exception {
+        File directory = temporary.newFolder();
+        try (NativeVoiceStore store = open(directory)) {
+            store.openOutput(OUTPUT);
+            store.cancelPlayback(OUTPUT.sourceId());
+            store.registerOutputEpoch(OUTPUT.sourceId(), AAC);
+            store.appendOutput(output(1, 1, VoiceAudioV2.EPOCH_END));
+        }
+        try (NativeVoiceStore store = open(directory)) {
+            assertTrue(store.playbackPositions().get(0).playbackCancelled());
+            assertEquals(0, store.playbackPositions().get(0).playedUs());
+            assertEquals(1, store.readOutput(OUTPUT.sourceId(), 0, 8192, 240000).size());
+        }
+    }
+
+    @Test public void oldUncancelledJournalsRemainRecoverableAndCancellationIsScopeBound() throws Exception {
+        File directory = temporary.newFolder();
+        try (NativeVoiceStore store = open(directory)) {
+            initialize(store); store.append(chunk(1, 64));
+            store.openOutput(OUTPUT); store.registerOutputEpoch(OUTPUT.sourceId(), AAC);
+            store.appendOutput(output(1, 1, 0));
+            code("VOICE_SOURCE_DIRECTION", () -> store.cancelPlayback(SOURCE.sourceId()));
+            code("VOICE_SOURCE_UNKNOWN", () -> store.cancelPlayback("out_unknown"));
+        }
+        try (NativeVoiceStore store = open(directory)) {
+            assertFalse(store.playbackPositions().get(0).playbackCancelled());
+            assertEquals(List.of(chunk(1, 64)), store.readPending(SOURCE.sourceId(), 0, 8192, 240000));
+            store.cancelPlayback(OUTPUT.sourceId());
+        }
+        var foreign = new NativeVoiceStore.Scope("actor_B", SCOPE.workspaceId(), SCOPE.conversationId());
+        try (NativeVoiceStore store = new NativeVoiceStore(directory, foreign, LIMITS)) {
+            assertTrue(store.playbackPositions().isEmpty());
+            code("VOICE_SOURCE_UNKNOWN", () -> store.cancelPlayback(OUTPUT.sourceId()));
+        }
+    }
+
     @Test public void reopenedSourceRetainsOriginalEncodedBytesAndIndependentDurableCursors() throws Exception {
         File directory = temporary.newFolder();
         try (NativeVoiceStore store = open(directory)) {

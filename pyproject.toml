@@ -15,7 +15,7 @@ dependencies = [
   "PyJWT[crypto]>=2.10,<3",
   "mcp>=2.3,<3",
   "standardwebhooks==1.0.0",
-  "live-interaction[audio] @ git+https://github.com/onedayonemasterpiece/live-interaction.git@b4fefe276ecbfb47a8d5a0f18b4397a2cf23c9f5",
+  "live-interaction[audio] @ git+https://github.com/onedayonemasterpiece/live-interaction.git@8823d89c100cd76af89d503749f420c65944ab49",
 ]
 
 [project.optional-dependencies]
