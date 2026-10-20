@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from projects_hub.app import LiveStart
 from projects_hub.runtime_versions import loaded_live_sdk
+from projects_hub import runtime_versions
 
 
 def test_native_build_metadata_is_bounded_display_only():
@@ -26,7 +27,7 @@ def test_loaded_sdk_identity_does_not_leak_url_or_secret():
     loaded_live_sdk.cache_clear()
     origin = {"url": "https://secret:credential@host/private", "vcs_info": {"commit_id": "d" * 40}}
     try:
-        with patch("projects_hub.runtime_versions.importlib.import_module", return_value=SimpleNamespace(__version__="0.4.0-rc.11")), patch("projects_hub.runtime_versions.importlib.metadata.distribution", return_value=SimpleNamespace(read_text=lambda _: json.dumps(origin))):
+        with patch.object(runtime_versions.importlib.metadata, "distribution", return_value=SimpleNamespace(read_text=lambda _: json.dumps(origin))), patch.object(runtime_versions.importlib, "import_module", return_value=SimpleNamespace(__version__="0.4.0-rc.11")):
             assert loaded_live_sdk() == {"version": "0.4.0-rc.11", "source_sha": "d" * 40}
             assert "credential" not in json.dumps(loaded_live_sdk())
     finally:
