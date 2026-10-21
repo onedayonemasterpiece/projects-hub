@@ -210,6 +210,8 @@ class DurableStore:
         );
         CREATE INDEX IF NOT EXISTS source_events_source_idx
             ON source_events(source_id, id);
+        CREATE INDEX IF NOT EXISTS source_events_context_idx
+            ON source_events(source_id, kind, payload_sha256);
         CREATE TABLE IF NOT EXISTS commands(
             id TEXT PRIMARY KEY,
             source_id TEXT NOT NULL REFERENCES sources(id),
