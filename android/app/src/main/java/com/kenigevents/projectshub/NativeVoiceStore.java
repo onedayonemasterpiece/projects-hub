@@ -95,7 +95,7 @@ public final class NativeVoiceStore implements DurableSourceStore, DurableOutput
     private final LinkedHashMap<Source, Boolean> openJournals = new LinkedHashMap<>(8, .75f, true);
     private RandomAccessFile lockFile;
     private FileLock lock;
-    private long journalBytes;
+    private long journalBytes, journalSyncs;
     private int sourceCount;
     private boolean closed, failed;
 
@@ -277,6 +277,75 @@ public final class NativeVoiceStore implements DurableSourceStore, DurableOutput
         return new VoiceAudioV2.DurablePrefix(chunk.sourceId(), source.chunks.size());
     }
 
+    /**
+     * Commit a bounded live-microphone burst with one durable file sync.
+     *
+     * No device ACK escapes before the original bytes AND their metadata have
+     * been synced. A failed write marks this instance unusable, so the
+     * existing journal recovery handles any uncertain disk tail on reopen.
+     * The session/actor source identity and the global quota are unchanged.
+     */
+    @Override public synchronized List<VoiceAudioV2.DurablePrefix> appendBatch(
+            List<VoiceAudioV2.EncodedChunk> chunks) throws IOException {
+        if (chunks == null || chunks.isEmpty() || chunks.size() > 6)
+            throw error("VOICE_SOURCE_BATCH_RANGE");
+        VoiceAudioV2.EncodedChunk first = chunks.get(0);
+        if (first == null) throw error("VOICE_SOURCE_BATCH_RANGE");
+        Source source = requireSource(first.sourceId(), false);
+        // Idempotent/recovery calls retain the original single-chunk contract.
+        // The normal encoder only enters the atomic path with a fresh group.
+        if (first.chunkSeq() <= source.chunks.size()) {
+            List<VoiceAudioV2.DurablePrefix> receipts = new ArrayList<>();
+            for (VoiceAudioV2.EncodedChunk chunk : chunks) receipts.add(append(chunk));
+            return receipts;
+        }
+        if (source.sealed) throw error("VOICE_SOURCE_SEALED");
+        ArrayList<byte[]> records = new ArrayList<>(chunks.size());
+        long expectedSeq = source.chunks.size() + 1L;
+        long endUs = source.validEndUs, durationUs = source.capturedDurationUs;
+        long bytes = 0;
+        for (VoiceAudioV2.EncodedChunk chunk : chunks) {
+            if (chunk == null || !chunk.sourceId().equals(first.sourceId())
+                    || !source.epochs.containsKey(chunk.epochId())
+                    || chunk.chunkSeq() != expectedSeq++) throw error("VOICE_SOURCE_GAP");
+            if (chunk.captureStartUs() < endUs
+                    || chunk.captureStartUs() > VoiceAudioV2.MAX_SAFE_INTEGER - chunk.durationUs())
+                throw error("VOICE_SOURCE_TIME");
+            if (durationUs > limits.maxSourceDurationUs() - chunk.durationUs())
+                throw error("VOICE_STORE_QUOTA");
+            byte[] record = body(CHUNK, out -> writeChunk(out, chunk));
+            bytes += record.length + 36L;
+            endUs = chunk.captureStartUs() + chunk.durationUs();
+            durationUs += chunk.durationUs();
+            records.add(record);
+        }
+        checkCapacity(bytes);
+        activateJournal(source);
+        long at = source.journal.length();
+        try {
+            source.journal.seek(at);
+            for (byte[] record : records) {
+                source.journal.writeInt(record.length);
+                source.journal.write(record);
+                source.journal.write(digest(record));
+            }
+            source.journal.getFD().sync();
+            journalSyncs++;
+            List<VoiceAudioV2.DurablePrefix> receipts = new ArrayList<>(chunks.size());
+            for (int i = 0; i < records.size(); i++) {
+                byte[] record = records.get(i);
+                applyRecord(source, record, at + 4);
+                at += record.length + 36L;
+                journalBytes += record.length + 36L;
+                receipts.add(new VoiceAudioV2.DurablePrefix(first.sourceId(), source.chunks.size()));
+            }
+            return receipts;
+        } catch (IOException | RuntimeException failure) {
+            failed = true; // uncertain disk tail: only reopen/recovery is safe
+            throw failure;
+        }
+    }
+
     @Override public synchronized List<VoiceAudioV2.EncodedChunk> readPending(
             String sourceId, long afterChunkSeq, int maxEncodedBytes, long maxDurationUs)
             throws IOException {
@@ -423,6 +492,7 @@ public final class NativeVoiceStore implements DurableSourceStore, DurableOutput
     }
 
     synchronized int openJournalCountForTesting() { return openJournals.size(); }
+    synchronized long journalSyncCountForTesting() { return journalSyncs; }
 
     private void checkOpen() throws IOException {
         if (closed) throw error("VOICE_STORE_CLOSED");
@@ -443,6 +513,7 @@ public final class NativeVoiceStore implements DurableSourceStore, DurableOutput
             source.journal.write(body);
             source.journal.write(digest(body));
             source.journal.getFD().sync();
+            journalSyncs++;
             // The in-memory cursor cannot outrun its on-device receipt.
             applyRecord(source, body, end + 4);
             journalBytes += body.length + 36L;
