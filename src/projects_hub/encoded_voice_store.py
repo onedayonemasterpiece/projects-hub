@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
@@ -121,7 +122,9 @@ class EncodedVoiceIO:
     async def run(self, operation, *args):
         if self.closed:
             raise RuntimeError("Encoded voice storage is closed")
+        queued_at = time.monotonic()
         await self.slots.acquire()
+        queue_wait_ms = round((time.monotonic() - queued_at) * 1000)
         try:
             future = asyncio.get_running_loop().run_in_executor(self.executor, operation, *args)
         except BaseException:
@@ -138,7 +141,20 @@ class EncodedVoiceIO:
         future.add_done_callback(finished)
         # Cancellation cannot cancel an in-flight SQLite commit or falsely free
         # its queue slot. The actual completion callback owns the slot release.
-        return await asyncio.shield(future)
+        try:
+            return await asyncio.shield(future)
+        finally:
+            elapsed_ms = round((time.monotonic() - queued_at) * 1000)
+            if elapsed_ms >= 150 or queue_wait_ms >= 50:
+                # Numeric diagnostic only; never log original audio, text or
+                # actor secrets. A high-water event identifies real HOL rather
+                # than tempting us to relax source age or ACK constraints.
+                log.warning("compressed voice IO contention", extra={
+                    "event": "live_voice_io_contention",
+                    "operation": getattr(operation, "__name__", "unknown")[:64],
+                    "queue_wait_ms": queue_wait_ms,
+                    "total_ms": elapsed_ms,
+                })
 
     def close(self):
         self.closed = True
@@ -222,7 +238,8 @@ class ProductEncodedAudioStore:
                 self.store.db.execute("UPDATE sources SET audio_format='encoded-v2',audio_direction=?,audio_path='',captured_at_ms=? WHERE id=?", (self.direction, descriptor.started_at_unix_ms, source["id"]))
                 self.store.db.execute("COMMIT")
             except BaseException:
-                self.store.db.execute("ROLLBACK")
+                if self.store.db.in_transaction:
+                    self.store.db.execute("ROLLBACK")
                 raise
             return BoundSource(descriptor, source["id"], 0)
 
@@ -292,7 +309,8 @@ class ProductEncodedAudioStore:
                 )
                 self.store.db.execute("COMMIT")
             except BaseException:
-                self.store.db.execute("ROLLBACK")
+                if self.store.db.in_transaction:
+                    self.store.db.execute("ROLLBACK")
                 raise
         # Only a *committed* batch may be reported as durable.
         for output, receipt in zip(outputs, receipts):
@@ -386,7 +404,7 @@ class ProductEncodedAudioStore:
                 if not in_transaction:
                     self.store.db.execute("COMMIT")
             except BaseException:
-                if not in_transaction:
+                if not in_transaction and self.store.db.in_transaction:
                     self.store.db.execute("ROLLBACK")
                 raise
             if (not in_transaction and self.direction == "downlink"
@@ -472,7 +490,8 @@ class ProductEncodedAudioStore:
                 self.store.db.execute("UPDATE sources SET audio_projection_bytes=audio_projection_bytes+? WHERE id=?", (len(projection.pcm16), source["id"]))
                 self.store.db.execute("COMMIT")
             except BaseException:
-                self.store.db.execute("ROLLBACK")
+                if self.store.db.in_transaction:
+                    self.store.db.execute("ROLLBACK")
                 raise
             return {"audio_bytes": source["audio_projection_bytes"] + len(projection.pcm16), "audio_chunks": source["audio_chunks"]}
 
