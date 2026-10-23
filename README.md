@@ -6,6 +6,10 @@ Voice-first project workspace built around **one central Live agent**. The curre
 implementation follows the product specification in [docs/product](docs/product/README.md)
 and is the first working vertical, not the complete product.
 
+## Performance and shared-host assessment — 18 October 2026
+
+[Go/Rust feasibility for Projects Hub](docs/research/projects-hub-go-rust-assessment-20261018.md) evaluates the voice framework and the complete product backend against four simultaneous assistants plus Regional Knowledge Base on the shared DevCoveer server. It records the exact source and observed deployed release, separates historical benchmarks from new measurements, and recommends bounded optimization before a language migration. The [read-only host snapshot](docs/research/projects-hub-shared-host-snapshot-20261018.json) is evidence for this assessment, not a load-test result. This document does not change the active native-voice implementation or deployment.
+
 ## First vertical
 
 The PWA uses a compact context island and a stable voice island. The current
