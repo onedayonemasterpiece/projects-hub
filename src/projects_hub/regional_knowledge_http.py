@@ -86,15 +86,38 @@ class RegionalKnowledgeHttpProvider:
         self.client=client or httpx.AsyncClient(trust_env=False,follow_redirects=False,
             limits=httpx.Limits(max_connections=8,max_keepalive_connections=4),timeout=2)
 
-    async def search_evidence(self,*,query,actor_sub,workspace_id,max_evidence,context:KnowledgeReadContext):
+    def _body(self, *, actor_sub, workspace_id, max_evidence, context):
+        return dict(codec='rkb.knowledge-query.v2',actor_sub=actor_sub,workspace_id=workspace_id,
+            provider_tenant=self.provider_tenant,link_id=self.binding.link_id,
+            link_revision=self.binding.link_revision,request_id=context.request_id,
+            turn_generation=context.turn_generation,min_data_seq=context.min_data_seq,
+            deadline_monotonic=context.deadline_monotonic,max_evidence=max_evidence)
+
+    async def search_evidence(self,*,query,actor_sub,workspace_id,max_evidence,
+                              context:KnowledgeReadContext,document_ids=None):
+        body=self._body(actor_sub=actor_sub,workspace_id=workspace_id,
+            max_evidence=max_evidence,context=context)
+        body['query']=query
+        if document_ids is not None:
+            body.update(codec='rkb.knowledge-query.v3',operation='search',document_ids=document_ids)
+        return await self._request(body,actor_sub=actor_sub,workspace_id=workspace_id,context=context)
+
+    async def fetch_evidence(self,*,actor_sub,workspace_id,max_evidence,context:KnowledgeReadContext,
+                             id=None,source_id=None,page_start=None,page_end=None,after_ordinal=None):
+        body=self._body(actor_sub=actor_sub,workspace_id=workspace_id,
+            max_evidence=max_evidence,context=context)
+        body.update(codec='rkb.knowledge-query.v3',operation='fetch')
+        if id is not None:
+            body['id']=id
+        else:
+            body.update(source_id=source_id,page_start=page_start,page_end=page_end)
+            if after_ordinal is not None:body['after_ordinal']=after_ordinal
+        return await self._request(body,actor_sub=actor_sub,workspace_id=workspace_id,context=context)
+
+    async def _request(self,body,*,actor_sub,workspace_id,context):
         if (actor_sub,workspace_id)!=(self.binding.actor_sub,self.binding.workspace_id) or not self.current():
             raise RegionalKnowledgeAccessError('knowledge_delegation_unavailable')
         if time.monotonic()>=context.deadline_monotonic:return failure(context,'deadline_exceeded')
-        body=dict(codec='rkb.knowledge-query.v2',query=query,actor_sub=actor_sub,workspace_id=workspace_id,
-            provider_tenant=self.provider_tenant,
-            link_id=self.binding.link_id,link_revision=self.binding.link_revision,request_id=context.request_id,
-            turn_generation=context.turn_generation,min_data_seq=context.min_data_seq,
-            deadline_monotonic=context.deadline_monotonic,max_evidence=max_evidence)
         started=time.monotonic();status='unavailable'
         try:
             async with __import__('asyncio').timeout_at(context.deadline_monotonic):
