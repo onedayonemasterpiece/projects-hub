@@ -218,3 +218,76 @@ def test_actual_create_app_uses_optional_private_configuration(tmp_path,monkeypa
     assert app.state.regional_knowledge_factory(boot['actor']['id'],boot['workspace']['id']) is not None
     # No HTTP calls occur during startup construction. Close the unused pool.
     asyncio.run(app.state.regional_knowledge_factory.aclose());store.close()
+
+
+@pytest.mark.asyncio
+async def test_p3_scoped_search_and_fetch_reuse_exact_local_credential_and_v2_response():
+    source='00000000-0000-0000-0000-000000000001'
+    captured=[];context=request_context()
+    def handler(request):
+        captured.append((request,json.loads(request.content)))
+        return httpx.Response(200,json=ready(context))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter=RegionalKnowledgeAdapter(provider(client),'usr_test','ws_test')
+        result=await adapter.search('Königsberg',document_ids=[source],context=context)
+        assert result['status']=='ok'
+        result=await adapter.fetch(source_id=source,page_start=4,page_end=7,context=context)
+        assert result['status']=='ok'
+        result=await adapter.fetch(id='rkb:passage:v1:opaque-reference',context=context)
+        assert result['status']=='ok'
+    assert len(captured)==3
+    assert captured[0][1]['codec']=='rkb.knowledge-query.v3'
+    assert captured[0][1]['operation']=='search' and captured[0][1]['document_ids']==[source]
+    assert captured[1][1]['operation']=='fetch' and captured[1][1]['source_id']==source
+    assert (captured[1][1]['page_start'],captured[1][1]['page_end'])==(4,7)
+    assert captured[2][1]['id']=='rkb:passage:v1:opaque-reference'
+    assert 'query' not in captured[1][1] and 'source_id' not in captured[2][1]
+    for request,body in captured:
+        assert request.url.host=='127.0.0.1' and request.headers['authorization']=='Bearer '+TOKEN
+        assert body['actor_sub']=='usr_test' and body['workspace_id']=='ws_test'
+        assert body['request_id']==context.request_id and body['turn_generation']==7
+        assert body['min_data_seq']==3 and body['deadline_monotonic']==context.deadline_monotonic
+        assert 'access_token' not in body and 'person_id' not in body
+
+
+@pytest.mark.asyncio
+async def test_p3_scoping_selectors_reject_ambiguous_inputs_before_network():
+    from projects_hub.regional_knowledge import RegionalKnowledgeInputError
+    source='00000000-0000-0000-0000-000000000001'
+    calls=[]
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200,json=ready(request_context()))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter=RegionalKnowledgeAdapter(provider(client),'usr_test','ws_test')
+        for ids in ([],[source,source],[source]*6,['not-uuid'],['00000000-0000-0000-0000-00000000000A']):
+            with pytest.raises(RegionalKnowledgeInputError):
+                await adapter.search('book',document_ids=ids)
+        for selector in ({},{'id':'arbitrary'}, {'source_id':source,'page_start':5,'page_end':9},
+                         {'source_id':source,'page_start':True,'page_end':3},
+                         {'source_id':source,'page_start':3,'page_end':2},
+                         {'source_id':source,'page_start':3,'page_end':6,'id':'rkb:passage:v1:opaque'}):
+            with pytest.raises(RegionalKnowledgeInputError):
+                await adapter.fetch(**selector)
+        with pytest.raises(RegionalKnowledgeInputError):
+            await adapter.fetch(source_id=source,page_start=0,page_end=0,after_ordinal=-1)
+    assert calls==[]
+
+
+@pytest.mark.asyncio
+async def test_p3_v3_fetch_preserves_auth_revocation_and_stale_generation_rejection():
+    source='00000000-0000-0000-0000-000000000001'
+    context=request_context()
+    current=[True]
+    def revoked(request):
+        current[0]=False
+        return httpx.Response(200,json=ready(context))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(revoked)) as client:
+        adapter=RegionalKnowledgeAdapter(provider(client,current=lambda:current[0]),'usr_test','ws_test')
+        with pytest.raises(RegionalKnowledgeAccessError):
+            await adapter.fetch(source_id=source,page_start=2,page_end=3,context=context)
+    def stale(request):return httpx.Response(200,json={**ready(context),'turn_generation':6})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(stale)) as client:
+        adapter=RegionalKnowledgeAdapter(provider(client),'usr_test','ws_test')
+        with pytest.raises(Exception,match='context_gap'):
+            await adapter.fetch(source_id=source,page_start=2,page_end=3,context=context)
