@@ -310,3 +310,48 @@ async def test_knowledge_provider_failure_degrades_only_capability(tmp_path: Pat
         )
     finally:
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_p3_mira_declarations_and_scoped_search_fetch_share_current_live_context(tmp_path):
+    from projects_hub.regional_knowledge import RegionalKnowledgeInputError
+    from projects_hub.live_adapter import _functions, _LONG_RUNNING_FUNCTIONS
+    from projects_hub.live_capabilities import BUNDLES
+    from uuid import UUID
+    names={d['name']:d for d in _functions(regional_knowledge=True)}
+    assert set(BUNDLES['knowledge'])=={'knowledge_search','knowledge_fetch'}
+    assert 'knowledge_fetch' in _LONG_RUNNING_FUNCTIONS
+    assert 'document_ids' in names['knowledge_search']['parameters']['properties']
+    assert set(names['knowledge_fetch']['parameters']['properties']) >= {'id','source_id','page_start','page_end'}
+
+    class P3(KnowledgeProvider):
+        def __init__(self):
+            super().__init__();self.scopes=[];self.fetches=[]
+        async def search_evidence(self,*,query,actor_sub,workspace_id,max_evidence,context,document_ids=None):
+            self.scopes.append((actor_sub,workspace_id,document_ids))
+            return v2(self.result,context)
+        async def fetch_evidence(self,*,actor_sub,workspace_id,context,max_evidence,
+                                 id=None,source_id=None,page_start=None,page_end=None,after_ordinal=None):
+            self.fetches.append((actor_sub,workspace_id,id,source_id,page_start,page_end))
+            return v2(self.result,context)
+    provider=P3()
+    store,actor,workspace,adapter,initialized,session=_live_context(tmp_path,
+        lambda a,w:RegionalKnowledgeAdapter(provider,a,w))
+    source='00000000-0000-0000-0000-000000000001'
+    try:
+        selected,_=bundle_setup(adapter,initialized,'knowledge')
+        assert {item['name'] for item in selected['functions']}=={'knowledge_search','knowledge_fetch'}
+        searched=await execute(adapter,session,{'name':'knowledge_search',
+            'args':{'query':'Какая книга?','document_ids':[source]}})
+        fetched=await execute(adapter,session,{'name':'knowledge_fetch',
+            'args':{'source_id':source,'page_start':2,'page_end':4}})
+        assert searched['status']=='ok' and fetched['status']=='ok'
+        assert provider.scopes==[(actor,workspace,[source])]
+        assert provider.fetches==[(actor,workspace,None,source,2,4)]
+        assert fetched['evidence'][0]['title']=='Кёнигсберг. Источник'
+        with pytest.raises(StoreError) as rejected:
+            await execute(adapter,session,{'name':'knowledge_fetch',
+                'args':{'source_id':source,'page_start':1,'page_end':10}})
+        assert rejected.value.code=='INVALID_ARGUMENT'
+    finally:
+        store.close()
