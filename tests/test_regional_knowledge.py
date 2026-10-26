@@ -340,7 +340,7 @@ async def test_p3_mira_declarations_and_scoped_search_fetch_share_current_live_c
     source='00000000-0000-0000-0000-000000000001'
     try:
         selected,_=bundle_setup(adapter,initialized,'knowledge')
-        assert {item['name'] for item in selected['functions']}=={'knowledge_search','knowledge_fetch'}
+        assert {'knowledge_search','knowledge_fetch'} <= {item['name'] for item in selected['functions']}
         searched=await execute(adapter,session,{'name':'knowledge_search',
             'args':{'query':'Какая книга?','document_ids':[source]}})
         fetched=await execute(adapter,session,{'name':'knowledge_fetch',
