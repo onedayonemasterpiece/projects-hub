@@ -12,7 +12,7 @@ import json
 import math
 import re
 import time
-from uuid import uuid4
+from uuid import UUID, uuid4
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
@@ -23,6 +23,15 @@ _MAX_ITEM_TEXT_CHARS = 8_000
 _MAX_TOTAL_TEXT_CHARS = 24_000
 _MAX_METADATA_BYTES = 12_000
 KNOWLEDGE_CODEC = 'rkb.knowledge-search.v2'
+
+
+def _canonical_document_id(value: Any) -> bool:
+    if type(value) is not str:
+        return False
+    try:
+        return str(UUID(value)) == value
+    except (ValueError, AttributeError):
+        return False
 
 
 @dataclass(frozen=True)
@@ -67,6 +76,14 @@ class RegionalKnowledgeProvider(Protocol):
         workspace_id: str,
         max_evidence: int,
         context: KnowledgeReadContext,
+        document_ids: list[str] | None = None,
+    ) -> dict[str, Any]: ...
+
+    async def fetch_evidence(
+        self, *, actor_sub: str, workspace_id: str, context: KnowledgeReadContext,
+        max_evidence: int, id: str | None = None, source_id: str | None = None,
+        page_start: int | None = None, page_end: int | None = None,
+        after_ordinal: int | None = None,
     ) -> dict[str, Any]: ...
 
 
@@ -236,6 +253,7 @@ class RegionalKnowledgeAdapter:
         *,
         max_evidence: int = 3,
         context: KnowledgeReadContext | None = None,
+        document_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         if type(query) is not str or not query.strip() or len(query) > _MAX_QUERY_CHARS or len(query.encode())>4096:
             raise RegionalKnowledgeInputError("knowledge_query_invalid")
@@ -245,6 +263,11 @@ class RegionalKnowledgeAdapter:
         except (TypeError, ValueError):
             raise RegionalKnowledgeInputError("knowledge_max_evidence_invalid") from None
         limit = max(1, min(limit, _MAX_EVIDENCE))
+        if document_ids is not None:
+            if (type(document_ids) is not list or not 1 <= len(document_ids) <= 5
+                    or any(type(item) is not str or not _canonical_document_id(item) for item in document_ids)
+                    or len(set(document_ids)) != len(document_ids)):
+                raise RegionalKnowledgeInputError('knowledge_document_ids_invalid')
         context=context or KnowledgeReadContext(uuid4().hex,0,time.monotonic()+2)
         if time.monotonic()>=context.deadline_monotonic:
             raise RegionalKnowledgeUnavailable('knowledge_deadline_exceeded')
@@ -256,6 +279,7 @@ class RegionalKnowledgeAdapter:
                 workspace_id=self.workspace_id,
                 max_evidence=limit,
                 context=context,
+                **({'document_ids': document_ids} if document_ids is not None else {}),
             )
         except RegionalKnowledgeAccessError:
             raise
@@ -267,6 +291,44 @@ class RegionalKnowledgeAdapter:
             raise RegionalKnowledgeUnavailable("regional_knowledge_unavailable") from exc
 
         normalized=normalize_knowledge_search(result,max_evidence=limit)
+        if (normalized['request_id']!=context.request_id or normalized['turn_generation']!=context.turn_generation
+                or normalized['min_data_seq']!=context.min_data_seq or time.monotonic()>=context.deadline_monotonic):
+            raise RegionalKnowledgeUnavailable('knowledge_context_gap')
+        return normalized
+
+    async def fetch(
+        self, *, id: str | None = None, source_id: str | None = None,
+        page_start: int | None = None, page_end: int | None = None,
+        after_ordinal: int | None = None, max_evidence: int = 5,
+        context: KnowledgeReadContext | None = None,
+    ) -> dict[str, Any]:
+        by_id = id is not None and all(v is None for v in (source_id,page_start,page_end,after_ordinal))
+        by_pages = (id is None and _canonical_document_id(source_id)
+            and type(page_start) is int and type(page_end) is int
+            and 0 <= page_start <= page_end < page_start + 4 and page_end <= 2499
+            and (after_ordinal is None or type(after_ordinal) is int and 0 <= after_ordinal < 2**63))
+        if not (by_id or by_pages) or (by_id and (type(id) is not str
+                or not id.startswith('rkb:passage:v1:') or len(id) > 4096)):
+            raise RegionalKnowledgeInputError('knowledge_fetch_selector_invalid')
+        if type(max_evidence) is not int or not 1 <= max_evidence <= _MAX_EVIDENCE:
+            raise RegionalKnowledgeInputError('knowledge_max_evidence_invalid')
+        context=context or KnowledgeReadContext(uuid4().hex,0,time.monotonic()+2)
+        if time.monotonic() >= context.deadline_monotonic:
+            raise RegionalKnowledgeUnavailable('knowledge_deadline_exceeded')
+        try:
+            result=await self.provider.fetch_evidence(actor_sub=self.actor_sub,
+                workspace_id=self.workspace_id,context=context,max_evidence=max_evidence,
+                id=id,source_id=source_id,page_start=page_start,page_end=page_end,
+                after_ordinal=after_ordinal)
+        except RegionalKnowledgeAccessError:
+            raise
+        except PermissionError as exc:
+            raise RegionalKnowledgeAccessError('knowledge_access_denied') from exc
+        except (RegionalKnowledgeInputError, RegionalKnowledgeContractError):
+            raise
+        except Exception as exc:
+            raise RegionalKnowledgeUnavailable('regional_knowledge_unavailable') from exc
+        normalized=normalize_knowledge_search(result,max_evidence=max_evidence)
         if (normalized['request_id']!=context.request_id or normalized['turn_generation']!=context.turn_generation
                 or normalized['min_data_seq']!=context.min_data_seq or time.monotonic()>=context.deadline_monotonic):
             raise RegionalKnowledgeUnavailable('knowledge_context_gap')
