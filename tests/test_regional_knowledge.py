@@ -355,3 +355,27 @@ async def test_p3_mira_declarations_and_scoped_search_fetch_share_current_live_c
         assert rejected.value.code=='INVALID_ARGUMENT'
     finally:
         store.close()
+
+def test_p1b_rule_is_emitted_once_in_actual_mira_knowledge_instructions(tmp_path):
+    """The real authorized capability transition must pass P1b to Mira, not only declare it."""
+    provider = KnowledgeProvider()
+    store, _actor, _workspace, adapter, initialized, _session = _live_context(
+        tmp_path,
+        lambda actor, workspace: RegionalKnowledgeAdapter(provider, actor, workspace),
+    )
+    marker = "Не добавляй в ответ детали, отсутствующие в прочитанных фрагментах"
+    try:
+        # Core startup is deliberately small; knowledge instructions appear on activation.
+        assert marker not in initialized["configuration"]["system_instruction"]
+        emitted, _ = bundle_setup(adapter, initialized, "knowledge")
+        instructions = emitted["system_instruction"]
+        names = {tool["name"] for tool in emitted["functions"]}
+        assert {"knowledge_search", "knowledge_fetch"} <= names
+        assert "# REGIONAL KNOWLEDGE" in instructions
+        assert instructions.count(marker) == 1
+        assert "современные названия мест" in instructions
+        assert "за пределами цитируемых источников" in instructions
+        # One product-owned rule in the issued overlay; no duplicated tool guidance.
+        assert all(marker not in tool["description"] for tool in emitted["functions"])
+    finally:
+        store.close()
