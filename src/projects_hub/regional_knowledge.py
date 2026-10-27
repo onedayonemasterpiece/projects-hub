@@ -9,6 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
+import re
+import time
+from uuid import UUID, uuid4
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
@@ -18,6 +22,31 @@ _MAX_EVIDENCE = 5
 _MAX_ITEM_TEXT_CHARS = 8_000
 _MAX_TOTAL_TEXT_CHARS = 24_000
 _MAX_METADATA_BYTES = 12_000
+KNOWLEDGE_CODEC = 'rkb.knowledge-search.v2'
+
+
+def _canonical_document_id(value: Any) -> bool:
+    if type(value) is not str:
+        return False
+    try:
+        return str(UUID(value)) == value
+    except (ValueError, AttributeError):
+        return False
+
+
+@dataclass(frozen=True)
+class KnowledgeReadContext:
+    request_id: str
+    turn_generation: int
+    deadline_monotonic: float
+    min_data_seq: int = 0
+
+    def __post_init__(self):
+        if (type(self.request_id) is not str or not 1<=len(self.request_id)<=256
+                or type(self.turn_generation) is not int or self.turn_generation<0
+                or type(self.min_data_seq) is not int or self.min_data_seq<0
+                or type(self.deadline_monotonic) not in (int,float) or not math.isfinite(self.deadline_monotonic)):
+            raise RegionalKnowledgeInputError('knowledge_read_context_invalid')
 
 
 class RegionalKnowledgeInputError(ValueError):
@@ -46,6 +75,15 @@ class RegionalKnowledgeProvider(Protocol):
         actor_sub: str,
         workspace_id: str,
         max_evidence: int,
+        context: KnowledgeReadContext,
+        document_ids: list[str] | None = None,
+    ) -> dict[str, Any]: ...
+
+    async def fetch_evidence(
+        self, *, actor_sub: str, workspace_id: str, context: KnowledgeReadContext,
+        max_evidence: int, id: str | None = None, source_id: str | None = None,
+        page_start: int | None = None, page_end: int | None = None,
+        after_ordinal: int | None = None,
     ) -> dict[str, Any]: ...
 
 
@@ -53,6 +91,8 @@ def _bounded_scalar_tree(value: Any, *, depth: int = 0) -> Any:
     if depth > 5:
         raise RegionalKnowledgeContractError("knowledge_metadata_too_deep")
     if value is None or isinstance(value, (bool, int, float)):
+        if isinstance(value,float) and not math.isfinite(value):
+            raise RegionalKnowledgeContractError('knowledge_metadata_nonfinite')
         return value
     if isinstance(value, str):
         if len(value) > 3_000:
@@ -86,6 +126,7 @@ def _bounded_metadata(value: Any) -> dict[str, Any] | None:
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
+        allow_nan=False,
     ).encode("utf-8")
     if len(encoded) > _MAX_METADATA_BYTES:
         raise RegionalKnowledgeContractError("knowledge_metadata_too_large")
@@ -96,9 +137,9 @@ def _text(value: Any, field: str, maximum: int, *, allow_empty: bool = False) ->
     if not isinstance(value, str):
         raise RegionalKnowledgeContractError(f"{field}_invalid")
     result = value.strip()
-    if (not result and not allow_empty) or len(result) > maximum:
+    if (not result and not allow_empty) or len(value) > maximum:
         raise RegionalKnowledgeContractError(f"{field}_invalid")
-    return result
+    return value
 
 
 def normalize_knowledge_search(
@@ -108,16 +149,49 @@ def normalize_knowledge_search(
 ) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise RegionalKnowledgeContractError("knowledge_result_invalid")
-    if set(value) - {"evidence", "mode"}:
+    fields={'codec','request_id','turn_generation','status','reason','mode','evidence','min_data_seq',
+        'observed_data_seq','observed_projection_seq','prior_write_pending','context_gap','continuation'}
+    if set(value) != fields or value['codec'] != KNOWLEDGE_CODEC:
         raise RegionalKnowledgeContractError("knowledge_result_unknown_field")
+    try:size=len(json.dumps(value,ensure_ascii=False,allow_nan=False).encode())
+    except (ValueError,TypeError,RecursionError):
+        raise RegionalKnowledgeContractError('knowledge_response_invalid') from None
+    if size>256*1024:
+        raise RegionalKnowledgeContractError('knowledge_response_too_large')
+    status=value['status']
+    if status not in {'ok','degraded','unavailable','cancelled','invalid_query','denied'}:
+        raise RegionalKnowledgeContractError('knowledge_status_invalid')
+    for field in ('turn_generation','min_data_seq','observed_data_seq','observed_projection_seq'):
+        if value[field] is None and field.startswith('observed_'):
+            continue
+        if type(value[field]) is not int or value[field]<0:
+            raise RegionalKnowledgeContractError('knowledge_freshness_invalid')
+    if type(value['request_id']) is not str or not 1<=len(value['request_id'])<=256:
+        raise RegionalKnowledgeContractError('knowledge_request_invalid')
+    if any(type(value[field]) is not bool for field in ('context_gap','prior_write_pending')):
+        raise RegionalKnowledgeContractError('knowledge_freshness_invalid')
+    reason=value['reason']
+    if (status=='ok' and reason is not None or status!='ok' and
+            (type(reason) is not str or not 1<=len(reason)<=128)):
+        raise RegionalKnowledgeContractError('knowledge_reason_invalid')
 
-    mode = str(value.get("mode") or "")
-    if mode not in {"hybrid", "lexical_degraded"}:
+    mode = value['mode']
+    if mode not in {"hybrid", "lexical_degraded",None}:
         raise RegionalKnowledgeContractError("knowledge_mode_invalid")
 
     raw_evidence = value.get("evidence")
     if not isinstance(raw_evidence, list) or len(raw_evidence) > max_evidence:
         raise RegionalKnowledgeContractError("knowledge_evidence_count_invalid")
+    if status in {'unavailable','cancelled','invalid_query','denied'} and (raw_evidence or mode is not None):
+        raise RegionalKnowledgeContractError('knowledge_failure_cannot_be_empty_success')
+    if status in {'ok','degraded'} and mode is None:
+        raise RegionalKnowledgeContractError('knowledge_mode_invalid')
+    if ((status=='ok' and (mode!='hybrid' or value['context_gap'] or value['prior_write_pending']))
+            or status in {'ok','degraded'} and (value['observed_data_seq'] is None or value['observed_projection_seq'] is None
+            or min(value['observed_data_seq'],value['observed_projection_seq'])<value['min_data_seq'])):
+        raise RegionalKnowledgeContractError('knowledge_freshness_invalid')
+    if (value['context_gap'] or value['prior_write_pending']) and raw_evidence:
+        raise RegionalKnowledgeContractError('knowledge_context_gap_has_evidence')
 
     total_text = 0
     evidence: list[dict[str, Any]] = []
@@ -126,16 +200,17 @@ def normalize_knowledge_search(
             raise RegionalKnowledgeContractError("knowledge_evidence_invalid")
         if set(raw) - {"id", "title", "text", "url", "metadata"}:
             raise RegionalKnowledgeContractError("knowledge_evidence_unknown_field")
-        item_id = _text(raw.get("id"), "knowledge_evidence_id", 500)
+        item_id = _text(raw.get("id"), "knowledge_evidence_id", 2048)
         title = _text(raw.get("title"), "knowledge_evidence_title", 1_000)
-        body = _text(raw.get("text"), "knowledge_evidence_text", _MAX_ITEM_TEXT_CHARS)
+        _text(raw.get("text"), "knowledge_evidence_text", _MAX_ITEM_TEXT_CHARS)
+        body = raw['text']
         total_text += len(body)
         if total_text > _MAX_TOTAL_TEXT_CHARS:
             raise RegionalKnowledgeContractError("knowledge_evidence_text_too_large")
 
         url = _text(raw.get("url"), "knowledge_evidence_url", 2_048)
         parsed = urlsplit(url)
-        if (
+        if re.fullmatch(r'urn:rkb:(passage|story|variant):[A-Za-z0-9._:%~-]+',url) is None and (
             parsed.scheme != "https"
             or not parsed.netloc
             or parsed.username
@@ -154,7 +229,8 @@ def normalize_knowledge_search(
             item["metadata"] = metadata
         evidence.append(item)
 
-    return {"evidence": evidence, "mode": mode}
+    continuation=_bounded_metadata(value['continuation'])
+    return {**value,'evidence':evidence,'continuation':continuation}
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,15 +252,25 @@ class RegionalKnowledgeAdapter:
         query: str,
         *,
         max_evidence: int = 3,
+        context: KnowledgeReadContext | None = None,
+        document_ids: list[str] | None = None,
     ) -> dict[str, Any]:
-        query = str(query or "").strip()
-        if not query or len(query) > _MAX_QUERY_CHARS:
+        if type(query) is not str or not query.strip() or len(query) > _MAX_QUERY_CHARS or len(query.encode())>4096:
             raise RegionalKnowledgeInputError("knowledge_query_invalid")
         try:
-            limit = int(max_evidence)
+            if type(max_evidence) is not int:raise ValueError
+            limit = max_evidence
         except (TypeError, ValueError):
             raise RegionalKnowledgeInputError("knowledge_max_evidence_invalid") from None
         limit = max(1, min(limit, _MAX_EVIDENCE))
+        if document_ids is not None:
+            if (type(document_ids) is not list or not 1 <= len(document_ids) <= 5
+                    or any(type(item) is not str or not _canonical_document_id(item) for item in document_ids)
+                    or len(set(document_ids)) != len(document_ids)):
+                raise RegionalKnowledgeInputError('knowledge_document_ids_invalid')
+        context=context or KnowledgeReadContext(uuid4().hex,0,time.monotonic()+2)
+        if time.monotonic()>=context.deadline_monotonic:
+            raise RegionalKnowledgeUnavailable('knowledge_deadline_exceeded')
 
         try:
             result = await self.provider.search_evidence(
@@ -192,6 +278,8 @@ class RegionalKnowledgeAdapter:
                 actor_sub=self.actor_sub,
                 workspace_id=self.workspace_id,
                 max_evidence=limit,
+                context=context,
+                **({'document_ids': document_ids} if document_ids is not None else {}),
             )
         except RegionalKnowledgeAccessError:
             raise
@@ -202,4 +290,46 @@ class RegionalKnowledgeAdapter:
         except Exception as exc:
             raise RegionalKnowledgeUnavailable("regional_knowledge_unavailable") from exc
 
-        return normalize_knowledge_search(result, max_evidence=limit)
+        normalized=normalize_knowledge_search(result,max_evidence=limit)
+        if (normalized['request_id']!=context.request_id or normalized['turn_generation']!=context.turn_generation
+                or normalized['min_data_seq']!=context.min_data_seq or time.monotonic()>=context.deadline_monotonic):
+            raise RegionalKnowledgeUnavailable('knowledge_context_gap')
+        return normalized
+
+    async def fetch(
+        self, *, id: str | None = None, source_id: str | None = None,
+        page_start: int | None = None, page_end: int | None = None,
+        after_ordinal: int | None = None, max_evidence: int = 5,
+        context: KnowledgeReadContext | None = None,
+    ) -> dict[str, Any]:
+        by_id = id is not None and all(v is None for v in (source_id,page_start,page_end,after_ordinal))
+        by_pages = (id is None and _canonical_document_id(source_id)
+            and type(page_start) is int and type(page_end) is int
+            and 0 <= page_start <= page_end < page_start + 4 and page_end <= 2499
+            and (after_ordinal is None or type(after_ordinal) is int and 0 <= after_ordinal < 2**63))
+        if not (by_id or by_pages) or (by_id and (type(id) is not str
+                or not id.startswith('rkb:passage:v1:') or len(id) > 4096)):
+            raise RegionalKnowledgeInputError('knowledge_fetch_selector_invalid')
+        if type(max_evidence) is not int or not 1 <= max_evidence <= _MAX_EVIDENCE:
+            raise RegionalKnowledgeInputError('knowledge_max_evidence_invalid')
+        context=context or KnowledgeReadContext(uuid4().hex,0,time.monotonic()+2)
+        if time.monotonic() >= context.deadline_monotonic:
+            raise RegionalKnowledgeUnavailable('knowledge_deadline_exceeded')
+        try:
+            result=await self.provider.fetch_evidence(actor_sub=self.actor_sub,
+                workspace_id=self.workspace_id,context=context,max_evidence=max_evidence,
+                id=id,source_id=source_id,page_start=page_start,page_end=page_end,
+                after_ordinal=after_ordinal)
+        except RegionalKnowledgeAccessError:
+            raise
+        except PermissionError as exc:
+            raise RegionalKnowledgeAccessError('knowledge_access_denied') from exc
+        except (RegionalKnowledgeInputError, RegionalKnowledgeContractError):
+            raise
+        except Exception as exc:
+            raise RegionalKnowledgeUnavailable('regional_knowledge_unavailable') from exc
+        normalized=normalize_knowledge_search(result,max_evidence=max_evidence)
+        if (normalized['request_id']!=context.request_id or normalized['turn_generation']!=context.turn_generation
+                or normalized['min_data_seq']!=context.min_data_seq or time.monotonic()>=context.deadline_monotonic):
+            raise RegionalKnowledgeUnavailable('knowledge_context_gap')
+        return normalized

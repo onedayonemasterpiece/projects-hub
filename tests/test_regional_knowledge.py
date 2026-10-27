@@ -7,12 +7,21 @@ import pytest
 from projects_hub.live_adapter import ProjectsHubLiveAdapter
 from projects_hub.live_resources import ConversationScope
 from projects_hub.regional_knowledge import (
+    KNOWLEDGE_CODEC,
     RegionalKnowledgeAdapter,
     RegionalKnowledgeContractError,
     RegionalKnowledgeUnavailable,
     normalize_knowledge_search,
 )
 from projects_hub.store import DurableStore, StoreError
+
+
+def v2(value, context=None):
+    return dict(codec=KNOWLEDGE_CODEC,request_id=context.request_id if context else 'fixture-read',
+        turn_generation=context.turn_generation if context else 0,status='ok' if value.get('mode')=='hybrid' else 'degraded',
+        reason=None if value.get('mode')=='hybrid' else 'lexical_only',min_data_seq=context.min_data_seq if context else 0,
+        observed_data_seq=5,observed_projection_seq=5,prior_write_pending=False,context_gap=False,
+        continuation=None,**value)
 
 
 class KnowledgeProvider:
@@ -44,6 +53,7 @@ class KnowledgeProvider:
         actor_sub,
         workspace_id,
         max_evidence,
+        context,
     ):
         self.calls.append(
             {
@@ -55,7 +65,7 @@ class KnowledgeProvider:
         )
         if self.error is not None:
             raise self.error
-        return self.result
+        return v2(self.result,context)
 
 
 def _live_context(tmp_path: Path, factory=None):
@@ -86,7 +96,7 @@ def _live_context(tmp_path: Path, factory=None):
 
 def test_knowledge_result_preserves_evidence_provenance():
     value = normalize_knowledge_search(
-        {
+        v2({
             "mode": "lexical_degraded",
             "evidence": [
                 {
@@ -101,7 +111,7 @@ def test_knowledge_result_preserves_evidence_provenance():
                     },
                 }
             ],
-        },
+        }),
         max_evidence=3,
     )
     assert value["mode"] == "lexical_degraded"
@@ -142,7 +152,7 @@ def test_knowledge_result_preserves_evidence_provenance():
 )
 def test_knowledge_result_rejects_untrusted_or_unbounded_shapes(payload):
     with pytest.raises(RegionalKnowledgeContractError):
-        normalize_knowledge_search(payload, max_evidence=3)
+        normalize_knowledge_search(v2(payload), max_evidence=3)
 
 
 @pytest.mark.asyncio
@@ -215,7 +225,7 @@ async def test_live_knowledge_tool_uses_current_actor_workspace_and_evidence(
         }
         assert provider.calls == [
             {
-                "query": "история Кафедрального собора",
+                "query": "  история Кафедрального собора  ",
                 "actor_sub": actor_id,
                 "workspace_id": workspace_id,
                 "max_evidence": 5,
@@ -298,5 +308,74 @@ async def test_knowledge_provider_failure_degrades_only_capability(tmp_path: Pat
             session.state["actor_id"],
             session.state["workspace_id"],
         )
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_p3_mira_declarations_and_scoped_search_fetch_share_current_live_context(tmp_path):
+    from projects_hub.regional_knowledge import RegionalKnowledgeInputError
+    from projects_hub.live_adapter import _functions, _LONG_RUNNING_FUNCTIONS
+    from projects_hub.live_capabilities import BUNDLES
+    from uuid import UUID
+    names={d['name']:d for d in _functions(regional_knowledge=True)}
+    assert set(BUNDLES['knowledge'])=={'knowledge_search','knowledge_fetch'}
+    assert 'knowledge_fetch' in _LONG_RUNNING_FUNCTIONS
+    assert 'document_ids' in names['knowledge_search']['parameters']['properties']
+    assert set(names['knowledge_fetch']['parameters']['properties']) >= {'id','source_id','page_start','page_end'}
+
+    class P3(KnowledgeProvider):
+        def __init__(self):
+            super().__init__();self.scopes=[];self.fetches=[]
+        async def search_evidence(self,*,query,actor_sub,workspace_id,max_evidence,context,document_ids=None):
+            self.scopes.append((actor_sub,workspace_id,document_ids))
+            return v2(self.result,context)
+        async def fetch_evidence(self,*,actor_sub,workspace_id,context,max_evidence,
+                                 id=None,source_id=None,page_start=None,page_end=None,after_ordinal=None):
+            self.fetches.append((actor_sub,workspace_id,id,source_id,page_start,page_end))
+            return v2(self.result,context)
+    provider=P3()
+    store,actor,workspace,adapter,initialized,session=_live_context(tmp_path,
+        lambda a,w:RegionalKnowledgeAdapter(provider,a,w))
+    source='00000000-0000-0000-0000-000000000001'
+    try:
+        selected,_=bundle_setup(adapter,initialized,'knowledge')
+        assert {'knowledge_search','knowledge_fetch'} <= {item['name'] for item in selected['functions']}
+        searched=await execute(adapter,session,{'name':'knowledge_search',
+            'args':{'query':'Какая книга?','document_ids':[source]}})
+        fetched=await execute(adapter,session,{'name':'knowledge_fetch',
+            'args':{'source_id':source,'page_start':2,'page_end':4}})
+        assert searched['status']=='ok' and fetched['status']=='ok'
+        assert provider.scopes==[(actor,workspace,[source])]
+        assert provider.fetches==[(actor,workspace,None,source,2,4)]
+        assert fetched['evidence'][0]['title']=='Кёнигсберг. Источник'
+        with pytest.raises(StoreError) as rejected:
+            await execute(adapter,session,{'name':'knowledge_fetch',
+                'args':{'source_id':source,'page_start':1,'page_end':10}})
+        assert rejected.value.code=='INVALID_ARGUMENT'
+    finally:
+        store.close()
+
+def test_p1b_rule_is_emitted_once_in_actual_mira_knowledge_instructions(tmp_path):
+    """The real authorized capability transition must pass P1b to Mira, not only declare it."""
+    provider = KnowledgeProvider()
+    store, _actor, _workspace, adapter, initialized, _session = _live_context(
+        tmp_path,
+        lambda actor, workspace: RegionalKnowledgeAdapter(provider, actor, workspace),
+    )
+    marker = "Не добавляй в ответ детали, отсутствующие в прочитанных фрагментах"
+    try:
+        # Core startup is deliberately small; knowledge instructions appear on activation.
+        assert marker not in initialized["configuration"]["system_instruction"]
+        emitted, _ = bundle_setup(adapter, initialized, "knowledge")
+        instructions = emitted["system_instruction"]
+        names = {tool["name"] for tool in emitted["functions"]}
+        assert {"knowledge_search", "knowledge_fetch"} <= names
+        assert "# REGIONAL KNOWLEDGE" in instructions
+        assert instructions.count(marker) == 1
+        assert "современные названия мест" in instructions
+        assert "за пределами цитируемых источников" in instructions
+        # One product-owned rule in the issued overlay; no duplicated tool guidance.
+        assert all(marker not in tool["description"] for tool in emitted["functions"])
     finally:
         store.close()

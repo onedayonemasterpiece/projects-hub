@@ -19,7 +19,7 @@ BUNDLES = {
     "repositories": ["github_repositories_list", "github_repository_read"],
     "calendar": ["devices_list_capabilities", "calendar_create_event_on_device", "calendar_list_events_on_device", "calendar_command_status"],
     "readiness": ["event_cards_list", "event_readiness_set", "task_create_follow_up", "task_set_state"],
-    "knowledge": ["knowledge_search"],
+    "knowledge": ["knowledge_search", "knowledge_fetch"],
     "expert_reviews": ["expert_reviews_list_assigned", "expert_reviews_get", "expert_reviews_accept", "expert_reviews_resolve", "expert_reviews_request_research"],
     "owner_development": ["backlog_list", "backlog_create", "development_codex_status", "development_execute_backlog", "development_execution_status", "collaboration_question_respond"],
 }
@@ -94,14 +94,11 @@ OVERLAYS = {'core': 'Read allowed projects before choosing focus. Use runtime_ve
               'через task_create_follow_up после согласия.\n'
               '- task_set_state отражает принятие/выполнение/откладывание/отказ; не объявляй task '
               'выполненной без tool result.',
- 'knowledge': '- knowledge_search присутствует только когда backend подтвердил отдельный '
-              'user-authorized grant к Regional Knowledge resource.\n'
-              '- Используй его для региональных фактов, когда полезны книги/журналы и provenance. '
-              'Отвечай по evidence, сохраняй различие между источником и своим выводом.\n'
-              '- Отсутствие результата не доказывает ложность факта. Не выдавай snippets без evidence '
-              'за проверенную истину.\n'
-              '- Projects Hub token не является Knowledge token; доступ и ACL проверяет сам Knowledge '
-              'resource.\n',
+ 'knowledge': '- Прочитай search на языке вопроса; проверь каждую запрошенную часть, человека, оговорки и источники. Для конкретной книги бери document_ids только из увиденных source_revisions, не придумывай UUID.\n'
+              '- При неполном фрагменте используй knowledge_fetch по id/next_id либо до четырёх соседних скан-страниц по source_id. При другом языке делай отдельный поиск, не смешивай языки. Максимум 6 последовательных обращений, завершай при достаточности.\n'
+              '- Отвечай 1–4 предложениями на языке вопроса, указывая авторов, книги, год и страницу или скан; отсутствие результата не доказывает отрицание. Недоступность/status/context_gap называй честно.\n'
+              '- Не добавляй в ответ детали, отсутствующие в прочитанных фрагментах (например, современные названия мест); если пользователь их просит, явно отмечай, что эти сведения находятся за пределами цитируемых источников.\n'
+              '- Авторизацию отдельно проверяет RKB; PH service identity не подменяет человека.\n',
  'expert_reviews': '- Expert-review tools присутствуют только когда backend подтвердил owning-service '
                    'grant и verified expert profile.\n'
                    '- Не решай противоречие сама: объясняй evidence и вызывай typed expert tool только '

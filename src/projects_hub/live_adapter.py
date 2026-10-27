@@ -6,6 +6,8 @@ import hashlib
 import json
 import logging
 import re
+import time
+from uuid import uuid4
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any, Callable
@@ -24,6 +26,7 @@ from .expert_reviews import (
     ExpertReviewError,
 )
 from .regional_knowledge import (
+    KnowledgeReadContext,
     RegionalKnowledgeAccessError,
     RegionalKnowledgeAdapter,
     RegionalKnowledgeContractError,
@@ -70,7 +73,7 @@ _LONG_RUNNING_FUNCTIONS = frozenset({
     "project_note_create", "project_note_reply", "project_note_analyze",
     "collaboration_questions_request", "collaboration_questions_answer",
     "collaboration_question_respond", "collaboration_continuation_status",
-    "knowledge_search", "expert_reviews_list_assigned", "expert_reviews_get",
+    "knowledge_search", "knowledge_fetch", "expert_reviews_list_assigned", "expert_reviews_get",
     "expert_reviews_accept", "expert_reviews_resolve", "expert_reviews_request_research",
     "development_codex_status", "development_execute_backlog", "development_execution_status",
 })
@@ -651,30 +654,47 @@ def _functions(
         ]
     )
     if regional_knowledge:
-        functions.append(
+        functions.extend([
             {
                 "name": "knowledge_search",
                 "description": (
-                    "Search the current user's authorized Regional Knowledge "
-                    "books and journals. Returns a small source-backed evidence "
-                    "pack with stable URLs/provenance. Use when regional factual "
-                    "evidence is useful; absence of a result is not proof that a "
-                    "claim is false."
+                    "Search authorized regional sources first in the question's language. "
+                    "Check all requested facts, identity and source citations after reading; "
+                    "if needed, search only the known document_ids (up to five IDs from earlier evidence/catalog), "
+                    "or use knowledge_fetch to read more. Never mix languages in one query or infer negation from no hits."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "query": {"type": "string", "maxLength": 1000},
-                        "max_evidence": {
-                            "type": "integer",
-                            "minimum": 1,
-                            "maximum": 5,
-                        },
+                        "max_evidence": {"type": "integer", "minimum": 1, "maximum": 5},
+                        "document_ids": {"type": "array", "items": {"type": "string"},
+                            "maxItems": 5,
+                            "description": "Canonical source UUIDs from an earlier authorized result or catalog, not invented."},
                     },
                     "required": ["query"],
                 },
-            }
-        )
+            },
+            {
+                "name": "knowledge_fetch",
+                "description": (
+                    "Read an exact search hit by id/next_id when truncated, or neighboring physical "
+                    "pages of a previously cited source_id (up to four). Recheck whether evidence is sufficient "
+                    "after each read; give 1–4 sourced sentences or identify the missing part."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string", "description": "Opaque passage id or next_id from knowledge_search/fetch."},
+                        "source_id": {"type": "string", "description": "Source UUID from authorized evidence."},
+                        "page_start": {"type": "integer", "minimum": 0, "maximum": 2499},
+                        "page_end": {"type": "integer", "minimum": 0, "maximum": 2499},
+                        "after_ordinal": {"type": "integer", "minimum": 0},
+                        "max_evidence": {"type": "integer", "minimum": 1, "maximum": 5},
+                    },
+                },
+            },
+        ])
     if expert_reviews:
         functions.extend(
             [
@@ -973,10 +993,11 @@ SYSTEM_INSTRUCTION = """# ROLE
 - Если tool отказал, объясни результат и продолжи разговор, не выдумывая успешное действие.
 
 # REGIONAL KNOWLEDGE
-- knowledge_search присутствует только когда backend подтвердил отдельный user-authorized grant к Regional Knowledge resource.
-- Используй его для региональных фактов, когда полезны книги/журналы и provenance. Отвечай по evidence, сохраняй различие между источником и своим выводом.
-- Отсутствие результата не доказывает ложность факта. Не выдавай snippets без evidence за проверенную истину.
+- knowledge_search и knowledge_fetch доступны только по текущему user-authorized grant к RKB. Сначала ищи на языке вопроса, читай фактический текст и проверяй все части, лица, отрицания и источник; по названной книге используй document_ids из уже прочитанной выдачи.
+- При пробеле делай лишь один осмысленный шаг: knowledge_fetch по next_id/id или соседним страницам либо отдельный поиск на языке источника; не смешивай языки. Не более 6 последовательных RKB-вызовов, остановись, когда достаточно доказательств.
+- Ответ 1–4 предложения на языке пользователя, ссылки на все использованные источники (автор, книга, год, печатная страница/скан), расхождения явно. Отсутствие результата не доказывает ложность; при сбое честно назови недоступность.
 - Projects Hub token не является Knowledge token; доступ и ACL проверяет сам Knowledge resource.
+- Contract v2: status, reason, context_gap и prior_write_pending обязательны. unavailable/cancelled/denied/context_gap не означают отсутствие знаний. lexical_degraded не является подтверждённым hybrid ответом. Не перезапускай поиск автоматически; уточняй или осмысленно переформулируй только по задаче человека.
 
 # EXPERT REVIEWS
 - Expert-review tools присутствуют только когда backend подтвердил owning-service grant и verified expert profile.
@@ -1663,6 +1684,8 @@ class ProjectsHubLiveAdapter:
                 "_core_personal_brief": personal_brief,
             },
             "context": {
+                "regional_knowledge_context": {"status":"context_gap","reason":"evidence_context_unavailable"}
+                    if regional_knowledge is not None else None,
                 "workspace_id": conversation["workspace_id"],
                 "conversation_id": conversation_id,
                 "current_project": {
@@ -1732,6 +1755,7 @@ class ProjectsHubLiveAdapter:
                 "source_reused": source_reused,
                 "expert_reviews_enabled": expert_reviews is not None,
                 "regional_knowledge_enabled": regional_knowledge is not None,
+                "regional_knowledge_contract": "rkb.knowledge-search.v2" if regional_knowledge is not None else None,
                 "owner_development_enabled": owner_development,
                 "source_terminal": source["status"] in {"archived", "ephemeral_processed"},
                 "pending_voice_sources": pending_voice_sources,
@@ -1987,6 +2011,9 @@ class ProjectsHubLiveAdapter:
         actor_id = state["actor_id"]
         source_id = state["source_id"]
         if message.get("activity_start"):
+            # A new human turn retires optional knowledge work immediately.
+            # The shared transport still owns provider/tool generation changes.
+            for task in tuple(state.get('_knowledge_reads',{}).values()):task.cancel()
             self._start_utterance(session)
         if "audio_base64" in message:
             raw = message.get("audio_base64")
@@ -2020,10 +2047,33 @@ class ProjectsHubLiveAdapter:
                     "utterance_activity_end",
                     utterance,
                 )
+                generation=getattr(session,'audio_turn_generation',None)
+                if type(generation) is int and generation>0:
+                    turns=state.setdefault('_knowledge_utterance_generations',{})
+                    if len(turns)>=32:turns.pop(next(iter(turns)))
+                    turns[generation]=utterance['id']
 
     def on_event(self, session: Any, event: dict[str, Any]) -> None:
         kind = str(event.get("type") or "")
         state = session.state
+        if kind == 'tool_call':
+            pending = state.setdefault('_knowledge_call_contexts', {})
+            for call in (event.get('calls') or []):
+                if call.get('name') in ('knowledge_search','knowledge_fetch') and isinstance(call.get('id'),str):
+                    if len(pending)>=32:
+                        pending.pop(next(iter(pending)))
+                    turn = state.get('_native_response_turn')
+                    utterance_id = turn.get('utterance_id') if isinstance(turn,dict) else None
+                    if utterance_id is None:
+                        # This exact generation crossed the provider activity
+                        # barrier. A nearby/most-recent transcript is no proof.
+                        utterance_id = state.get('_knowledge_utterance_generations',{}).get(
+                            getattr(session,'audio_end_sent_generation',None))
+                    pending[call['id']] = (time.monotonic(),getattr(session,'tool_feedback_generation',0),utterance_id)
+        elif kind == 'tool_cancelled':
+            for ident in (event.get('ids') or []):
+                task = state.get('_knowledge_reads',{}).get(ident)
+                if task is not None:task.cancel()
         if kind in {"reconnecting", "resumed"} and state.pop("_native_response_interrupted", False):
             # Only a provider boundary retires an interrupted response whose
             # completion was lost. A handset transport_gap is not this boundary.
@@ -2222,6 +2272,7 @@ class ProjectsHubLiveAdapter:
 
     def on_stopped(self, session: Any) -> None:
         state = session.state
+        for task in tuple(state.get('_knowledge_reads',{}).values()):task.cancel()
         # Fence provider callbacks before any cleanup can yield to another task.
         state["_checkpoint_stopped"] = True
         pending = self._preference_applications.pop(getattr(session, "id", ""), None)
@@ -3124,7 +3175,7 @@ class ProjectsHubLiveAdapter:
                 state=str(args.get("state") or ""),
             )
 
-        if name == "knowledge_search":
+        if name in ("knowledge_search", "knowledge_fetch"):
             adapter = self._regional_knowledge(actor_id, workspace_id)
             if adapter is None:
                 raise StoreError(
@@ -3132,10 +3183,42 @@ class ProjectsHubLiveAdapter:
                     "Regional Knowledge is not connected for this actor",
                 )
             try:
-                return await adapter.search(
-                    str(args.get("query") or ""),
-                    max_evidence=args.get("max_evidence", 3),
-                )
+                call_id = str(call.get('id') or uuid4().hex)
+                started,generation,utterance_id = state.get('_knowledge_call_contexts',{}).pop(call_id,
+                    (time.monotonic(),getattr(session,'tool_feedback_generation',0),None))
+                context = KnowledgeReadContext(uuid4().hex,generation,started+2,
+                    int(state.get('_knowledge_min_data_seq',0)))
+                def current():
+                    return (not getattr(session,'closed',False) and not state.get('_checkpoint_stopped')
+                        and call_id not in getattr(session,'cancelled',set())
+                        and generation==getattr(session,'tool_feedback_generation',0))
+                from .regional_knowledge_http import failure
+                if not current():return failure(context,'context_gap',status='cancelled')
+                if name == 'knowledge_search':
+                    operation=adapter.search(args.get('query',''),max_evidence=args.get('max_evidence',3),
+                        document_ids=args.get('document_ids'),context=context)
+                else:
+                    operation=adapter.fetch(id=args.get('id'),source_id=args.get('source_id'),
+                        page_start=args.get('page_start'),page_end=args.get('page_end'),
+                        after_ordinal=args.get('after_ordinal'),max_evidence=args.get('max_evidence',5),
+                        context=context)
+                task=asyncio.create_task(operation)
+                state.setdefault('_knowledge_reads',{})[call_id]=task
+                try:
+                    result=await task
+                    if not current():return failure(context,'context_gap',status='cancelled')
+                    if utterance_id is not None and getattr(session,'id',None):
+                        utterance=next((value for value in state.get('_utterances',[]) if value.get('id')==utterance_id),None)
+                        from .regional_knowledge_context import checkpoint
+                        checkpoint(self.store,session=session,context=context,tool_call_id=call_id,
+                            utterance=utterance,query=str(args.get('query') if name == 'knowledge_search'
+                                else 'fetch:'+str(args.get('id') or args.get('source_id') or '')),result=result)
+                    return result
+                except asyncio.CancelledError:
+                    if asyncio.current_task().cancelling():raise
+                    return failure(context,'context_gap',status='cancelled')
+                finally:
+                    state['_knowledge_reads'].pop(call_id,None)
             except RegionalKnowledgeInputError as exc:
                 raise StoreError("INVALID_ARGUMENT", str(exc)) from exc
             except RegionalKnowledgeAccessError as exc:
