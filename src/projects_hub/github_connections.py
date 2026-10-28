@@ -46,6 +46,10 @@ class GitHubConnections:
     def configured(self) -> bool:
         return self.client is not None
 
+    async def aclose(self) -> None:
+        if self.client is not None and hasattr(self.client, "aclose"):
+            await self.client.aclose()
+
     @property
     def bootstrap_available(self) -> bool:
         return bool(self.settings.public_origin)
@@ -98,7 +102,7 @@ class GitHubConnections:
             webhook_secret=config["webhook_secret"],
         )
 
-    def _persist_manifest_config(self, payload: dict[str, Any]) -> None:
+    async def _persist_manifest_config(self, payload: dict[str, Any]) -> None:
         config = self._validate_persisted_config(
             {
                 "app_id": payload.get("id"),
@@ -119,6 +123,7 @@ class GitHubConnections:
             os.close(fd)
         os.replace(temp, path)
         os.chmod(path, 0o600)
+        await self.aclose()
         self.client = GitHubAppClient(
             app_id=config["app_id"],
             slug=config["slug"],
@@ -250,7 +255,7 @@ class GitHubConnections:
         )
         payload = await self._exchange_manifest_code(code)
         try:
-            self._persist_manifest_config(payload)
+            await self._persist_manifest_config(payload)
         except (OSError, RuntimeError, ValueError) as exc:
             raise StoreError(
                 "GITHUB_APP_PERSIST_FAILED",
