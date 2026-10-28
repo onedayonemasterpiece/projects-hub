@@ -39,6 +39,12 @@ class GitHubAppClient:
         self.webhook_secret = webhook_secret.encode("utf-8")
         self.transport = transport
         self.now = now or time.time
+        self._http = httpx.AsyncClient(
+            base_url=API_BASE, transport=transport, timeout=15.0, follow_redirects=False,
+        )
+
+    async def aclose(self) -> None:
+        await self._http.aclose()
 
     def install_url(self, state: str) -> str:
         return (
@@ -83,24 +89,18 @@ class GitHubAppClient:
         token: str,
         body: dict[str, Any] | None = None,
     ) -> Any:
-        async with httpx.AsyncClient(
-            base_url=API_BASE,
-            transport=self.transport,
-            timeout=15.0,
-            follow_redirects=False,
-        ) as client:
-            try:
-                response = await client.request(
-                    method,
-                    path,
-                    headers=self._headers(token),
-                    json=body,
-                )
-            except httpx.HTTPError as exc:
-                raise GitHubAppError(
-                    "GITHUB_UNAVAILABLE",
-                    "GitHub request failed",
-                ) from exc
+        try:
+            response = await self._http.request(
+                method,
+                path,
+                headers=self._headers(token),
+                json=body,
+            )
+        except httpx.HTTPError as exc:
+            raise GitHubAppError(
+                "GITHUB_UNAVAILABLE",
+                "GitHub request failed",
+            ) from exc
         if response.status_code in {401, 403}:
             raise GitHubAppError(
                 "GITHUB_FORBIDDEN",

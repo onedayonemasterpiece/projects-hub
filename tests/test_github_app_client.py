@@ -210,3 +210,50 @@ async def test_repository_contents_reads_directory_and_text_file():
     )
     assert readme["kind"] == "file"
     assert readme["text"] == "Привет из README"
+
+
+@pytest.mark.asyncio
+async def test_http_client_reused_and_closed_on_replacement_and_lifespan_shutdown(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from projects_hub.app import create_app
+    from projects_hub.github_connections import GitHubConnections
+    from projects_hub.settings import Settings
+    from projects_hub.store import DurableStore
+
+    clients, authorizations = [], []
+    original = httpx.AsyncClient
+
+    class ObservedClient(original):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            clients.append(self)
+
+    def handler(request):
+        authorizations.append(request.headers['authorization'])
+        return httpx.Response(200, json={'id': 123})
+
+    monkeypatch.setattr(httpx, 'AsyncClient', ObservedClient)
+    github = GitHubAppClient(app_id=1, slug='fixture', private_key='unused',
+        webhook_secret='unused', transport=httpx.MockTransport(handler))
+    store = DurableStore(tmp_path / 'data')
+    settings = Settings(data_dir=tmp_path / 'data', static_dir=tmp_path / 'dist', session_secret='fixture')
+    connections = GitHubConnections(store, settings, client=github)
+    async def noop(): pass
+    background = SimpleNamespace(start_background=noop, close=noop)
+    background.collaboration = background
+    app = create_app(settings, store=store, github_connections=connections,
+        live_host=SimpleNamespace(close=noop), development=background,
+        collaboration=background, collaboration_analysis=background)
+    try:
+        async with app.router.lifespan_context(app):
+            await github.repository_metadata(token='first-token', repository_id=123)
+            await github.repository_metadata(token='second-token', repository_id=123)
+            assert len(clients) == 1 and not clients[0].is_closed
+            assert authorizations == ['Bearer first-token', 'Bearer second-token']
+            await connections._persist_manifest_config(dict(id=2, slug='replacement',
+                pem='-----BEGIN PRIVATE KEY----- fixture', webhook_secret='synthetic-secret-at-least20'))
+            assert len(clients) == 2 and clients[0].is_closed and not clients[1].is_closed
+        assert all(client.is_closed for client in clients)
+    finally:
+        await connections.aclose()
+        store.close()

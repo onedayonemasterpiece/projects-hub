@@ -359,6 +359,9 @@ def create_app(
                 development_service, "close"
             ):
                 await development_service.close()
+            github = app.state.github_connections
+            if hasattr(github, "aclose"):
+                await github.aclose()
             if owned_store:
                 store.close()
 
