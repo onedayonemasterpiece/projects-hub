@@ -969,6 +969,10 @@ async def test_rkb_loopback_wake_uses_existing_subscription_outbox_and_test_ack(
     await events.subscribe(grant['id'], REQUEST_EVENT, {'project_id': grant['project_id']}, DELIVERY)
     credential = app.state.mcp_auth.provision_service(
         grant['actor_id'], 'ph_service_rkb_expert', [REDIRECT])
+    with pytest.raises(StoreError, match='loopback-only'):
+        app.state.mcp_auth.authorize_service({'client_id':'ph_service_rkb_expert'})
+    with pytest.raises(StoreError, match='loopback-only'):
+        app.state.mcp_auth.exchange({'client_id':'ph_service_rkb_expert'})
     body = {'project_id': grant['project_id'],
             'rkb_request_id': '12345678-1234-1234-1234-123456789abc'}
     transport = httpx.ASGITransport(app=app, client=('127.0.0.1', 34567))
