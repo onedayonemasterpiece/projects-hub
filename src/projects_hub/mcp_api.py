@@ -183,8 +183,7 @@ def attach_mcp_routes(app, *, store, settings, actor_id_from_request, analysis_s
             client = auth.service_client('ph_service_rkb_expert')
             result = events.create_request(client['actor_id'], body['project_id'],
                 'rkb.expert.' + body['rkb_request_id'], ttl_seconds=3600,
-                event_name=REQUEST_EVENT, request_kind='rkb_expert', origin='rkb',
-                service_intent=True)
+                event_name=REQUEST_EVENT, request_kind='rkb_expert', origin='rkb')
             return JSONResponse(result, status_code=202, headers={'Cache-Control':'no-store'})
         except (ValueError, UnicodeError, HTTPException):
             return JSONResponse({'error': 'INVALID_ARGUMENT'}, status_code=400)
