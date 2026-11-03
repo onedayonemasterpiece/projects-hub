@@ -394,7 +394,12 @@ class MCPEvents:
         project = self.store.db.execute('SELECT workspace_id FROM projects WHERE id=?', (row['project_id'],)).fetchone()
         if not project:
             raise StoreError('REQUEST_UNAVAILABLE', 'Test request unavailable')
-        self.store.project_access(actor_id, project['workspace_id'], row['project_id'])
+        if row['request_kind'] == 'rkb_expert':
+            client = self.auth.service_client('ph_service_rkb_expert')
+            if actor_id != client['actor_id'] or row['project_id'] != self.rkb_expert_project_id:
+                raise StoreError('REQUEST_UNAVAILABLE', 'RKB request scope unavailable')
+        else:
+            self.store.project_access(actor_id, project['workspace_id'], row['project_id'])
         actor = self.store.db.execute('SELECT display_name FROM actors WHERE id=?', (actor_id,)).fetchone()
         return actor_id, actor['display_name']
 
