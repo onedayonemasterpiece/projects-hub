@@ -227,3 +227,91 @@ Local tests cover two discussion routes, restart, strict SDK schemas, atomic
 failure, version conflicts, revocation and uncertain-send reconciliation. Live
 MVP0 PASS still requires actual dot/Slack receipts and two separate owner-approved
 discussion/thread routes. P0 alone is not that acceptance.
+
+
+## Same-host RKB expert request wake (SW; source only, not deployed)
+
+This is **only the wake transport**, not RKB expert execution or Slack delivery.
+The RKB signed-ingress service first commits its canonical UUID request and verifies
+its own exact remote acceptance. It then POSTs only
+`{"project_id":"prj_…","rkb_request_id":"<canonical UUID>"}` to
+`http://127.0.0.1:8196/internal/rkb/expert-wake`, on the same Linux host.
+PH creates a saved `mcp_test_requests` row and an `mcp_outbox` entry
+for the existing `projects_hub.request.created` subscription. PH owns webhook
+retries, event IDs and deduplication; RKB does not speak Events or see dot's
+callback secret. The PH command ID is `rkb.expert.<RKB UUID>`: HTTP retry or
+lost acceptance response creates **no second request/event**. The bounded
+202 receipt contains PH `project_id`, `request_id`, `eventId`, not the
+original Slack text, source evidence, person, or destination.
+
+### Authority and installation — Shkiper only, after merge
+
+PH: provision a **separate** revocable `ph_service_rkb_expert` client using
+the existing installed `scripts/run_mcp_test_request.sh provision-service`.
+Store its secret as a private regular file, with no copying into Git, logs,
+URL, personal OAuth/browser or owner bearer. Bind the fixed project via
+`PROJECTS_HUB_RKB_EXPERT_PROJECT_ID=prj_<exact subscribed project>` in
+protected PH runtime config. The endpoint accepts only loopback connections
+with no forwarding headers, correct credential, exact fixed project and a
+canonical UUID. It delegates to the existing PH request/outbox, never an owner
+actor or PH note/discussion authorization. Revocation uses the existing
+`disable-service --client-id ph_service_rkb_expert` operation.
+
+RKB: configure the private file selected by `RKB_EXPERT_PH_WAKE_CONFIG`:
+
+```json
+{"codec":"rkb.ph-expert-wake.v1","project_id":"prj_<exact subscribed project>","service_secret_file":"/absolute/owner-private/ph-rkb-expert-secret"}
+```
+
+The file and its referenced secret must be private regular files (owner-only
+permissions). The bridge is off by default and requires the existing signed
+HTTP expert Slack ingress **and** the same real executor context, not Socket
+Mode nor the historical one-line search fallback. No live app, notebook,
+provider token or subscription is installed by this PR. RKB's own remote
+acceptance gate and service-scoped claim/result remain independent; a PH
+`test_ack` proves dot woke up, **not** that a human received a sourced answer.
+
+### One Shkiper live control — precisely one event
+
+1. After both PRs are merged/deployed by their owners and the private
+   service identity/config is provisioned, check the existing PH subscription
+   (`scripts/run_mcp_test_request.sh subscriptions`) for
+   `projects_hub.request.created` with **exact** `project_id` and
+   `state=active`, unexpired `expires_ms`, and verified callback. The
+   2026-10-13 historical subscription was
+   `sub_288a2273dde1bd289ce356046d274876bf82107a6faf8b8ada06d82ab148a409`
+   for `prj_9a50a8e9e45a495387cfd6d7413e833e`; **history is not current
+   subscription status** and subscriptions expire within 24 hours. If absent
+   or expired, ask the **owner in ChatGPT** to refresh the Projects Hub MCP
+   connection/tools/Events and explicitly have dot subscribe to
+   `projects_hub.request.created` with the same `project_id`; approve all
+   requested tool risk levels if prompted. Re-check the saved subscription
+   before testing. The 13 Oct report required a second refresh; no new owner
+   API token is involved. Leave dot idle after confirmation.
+2. Produce **one** signed test Slack expert request through the configured
+   RKB ingress, ensure its canonical request is remotely accepted, and do
+   not post another message to dot. Its exact RKB UUID must yield one PH
+   `rkb_expert` request/outbox event; record PH `request_id`, `eventId`,
+   callback `accepted_ms` and source acceptance. Dot, already subscribed,
+   reads `get_project_request(project_id,request_id)`, verifies
+   `request_kind=rkb_expert`, `rkb_request_id` and `event_id`, then writes
+   one correlated `record_request_result` of kind `test_ack` using the saved
+   nonce. **Do not send a Slack reply as part of this wake-only control.**
+3. Read PH request status and require state `completed`, persisted
+   `test_ack`, matching `response_actor_id`, and same event correlation.
+   A mere HTTP 202 or webhook 200 is **not a PASS**. Reference measurement
+   from the real 13 Oct idle-dot test: callback accepted at **1.253 s** and
+   `test_ack` stored at **43.302 s** after request creation. Observe for
+   about **120 s**, record measured times, and treat them as observations,
+   **not an SLA**. On missing response identify whether RKB acceptance,
+   PH subscription/outbox, callback acceptance or dot tool read/write failed;
+   leave the test as NOT ACCEPTED without inventing a second wake.
+
+### Intentional boundaries
+
+No new Events transport, outbox, scheduler, retry worker, owner permission,
+PH discussion/Slack binding, RKB corpus proxy, model, search result, delivery
+receipt or second service. Scope of this source PR is only
+**RKB accepted request → one PH event → dot can save test_ack**.
+The separate RKB-answer executor/one native Slack delivery is a subsequent
+slice and must not treat a PH ack as a sourced answer.
