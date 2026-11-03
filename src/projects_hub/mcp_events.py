@@ -208,9 +208,10 @@ class MCPEvents:
     def create_request(self, actor_id: str, project_id: str, command_id: str, ttl_seconds: int = 900,
                        *, context_actor_id: str | None = None, event_name: str = EVENT,
                        binding_id: str | None = None, request_kind: str = 'discussion',
-                       origin: str = 'mira', service_intent: bool = False) -> dict:
+                       origin: str = 'mira') -> dict:
         if not isinstance(command_id, str) or not 8 <= len(command_id) <= 160 or not 60 <= ttl_seconds <= 3600:
             raise StoreError('INVALID_ARGUMENT', 'Command id or request lifetime invalid')
+        service_intent = request_kind == 'rkb_expert'
         if service_intent:
             client = self.auth.service_client('ph_service_rkb_expert')
             if (actor_id != client['actor_id'] or project_id != self.rkb_expert_project_id
@@ -230,7 +231,7 @@ class MCPEvents:
                 if (event_name not in (EVENT, REQUEST_EVENT) or (binding_id and event_name != REQUEST_EVENT)
                         or request_kind not in ('discussion','question_start','rkb_expert')
                         or origin not in ('mira','slack','voice','rkb')
-                        or ((request_kind == 'rkb_expert' or origin == 'rkb') and not service_intent) or
+                        or (origin == 'rkb' and not service_intent) or
                         (request_kind == 'question_start' and (not binding_id or event_name != REQUEST_EVENT))):
                     raise StoreError('INVALID_ARGUMENT', 'Unknown request event')
                 binding = self.bindings.for_owner(actor_id, project_id, binding_id, context_actor_id) if binding_id else None
