@@ -253,7 +253,9 @@ URL, personal OAuth/browser or owner bearer. Bind the fixed project via
 `PROJECTS_HUB_RKB_EXPERT_PROJECT_ID=prj_<exact subscribed project>` in
 protected PH runtime config. The endpoint accepts only loopback connections
 with no forwarding headers, correct credential, exact fixed project and a
-canonical UUID. It delegates to the existing PH request/outbox, never an owner
+canonical UUID. This reserved service client is explicitly rejected by PH
+OAuth authorize/token exchange, so its secret cannot obtain the generic PH
+MCP integration's across-project grant. It delegates to the existing PH request/outbox, never an owner
 actor or PH note/discussion authorization. Revocation uses the existing
 `disable-service --client-id ph_service_rkb_expert` operation.
 
