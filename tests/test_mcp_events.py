@@ -951,3 +951,58 @@ async def test_explicit_slack_rejection_can_retry_only_unfinished_destination(se
     unknown=write({**error,'claim_id':retry['destinations']['claim_id'],'error':'internal_error'})
     assert unknown['destinations']['slack_state']=='unconfirmed'
     assert store.db.execute('SELECT COUNT(*) FROM project_discussion_entries').fetchone()[0]==1
+
+
+
+@pytest.mark.asyncio
+async def test_rkb_loopback_wake_uses_existing_subscription_outbox_and_test_ack(setup, tmp_path):
+    """One RKB UUID → one existing MCP event; no owner route or Slack effect."""
+    import httpx
+
+    store, _, _, receiver, grant, _ = setup
+    settings = Settings(data_dir=store.data_dir, static_dir=tmp_path/'no-ui',
+                        session_secret='s'*48, public_origin=ORIGIN,
+                        rkb_expert_project_id=grant['project_id'])
+    app = create_app(settings, store=store)
+    events = app.state.mcp_events
+    events.sender = receiver
+    await events.subscribe(grant['id'], REQUEST_EVENT, {'project_id': grant['project_id']}, DELIVERY)
+    credential = app.state.mcp_auth.provision_service(
+        grant['actor_id'], 'ph_service_rkb_expert', [REDIRECT])
+    body = {'project_id': grant['project_id'],
+            'rkb_request_id': '12345678-1234-1234-1234-123456789abc'}
+    transport = httpx.ASGITransport(app=app, client=('127.0.0.1', 34567))
+    async with httpx.AsyncClient(transport=transport, base_url='http://127.0.0.1:8196') as client:
+        path = '/internal/rkb/expert-wake'
+        assert (await client.post(path, json=body)).status_code == 401
+        headers = {'Authorization':'Bearer ' + credential['client_secret']}
+        assert (await client.post(path, json={**body, 'project_id':'prj_'+'0'*32},
+                                  headers=headers)).status_code == 400
+        assert (await client.post(path, json={**body, 'rkb_request_id':'../foo'},
+                                  headers=headers)).status_code == 400
+        created = await client.post(path, json=body, headers=headers)
+        assert created.status_code == 202, created.text
+        receipt = created.json()
+        replay = await client.post(path, json=body, headers=headers)
+        assert replay.status_code == 202 and replay.json() == receipt
+        assert store.db.execute('SELECT count(*) FROM mcp_test_requests').fetchone()[0] == 1
+        assert store.db.execute('SELECT count(*) FROM mcp_outbox').fetchone()[0] == 1
+        assert await events.deliver_one() is True
+        event, _ = receiver.events[0]
+        assert event['name'] == REQUEST_EVENT and event['data']['request_kind'] == 'rkb_expert'
+        assert event['data']['request_id'] == receipt['request_id']
+        assert 'rkb_request_id' not in event['data']  # Fetch saved, scoped context instead.
+        read = events.get_project_request(grant['id'], receipt['project_id'], receipt['request_id'])
+        assert read['rkb_request_id'] == body['rkb_request_id']
+        assert read['allowed_result_kinds'] == ['test_ack']
+        assert read['mode'] == 'test'
+        result = events.record_request_result(grant['id'], receipt['project_id'],
+                    receipt['request_id'], receipt['eventId'],
+                    {'kind':'test_ack', 'nonce':read['nonce'], 'text':'ACK wake'})
+        assert result['state'] == 'completed'
+        assert not await events.deliver_one()
+        assert len(receiver.events) == 1
+        app.state.mcp_auth.disable_service(grant['actor_id'], 'ph_service_rkb_expert')
+        assert (await client.post(path, json=body, headers=headers)).status_code == 401
+        with pytest.raises(StoreError):
+            events.get_project_request(grant['id'], receipt['project_id'], receipt['request_id'])
