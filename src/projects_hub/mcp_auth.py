@@ -251,6 +251,8 @@ class MCPAuth:
             row = self.store.db.execute('SELECT * FROM mcp_grants WHERE id=?', (grant_id,)).fetchone()
             if not row or row['revoked_ms'] is not None or row['expires_ms'] <= _now_ms():
                 raise StoreError('invalid_token', 'Integration grant unavailable')
+            if row['client_id'] == 'ph_service_rkb_expert':
+                raise StoreError('invalid_token', 'RKB wake credential is loopback-only')
             service = self.store.db.execute('SELECT * FROM mcp_service_clients WHERE client_id=?', (row['client_id'],)).fetchone()
             if service:
                 if not service['enabled'] or service['actor_id'] != row['actor_id']:
