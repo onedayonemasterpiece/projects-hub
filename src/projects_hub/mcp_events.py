@@ -222,8 +222,9 @@ class MCPEvents:
         with self.store._lock:
             self.store.db.execute('BEGIN IMMEDIATE')
             try:
-                if not service_intent:
-                    self.auth.project_owner(actor_id, project_id)
+                # project_owner returns role=integration (no owner grant) for
+                # enabled service actors, and still checks project is active.
+                self.auth.project_owner(actor_id, project_id)
                 context_actor_id = context_actor_id or actor_id
                 project = self.store.db.execute('SELECT workspace_id FROM projects WHERE id=?', (project_id,)).fetchone()
                 if not service_intent:
