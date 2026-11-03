@@ -237,7 +237,12 @@ its own exact remote acceptance. It then POSTs only
 `{"project_id":"prj_…","rkb_request_id":"<canonical UUID>"}` to
 `http://127.0.0.1:8196/internal/rkb/expert-wake`, on the same Linux host.
 PH creates a saved `mcp_test_requests` row and an `mcp_outbox` entry
-for the existing `projects_hub.request.created` subscription. PH owns webhook
+for the existing `projects_hub.request.created` subscription. RKB may receive
+that request through its signed HTTP ingress or authenticated Slack Socket Mode;
+PH is indifferent to this upstream transport and never sends Slack itself.
+The RKB wake is allowed alongside the existing Kaliningrad Base PR609 answer
+fallback: an unavailable PH only degrades dot wake, not the bot's native
+one-shot answer. PH owns webhook
 retries, event IDs and deduplication; RKB does not speak Events or see dot's
 callback secret. The PH command ID is `rkb.expert.<RKB UUID>`: HTTP retry or
 lost acceptance response creates **no second request/event**. The bounded
@@ -290,8 +295,10 @@ acceptance gate and service-scoped claim/result remain independent; a PH
    requested tool risk levels if prompted. Re-check the saved subscription
    before testing. The 13 Oct report required a second refresh; no new owner
    API token is involved. Leave dot idle after confirmation.
-2. Produce **one** signed test Slack expert request through the configured
-   RKB ingress, ensure its canonical request is remotely accepted, and do
+2. Produce **one** verified Slack expert request through the installed
+   Kaliningrad Base **Socket Mode** app mention (or the signed HTTP ingress
+   only if actually configured); ensure its canonical request is remotely
+   accepted, and do
    not post another message to dot. Its exact RKB UUID must yield one PH
    `rkb_expert` request/outbox event; record PH `request_id`, `eventId`,
    callback `accepted_ms` and source acceptance. Dot, already subscribed,
