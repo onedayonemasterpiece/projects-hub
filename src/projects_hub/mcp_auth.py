@@ -157,6 +157,8 @@ class MCPAuth:
         requires the confidential client's secret. This is authorization_code,
         not an unsupported client_credentials grant. No cookie is consulted.
         """
+        if params.get('client_id') == 'ph_service_rkb_expert':
+            raise StoreError('invalid_client', 'RKB wake credential is loopback-only')
         with self.store._lock:
             client = self.service_client(params.get('client_id', ''))
             flow = self.begin(params)
@@ -249,6 +251,8 @@ class MCPAuth:
             row = self.store.db.execute('SELECT * FROM mcp_grants WHERE id=?', (grant_id,)).fetchone()
             if not row or row['revoked_ms'] is not None or row['expires_ms'] <= _now_ms():
                 raise StoreError('invalid_token', 'Integration grant unavailable')
+            if row['client_id'] == 'ph_service_rkb_expert':
+                raise StoreError('invalid_token', 'RKB wake credential is loopback-only')
             service = self.store.db.execute('SELECT * FROM mcp_service_clients WHERE client_id=?', (row['client_id'],)).fetchone()
             if service:
                 if not service['enabled'] or service['actor_id'] != row['actor_id']:
@@ -276,6 +280,8 @@ class MCPAuth:
             return self.grant(row['grant_id'])
 
     def exchange(self, params: dict, *, service_only: bool = False) -> dict:
+        if params.get('client_id') == 'ph_service_rkb_expert':
+            raise StoreError('invalid_client', 'RKB wake credential is loopback-only')
         if params.get('resource') != self.resource or params.get('scope', SCOPE) != SCOPE:
             raise StoreError('invalid_target', 'Resource or scope mismatch')
         with self.store._lock:

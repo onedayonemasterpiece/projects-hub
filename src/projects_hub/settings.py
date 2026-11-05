@@ -66,6 +66,7 @@ class Settings:
     github_app_webhook_secret: str = ""
 
     voice_analysis_config: dict | None = field(default=None, repr=False)
+    rkb_expert_project_id: str = ""
 
     @property
     def public_auth_enabled(self) -> bool:
@@ -186,4 +187,5 @@ class Settings:
             github_app_private_key=github_private_key,
             github_app_webhook_secret=github_webhook_secret,
             voice_analysis_config=voice_binding,
+            rkb_expert_project_id=str(env.get('PROJECTS_HUB_RKB_EXPERT_PROJECT_ID') or '').strip(),
         )

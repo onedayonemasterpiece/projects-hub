@@ -35,6 +35,7 @@ class MCPEvents:
         self.store, self.auth = store, auth
         self.sender = sender or WebhookSender()
         self.release_sha = release_sha
+        self.rkb_expert_project_id = None  # Fixed by the hosting app, never by the caller.
         # Domain separation; reuse the existing private deployment key without
         # minting a new credential. Secrets never enter tool responses or logs.
         key = hashlib.sha256(('projects-hub:mcp-webhook:v1:' + session_secret).encode()).digest()
@@ -210,16 +211,28 @@ class MCPEvents:
                        origin: str = 'mira') -> dict:
         if not isinstance(command_id, str) or not 8 <= len(command_id) <= 160 or not 60 <= ttl_seconds <= 3600:
             raise StoreError('INVALID_ARGUMENT', 'Command id or request lifetime invalid')
+        service_intent = request_kind == 'rkb_expert'
+        if service_intent:
+            client = self.auth.service_client('ph_service_rkb_expert')
+            if (actor_id != client['actor_id'] or project_id != self.rkb_expert_project_id
+                    or event_name != REQUEST_EVENT or request_kind != 'rkb_expert'
+                    or origin != 'rkb' or binding_id is not None or context_actor_id is not None
+                    or not command_id.startswith('rkb.expert.')):
+                raise StoreError('PROJECT_FORBIDDEN', 'RKB service binding mismatch')
         with self.store._lock:
             self.store.db.execute('BEGIN IMMEDIATE')
             try:
+                # project_owner returns role=integration (no owner grant) for
+                # enabled service actors, and still checks project is active.
                 self.auth.project_owner(actor_id, project_id)
                 context_actor_id = context_actor_id or actor_id
                 project = self.store.db.execute('SELECT workspace_id FROM projects WHERE id=?', (project_id,)).fetchone()
-                self.store.project_access(context_actor_id, project['workspace_id'], project_id)
+                if not service_intent:
+                    self.store.project_access(context_actor_id, project['workspace_id'], project_id)
                 if (event_name not in (EVENT, REQUEST_EVENT) or (binding_id and event_name != REQUEST_EVENT)
-                        or request_kind not in ('discussion','question_start')
-                        or origin not in ('mira','slack','voice') or
+                        or request_kind not in ('discussion','question_start','rkb_expert')
+                        or origin not in ('mira','slack','voice','rkb')
+                        or (origin == 'rkb' and not service_intent) or
                         (request_kind == 'question_start' and (not binding_id or event_name != REQUEST_EVENT))):
                     raise StoreError('INVALID_ARGUMENT', 'Unknown request event')
                 binding = self.bindings.for_owner(actor_id, project_id, binding_id, context_actor_id) if binding_id else None
@@ -236,7 +249,8 @@ class MCPEvents:
                             or prior['request_kind'] != request_kind or prior['initiation_origin'] != origin):
                         raise StoreError('REQUEST_CONFLICT', 'Command id already used for another route or mode')
                     self.store.db.execute('COMMIT')
-                    return self.status(actor_id, old['id'])
+                    return (dict(project_id=project_id,request_id=prior['id'],eventId=prior['event_id'])
+                            if service_intent else self.status(actor_id, old['id']))
                 now = _now_ms()
                 subscriptions = self.store.db.execute("SELECT * FROM mcp_subscriptions WHERE project_id=? AND event_name=? AND state='active' AND expires_ms>?", (project_id, event_name, now)).fetchall()
                 eligible = []
@@ -267,7 +281,8 @@ class MCPEvents:
                 raise
         self._log('MCP test requested', event='mcp_test_created', request_id=request_id,
                   event_id=event_id, project_id=project_id)
-        return self.status(actor_id, request_id)
+        return (dict(project_id=project_id,request_id=request_id,eventId=event_id)
+                if service_intent else self.status(actor_id, request_id))
 
 
     def start_question_session(self, actor_id: str, project_id: str, note_id: str,
@@ -380,7 +395,12 @@ class MCPEvents:
         project = self.store.db.execute('SELECT workspace_id FROM projects WHERE id=?', (row['project_id'],)).fetchone()
         if not project:
             raise StoreError('REQUEST_UNAVAILABLE', 'Test request unavailable')
-        self.store.project_access(actor_id, project['workspace_id'], row['project_id'])
+        if row['request_kind'] == 'rkb_expert':
+            client = self.auth.service_client('ph_service_rkb_expert')
+            if actor_id != client['actor_id'] or row['project_id'] != self.rkb_expert_project_id:
+                raise StoreError('REQUEST_UNAVAILABLE', 'RKB request scope unavailable')
+        else:
+            self.store.project_access(actor_id, project['workspace_id'], row['project_id'])
         actor = self.store.db.execute('SELECT display_name FROM actors WHERE id=?', (actor_id,)).fetchone()
         return actor_id, actor['display_name']
 
@@ -452,6 +472,11 @@ class MCPEvents:
                         return dict(project_id=project_id,request_id=row['id'],event_id=row['event_id'],**redirected)
                 return self.bindings.get_request(grant_id, row)
             data = self.get_request(grant_id, request_id, project_id=project_id)
+            if row['request_kind'] == 'rkb_expert':
+                self.auth.service_client('ph_service_rkb_expert')
+                if row['project_id'] != self.rkb_expert_project_id:
+                    raise StoreError('REQUEST_UNAVAILABLE', 'RKB service binding revoked')
+                data.update(request_kind='rkb_expert', rkb_request_id=row['command_id'].removeprefix('rkb.expert.'))
             data.update(mode='test', event_id=row['event_id'], response_id=self.response_id(request_id) if row['state']=='completed' else None,
                         backend_state='stored' if row['state']=='completed' else 'awaiting_result',
                         allowed_result_kinds=['test_ack'],
@@ -520,7 +545,12 @@ class MCPEvents:
             try:
                 self._access(row['grant_id'], row['project_id'])
                 project = self.store.db.execute('SELECT workspace_id FROM projects WHERE id=?', (row['project_id'],)).fetchone()
-                self.store.project_access(row['context_actor_id'], project['workspace_id'], row['project_id'])
+                if row['request_kind'] == 'rkb_expert':
+                    self.auth.service_client('ph_service_rkb_expert')
+                    if row['project_id'] != self.rkb_expert_project_id:
+                        raise StoreError('PROJECT_FORBIDDEN', 'RKB service binding revoked')
+                else:
+                    self.store.project_access(row['context_actor_id'], project['workspace_id'], row['project_id'])
                 if row['mode'] == 'live':
                     self.bindings.access(row['grant_id'], row['project_id'], row['binding_id'], row['context_actor_id'], row['binding_revision'])
             except StoreError:

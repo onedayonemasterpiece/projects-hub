@@ -155,6 +155,42 @@ def attach_mcp_routes(app, *, store, settings, actor_id_from_request, analysis_s
     origin = settings.public_origin or 'http://127.0.0.1'
     auth = MCPAuth(store, origin)
     events = MCPEvents(store, auth, settings.session_secret, release_sha=settings.release_sha)
+    events.rkb_expert_project_id = settings.rkb_expert_project_id
+    # Same-host RKB producer only: one exact project, one revocable service principal.
+    # The existing request/outbox owns the MCP Event; RKB never holds dot's webhook.
+    @app.post('/internal/rkb/expert-wake')
+    async def rkb_expert_wake(request: Request):
+        if (request.client is None or request.client.host not in ('127.0.0.1', '::1')
+                or any(request.headers.get(k) for k in
+                       ('forwarded', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto'))):
+            return JSONResponse({'error': 'not_found'}, status_code=404)
+        if not events.rkb_expert_project_id:
+            return JSONResponse({'error': 'bridge_not_configured'}, status_code=503)
+        authorization = request.headers.get('authorization', '')
+        try:
+            auth.validate_service_secret('ph_service_rkb_expert',
+                                         authorization[7:] if authorization.startswith('Bearer ') else '')
+        except StoreError:
+            return JSONResponse({'error': 'service_denied'}, status_code=401)
+        try:
+            body = json.loads(await small_body(request, limit=512))
+            if (not isinstance(body, dict) or set(body) != {'project_id','rkb_request_id'}
+                    or body['project_id'] != events.rkb_expert_project_id
+                    or not isinstance(body['rkb_request_id'], str)
+                    or not re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}',
+                                        body['rkb_request_id'])):
+                raise StoreError('INVALID_ARGUMENT', 'Invalid RKB request reference')
+            client = auth.service_client('ph_service_rkb_expert')
+            result = events.create_request(client['actor_id'], body['project_id'],
+                'rkb.expert.' + body['rkb_request_id'], ttl_seconds=3600,
+                event_name=REQUEST_EVENT, request_kind='rkb_expert', origin='rkb')
+            return JSONResponse(result, status_code=202, headers={'Cache-Control':'no-store'})
+        except (ValueError, UnicodeError, HTTPException):
+            return JSONResponse({'error': 'INVALID_ARGUMENT'}, status_code=400)
+        except StoreError as exc:
+            code = exc.code
+            status = 503 if code in ('NO_SUBSCRIPTION','PROJECT_UNAVAILABLE') else 409 if code == 'REQUEST_CONFLICT' else 403 if code == 'PROJECT_FORBIDDEN' else 400
+            return JSONResponse({'error': code}, status_code=status)
     events.analysis_service = analysis_service
     app.state.mcp_auth, app.state.mcp_events = auth, events
     if analysis_service is not None:
