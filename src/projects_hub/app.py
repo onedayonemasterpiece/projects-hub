@@ -327,6 +327,10 @@ def create_app(
     settings = settings or Settings.from_env()
     owned_store = store is None
     store = store or DurableStore(settings.data_dir)
+    owns_knowledge_factory = regional_knowledge_factory is None
+    if owns_knowledge_factory:
+        from .regional_knowledge_http import configured_knowledge_factory
+        regional_knowledge_factory = configured_knowledge_factory(store)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -349,6 +353,10 @@ def create_app(
                 await host.close()
             elif host is not None and hasattr(host, "stop_all"):
                 await host.stop_all()
+            journal=getattr(store,'_knowledge_context_journal',None)
+            if journal is not None:await journal.aclose()
+            if owns_knowledge_factory and regional_knowledge_factory is not None:
+                await regional_knowledge_factory.aclose()
             if host is not None and hasattr(host, "close_audio_storage"):
                 await host.close_audio_storage()
             if collaboration_analysis_service is not None:
@@ -365,6 +373,7 @@ def create_app(
     app = FastAPI(title="Projects Hub", version=__version__, lifespan=lifespan)
     app.state.settings = settings
     app.state.store = store
+    app.state.regional_knowledge_factory = regional_knowledge_factory
     app.state.board = BoardService(store)
     app.state.board_view_context = BoardViewContextStore(store, app.state.board)
     app.state.board_hub = None
