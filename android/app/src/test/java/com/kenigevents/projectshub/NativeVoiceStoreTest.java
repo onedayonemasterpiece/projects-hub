@@ -51,6 +51,50 @@ public final class NativeVoiceStoreTest {
     }
     @FunctionalInterface private interface Throwing { void run() throws Exception; }
 
+    @Test public void microphoneBatchSyncsOnceAndAllChunksSurviveReopen() throws Exception {
+        File dir = temporary.newFolder();
+        try (NativeVoiceStore store = open(dir)) {
+            initialize(store);
+            long before = store.journalSyncCountForTesting();
+            List<VoiceAudioV2.EncodedChunk> original = java.util.stream.LongStream.rangeClosed(1, 6)
+                    .mapToObj(n -> chunk(n, 32)).collect(Collectors.toList());
+            List<VoiceAudioV2.DurablePrefix> receipts = store.appendBatch(original);
+            assertEquals(List.of(1L, 2L, 3L, 4L, 5L, 6L),
+                    receipts.stream().map(VoiceAudioV2.DurablePrefix::chunkSeq).collect(Collectors.toList()));
+            assertEquals("one file sync for six complete 20-ms originals",
+                    before + 1, store.journalSyncCountForTesting());
+            assertEquals(original, store.readPending(SOURCE.sourceId(), 0, 8192, 240000));
+            assertEquals(6, store.sources().get(0).deviceDurableThrough());
+            assertEquals(0, store.sources().get(0).serverCommittedThrough());
+            assertEquals(6, store.appendBatch(original).get(5).chunkSeq()); // exact retry
+            assertEquals("duplicate burst does not fsync", before + 1, store.journalSyncCountForTesting());
+        }
+        try (NativeVoiceStore restored = open(dir)) {
+            assertEquals(6, restored.sources().get(0).deviceDurableThrough());
+            assertEquals(6, restored.readPending(SOURCE.sourceId(), 0, 8192, 240000).size());
+            assertEquals(0, restored.sources().get(0).serverCommittedThrough());
+            code("VOICE_SOURCE_CONFLICT", () -> restored.appendBatch(List.of(chunk(1, 33))));
+            restored.markServerCommitted(new VoiceAudioV2.DurablePrefix(SOURCE.sourceId(), 6));
+            assertTrue(restored.readPending(SOURCE.sourceId(), 0, 8192, 240000).isEmpty());
+        }
+    }
+
+    @Test public void invalidBatchCannotFsyncOrAdvancePartialCaptureReceipt() throws Exception {
+        try (NativeVoiceStore store = open(temporary.newFolder())) {
+            initialize(store);
+            long before = store.journalSyncCountForTesting();
+            code("VOICE_SOURCE_GAP", () -> store.appendBatch(List.of(chunk(1, 32), chunk(3, 32))));
+            assertEquals(before, store.journalSyncCountForTesting());
+            assertEquals(0, store.sources().get(0).deviceDurableThrough());
+            assertTrue(store.readPending(SOURCE.sourceId(), 0, 8192, 240000).isEmpty());
+            code("VOICE_SOURCE_BATCH_RANGE", () -> store.appendBatch(List.of()));
+            List<VoiceAudioV2.DurablePrefix> receipts = store.appendBatch(List.of(chunk(1, 32), chunk(2, 32)));
+            assertEquals(List.of(1L, 2L),
+                    receipts.stream().map(VoiceAudioV2.DurablePrefix::chunkSeq).collect(Collectors.toList()));
+            assertEquals(before + 1, store.journalSyncCountForTesting());
+        }
+    }
+
     @Test public void alternatingMicAndSpeakerJournalsKeepBoundedHandlesAndDurableOriginals() throws Exception {
         File directory = temporary.newFolder();
         try (NativeVoiceStore store = open(directory)) {
